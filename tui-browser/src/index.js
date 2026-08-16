@@ -477,6 +477,7 @@ function restoreAnchor(state, anchor) {
 async function refresh(state, page, { resetCursor = false, anchor = null } = {}) {
   const started = Date.now();
   state.blocks = await snapshotBlocks(page, state.source);
+  state.renderedUrl = page.url();
   if (state.live) state.live.snapshotCostMs = Date.now() - started;
   if (resetCursor) { state.cursor = 0; state.scroll = 0; state.col = 0; }
   relayout(state);
@@ -628,6 +629,27 @@ function announce(state, { politeness, text }) {
 // Records that the reader just did something. Live refreshes hold off while
 // this is recent, so the buffer is never swapped mid-keystroke. It lives in
 // the key handlers rather than the input loop so no call path can bypass it.
+// The page can navigate without us asking: a script redirects, a video ends
+// and moves on, a login completes. Until we notice, the buffer describes a
+// document that no longer exists — every line refers to an element that is
+// gone, so activating one fails with an evaluation error against a stale
+// handle. Rebuild when the main frame lands somewhere new.
+async function onExternalNavigation(state, page) {
+  const url = page.url();
+  if (url === state.renderedUrl) return;
+  if (state.live && state.live.refreshing) return;
+
+  state.renderedUrl = url;
+  log('navigation.external', { url: url.slice(0, 120) });
+  try {
+    await refresh(state, page, { resetCursor: true });
+  } catch {
+    return; // navigating again already; the next event will catch up
+  }
+  render(state, page);
+  setStatus(state, `Page changed: ${url}`);
+}
+
 function markInput(state) {
   if (state.live) state.live.lastInputMs = Date.now();
 }
@@ -1114,6 +1136,7 @@ async function main() {
     address: null,
     changes: [],
     changeIndex: -1,
+    renderedUrl: page.url(),
     drawn: { address: null, hint: null },
     live: createLiveState(),
     statusHeldUntil: 0,
@@ -1131,7 +1154,9 @@ async function main() {
   // snapshots take seconds instead of milliseconds. Same-origin child frames
   // are covered by addInitScript without any per-frame work here.
   page.on('framenavigated', (frame) => {
-    if (frame === page.mainFrame()) armFrame(frame).catch(() => {});
+    if (frame !== page.mainFrame()) return;
+    armFrame(frame).catch(() => {});
+    onExternalNavigation(state, page).catch(() => {});
   });
 
   process.stdout.on('resize', () => {
@@ -1207,5 +1232,5 @@ module.exports = {
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock,
   anchorFor, restoreAnchor, diffBlocks, jumpToChange, activateCurrent, SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
-  renderRow, parseArgs,
+  renderRow, parseArgs, onExternalNavigation,
 };
