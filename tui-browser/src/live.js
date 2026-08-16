@@ -51,22 +51,26 @@ const TICK_MS = 250;
 // anything: idle updates freely, active reading holds still.
 const INPUT_GRACE_MS = 2500;
 
-const OBSERVER_SCRIPT = () => {
+const OBSERVER_SCRIPT = (force) => {
   if (window.__twebObserver) return;
 
-  // Only observe documents that are actually ours to read: the top document
-  // and same-origin children. An ad-heavy page spawns hundreds of
-  // cross-origin tracking iframes, and arming each one means hundreds of
-  // MutationObservers all calling back over a single connection — which
-  // queues ahead of our own snapshots and stalls them for seconds. None of
-  // that traffic describes content the reader can see.
-  try {
-    if (window.top !== window.self) {
-      // Throws for cross-origin parents, which is exactly the test we want.
-      void window.top.document;
+  // Documents are armed one of two ways. Frames we actually render are armed
+  // explicitly, with force, whatever their origin — an embedded video player
+  // is cross-origin and its elapsed time is content the reader can see.
+  // Everything else is armed only if it is the top document or same-origin
+  // with it: an ad-heavy page spawns hundreds of cross-origin tracking
+  // iframes, and observing all of them means hundreds of MutationObservers
+  // calling back over a single connection, queueing ahead of our own
+  // snapshots and stalling them for seconds.
+  if (!force) {
+    try {
+      if (window.top !== window.self) {
+        // Throws for cross-origin parents, which is exactly the test we want.
+        void window.top.document;
+      }
+    } catch {
+      return;
     }
-  } catch {
-    return;
   }
 
   // Coalesce inside the page. Calling the binding on every mutation batch
@@ -154,17 +158,42 @@ async function installLive(page, onEvent) {
   return { boundNow, armed, frames: page.frames().length };
 }
 
-// Arms a single frame. Frames arrive continuously on ad-heavy pages, so
-// re-scanning every frame each time one appears is quadratic work — several
-// hundred evaluations per new tracking iframe. The observer script is
-// idempotent, so arming just the new frame is both correct and cheap.
-async function armFrame(frame) {
+// Frames we have already armed. The observer script is idempotent in the
+// page, but the round trip to get there is not free, and an unresponsive ad
+// frame can sit on the shared connection for seconds — re-arming on every
+// refresh pushed a snapshot from 0.6s to 33s.
+const armedFrames = new WeakSet();
+
+// A frame that never answers must not hold up everything behind it.
+const ARM_TIMEOUT_MS = 2000;
+
+async function armFrame(frame, { force = false } = {}) {
+  if (armedFrames.has(frame)) return false;
   try {
-    await frame.evaluate(OBSERVER_SCRIPT);
+    let timer;
+    const guard = new Promise((_r, reject) => {
+      timer = setTimeout(() => reject(new Error('arm timeout')), ARM_TIMEOUT_MS);
+    });
+    await Promise.race([frame.evaluate(OBSERVER_SCRIPT, force), guard])
+      .finally(() => clearTimeout(timer));
+    armedFrames.add(frame);
     return true;
   } catch {
-    return false; // detached, or a frame we are not allowed to script
+    return false; // detached, unresponsive, or not ours to script
   }
+}
+
+// Arms the frames a snapshot actually drew content from, regardless of
+// origin. This is the "observe what you display" rule: it reaches an
+// embedded player's timer without reaching an ad iframe we never showed.
+// Already-armed frames cost nothing, so this is safe to call after every
+// snapshot; in practice it does real work only when a new frame appears.
+async function armRenderedFrames(frames, limit = 8) {
+  let armed = 0;
+  for (const frame of frames.slice(0, limit)) {
+    if (await armFrame(frame, { force: true })) armed += 1;
+  }
+  return armed;
 }
 
 // Whether a buffer refresh is due, judged against what the last snapshot
@@ -194,6 +223,6 @@ function createLiveState() {
 }
 
 module.exports = {
-  installLive, armFrame, refreshDue, createLiveState,
+  installLive, armFrame, armRenderedFrames, refreshDue, createLiveState,
   TICK_MS, MIN_INTERVAL_MS, DUTY_CYCLE, INPUT_GRACE_MS,
 };
