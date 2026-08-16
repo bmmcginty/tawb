@@ -608,6 +608,13 @@ function announce(state, { politeness, text }) {
   }
 }
 
+// Records that the reader just did something. Live refreshes hold off while
+// this is recent, so the buffer is never swapped mid-keystroke. It lives in
+// the key handlers rather than the input loop so no call path can bypass it.
+function markInput(state) {
+  if (state.live) state.live.lastInputMs = Date.now();
+}
+
 async function runLiveRefresh(state, page) {
   const live = state.live;
   if (!refreshDue(live)) return;
@@ -750,6 +757,7 @@ function jumpToChange(state, page, direction = 1) {
 // ---------------------------------------------------------------------------
 
 async function handleBrowseKey(chunk, state, page) {
+  markInput(state);
   if (chunk === CTRL_C || chunk === 'q') return 'quit';
 
   if (chunk === CTRL_L) {
@@ -893,6 +901,7 @@ async function activateCurrent(state, page) {
 }
 
 async function handleTypeKey(chunk, state, page) {
+  markInput(state);
   const t = state.typing;
   if (!t) { state.mode = 'browse'; return; }
 
@@ -939,6 +948,7 @@ async function handleTypeKey(chunk, state, page) {
 }
 
 async function handleAddressKey(chunk, state, page) {
+  markInput(state);
   const a = state.address;
 
   if (chunk === ESC) {
@@ -1062,9 +1072,7 @@ async function main() {
   let running = true;
   while (running) {
     const chunk = await readKey();
-    // Recorded before handling so an in-flight refresh yields to input
-    // rather than repainting under the reader's hands.
-    state.live.lastInputMs = Date.now();
+    markInput(state);
 
     const t0 = Date.now();
     let result;
@@ -1073,7 +1081,7 @@ async function main() {
     else result = await handleBrowseKey(chunk, state, page);
     const ms = Date.now() - t0;
 
-    state.live.lastInputMs = Date.now();
+    markInput(state);
     // Only slow keys are worth a line each; movement is the common case and
     // would otherwise flood the log.
     if (ms >= 20) {

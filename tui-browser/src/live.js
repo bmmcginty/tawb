@@ -35,9 +35,21 @@ const DUTY_CYCLE = 0.2;
 // all on a page that mutates continuously, which is precisely what a page
 // with a clock does.
 const TICK_MS = 250;
-// Interactive input wins. If the reader pressed a key very recently, the
-// refresh waits rather than repainting under their hands.
-const INPUT_GRACE_MS = 200;
+// How long after a keystroke the reader still counts as "reading", during
+// which the buffer is not swapped underneath them.
+//
+// This has to be longer than the gap between keystrokes, not shorter. At
+// 200ms someone arrowing at a normal pace (~450ms per key) looked idle
+// between every single press, so refreshes fired continuously mid-read and
+// each one risked relocating the cursor. Screen readers do not reflow a
+// virtual buffer while you move through it either; they hold it steady,
+// announce live regions, and rebuild when you are done. Staleness while
+// reading is the correct trade.
+//
+// Watching a page — a clock, a ticker — means not touching keys at all, so
+// the same signal separates the two uses without the reader configuring
+// anything: idle updates freely, active reading holds still.
+const INPUT_GRACE_MS = 2500;
 
 const OBSERVER_SCRIPT = () => {
   if (window.__twebObserver) return;
