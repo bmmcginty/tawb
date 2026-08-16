@@ -37,6 +37,9 @@ const CANDIDATE_BROWSERS = [
 ];
 
 const STARTUP_TIMEOUT_MS = 25000;
+// Where we record the debugging port of a browser we started, so a later
+// session can find it again.
+const ENDPOINT_FILE = 'tui-browser-endpoint.json';
 
 function defaultProfileDir() {
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
@@ -117,9 +120,39 @@ function buildCommand(executable, args) {
   return { command: xvfb, args: ['-a', executable, ...args] };
 }
 
-// Starts an ordinary browser and attaches to it. The profile directory
-// persists between runs, so logins and cookies survive — which is most of
-// what makes the web usable.
+function endpointRecordPath(profileDir) {
+  return path.join(profileDir, ENDPOINT_FILE);
+}
+
+function readEndpointRecord(profileDir) {
+  try {
+    return JSON.parse(fs.readFileSync(endpointRecordPath(profileDir), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function writeEndpointRecord(profileDir, record) {
+  try {
+    fs.writeFileSync(endpointRecordPath(profileDir), JSON.stringify(record));
+  } catch { /* the browser still works without it */ }
+}
+
+// A browser already using this profile is one we must join rather than
+// compete with. Chrome enforces one instance per profile directory, so a
+// second launch simply hands its arguments to the running instance and
+// exits — leaving nothing listening on a new debugging port, which is why
+// starting a second session used to hang until the startup timeout expired.
+async function findRunningBrowser(profileDir) {
+  const record = readEndpointRecord(profileDir);
+  if (!record || !record.port) return null;
+  if (!(await endpointReady(record.port))) return null;
+  return record.port;
+}
+
+// Starts an ordinary browser and attaches to it, or rejoins one already
+// running on this profile. The profile persists between runs, so logins and
+// cookies survive — which is most of what makes the web usable.
 async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => {} } = {}) {
   const found = findBrowserExecutable();
   if (!found) {
@@ -130,6 +163,19 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   }
 
   fs.mkdirSync(profileDir, { recursive: true });
+
+  const running = await findRunningBrowser(profileDir);
+  if (running) {
+    log('browser.rejoin', { port: running, profileDir });
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${running}`);
+    const context = browser.contexts()[0];
+    if (context) {
+      // Not ours to shut down: another session may still be reading it.
+      return { browser, context, child: null, owned: false, port: running, rejoined: true };
+    }
+    await browser.close().catch(() => {});
+  }
+
   const port = await freePort();
 
   const browserArgs = [
@@ -146,11 +192,29 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   const child = spawn(command, args, { stdio: 'ignore', detached: false });
   child.on('error', () => { /* surfaced by the readiness check below */ });
 
-  const ready = await waitForEndpoint(port, Date.now() + STARTUP_TIMEOUT_MS);
+  // A browser that hands off to another instance exits straight away. Notice
+  // that rather than waiting out the full timeout for a port that will never
+  // open, and say what actually happened.
+  let exitedEarly = false;
+  child.on('exit', () => { exitedEarly = true; });
+
+  const deadline = Date.now() + STARTUP_TIMEOUT_MS;
+  let ready = false;
+  while (Date.now() < deadline) {
+    if (await endpointReady(port)) { ready = true; break; }
+    if (exitedEarly) break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
   if (!ready) {
     try { child.kill(); } catch { /* already gone */ }
-    throw new Error(`${found.name} did not open a debugging port within ${STARTUP_TIMEOUT_MS / 1000}s`);
+    throw new Error(exitedEarly
+      ? `${found.name} exited immediately: another browser is already using ${profileDir}. `
+        + 'Close it, or use --connect to attach to it.'
+      : `${found.name} did not open a debugging port within ${STARTUP_TIMEOUT_MS / 1000}s`);
   }
+
+  writeEndpointRecord(profileDir, { port, pid: child.pid, startedAt: Date.now() });
 
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   const context = browser.contexts()[0];
@@ -177,5 +241,6 @@ function normaliseEndpoint(value) {
 
 module.exports = {
   launchOwnBrowser, connectToBrowser, normaliseEndpoint,
-  findBrowserExecutable, defaultProfileDir,
+  findBrowserExecutable, defaultProfileDir, findRunningBrowser,
+  readEndpointRecord, writeEndpointRecord,
 };
