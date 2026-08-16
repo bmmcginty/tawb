@@ -10,6 +10,7 @@ const { snapshotFrameTree } = require('./frames');
 const { installLive, armFrame, refreshDue, createLiveState, TICK_MS } = require('./live');
 const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
 const { layoutLines } = require('./layout');
+const { remapIndex } = require('./remap');
 
 const START_URL = process.argv[2] || 'https://www.google.com';
 
@@ -626,6 +627,7 @@ async function runLiveRefresh(state, page) {
   const tPrep = Date.now();
   const previousLines = state.lines.map((_, i) => renderRow(state, i));
   const previousTexts = state.blocks.map((b) => b.text);
+  const previousLineTexts = state.lines.map((l) => l.text);
   const anchor = anchorFor(state);
   const prepMs = Date.now() - tPrep;
 
@@ -637,8 +639,18 @@ async function runLiveRefresh(state, page) {
     return;
   }
 
+  // Work out the new cursor position arithmetically from what actually
+  // changed. Only if the rewritten region resized under the cursor is there
+  // no exact answer, and only then do we fall back to searching for the line.
   const tPost = Date.now();
-  reanchorQuietly(state, anchor);
+  const remap = remapIndex(previousLineTexts, state.lines.map((l) => l.text), state.cursor);
+  if (remap.exact) {
+    state.cursor = Math.min(Math.max(remap.index, 0), Math.max(state.lines.length - 1, 0));
+    clampCol(state);
+    clampScroll(state);
+  } else {
+    reanchorQuietly(state, anchor);
+  }
   const reanchorMs = Date.now() - tPost;
 
   const tDiff = Date.now();
@@ -667,6 +679,7 @@ async function runLiveRefresh(state, page) {
     diffMs,
     drawMs,
     repainted,
+    remapExact: remap.exact,
     lines: state.lines.length,
     changedRegions: regions.length,
     cursor: state.cursor,
