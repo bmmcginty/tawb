@@ -850,6 +850,25 @@ async function handleBrowseKey(chunk, state, page) {
   if (chunk === '\r' || chunk === '\n') return activateCurrent(state, page);
 }
 
+// Nothing the reader triggers may block the interface indefinitely.
+// Playwright's default timeout is 30 seconds, so a click that cannot resolve
+// — a control inside a bot-check frame, an element that vanished mid-page —
+// froze the whole terminal for half a minute with no way out. Bound it, and
+// report the failure on the status line instead.
+const ACTION_TIMEOUT_MS = 6000;
+const OPERATION_TIMEOUT_MS = 8000;
+const NAVIGATION_TIMEOUT_MS = 20000;
+
+class ActionTimeout extends Error {}
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  const guard = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new ActionTimeout(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+}
+
 async function elementHandleFor(state, page, item) {
   if (state.source === 'html') return domElementHandle(page, item);
   if (state.source === 'render') return renderElementHandle(page, item);
@@ -869,9 +888,11 @@ async function activateCurrent(state, page) {
   const anchor = anchorFor(state);
 
   try {
+    setStatus(state, `Activating "${item.name}"...`);
     if (FIELD_ROLES.has(item.role)) {
-      const handle = await elementHandleFor(state, page, item);
-      await handle.evaluate((el) => el.focus());
+      const handle = await withTimeout(
+        elementHandleFor(state, page, item), ACTION_TIMEOUT_MS, 'Locating field');
+      await withTimeout(handle.evaluate((el) => el.focus()), ACTION_TIMEOUT_MS, 'Focusing field');
       const info = await readFieldState(handle);
       state.mode = 'type';
       state.typing = { handle, item, text: info.text, caret: info.caret };
@@ -887,15 +908,20 @@ async function activateCurrent(state, page) {
       // Activate through the DOM's own default action rather than a
       // mouse-coordinate click: a blind user has no viewport, and legitimate
       // targets (skip links, visually hidden controls) sit off-screen.
-      const handle = await elementHandleFor(state, page, item);
-      await Promise.all([
+      const handle = await withTimeout(
+        elementHandleFor(state, page, item), ACTION_TIMEOUT_MS, 'Locating element');
+      await withTimeout(Promise.all([
         page.waitForLoadState('domcontentloaded').catch(() => {}),
         handle.evaluate((el) => el.click()),
-      ]);
+      ]), ACTION_TIMEOUT_MS, 'Activating');
       state.statusMsg = `Activated: ${item.name}`;
     }
   } catch (err) {
-    setStatus(state, `Error activating "${item.name}": ${err.message.split('\n')[0]}`);
+    const timedOut = err instanceof ActionTimeout;
+    setStatus(state, timedOut
+      ? `Gave up activating "${item.name}" after ${ACTION_TIMEOUT_MS / 1000}s — it may be inside a bot check or an unreachable frame.`
+      : `Error activating "${item.name}": ${err.message.split('\n')[0]}`);
+    log('activate.failed', { name: String(item.name).slice(0, 80), timedOut, source: state.source });
     return;
   }
 
@@ -1034,6 +1060,8 @@ async function main() {
   const browser = await timed('browser.launch', {}, () => chromium.launch({ headless: true }));
   const context = await timed('context.open', {}, () => openContext(browser));
   const page = await context.newPage();
+  page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
+  page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
   await timed('goto', { url: START_URL }, () =>
     page.goto(START_URL, { waitUntil: 'domcontentloaded' }));
 
