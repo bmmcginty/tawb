@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 'use strict';
 
-const { chromium } = require('playwright');
 const { FIELD_ROLES, LINK_ROLES, BUTTON_ROLES } = require('./aria');
 const { itemAtOffset } = require('./blocks');
 const { activateDomItem, domElementHandle } = require('./dom');
@@ -11,16 +10,18 @@ const { installLive, armFrame, refreshDue, createLiveState, TICK_MS } = require(
 const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
 const { layoutLines } = require('./layout');
 const { remapIndex } = require('./remap');
-const { connectToBrowser, normaliseEndpoint } = require('./browser');
+const { launchOwnBrowser, connectToBrowser, normaliseEndpoint, defaultProfileDir } = require('./browser');
 
 // --connect <port|host:port|url> attaches to a browser that is already
 // running with --remote-debugging-port, rather than launching one.
 function parseArgs(argv) {
-  const options = { url: null, connect: null };
+  const options = { url: null, connect: null, profile: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--connect') { options.connect = normaliseEndpoint(argv[i + 1] || ''); i += 1; }
     else if (arg.startsWith('--connect=')) { options.connect = normaliseEndpoint(arg.slice('--connect='.length)); }
+    else if (arg === '--profile') { options.profile = argv[i + 1] || null; i += 1; }
+    else if (arg.startsWith('--profile=')) { options.profile = arg.slice('--profile='.length); }
     else if (!arg.startsWith('-') && !options.url) { options.url = arg; }
   }
   return options;
@@ -1053,34 +1054,24 @@ async function handleAddressKey(chunk, state, page) {
 
 // ---------------------------------------------------------------------------
 
-// Headless Chrome announces itself as "HeadlessChrome" in the User-Agent,
-// and bot protection (Cloudflare among others) blocks on that token alone —
-// timeanddate.com answers 403 "Just a moment..." with it and 200 without.
-// Nothing else about the automation needs hiding for that check: it still
-// passes with navigator.webdriver set to true. Deriving the string from the
-// browser's own UA keeps it correct across Chrome versions and platforms.
-async function openContext(browser) {
-  const probe = await browser.newContext();
-  const probePage = await probe.newPage();
-  const ua = await probePage.evaluate(() => navigator.userAgent);
-  await probe.close();
-
-  return browser.newContext({
-    userAgent: ua.replace('HeadlessChrome', 'Chrome'),
-  });
-}
-
 async function main() {
   log('start', { url: START_URL, logPath: LOG_PATH, connect: ARGS.connect || null });
 
+  // Either attach to a browser the user is already running, or start an
+  // ordinary one ourselves. There is deliberately no Playwright-launched
+  // fallback: that browser announces itself as automated, and sites that
+  // react to it leave the reader stuck on pages that never resolve.
   let browser;
   let context;
+  let ownedChild = null;
   if (ARGS.connect) {
     ({ browser, context } = await timed('browser.connect', { endpoint: ARGS.connect }, () =>
       connectToBrowser(ARGS.connect)));
   } else {
-    browser = await timed('browser.launch', {}, () => chromium.launch({ headless: true }));
-    context = await timed('context.open', {}, () => openContext(browser));
+    const started = await timed('browser.start', {}, () =>
+      launchOwnBrowser({ profileDir: ARGS.profile || defaultProfileDir(), log }));
+    ({ browser, context } = started);
+    ownedChild = started.child;
   }
 
   const page = await context.newPage();
@@ -1161,7 +1152,10 @@ async function main() {
   clearInterval(counterTimer);
   flushCounters({ refreshes: state.live.refreshes });
   log('exit', {});
-  await browser.close();
+  await browser.close().catch(() => {});
+  // Only tear down a browser we started; one the user was already running is
+  // theirs to keep.
+  if (ownedChild) { try { ownedChild.kill(); } catch { /* already gone */ } }
   restoreTerminal();
   process.exit(0);
 }
@@ -1193,5 +1187,5 @@ module.exports = {
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock,
   anchorFor, restoreAnchor, diffBlocks, jumpToChange, activateCurrent, SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
-  renderRow, openContext, parseArgs,
+  renderRow, parseArgs,
 };
