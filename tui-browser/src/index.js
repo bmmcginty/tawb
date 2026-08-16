@@ -1064,21 +1064,41 @@ async function main() {
   let browser;
   let context;
   let ownedChild = null;
+  let rejoined = false;
   if (ARGS.connect) {
     ({ browser, context } = await timed('browser.connect', { endpoint: ARGS.connect }, () =>
       connectToBrowser(ARGS.connect)));
+    rejoined = true;
   } else {
     const started = await timed('browser.start', {}, () =>
       launchOwnBrowser({ profileDir: ARGS.profile || defaultProfileDir(), log }));
     ({ browser, context } = started);
     ownedChild = started.child;
+    rejoined = !!started.rejoined;
   }
 
-  const page = await context.newPage();
+  // When joining a browser that is already running, take over the tab it is
+  // already showing rather than opening a blank one. Rejoining is usually
+  // about reaching something already on screen — a video that is playing, a
+  // form half filled in — and a fresh tab would hide exactly that.
+  let page = null;
+  if (rejoined && !ARGS.url) {
+    const existing = context.pages().filter((p) => {
+      const url = p.url();
+      return url && url !== 'about:blank';
+    });
+    page = existing[existing.length - 1] || null;
+    if (page) log('page.adopt', { url: page.url().slice(0, 120), of: existing.length });
+  }
+
+  const adopted = !!page;
+  if (!page) page = await context.newPage();
   page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
   page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
-  await timed('goto', { url: START_URL }, () =>
-    page.goto(START_URL, { waitUntil: 'domcontentloaded' }));
+  if (!adopted) {
+    await timed('goto', { url: START_URL }, () =>
+      page.goto(START_URL, { waitUntil: 'domcontentloaded' }));
+  }
 
   const state = {
     page,
