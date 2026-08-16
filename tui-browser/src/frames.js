@@ -21,6 +21,20 @@ const { log } = require('./log');
 
 const MAX_DEPTH = 4;
 const MAX_FRAMES = 25;
+// No single frame may hold up a snapshot. On a page mid ad-storm, an
+// ariaSnapshot of the main document and a query for its child frames were
+// each measured taking 23 seconds, producing a 46 second snapshot during
+// which the interface had nothing new to show. A partial view now, built
+// from the frames that answered promptly, beats a complete one much later.
+const FRAME_BUDGET_MS = 4000;
+
+function withDeadline(promise, ms, onTimeout) {
+  let timer;
+  const guard = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(onTimeout), ms);
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+}
 
 function isFrameItem(item) {
   return item && (item.role === 'iframe' || item.tag === 'iframe' || item.tag === 'frame');
@@ -81,10 +95,14 @@ async function walk(frame, source, depth, budget, seen, visited) {
   let blocks;
   const tBlocks = Date.now();
   try {
-    blocks = await blocksForFrame(frame, source);
+    blocks = await withDeadline(blocksForFrame(frame, source), FRAME_BUDGET_MS, null);
   } catch {
     log('frame.blocks.error', { depth, url: frame.url().slice(0, 80) });
     return []; // frame navigated or detached mid-snapshot
+  }
+  if (blocks === null) {
+    log('frame.blocks.timeout', { depth, ms: Date.now() - tBlocks, url: frame.url().slice(0, 100) });
+    return [];
   }
   const blocksMs = Date.now() - tBlocks;
   if (visited && blocks.length) visited.push(frame);
@@ -97,8 +115,12 @@ async function walk(frame, source, depth, budget, seen, visited) {
   let children;
   const tKids = Date.now();
   try {
-    children = await orderedChildFrames(frame, budget.remaining);
+    children = await withDeadline(orderedChildFrames(frame, budget.remaining), FRAME_BUDGET_MS, null);
   } catch {
+    return blocks;
+  }
+  if (children === null) {
+    log('frame.children.timeout', { depth, ms: Date.now() - tKids, url: frame.url().slice(0, 100) });
     return blocks;
   }
   const kidsMs = Date.now() - tKids;
