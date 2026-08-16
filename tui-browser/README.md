@@ -1,7 +1,7 @@
 # tui-browser
 
 A terminal browser for reading the web from the command line, built for a
-blind user. It drives a real headless Chromium through Playwright and
+blind user. It drives an ordinary Chrome or Chromium and
 presents each page as a linear list of lines — the model a screen reader's
 browse mode uses — instead of trying to draw the page as text art.
 
@@ -14,6 +14,41 @@ cd tui-browser
 npm install
 npm start -- https://en.wikipedia.org/wiki/Braille
 ```
+
+## It drives a real browser, not an automated one
+
+This starts an ordinary Chrome or Chromium and watches it. It does not let
+Playwright launch the browser, because a Playwright-launched browser
+advertises itself as automated — `navigator.webdriver` is true — and sites
+that react to that leave you parked on pages which never load. Measured
+against the Cloudflare check pastebin.com puts in front of `/login`:
+
+| How the browser is started | Result |
+| -------------------------- | ------ |
+| Playwright, headless        | never clears |
+| Playwright, headed          | never clears |
+| Started normally, attached to | clears in ~4s |
+
+There is no fallback to an automated browser. A browser that cannot load
+the page is not a degraded mode, it is a broken one.
+
+Nothing here spoofs a User-Agent or patches headers. A real browser sends
+correct, self-consistent headers on its own; forging them is only necessary
+when disguising a headless browser, and we do not run one.
+
+A headless browser fails those checks even when started normally, so with no
+`DISPLAY` the browser runs under Xvfb — a real browser drawing to a virtual
+screen. Install `xvfb` if you are not in a graphical session.
+
+Your profile persists between runs, so logins and cookies survive:
+
+```
+npm start -- --profile ~/.local/share/tui-browser/profile https://example.com
+npm start -- --connect 9222 https://example.com   # attach to a browser you started
+```
+
+To use a browser you are already running, start it with
+`--remote-debugging-port=9222` and pass `--connect 9222`.
 
 ## Reading holds still while you move — this is deliberate
 
@@ -168,5 +203,7 @@ iframes have been the usual culprit.
   over refreshes, so it should not block you.
 - A clock updates about once a second at best, and slower on expensive
   pages, because each update currently costs a whole-page snapshot.
-- Cloudflare and similar interactive challenges cannot be completed from
-  here.
+- Some sites gate particular endpoints behind bot checks. These now pass,
+  because the browser is a real one, but a challenge that demands
+  interaction may still need a sighted pass in the same profile — the
+  clearance cookie is then reused.
