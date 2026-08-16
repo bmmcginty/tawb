@@ -6,7 +6,7 @@ const { itemAtOffset } = require('./blocks');
 const { activateDomItem, domElementHandle } = require('./dom');
 const { renderElementHandle } = require('./render_html');
 const { snapshotFrameTree } = require('./frames');
-const { installLive, armFrame, refreshDue, createLiveState, TICK_MS } = require('./live');
+const { installLive, armFrame, armRenderedFrames, refreshDue, createLiveState, TICK_MS } = require('./live');
 const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
 const { layoutLines } = require('./layout');
 const { remapIndex } = require('./remap');
@@ -84,9 +84,9 @@ function contentWidth() {
   return Math.max(20, termSize().cols - GUTTER - 1);
 }
 
-async function snapshotBlocks(page, source = 'ax') {
+async function snapshotBlocks(page, source = 'ax', { visited = null } = {}) {
   const t0 = Date.now();
-  const blocks = await snapshotFrameTree(page, source);
+  const blocks = await snapshotFrameTree(page, source, { visited });
   log('snapshot', { source, ms: Date.now() - t0, blocks: blocks.length, frames: page.frames().length });
   return blocks;
 }
@@ -476,8 +476,13 @@ function restoreAnchor(state, anchor) {
 
 async function refresh(state, page, { resetCursor = false, anchor = null } = {}) {
   const started = Date.now();
-  state.blocks = await snapshotBlocks(page, state.source);
+  const visited = [];
+  state.blocks = await snapshotBlocks(page, state.source, { visited });
   state.renderedUrl = page.url();
+  // Observe what we display: a frame that contributed lines may keep
+  // changing them — an embedded player's elapsed time, for instance — and it
+  // is often cross-origin, so nothing else would arm it.
+  armRenderedFrames(visited).catch(() => {});
   if (state.live) state.live.snapshotCostMs = Date.now() - started;
   if (resetCursor) { state.cursor = 0; state.scroll = 0; state.col = 0; }
   relayout(state);

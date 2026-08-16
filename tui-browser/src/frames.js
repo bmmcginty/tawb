@@ -70,12 +70,14 @@ async function orderedChildFrames(frame, limit = Infinity) {
   return children;
 }
 
-async function snapshotFrameTree(page, source) {
+// `visited` collects the frames that actually contributed content, so the
+// caller can observe exactly what it displays.
+async function snapshotFrameTree(page, source, { visited = null } = {}) {
   const budget = { remaining: MAX_FRAMES };
-  return walk(page.mainFrame(), source, 0, budget, new Set());
+  return walk(page.mainFrame(), source, 0, budget, new Set(), visited);
 }
 
-async function walk(frame, source, depth, budget, seen) {
+async function walk(frame, source, depth, budget, seen, visited) {
   let blocks;
   const tBlocks = Date.now();
   try {
@@ -85,6 +87,7 @@ async function walk(frame, source, depth, budget, seen) {
     return []; // frame navigated or detached mid-snapshot
   }
   const blocksMs = Date.now() - tBlocks;
+  if (visited && blocks.length) visited.push(frame);
   if (blocksMs > 100) {
     log('frame.blocks.slow', { depth, ms: blocksMs, blocks: blocks.length, url: frame.url().slice(0, 100) });
   }
@@ -123,7 +126,7 @@ async function walk(frame, source, depth, budget, seen) {
     budget.remaining -= 1;
     if (budget.remaining < 0) break;
 
-    const nested = await walk(child, source, depth + 1, budget, new Set([...seen, url]));
+    const nested = await walk(child, source, depth + 1, budget, new Set([...seen, url]), visited);
     out.push(...nested);
   }
 
