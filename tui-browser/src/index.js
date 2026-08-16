@@ -11,8 +11,23 @@ const { installLive, armFrame, refreshDue, createLiveState, TICK_MS } = require(
 const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
 const { layoutLines } = require('./layout');
 const { remapIndex } = require('./remap');
+const { connectToBrowser, normaliseEndpoint } = require('./browser');
 
-const START_URL = process.argv[2] || 'https://www.google.com';
+// --connect <port|host:port|url> attaches to a browser that is already
+// running with --remote-debugging-port, rather than launching one.
+function parseArgs(argv) {
+  const options = { url: null, connect: null };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--connect') { options.connect = normaliseEndpoint(argv[i + 1] || ''); i += 1; }
+    else if (arg.startsWith('--connect=')) { options.connect = normaliseEndpoint(arg.slice('--connect='.length)); }
+    else if (!arg.startsWith('-') && !options.url) { options.url = arg; }
+  }
+  return options;
+}
+
+const ARGS = parseArgs(process.argv.slice(2));
+const START_URL = ARGS.url || 'https://www.google.com';
 
 const ESC = '\x1b';
 const CTRL_C = '\x03';
@@ -1056,9 +1071,18 @@ async function openContext(browser) {
 }
 
 async function main() {
-  log('start', { url: START_URL, logPath: LOG_PATH });
-  const browser = await timed('browser.launch', {}, () => chromium.launch({ headless: true }));
-  const context = await timed('context.open', {}, () => openContext(browser));
+  log('start', { url: START_URL, logPath: LOG_PATH, connect: ARGS.connect || null });
+
+  let browser;
+  let context;
+  if (ARGS.connect) {
+    ({ browser, context } = await timed('browser.connect', { endpoint: ARGS.connect }, () =>
+      connectToBrowser(ARGS.connect)));
+  } else {
+    browser = await timed('browser.launch', {}, () => chromium.launch({ headless: true }));
+    context = await timed('context.open', {}, () => openContext(browser));
+  }
+
   const page = await context.newPage();
   page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
   page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
@@ -1169,5 +1193,5 @@ module.exports = {
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock,
   anchorFor, restoreAnchor, diffBlocks, jumpToChange, activateCurrent, SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
-  renderRow, openContext,
+  renderRow, openContext, parseArgs,
 };

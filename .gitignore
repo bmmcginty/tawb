@@ -2,3 +2,8 @@ node_modules/
 
 # Timing log, rewritten on every run.
 tweb.log
+
+# Network captures used for debugging. These contain live session cookies
+# (cf_clearance, login sessions) and must never be committed.
+out/
+*.saz
