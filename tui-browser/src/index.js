@@ -6,7 +6,7 @@ const { itemAtOffset } = require('./blocks');
 const { activateDomItem, domElementHandle } = require('./dom');
 const { renderElementHandle } = require('./render_html');
 const { snapshotFrameTree } = require('./frames');
-const { installLive, armFrame, armRenderedFrames, refreshDue, createLiveState, TICK_MS, INPUT_GRACE_MS } = require('./live');
+const { installLive, armFrame, armRenderedFrames, refreshDue, createLiveState, pulse, TICK_MS, INPUT_GRACE_MS } = require('./live');
 const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
 const { layoutLines } = require('./layout');
 const { remapIndex } = require('./remap');
@@ -861,9 +861,20 @@ function onLiveEvent(state, page, payload) {
 // A steady tick, deliberately not a debounce. Under continuous mutation a
 // debounced timer is reset before it ever fires, so refreshes never happen at
 // all — which is exactly what a page with a clock produces.
+// Notices a page that changed without telling anyone, and revives the
+// observer if the document it was watching has been replaced.
+// A pulse that found nothing is the normal case and not worth a line each
+// second; one that found something, or was slow enough to be worth knowing
+// about on this page, is.
+async function pulseLive(state, page) {
+  const result = await pulse(page, state.live);
+  if (result && (result.changed || result.rearmed || result.ms > 50)) log('live.pulse', result);
+}
+
 function startLiveTicker(state, page) {
   if (state.live.ticker) return;
   state.live.ticker = setInterval(() => {
+    pulseLive(state, page).catch(() => {});
     runLiveRefresh(state, page).catch(() => {});
   }, TICK_MS);
   if (state.live.ticker.unref) state.live.ticker.unref();
