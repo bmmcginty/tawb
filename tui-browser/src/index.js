@@ -6,7 +6,7 @@ const { itemAtOffset } = require('./blocks');
 const { activateDomItem, domElementHandle } = require('./dom');
 const { renderElementHandle } = require('./render_html');
 const { snapshotFrameTree } = require('./frames');
-const { installLive, armFrame, armRenderedFrames, refreshDue, createLiveState, TICK_MS } = require('./live');
+const { installLive, armFrame, armRenderedFrames, refreshDue, createLiveState, TICK_MS, INPUT_GRACE_MS } = require('./live');
 const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
 const { layoutLines } = require('./layout');
 const { remapIndex } = require('./remap');
@@ -730,6 +730,101 @@ async function runLiveRefresh(state, page) {
   });
 }
 
+// Where a piece of text sits in the buffer, but only if it sits in exactly
+// one place. Ambiguity is the whole risk in patching by content: "12:04"
+// appearing twice means we cannot say which one the page rewrote.
+function soleBlockContaining(blocks, needle) {
+  let found = -1;
+  for (let i = 0; i < blocks.length; i += 1) {
+    const at = blocks[i].text.indexOf(needle);
+    if (at < 0) continue;
+    // Twice inside one line is just as ambiguous as once in two lines.
+    if (found >= 0 || blocks[i].text.indexOf(needle, at + needle.length) >= 0) return -1;
+    found = i;
+  }
+  return found;
+}
+
+// Splices replaced text straight into the buffer, skipping the snapshot.
+//
+// A clock costs a whole-page snapshot per tick today — 150ms on a plain page
+// and seconds on a heavy one — to change eight characters. When the page
+// tells us the exact text it replaced, and that text names one line and one
+// line only, we can rewrite that line for a fraction of a millisecond.
+//
+// Anything the splice cannot account for returns null and leaves the buffer
+// untouched, so the wholesale refresh still happens. In particular the line
+// count must come out the same: a patch that reflows the buffer would move
+// the reader, and moving the reader is the one thing a live update may not
+// do. Returns the indices of the blocks it changed.
+function applyTextPatches(state, patches) {
+  if (!patches || !patches.length || !state.blocks.length) return null;
+
+  const previousLineCount = state.lines.length;
+  const undo = [];
+  const touched = [];
+  const restore = () => {
+    for (const entry of undo.reverse()) {
+      entry.block.text = entry.text;
+      if (entry.name !== null) entry.block.item.name = entry.name;
+    }
+  };
+
+  for (const patch of patches) {
+    const { from, to } = patch || {};
+    if (!from || !to || from === to) { restore(); return null; }
+
+    // Resolved one at a time, against the buffer as the previous patch left
+    // it: two patches can land on the same line.
+    const index = soleBlockContaining(state.blocks, from);
+    if (index < 0) { restore(); return null; }
+
+    const block = state.blocks[index];
+    const item = block.item;
+    const hadName = item && typeof item.name === 'string' && item.name.includes(from);
+    undo.push({ block, text: block.text, name: hadName ? item.name : null });
+
+    block.text = block.text.replace(from, to);
+    // The name is what activation resolves against, so it cannot be left
+    // describing text that is no longer on the page.
+    if (hadName) item.name = item.name.replace(from, to);
+    if (!touched.includes(index)) touched.push(index);
+  }
+
+  relayout(state);
+  if (state.lines.length !== previousLineCount) {
+    restore();
+    relayout(state);
+    return null;
+  }
+
+  // The line the reader is on is theirs while they are reading it. A clock
+  // elsewhere on the page may tick — that moves nothing — but rewriting the
+  // words under the cursor mid-sentence is exactly the freeze's purpose.
+  const onCursorLine = state.lines[state.cursor];
+  if (onCursorLine && touched.includes(onCursorLine.blockIndex)
+      && Date.now() - state.live.lastInputMs < INPUT_GRACE_MS) {
+    restore();
+    relayout(state);
+    return null;
+  }
+
+  return touched;
+}
+
+// The rows currently on screen, which is all a splice can have changed: it
+// kept the line count, so nothing scrolled. Rendering the whole buffer for
+// the comparison would cost more than the patch it is there to make cheap.
+function visibleRowsNow(state) {
+  const height = viewportHeight();
+  const rows = [];
+  for (let i = 0; i < height; i += 1) {
+    const lineIndex = state.scroll + i;
+    rows[lineIndex] = lineIndex < state.lines.length ? renderRow(state, lineIndex) : '';
+  }
+  return rows;
+}
+
 function onLiveEvent(state, page, payload) {
   const live = state.live;
   if (!payload) return;
@@ -740,6 +835,24 @@ function onLiveEvent(state, page, payload) {
   if (!live.enabled) return;
 
   for (const item of payload.announcements || []) announce(state, item);
+
+  // Try the cheap path first. It only applies to a batch that was nothing but
+  // text replacement, and only while nothing else is rewriting the buffer —
+  // a refresh in flight is about to replace these blocks wholesale.
+  if (payload.pureText && state.mode === 'browse' && !live.refreshing) {
+    const before = visibleRowsNow(state);
+    const touched = applyTextPatches(state, payload.patches);
+    if (touched) {
+      const t0 = Date.now();
+      const repainted = patchVisibleRows(state, before);
+      state.changes = touched.map((index) => ({ start: index, end: index }));
+      state.changeIndex = -1;
+      count('patched');
+      log('live.patch', { patches: payload.patches.length, blocks: touched.length, repainted, ms: Date.now() - t0 });
+      return;
+    }
+    count('patchMissed');
+  }
 
   live.mutations += payload.mutations || 0;
   live.dirty = true;
@@ -1275,5 +1388,6 @@ module.exports = {
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock,
   anchorFor, restoreAnchor, diffBlocks, jumpToChange, activateCurrent, SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
+  applyTextPatches, soleBlockContaining,
   renderRow, parseArgs, onExternalNavigation,
 };

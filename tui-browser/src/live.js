@@ -22,6 +22,13 @@
 // `ariaSnapshot()` returns a flat YAML string with no node identity at all,
 // so the AX view can only ever be refreshed wholesale — which is exactly the
 // view with the worst snapshot cost.
+//
+// There is one way round that without node identity, and it covers the case
+// that hurts most: a clock, a counter, a score. Those replace text and change
+// nothing else, and the page knows both the old text and the new one. Sent
+// across as a pair, the old text names the line by content — the same way the
+// cursor is already tracked across refreshes — and the driver can splice in
+// the new text for a fraction of a millisecond instead of a whole snapshot.
 
 const BOUND = Symbol('tweb.liveBound');
 
@@ -77,18 +84,54 @@ const OBSERVER_SCRIPT = (force) => {
   // means an IPC round trip several times a second for information that only
   // needs to arrive once per tick.
   const NOTIFY_INTERVAL_MS = 250;
+  // More replacements than this in one batch is not a ticking clock, it is
+  // the page rewriting itself, and a snapshot is the honest way to read it.
+  const MAX_PATCHES = 8;
   let pendingAnnouncements = [];
   let pendingMutations = 0;
+  let pendingPatches = [];
+  // Whether every mutation seen this batch was a plain text replacement. One
+  // that was not means the structure may have moved, so the driver must not
+  // trust the patches alone.
+  let pendingPure = true;
   let notifyTimer = null;
 
   const flush = () => {
     notifyTimer = null;
     const announcements = pendingAnnouncements;
     const mutations = pendingMutations;
+    const patches = pendingPatches;
+    const pureText = pendingPure && patches.length > 0;
     pendingAnnouncements = [];
     pendingMutations = 0;
+    pendingPatches = [];
+    pendingPure = true;
     if (!mutations && announcements.length === 0) return;
-    window.__twebNotify({ announcements: announcements.slice(0, 5), mutations });
+    window.__twebNotify({ announcements: announcements.slice(0, 5), mutations, patches, pureText });
+  };
+
+  const clean = (value) => String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+
+  // The old and new text of a mutation that only replaced text. Anything
+  // structural — an element added, an attribute changed, text that appeared
+  // from nothing or vanished entirely — returns null, because the line count
+  // can change and only a snapshot can say how.
+  const textReplacement = (record) => {
+    let from;
+    let to;
+    if (record.type === 'characterData') {
+      from = clean(record.oldValue);
+      to = clean(record.target.data);
+    } else if (record.type === 'childList') {
+      const nodes = [...record.removedNodes, ...record.addedNodes];
+      if (nodes.length === 0 || nodes.some((n) => n.nodeType !== 3)) return null;
+      from = clean([...record.removedNodes].map((n) => n.data).join(' '));
+      to = clean([...record.addedNodes].map((n) => n.data).join(' '));
+    } else {
+      return null;
+    }
+    if (!from || !to || from === to) return null;
+    return { from, to };
   };
 
   const summarise = (node) => {
@@ -110,6 +153,11 @@ const OBSERVER_SCRIPT = (force) => {
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       pendingMutations += 1;
+
+      const replacement = textReplacement(record);
+      if (replacement && pendingPatches.length < MAX_PATCHES) pendingPatches.push(replacement);
+      else pendingPure = false;
+
       const info = summarise(record.target);
       if (!info || !info.politeness || !info.text) continue;
       const key = info.politeness + ' ' + info.text;
@@ -126,6 +174,9 @@ const OBSERVER_SCRIPT = (force) => {
     subtree: true,
     childList: true,
     characterData: true,
+    // The text that was there before is what names the line to patch, and
+    // the record is the only place it still exists.
+    characterDataOldValue: true,
     attributes: true,
     attributeFilter: ['aria-label', 'aria-live', 'value', 'src', 'href', 'alt', 'title', 'hidden'],
   });
