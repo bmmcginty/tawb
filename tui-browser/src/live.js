@@ -59,7 +59,17 @@ const TICK_MS = 250;
 const INPUT_GRACE_MS = 2500;
 
 const OBSERVER_SCRIPT = (force) => {
-  if (window.__twebObserver) return;
+  // An observer only ever watches the document it was attached to. A page
+  // that replaces its document in place — `document.open()`, or swapping
+  // documentElement, which is what a bot check does the moment it is
+  // satisfied — leaves the observer bound to a document nobody is looking at
+  // any more. The window survives, so a plain "already installed" check
+  // would refuse to re-arm and the page would go silent for good. Re-arm
+  // whenever the root we are watching is no longer the live one.
+  if (window.__twebObserver) {
+    if (window.__twebObserverRoot === document.documentElement) return;
+    try { window.__twebObserver.disconnect(); } catch { /* already dead */ }
+  }
 
   // Documents are armed one of two ways. Frames we actually render are armed
   // explicitly, with force, whatever their origin — an embedded video player
@@ -182,7 +192,21 @@ const OBSERVER_SCRIPT = (force) => {
   });
 
   window.__twebObserver = observer;
+  window.__twebObserverRoot = document.documentElement;
 };
+
+// Asked once a second, so it has to be cheap: is the observer still watching
+// the document on screen, and does the page still hold what it held? An
+// element count, the title and the URL are enough to notice a document being
+// swapped out from under us — and cost a fraction of what a snapshot does.
+const PULSE_SCRIPT = () => ({
+  observing: !!(window.__twebObserver && window.__twebObserverRoot === document.documentElement),
+  print: [
+    document.getElementsByTagName('*').length,
+    document.title,
+    location.href,
+  ].join('|'),
+});
 
 // The callback binding lives on the BrowserContext, not on a frame: only
 // Page and BrowserContext expose bindings, and a context-level one reaches
@@ -218,8 +242,11 @@ const armedFrames = new WeakSet();
 // A frame that never answers must not hold up everything behind it.
 const ARM_TIMEOUT_MS = 2000;
 
-async function armFrame(frame, { force = false } = {}) {
-  if (armedFrames.has(frame)) return false;
+async function armFrame(frame, { force = false, again = false } = {}) {
+  // `again` is for a frame we know needs re-arming despite having been armed
+  // before: the frame object outlives the document, so the record of having
+  // armed it says nothing about the document now loaded in it.
+  if (armedFrames.has(frame) && !again) return false;
   try {
     let timer;
     const guard = new Promise((_r, reject) => {
@@ -247,6 +274,57 @@ async function armRenderedFrames(frames, limit = 8) {
   return armed;
 }
 
+// Some changes arrive with nobody to announce them.
+//
+// Both of our signals can go quiet at the same time. A page that replaces
+// its document in place kills the observer — it is still watching the old
+// document — and produces no navigation event either, because nothing
+// navigated. Measured against a page doing exactly that, the reader sat on a
+// one-line buffer indefinitely while the real page had been there since four
+// seconds in. Reddit's bot check behaves this way, and the reader's only way
+// out was to cycle views by hand and force a snapshot.
+//
+// So once a second we ask the page directly. Not what it says — that is a
+// snapshot, and the expensive thing we are avoiding — just whether it is
+// still the page we think it is, and whether anyone is still listening.
+const PULSE_MS = 1000;
+const PULSE_TIMEOUT_MS = 1000;
+
+function withTimeout(promise, ms) {
+  let timer;
+  const guard = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('pulse timeout')), ms);
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+}
+
+async function pulse(page, live, now = Date.now()) {
+  if (!live.enabled) return null;
+  if (now - live.lastPulseMs < PULSE_MS) return null;
+  live.lastPulseMs = now;
+
+  const started = Date.now();
+  let reading;
+  try {
+    reading = await withTimeout(page.mainFrame().evaluate(PULSE_SCRIPT), PULSE_TIMEOUT_MS);
+  } catch {
+    return null; // navigating, detached, or too busy to answer — try later
+  }
+  const ms = Date.now() - started;
+
+  let rearmed = false;
+  if (!reading.observing) {
+    rearmed = await armFrame(page.mainFrame(), { force: true, again: true });
+  }
+
+  // The first reading is a baseline, not a change.
+  const changed = live.print !== null && reading.print !== live.print;
+  live.print = reading.print;
+  if (changed) live.dirty = true;
+
+  return { changed, rearmed, ms };
+}
+
 // Whether a buffer refresh is due, judged against what the last snapshot
 // actually cost rather than a fixed interval.
 function refreshDue(live, now = Date.now()) {
@@ -267,6 +345,8 @@ function createLiveState() {
     refreshes: 0,
     lastRefreshMs: 0,
     lastInputMs: 0,
+    lastPulseMs: 0,
+    print: null,
     snapshotCostMs: 0,
     ticker: null,
     queue: [],
@@ -274,6 +354,6 @@ function createLiveState() {
 }
 
 module.exports = {
-  installLive, armFrame, armRenderedFrames, refreshDue, createLiveState,
-  TICK_MS, MIN_INTERVAL_MS, DUTY_CYCLE, INPUT_GRACE_MS,
+  installLive, armFrame, armRenderedFrames, refreshDue, createLiveState, pulse,
+  TICK_MS, MIN_INTERVAL_MS, DUTY_CYCLE, INPUT_GRACE_MS, PULSE_MS,
 };
