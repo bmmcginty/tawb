@@ -37,6 +37,16 @@ const NAVIGATION_EVENTS = [
   'browsingContext.navigationStarted',
 ];
 
+// How long an action is given to start a navigation before we conclude it was
+// not going to. A click that navigates says so within a round trip, so this is
+// generous already, and it is paid in full by every button that only changes
+// the page in place — at 400ms that was five times the cost of the same press
+// on Chromium. Missing the window is no longer serious: the pulse notices a
+// new document within a second and rebuilds regardless of what the reader is
+// pressing, so the cost of guessing low is a slower update rather than a stale
+// page.
+const NAVIGATION_GRACE_MS = 150;
+
 // BiDi delivers no event you have not asked for, channel callbacks included:
 // without this subscription the page calls its binding, the call succeeds, and
 // nothing ever arrives. Which is exactly as quiet as a binding that was never
@@ -258,6 +268,7 @@ class FirefoxPage {
     this._mainFrame = new FirefoxFrame(session, contextId, this);
     this._navigationHandlers = [];
     this._seenFrames = [];
+    this._loading = false;
     this.keyboard = new FirefoxKeyboard(session, this);
   }
 
@@ -317,16 +328,43 @@ class FirefoxPage {
 
   async goto(url, { waitUntil = 'complete' } = {}) {
     const wait = waitUntil === 'domcontentloaded' ? 'interactive' : 'complete';
-    const result = await this.session.send('browsingContext.navigate', {
-      context: this.contextId, url, wait,
-    });
-    this.setUrl(result.url || url);
+    try {
+      const result = await this.session.send('browsingContext.navigate', {
+        context: this.contextId, url, wait,
+      });
+      this.setUrl(result.url || url);
+    } finally {
+      // navigate() waited for the document itself, so nothing is outstanding
+      // whether it succeeded or threw.
+      this._loading = false;
+    }
     return null;
   }
 
-  async waitForLoadState() {
-    // Navigation already waits for the document, so there is nothing left to
-    // wait for that we can express here.
+  // Waits for a navigation that an action may have started.
+  //
+  // Doing nothing here was a real bug rather than a missing nicety: activation
+  // calls this alongside the click, and returning at once meant the snapshot
+  // that followed described the page being left rather than the one being
+  // opened. Worse, that snapshot recorded the new URL as the one on screen, so
+  // the navigation watcher saw nothing to do and the stale buffer stayed until
+  // the reader refreshed by hand.
+  //
+  // Resolving immediately when nothing is loading is equally wrong, because
+  // the click has not necessarily started the navigation yet. So we give a
+  // navigation a short window to begin, and only then wait for it to finish.
+  // A click that navigates nowhere costs that window and no more.
+  async waitForLoadState(state = 'load', { timeout = 15000 } = {}) {
+    const startedBy = Date.now() + NAVIGATION_GRACE_MS;
+    while (!this._loading && Date.now() < startedBy) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    if (!this._loading) return;
+
+    const deadline = Date.now() + timeout;
+    while (this._loading && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
   }
 
   async waitForFunction(fn, arg, { timeout = 5000, polling = 250 } = {}) {
@@ -494,7 +532,12 @@ async function openFirefox({
     session.on(event, (params) => {
       if (params.context !== top.context) return;
       if (params.url) page.setUrl(params.url);
-      if (event === 'browsingContext.load' || event === 'browsingContext.fragmentNavigated') {
+      if (event === 'browsingContext.navigationStarted') {
+        page._loading = true;
+      } else if (event === 'browsingContext.load') {
+        page._loading = false;
+        page.emitNavigated();
+      } else if (event === 'browsingContext.fragmentNavigated') {
         page.emitNavigated();
       }
     });

@@ -201,6 +201,7 @@ const OBSERVER_SCRIPT = (force) => {
 // swapped out from under us — and cost a fraction of what a snapshot does.
 const PULSE_SCRIPT = () => ({
   observing: !!(window.__twebObserver && window.__twebObserverRoot === document.documentElement),
+  href: location.href,
   print: [
     document.getElementsByTagName('*').length,
     document.title,
@@ -320,16 +321,29 @@ async function pulse(page, live, now = Date.now()) {
 
   // The first reading is a baseline, not a change.
   const changed = live.print !== null && reading.print !== live.print;
+  // A different URL is not a changed page, it is a different one. The buffer
+  // describes a document that no longer exists, so every line in it refers to
+  // an element that is gone.
+  const navigated = live.href !== null && reading.href !== live.href;
   live.print = reading.print;
+  live.href = reading.href;
   if (changed) live.dirty = true;
+  if (navigated) live.navigated = true;
 
-  return { changed, rearmed, ms };
+  return { changed, navigated, rearmed, ms };
 }
 
 // Whether a buffer refresh is due, judged against what the last snapshot
 // actually cost rather than a fixed interval.
 function refreshDue(live, now = Date.now()) {
   if (!live.enabled || !live.dirty || live.refreshing) return false;
+  // The reading freeze holds a document still while it is being read. It has
+  // nothing to hold when the document has been replaced: waiting then leaves
+  // the reader moving around a page that is gone, and the longer they keep
+  // pressing keys the longer it lasts — which is exactly when it is least
+  // likely to look like the page's fault. Measured at 9 seconds of stale
+  // buffer after following a link, ended only by refreshing by hand.
+  if (live.navigated) return true;
   if (now - live.lastInputMs < INPUT_GRACE_MS) return false;
   const cost = live.snapshotCostMs || MIN_INTERVAL_MS;
   const interval = Math.max(MIN_INTERVAL_MS, cost / DUTY_CYCLE);
@@ -348,6 +362,8 @@ function createLiveState() {
     lastInputMs: 0,
     lastPulseMs: 0,
     print: null,
+    href: null,
+    navigated: false,
     snapshotCostMs: 0,
     ticker: null,
     queue: [],
