@@ -3,6 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 
+const { processAlive } = require('./proc');
+
 // Timing log. The UI owns the terminal, so diagnostics go to a file — one
 // NDJSON record per event, with the elapsed milliseconds since the process
 // started. Written synchronously-ish through a stream so the ordering is
@@ -10,7 +12,42 @@ const path = require('path');
 //
 // Path comes from TWEB_LOG, defaulting to tweb.log next to the package.
 
-const LOG_PATH = process.env.TWEB_LOG || path.join(__dirname, '..', 'tweb.log');
+const DEFAULT_LOG = path.join(__dirname, '..', 'tweb.log');
+
+// Two sessions must not share one log. The second would truncate the first's
+// and then interleave with it, wrecking the one record you consult to find
+// out why something felt slow — and wrecking it precisely when you are
+// running two sessions, which is when timings are hardest to reason about.
+//
+// The header line names the process that opened the log, so a starting
+// session can see whether the log it is about to overwrite belongs to a
+// session still running. If it does, it writes tweb-<pid>.log alongside
+// instead. The common case — one session at a time — still gets tweb.log.
+function ownerOfLog(file) {
+  let firstLine;
+  try {
+    const fd = fs.openSync(file, 'r');
+    const head = Buffer.alloc(200);
+    const read = fs.readSync(fd, head, 0, head.length, 0);
+    fs.closeSync(fd);
+    firstLine = head.subarray(0, read).toString('utf8').split('\n')[0];
+  } catch {
+    return null; // no log yet, or none we can read
+  }
+  const match = /\bpid (\d+)\b/.exec(firstLine);
+  return match ? Number(match[1]) : null;
+}
+
+function resolveLogPath() {
+  if (process.env.TWEB_LOG) return process.env.TWEB_LOG;
+  if (processAlive(ownerOfLog(DEFAULT_LOG))) {
+    const parsed = path.parse(DEFAULT_LOG);
+    return path.join(parsed.dir, `${parsed.name}-${process.pid}${parsed.ext}`);
+  }
+  return DEFAULT_LOG;
+}
+
+const LOG_PATH = resolveLogPath();
 
 let stream = null;
 const started = Date.now();
@@ -19,7 +56,7 @@ function open() {
   if (stream) return stream;
   try {
     stream = fs.createWriteStream(LOG_PATH, { flags: 'w' });
-    stream.write(`# tui-browser log ${new Date().toISOString()}\n`);
+    stream.write(`# tui-browser log ${new Date().toISOString()} pid ${process.pid}\n`);
   } catch {
     stream = null;
   }
