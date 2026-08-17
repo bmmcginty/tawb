@@ -10,19 +10,23 @@ const { installLive, armFrame, armRenderedFrames, refreshDue, createLiveState, p
 const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
 const { layoutLines } = require('./layout');
 const { remapIndex } = require('./remap');
-const { launchOwnBrowser, connectToBrowser, normaliseEndpoint, defaultProfileDir } = require('./browser');
+const { normaliseEndpoint } = require('./browser');
+const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
 const { claimedTargets, claimTab, releaseTab } = require('./session');
 
 // --connect <port|host:port|url> attaches to a browser that is already
 // running with --remote-debugging-port, rather than launching one.
+// --browser <name> chooses which engine to drive.
 function parseArgs(argv) {
-  const options = { url: null, connect: null, profile: null };
+  const options = { url: null, connect: null, profile: null, engine: DEFAULT_ENGINE };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--connect') { options.connect = normaliseEndpoint(argv[i + 1] || ''); i += 1; }
     else if (arg.startsWith('--connect=')) { options.connect = normaliseEndpoint(arg.slice('--connect='.length)); }
     else if (arg === '--profile') { options.profile = argv[i + 1] || null; i += 1; }
     else if (arg.startsWith('--profile=')) { options.profile = arg.slice('--profile='.length); }
+    else if (arg === '--browser') { options.engine = argv[i + 1] || DEFAULT_ENGINE; i += 1; }
+    else if (arg.startsWith('--browser=')) { options.engine = arg.slice('--browser='.length); }
     else if (!arg.startsWith('-') && !options.url) { options.url = arg; }
   }
   return options;
@@ -88,9 +92,9 @@ function contentWidth() {
   return Math.max(20, termSize().cols - GUTTER - 1);
 }
 
-async function snapshotBlocks(page, source = 'ax', { visited = null } = {}) {
+async function snapshotBlocks(page, source = 'ax', { visited = null, driver = null } = {}) {
   const t0 = Date.now();
-  const blocks = await snapshotFrameTree(page, source, { visited });
+  const blocks = await snapshotFrameTree(page, source, { visited, driver });
   log('snapshot', { source, ms: Date.now() - t0, blocks: blocks.length, frames: page.frames().length });
   return blocks;
 }
@@ -481,7 +485,7 @@ function restoreAnchor(state, anchor) {
 async function refresh(state, page, { resetCursor = false, anchor = null } = {}) {
   const started = Date.now();
   const visited = [];
-  state.blocks = await snapshotBlocks(page, state.source, { visited });
+  state.blocks = await snapshotBlocks(page, state.source, { visited, driver: state.driver });
   state.renderedUrl = page.url();
   // Observe what we display: a frame that contributed lines may keep
   // changing them — an embedded player's elapsed time, for instance — and it
@@ -1239,7 +1243,7 @@ async function elementHandleFor(state, page, item) {
   if (DOM_SOURCES.has(state.source)) return domElementHandle(page, item);
   if (state.source === 'render') return renderElementHandle(page, item);
   const scope = item.frame || page;
-  return scope.getByRole(item.role, { name: item.name, exact: true }).first().elementHandle();
+  return state.driver.elementByRole(scope, item.role, item.name);
 }
 
 // ---------------------------------------------------------------------------
@@ -1521,45 +1525,20 @@ async function handleAddressKey(chunk, state, page) {
 
 // ---------------------------------------------------------------------------
 
-// A tab's identity as the browser knows it, which is the only name for it
-// that means the same thing in another session's process.
-async function targetIdFor(context, page) {
-  try {
-    const session = await context.newCDPSession(page);
-    const { targetInfo } = await session.send('Target.getTargetInfo');
-    await session.detach().catch(() => {});
-    return (targetInfo && targetInfo.targetId) || null;
-  } catch {
-    return null;
-  }
-}
-
 async function main() {
-  log('start', { url: START_URL, logPath: LOG_PATH, connect: ARGS.connect || null });
+  log('start', {
+    url: START_URL, logPath: LOG_PATH, connect: ARGS.connect || null, engine: ARGS.engine,
+  });
 
   // Either attach to a browser the user is already running, or start an
   // ordinary one ourselves. There is deliberately no Playwright-launched
   // fallback: that browser announces itself as automated, and sites that
   // react to it leave the reader stuck on pages that never resolve.
-  let browser;
-  let context;
-  let ownedChild = null;
-  let rejoined = false;
-  let browserPort = null;
-  if (ARGS.connect) {
-    const connected = await timed('browser.connect', { endpoint: ARGS.connect }, () =>
-      connectToBrowser(ARGS.connect));
-    ({ browser, context } = connected);
-    browserPort = connected.port;
-    rejoined = true;
-  } else {
-    const started = await timed('browser.start', {}, () =>
-      launchOwnBrowser({ profileDir: ARGS.profile || defaultProfileDir(), log }));
-    ({ browser, context } = started);
-    ownedChild = started.child;
-    browserPort = started.port;
-    rejoined = !!started.rejoined;
-  }
+  const driver = await timed('browser.start', { engine: ARGS.engine }, () =>
+    openDriver({ engine: ARGS.engine, connect: ARGS.connect, profile: ARGS.profile, log }));
+  const { browser, context } = driver;
+  const browserPort = driver.port;
+  const rejoined = driver.rejoined;
 
   // When joining a browser that is already running, take over the tab it is
   // already showing rather than opening a blank one. Rejoining is usually
@@ -1579,7 +1558,7 @@ async function main() {
     });
     for (let i = existing.length - 1; i >= 0; i -= 1) {
       const candidate = existing[i];
-      const targetId = await targetIdFor(context, candidate);
+      const targetId = await driver.targetIdFor(candidate);
       if (targetId && taken.has(targetId)) continue;
       page = candidate;
       pageTargetId = targetId;
@@ -1594,7 +1573,7 @@ async function main() {
   // Claim whichever tab we ended up on, including one we just opened and one
   // in a browser we started: the session that joins later is the one that
   // needs to know to leave it alone.
-  if (!pageTargetId) pageTargetId = await targetIdFor(context, page);
+  if (!pageTargetId) pageTargetId = await driver.targetIdFor(page);
   claimTab(browserPort, pageTargetId);
   page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
   page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
@@ -1604,9 +1583,10 @@ async function main() {
   }
 
   const state = {
+    driver,
     page,
     source: 'ax',
-    blocks: await snapshotBlocks(page, 'ax'),
+    blocks: await snapshotBlocks(page, 'ax', { driver }),
     lines: [],
     cursor: 0,
     col: 0,
@@ -1680,10 +1660,7 @@ async function main() {
   flushCounters({ refreshes: state.live.refreshes });
   log('exit', {});
   releaseTab(browserPort);
-  await browser.close().catch(() => {});
-  // Only tear down a browser we started; one the user was already running is
-  // theirs to keep.
-  if (ownedChild) { try { ownedChild.kill(); } catch { /* already gone */ } }
+  await driver.close();
   restoreTerminal();
   process.exit(0);
 }
