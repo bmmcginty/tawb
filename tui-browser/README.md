@@ -284,6 +284,7 @@ lines of accessibility tree is 17000 lines of markup.
 | `Enter`  | Activate the link, button or field on this line                  |
 | `Ctrl+L` | Address bar (scrolls sideways for long URLs; `Esc` cancels)      |
 | `\`      | Cycle view: AX → PAGE → HTML → SOURCE                            |
+| `>` / `<`| Next / previous tab                                              |
 | `c` / `C`| Jump to the next / previous area that changed                    |
 | `r`      | Refresh now                                                      |
 | `L`      | Turn live updating on or off                                     |
@@ -345,6 +346,24 @@ Nothing is rebuilt when nothing arrives — the scroll is put back as it was.
 That matters more than it sounds: scrolled to the bottom, a Wikipedia article
 collapses its table of contents and the page loses a couple of hundred lines
 you had a moment ago.
+
+## Tabs and windows
+
+A link with `target="_blank"` opens a tab and the browser moves to it. **So do
+we** — the browser has already gone there and you should be where the browser
+is. The status line says so: *"Followed a new tab — tab 3 of 3: Page B"*.
+
+A tab that opens *behind* is announced and left alone, because nothing moves
+you without saying so. `>` and `<` step through everything open, wrapping at
+either end.
+
+Tabs in separate windows are in that same list. Neither browser's protocol
+says which window a tab belongs to, and for reading purposes a window is just
+somewhere else a tab can be.
+
+If the tab you are reading closes — the page closes itself, or you close it in
+the browser — you are moved to one that still exists rather than left holding
+a buffer full of lines that refer to nothing.
 
 ## When something changes elsewhere
 
