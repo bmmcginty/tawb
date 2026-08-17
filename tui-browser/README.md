@@ -50,6 +50,17 @@ npm start -- --connect 9222 https://example.com   # attach to a browser you star
 To use a browser you are already running, start it with
 `--remote-debugging-port=9222` and pass `--connect 9222`.
 
+## Running more than one at a time
+
+Chrome allows one browser per profile, so a second session joins the browser
+the first one started rather than launching its own. What it will not do is
+join the first session's *tab*: two sessions reading one tab navigate each
+other around. A second session takes an unclaimed tab if there is one and
+opens its own otherwise, and each gets its own timing log.
+
+A session started with a URL always opens its own tab. Only a session
+started without one adopts what is already on screen.
+
 ## Reading holds still while you move — this is deliberate
 
 **The page stops updating while you are navigating, and resumes about 2.5
