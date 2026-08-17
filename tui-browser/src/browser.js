@@ -6,6 +6,9 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { chromium } = require('playwright');
+const {
+  readEndpointRecord, writeEndpointRecord, endpointReady, runningEndpoint,
+} = require('./endpoint');
 
 // Getting hold of a browser to read.
 //
@@ -37,9 +40,6 @@ const CANDIDATE_BROWSERS = [
 ];
 
 const STARTUP_TIMEOUT_MS = 25000;
-// Where we record the debugging port of a browser we started, so a later
-// session can find it again.
-const ENDPOINT_FILE = 'tui-browser-endpoint.json';
 
 function defaultProfileDir() {
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
@@ -85,24 +85,6 @@ function freePort() {
   });
 }
 
-function endpointReady(port) {
-  return new Promise((resolve) => {
-    const request = net.connect(port, '127.0.0.1');
-    request.setTimeout(1000);
-    request.on('connect', () => { request.destroy(); resolve(true); });
-    request.on('error', () => resolve(false));
-    request.on('timeout', () => { request.destroy(); resolve(false); });
-  });
-}
-
-async function waitForEndpoint(port, deadline) {
-  while (Date.now() < deadline) {
-    if (await endpointReady(port)) return true;
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  return false;
-}
-
 // The challenge above is only cleared by a browser with a display; a headless
 // one fails it even when started normally. With no DISPLAY we therefore run
 // under Xvfb, which is a real browser rendering to a virtual screen rather
@@ -120,35 +102,12 @@ function buildCommand(executable, args) {
   return { command: xvfb, args: ['-a', executable, ...args] };
 }
 
-function endpointRecordPath(profileDir) {
-  return path.join(profileDir, ENDPOINT_FILE);
-}
-
-function readEndpointRecord(profileDir) {
-  try {
-    return JSON.parse(fs.readFileSync(endpointRecordPath(profileDir), 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-function writeEndpointRecord(profileDir, record) {
-  try {
-    fs.writeFileSync(endpointRecordPath(profileDir), JSON.stringify(record));
-  } catch { /* the browser still works without it */ }
-}
-
 // A browser already using this profile is one we must join rather than
 // compete with. Chrome enforces one instance per profile directory, so a
 // second launch simply hands its arguments to the running instance and
 // exits — leaving nothing listening on a new debugging port, which is why
 // starting a second session used to hang until the startup timeout expired.
-async function findRunningBrowser(profileDir) {
-  const record = readEndpointRecord(profileDir);
-  if (!record || !record.port) return null;
-  if (!(await endpointReady(record.port))) return null;
-  return record.port;
-}
+const findRunningBrowser = runningEndpoint;
 
 // Starts an ordinary browser and attaches to it, or rejoins one already
 // running on this profile. The profile persists between runs, so logins and
@@ -253,5 +212,4 @@ function normaliseEndpoint(value) {
 module.exports = {
   launchOwnBrowser, connectToBrowser, normaliseEndpoint, portOfEndpoint,
   findBrowserExecutable, defaultProfileDir, findRunningBrowser,
-  readEndpointRecord, writeEndpointRecord,
 };
