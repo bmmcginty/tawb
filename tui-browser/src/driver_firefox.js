@@ -51,7 +51,12 @@ const NAVIGATION_GRACE_MS = 150;
 // without this subscription the page calls its binding, the call succeeds, and
 // nothing ever arrives. Which is exactly as quiet as a binding that was never
 // installed, and took a probe to tell apart.
-const SUBSCRIBED_EVENTS = [...NAVIGATION_EVENTS, 'script.message'];
+const SUBSCRIBED_EVENTS = [
+  ...NAVIGATION_EVENTS,
+  'script.message',
+  'browsingContext.contextCreated',
+  'browsingContext.contextDestroyed',
+];
 
 function toRemoteArgument(value) {
   if (value === undefined) return { type: 'undefined' };
@@ -269,6 +274,7 @@ class FirefoxPage {
     this._navigationHandlers = [];
     this._seenFrames = [];
     this._loading = false;
+    this._closed = false;
     this.keyboard = new FirefoxKeyboard(session, this);
   }
 
@@ -293,6 +299,14 @@ class FirefoxPage {
 
   url() {
     return this._mainFrame.url();
+  }
+
+  isClosed() {
+    return !!this._closed;
+  }
+
+  async title() {
+    return this.evaluate(() => document.title).catch(() => '');
   }
 
   setUrl(url) {
@@ -482,10 +496,27 @@ async function openFirefox({
   const top = tree.contexts[0];
   if (!top) throw new Error('Firefox exposed no browsing context');
 
+  // Pages are kept by browsing-context id rather than rebuilt on demand,
+  // because a page owns things that must not be thrown away and remade: its
+  // navigation handlers, its keyboard, and whether it is mid-load.
+  const pages = new Map();
+
+  const pageFor = (contextId, url) => {
+    let page = pages.get(contextId);
+    if (!page) {
+      page = new FirefoxPage(session, contextId, browserContext);
+      pages.set(contextId, page);
+    }
+    if (url) page.setUrl(url);
+    return page;
+  };
+
   const browserContext = {
-    _pages: [],
-    pages() { return this._pages; },
-    async newPage() { return this._pages[0]; },
+    pages() { return [...pages.values()]; },
+    async newPage() {
+      const created = await session.send('browsingContext.create', { type: 'tab' });
+      return pageFor(created.context, 'about:blank');
+    },
     async exposeBinding(name, callback) {
       const install = `(channel) => { window[${JSON.stringify(name)}] = channel; }`;
       const channelArg = { type: 'channel', value: { channel: name, ownership: 'none' } };
@@ -501,7 +532,7 @@ async function openFirefox({
       // now. Without this the observer installs happily and then throws inside
       // the page the first time it tries to report anything — silently, since
       // nobody is listening to a page's exceptions.
-      for (const openPage of this._pages) {
+      for (const openPage of this.pages()) {
         await session.send('script.callFunction', {
           functionDeclaration: install,
           arguments: [channelArg],
@@ -523,25 +554,48 @@ async function openFirefox({
     },
   };
 
-  const page = new FirefoxPage(session, top.context, browserContext);
-  page.setUrl(top.url || 'about:blank');
-  browserContext._pages.push(page);
+  const page = pageFor(top.context, top.url || 'about:blank');
+  // Tabs the browser already had, from every window it has open.
+  for (const other of tree.contexts.slice(1)) {
+    if (!other.parent) pageFor(other.context, other.url);
+  }
+
+  const newTabHandlers = [];
 
   await session.send('session.subscribe', { events: SUBSCRIBED_EVENTS }).catch(() => {});
+
   for (const event of NAVIGATION_EVENTS) {
     session.on(event, (params) => {
-      if (params.context !== top.context) return;
-      if (params.url) page.setUrl(params.url);
+      // Events arrive for every context, including frames, so they are routed
+      // to the page they belong to rather than assumed to be for ours.
+      const target = pages.get(params.context);
+      if (!target) return;
+      if (params.url) target.setUrl(params.url);
       if (event === 'browsingContext.navigationStarted') {
-        page._loading = true;
+        target._loading = true;
       } else if (event === 'browsingContext.load') {
-        page._loading = false;
-        page.emitNavigated();
+        target._loading = false;
+        target.emitNavigated();
       } else if (event === 'browsingContext.fragmentNavigated') {
-        page.emitNavigated();
+        target.emitNavigated();
       }
     });
   }
+
+  session.on('browsingContext.contextCreated', (params) => {
+    // A frame is a browsing context too; only a top-level one is a tab.
+    if (params.parent) return;
+    const opened = pageFor(params.context, params.url);
+    for (const handler of newTabHandlers) {
+      try { handler(opened); } catch { /* a handler must not break the session */ }
+    }
+  });
+
+  session.on('browsingContext.contextDestroyed', (params) => {
+    const closing = pages.get(params.context);
+    if (closing) closing._closed = true;
+    pages.delete(params.context);
+  });
 
   const webdriverFlag = await readWebdriverFlag(page);
   log('firefox.ready', { cleared, webdriver: webdriverFlag });
@@ -567,6 +621,20 @@ async function openFirefox({
 
     // Which views this engine can offer.
     capabilities: { ax: true, frames: true },
+
+    // Every tab, across every window: BiDi reports all top-level browsing
+    // contexts, and a window is not a thing it distinguishes.
+    listTabs() {
+      return browserContext.pages();
+    },
+
+    onNewTab(handler) {
+      newTabHandlers.push(handler);
+    },
+
+    async newTab() {
+      return browserContext.newPage();
+    },
 
     async targetIdFor() {
       // BiDi context ids are already stable per tab; one tab for now, so tab

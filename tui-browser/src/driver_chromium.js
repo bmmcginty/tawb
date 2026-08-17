@@ -65,6 +65,23 @@ async function openChromium({
       return parseAriaSnapshot(await frame.locator('body').ariaSnapshot());
     },
 
+    // Every tab the browser has, across all its windows. Order is creation
+    // order rather than the order they sit in the tab strip, which is the
+    // only ordering the protocol offers.
+    listTabs() {
+      return context.pages().filter((page) => !page.isClosed());
+    },
+
+    // A tab opening is how target="_blank" arrives, and the reader wants to
+    // follow it the way a sighted user's browser already has.
+    onNewTab(handler) {
+      context.on('page', handler);
+    },
+
+    async newTab() {
+      return context.newPage();
+    },
+
     // Whoever computed the tree resolves against it. Playwright's items carry
     // no element reference, so this goes back through role and name.
     async axElementHandle(scope, item) {
