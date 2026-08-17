@@ -10,7 +10,9 @@ const { launchOwnBrowser, connectToBrowser, defaultProfileDir } = require('./bro
 // injected script of its own — good enough that there is no reason to
 // replace it here just because another engine needs its own.
 
-async function openChromium({ connect = null, profile = null, log = () => {} } = {}) {
+async function openChromium({
+  connect = null, profile = null, keepBrowser = false, log = () => {},
+} = {}) {
   let browser;
   let context;
   let child = null;
@@ -67,8 +69,10 @@ async function openChromium({ connect = null, profile = null, log = () => {} } =
     async close() {
       await browser.close().catch(() => {});
       // Only tear down a browser we started; one the user was already running
-      // is theirs to keep.
-      if (child) {
+      // is theirs to keep. --keep-browser leaves even ours running, so the
+      // next session rejoins it in 50ms instead of cold-starting in four
+      // seconds.
+      if (child && !keepBrowser) {
         try { child.kill(); } catch { /* already gone */ }
       }
     },

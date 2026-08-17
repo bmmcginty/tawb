@@ -243,20 +243,37 @@ async function readWebdriverFlag(page) {
   }
 }
 
-async function openFirefox({ profile = null, connect = null, log = () => {} } = {}) {
+async function openFirefox({
+  profile = null, connect = null, keepBrowser = false, log = () => {},
+} = {}) {
   let child = null;
   let endpoint = connect;
   let cleared = null;
 
   if (!endpoint) {
-    const started = await launchFirefox({ profileDir: profile || defaultProfileDir(), log });
+    const started = await launchFirefox({
+      profileDir: profile || defaultProfileDir(), keepBrowser, log,
+    });
     child = started.child;
     endpoint = started.endpoint;
     cleared = started.cleared;
   }
 
   const session = await bidi.connect(endpoint);
-  await session.send('session.new', { capabilities: { alwaysMatch: {} } });
+  try {
+    await session.send('session.new', { capabilities: { alwaysMatch: {} } });
+  } catch (err) {
+    session.close();
+    // Firefox serves one BiDi session at a time, so a second reader cannot
+    // share a Firefox the way two can share a Chromium through separate tabs.
+    if (/session/i.test(err.message) && /maximum|already/i.test(err.message)) {
+      throw new Error(
+        'Another session is already reading this Firefox, and Firefox allows only '
+        + 'one at a time. Quit the other reader, or use a different --profile.',
+      );
+    }
+    throw err;
+  }
 
   const tree = await session.send('browsingContext.getTree', {});
   const top = tree.contexts[0];
@@ -321,7 +338,6 @@ async function openFirefox({ profile = null, connect = null, log = () => {} } = 
   const webdriverFlag = await readWebdriverFlag(page);
   log('firefox.ready', { cleared, webdriver: webdriverFlag });
   if (webdriverFlag !== false) {
-    await session.send('browser.close', {}).catch(() => {});
     session.close();
     if (child) { try { child.kill(); } catch { /* already gone */ } }
     throw new Error(
@@ -360,9 +376,18 @@ async function openFirefox({ profile = null, connect = null, log = () => {} } = 
     },
 
     async close() {
-      await session.send('browser.close', {}).catch(() => {});
+      // End the session but leave the browser: Firefox serves one BiDi session
+      // at a time and does not release it just because the socket went away,
+      // so a session left hanging locks out the next reader entirely.
+      await session.send('session.end', {}).catch(() => {});
+      // Only a browser we started is ours to shut down, and browser.close is
+      // "quit Firefox" — sending it after rejoining would take down a browser
+      // somebody else is reading. Disconnecting is all a rejoining session
+      // may do.
       session.close();
-      if (child) { try { child.kill(); } catch { /* already gone */ } }
+      if (child && !keepBrowser) {
+        try { child.kill(); } catch { /* already gone */ }
+      }
     },
   };
 }

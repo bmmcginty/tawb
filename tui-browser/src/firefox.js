@@ -5,6 +5,7 @@ const fs = require('fs');
 const net = require('net');
 const os = require('os');
 const path = require('path');
+const { writeEndpointRecord, runningEndpoint, waitForEndpoint } = require('./endpoint');
 
 // Getting hold of a Firefox that is not pretending to be a robot.
 //
@@ -98,14 +99,6 @@ function portOpen(port) {
     socket.on('error', () => resolve(false));
     socket.on('timeout', () => { socket.destroy(); resolve(false); });
   });
-}
-
-async function waitForPort(port, deadline) {
-  while (Date.now() < deadline) {
-    if (await portOpen(port)) return true;
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  return false;
 }
 
 // A headless browser fails the checks a real one passes, so with no display we
@@ -224,7 +217,9 @@ async function clearAutomationFlag({ port = MARIONETTE_PORT, stopAfter = true } 
 
 // Starts an ordinary Firefox, silences the announcement, and returns where to
 // attach. The caller verifies from inside a page before trusting any of it.
-async function launchFirefox({ profileDir = defaultProfileDir(), log = () => {} } = {}) {
+async function launchFirefox({
+  profileDir = defaultProfileDir(), keepBrowser = false, log = () => {},
+} = {}) {
   const found = findFirefox();
   if (!found) {
     throw new Error(
@@ -234,6 +229,26 @@ async function launchFirefox({ profileDir = defaultProfileDir(), log = () => {} 
   }
 
   fs.mkdirSync(profileDir, { recursive: true });
+
+  // A Firefox already serving this profile is one to join. Firefox allows one
+  // instance per profile and refuses the second outright, so this is a
+  // correctness fix as much as a speed one — and it is the whole of the
+  // startup difference against Chromium, which has been quietly rejoining a
+  // running browser in 50ms while Firefox cold-started every time.
+  const running = await runningEndpoint(profileDir);
+  if (running) {
+    log('firefox.rejoin', { port: running, profileDir });
+    return {
+      child: null,
+      port: running,
+      endpoint: `ws://127.0.0.1:${running}/session`,
+      executable: null,
+      profileDir,
+      cleared: null,
+      rejoined: true,
+    };
+  }
+
   const port = await freePort();
 
   const args = [
@@ -250,18 +265,25 @@ async function launchFirefox({ profileDir = defaultProfileDir(), log = () => {} 
   const { command, args: spawnArgs } = buildCommand(found.executable, args);
   log('firefox.spawn', { executable: found.executable, port, marionette: MARIONETTE_PORT, profileDir });
 
-  const child = spawn(command, spawnArgs, { stdio: 'ignore', detached: false });
+  // Detached, so the browser is not taken down by the terminal session ending
+  // or the reader crashing. It is still killed explicitly on a clean exit
+  // unless --keep-browser asked for it to stay, in which case the next session
+  // rejoins it instead of waiting four seconds for a cold start.
+  const child = spawn(command, spawnArgs, { stdio: 'ignore', detached: true });
+  child.unref();
   child.on('error', () => { /* surfaced by the readiness check */ });
   let exitedEarly = false;
   child.on('exit', () => { exitedEarly = true; });
 
-  const deadline = Date.now() + STARTUP_TIMEOUT_MS;
+  const spawnedAt = Date.now();
+  const deadline = spawnedAt + STARTUP_TIMEOUT_MS;
   let ready = false;
   while (Date.now() < deadline) {
     if (await portOpen(port)) { ready = true; break; }
     if (exitedEarly) break;
     await new Promise((r) => setTimeout(r, 200));
   }
+  const portMs = Date.now() - spawnedAt;
   if (!ready) {
     try { child.kill(); } catch { /* already gone */ }
     throw new Error(exitedEarly
@@ -269,11 +291,14 @@ async function launchFirefox({ profileDir = defaultProfileDir(), log = () => {} 
       : `${found.name} did not open a debugging port within ${STARTUP_TIMEOUT_MS / 1000}s`);
   }
 
+  writeEndpointRecord(profileDir, { port, pid: child.pid, startedAt: Date.now() });
+
   let cleared = null;
-  if (await waitForPort(MARIONETTE_PORT, Date.now() + 15000)) {
+  const clearStarted = Date.now();
+  if (await waitForEndpoint(MARIONETTE_PORT, Date.now() + 15000)) {
     try {
       cleared = await clearAutomationFlag();
-      log('firefox.automation.cleared', cleared);
+      log('firefox.automation.cleared', { ...cleared, portMs, clearMs: Date.now() - clearStarted });
     } catch (err) {
       log('firefox.automation.error', { error: String(err.message || err).slice(0, 200) });
     }
@@ -288,6 +313,7 @@ async function launchFirefox({ profileDir = defaultProfileDir(), log = () => {} 
     executable: found.executable,
     profileDir,
     cleared,
+    rejoined: false,
   };
 }
 

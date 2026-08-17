@@ -18,13 +18,16 @@ const { claimedTargets, claimTab, releaseTab } = require('./session');
 // running with --remote-debugging-port, rather than launching one.
 // --browser <name> chooses which engine to drive.
 function parseArgs(argv) {
-  const options = { url: null, connect: null, profile: null, engine: DEFAULT_ENGINE };
+  const options = {
+    url: null, connect: null, profile: null, engine: DEFAULT_ENGINE, keepBrowser: false,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--connect') { options.connect = normaliseEndpoint(argv[i + 1] || ''); i += 1; }
     else if (arg.startsWith('--connect=')) { options.connect = normaliseEndpoint(arg.slice('--connect='.length)); }
     else if (arg === '--profile') { options.profile = argv[i + 1] || null; i += 1; }
     else if (arg.startsWith('--profile=')) { options.profile = arg.slice('--profile='.length); }
+    else if (arg === '--keep-browser') { options.keepBrowser = true; }
     else if (arg === '--browser') { options.engine = argv[i + 1] || DEFAULT_ENGINE; i += 1; }
     else if (arg.startsWith('--browser=')) { options.engine = arg.slice('--browser='.length); }
     else if (!arg.startsWith('-') && !options.url) { options.url = arg; }
@@ -1544,7 +1547,13 @@ async function main() {
   // fallback: that browser announces itself as automated, and sites that
   // react to it leave the reader stuck on pages that never resolve.
   const driver = await timed('browser.start', { engine: ARGS.engine }, () =>
-    openDriver({ engine: ARGS.engine, connect: ARGS.connect, profile: ARGS.profile, log }));
+    openDriver({
+      engine: ARGS.engine,
+      connect: ARGS.connect,
+      profile: ARGS.profile,
+      keepBrowser: ARGS.keepBrowser,
+      log,
+    }));
   const { browser, context } = driver;
   const browserPort = driver.port;
   const rejoined = driver.rejoined;
