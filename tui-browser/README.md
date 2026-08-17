@@ -176,6 +176,19 @@ Braille was based on…   ordinary text
 Separator punctuation (`|`, `,`) is folded onto the end of the preceding
 link rather than taking a line of its own, since a lone `|` says nothing.
 
+One item per line applies to items, not to words. A bold or italic word is
+a node of its own in the accessibility tree, so `teenagers are just
+<em>really</em> dumb` would otherwise become three lines — and a one-word
+line reads as a heading or a link when you are arrowing through, a
+structural break that is not in the page. Runs of prose are joined back
+into one line; links are not, so their position stays predictable, and a
+paragraph boundary still ends the line. `[HTML]` view is left fragmented on
+purpose, being the view for seeing what is actually there.
+
+A line longer than the terminal wraps, and each wrapped row is navigable in
+its own right — so several rows in a row of plain prose are wrapping, while
+a lone short word between full ones is not.
+
 Embedded frames are rendered inline, where they sit in the parent page —
 neither the accessibility tree nor a DOM walk descends into them on its own,
 so an embedded video or comment thread would otherwise simply be missing.
