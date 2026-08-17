@@ -722,8 +722,10 @@ async function runLiveRefresh(state, page) {
   if (!refreshDue(live)) return;
 
   const cycle = Date.now();
+  const wasNavigation = live.navigated;
   live.refreshing = true;
   live.refreshes += 1;
+  live.navigated = false;
 
   const tPrep = Date.now();
   const previousLines = state.lines.map((_, i) => renderRow(state, i));
@@ -741,7 +743,16 @@ async function runLiveRefresh(state, page) {
   }
 
   const tPost = Date.now();
-  const remapExact = restoreCursorAfterRebuild(state, previousLineTexts, anchor);
+  // Nothing to restore across a navigation: the lines the reader was among
+  // belong to a document that is gone.
+  if (wasNavigation) {
+    state.cursor = 0;
+    state.col = 0;
+    state.scroll = 0;
+  }
+  const remapExact = wasNavigation
+    ? false
+    : restoreCursorAfterRebuild(state, previousLineTexts, anchor);
   const reanchorMs = Date.now() - tPost;
 
   const tDiff = Date.now();
@@ -1072,7 +1083,9 @@ function atEnd(state) {
 // about on this page, is.
 async function pulseLive(state, page) {
   const result = await pulse(page, state.live);
-  if (result && (result.changed || result.rearmed || result.ms > 50)) log('live.pulse', result);
+  if (result && (result.changed || result.navigated || result.rearmed || result.ms > 50)) {
+    log('live.pulse', result);
+  }
   // A pulse that cannot run at all is worth knowing about: it is the safety
   // net, and a silent one is no net.
   if (state.live.pulseErrors) {
