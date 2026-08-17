@@ -5,7 +5,9 @@ const fs = require('fs');
 const net = require('net');
 const os = require('os');
 const path = require('path');
-const { writeEndpointRecord, runningEndpoint, waitForEndpoint } = require('./endpoint');
+const {
+  writeEndpointRecord, readEndpointRecord, runningEndpoint, waitForEndpoint,
+} = require('./endpoint');
 
 // Getting hold of a Firefox that is not pretending to be a robot.
 //
@@ -33,15 +35,29 @@ const { writeEndpointRecord, runningEndpoint, waitForEndpoint } = require('./end
 // redefined, no toString is patched, so there is no tampering for a site to
 // notice. The browser simply stops announcing something about itself.
 //
-// There is a real cost, and it is the flag below that grants it:
-// --remote-allow-system-access lets anything reaching the Marionette port run
-// privileged code in a browser holding the user's logins. The port is on
-// loopback and Marionette is shut down as soon as the flag is cleared, which
-// also happens to set its own announcement false on the way out.
+// Marionette is then left running, on purpose, because it is the only way out
+// of a problem BiDi has no answer for. Closing a BiDi connection does not end
+// its session — Firefox only unregisters the connection — and a pure-BiDi
+// session cannot be reattached to or ended from anywhere else, so a reader
+// that dies without saying session.end strands the session and locks every
+// later reader out until Firefox restarts. Marionette shares that single
+// session slot, and its own connection handler deletes the session
+// unconditionally when a connection closes. So connecting to Marionette and
+// hanging up releases a stranded session, in milliseconds, with no restart.
+//
+// Local port exposure is out of scope for this project: anything that can
+// reach Marionette can already reach the browser's own protocol port and
+// drive it. What is in scope is the consequence for us — while Marionette
+// listens, anything that connects to it and disconnects will drop our session
+// too, which is one more reason to end it cleanly ourselves.
+//
+// Each instance gets its own Marionette port, written into the profile.
+// Firefox's default is 2828 for every browser, so with two profiles running
+// the second reader would clear the first browser's flag and knock out the
+// first browser's session.
 
 const CANDIDATES = ['firefox', 'firefox-esr', 'librewolf'];
 const STARTUP_TIMEOUT_MS = 45000;
-const MARIONETTE_PORT = 2828;
 
 // Both agents publish their own key, and either one being true is enough to
 // give the browser away.
@@ -54,6 +70,20 @@ const CLEAR_SCRIPT = `
   Services.ppmm.sharedData.flush();
   return { before, after: keys.map((k) => Services.ppmm.sharedData.get(k) ?? false) };
 `;
+
+// Firefox reads this at startup, so it has to be in the profile before launch.
+function writeMarionettePort(profileDir, port) {
+  const line = `user_pref("marionette.port", ${port});\n`;
+  const target = path.join(profileDir, 'user.js');
+  let existing = '';
+  try {
+    existing = fs.readFileSync(target, 'utf8').split('\n')
+      .filter((l) => !l.includes('marionette.port'))
+      .join('\n');
+  } catch { /* no user.js yet */ }
+  if (existing && !existing.endsWith('\n')) existing += '\n';
+  fs.writeFileSync(target, existing + line);
+}
 
 function defaultProfileDir() {
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
@@ -185,33 +215,53 @@ function marionetteCommand(port, commands, { timeout = 20000 } = {}) {
   });
 }
 
-// Shuts Marionette down without touching the browser. Its own uninit stops
-// the server and publishes its flag as false on the way out, which is exactly
-// the direction we want. Not `Marionette:Quit` — that is WebDriver's "quit the
-// browser" command, and it takes Firefox with it.
-const STOP_MARIONETTE_SCRIPT = `
-  const { Marionette } = ChromeUtils.importESModule(
-    "chrome://remote/content/components/Marionette.sys.mjs");
-  Marionette.uninit();
-  return true;
-`;
-
 // Stops the browser announcing itself, and reports what it found.
-async function clearAutomationFlag({ port = MARIONETTE_PORT, stopAfter = true } = {}) {
+//
+// Marionette is left running afterwards: see the note at the top of this file.
+// Disconnecting from it deletes the session it just created, which is also how
+// the BiDi session that follows is able to start at all — the two share one
+// slot.
+async function clearAutomationFlag({ port, stopAfter = false } = {}) {
   return marionetteCommand(port, async (send) => {
     await send('WebDriver:NewSession', {});
     await send('Marionette:SetContext', { value: 'chrome' });
     const result = await send('WebDriver:ExecuteScript', { script: CLEAR_SCRIPT, args: [] });
-
     if (stopAfter) {
-      // Its privileged port is the one real cost of this approach, and it has
-      // served its purpose. The reply may never arrive, because the server we
-      // are talking to is the thing being stopped.
-      send('WebDriver:ExecuteScript', { script: STOP_MARIONETTE_SCRIPT, args: [] })
-        .catch(() => {});
+      send('WebDriver:ExecuteScript', {
+        script: `const { Marionette } = ChromeUtils.importESModule(
+          "chrome://remote/content/components/Marionette.sys.mjs"); Marionette.uninit(); return true;`,
+        args: [],
+      }).catch(() => {});
       await new Promise((r) => setTimeout(r, 300));
     }
     return result && result.value;
+  });
+}
+
+// Releases a WebDriver session that a dead reader left behind.
+//
+// No commands are sent and none are needed: Marionette deletes the session
+// when a connection to it closes, whatever that connection did. Connecting and
+// hanging up is the whole operation.
+//
+// This must only be used against a session whose owner is gone. Marionette
+// cannot tell whose session it is deleting, so knocking while another reader
+// is alive would take the page out from under them.
+function releaseStrandedSession(port, { timeout = 8000 } = {}) {
+  return new Promise((resolve) => {
+    const socket = net.connect(port, '127.0.0.1');
+    let settled = false;
+    const finish = (released) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(released);
+    };
+    socket.setTimeout(timeout);
+    // The handshake proves Marionette is really there before we count it.
+    socket.on('data', () => { socket.end(); finish(true); });
+    socket.on('error', () => finish(false));
+    socket.on('timeout', () => finish(false));
   });
 }
 
@@ -237,10 +287,12 @@ async function launchFirefox({
   // running browser in 50ms while Firefox cold-started every time.
   const running = await runningEndpoint(profileDir);
   if (running) {
-    log('firefox.rejoin', { port: running, profileDir });
+    const record = readEndpointRecord(profileDir) || {};
+    log('firefox.rejoin', { port: running, marionette: record.marionettePort || null, profileDir });
     return {
       child: null,
       port: running,
+      marionettePort: record.marionettePort || null,
       endpoint: `ws://127.0.0.1:${running}/session`,
       executable: null,
       profileDir,
@@ -250,6 +302,8 @@ async function launchFirefox({
   }
 
   const port = await freePort();
+  const marionettePort = await freePort();
+  writeMarionettePort(profileDir, marionettePort);
 
   const args = [
     '--no-remote',
@@ -263,7 +317,7 @@ async function launchFirefox({
   ];
 
   const { command, args: spawnArgs } = buildCommand(found.executable, args);
-  log('firefox.spawn', { executable: found.executable, port, marionette: MARIONETTE_PORT, profileDir });
+  log('firefox.spawn', { executable: found.executable, port, marionette: marionettePort, profileDir });
 
   // Detached, so the browser is not taken down by the terminal session ending
   // or the reader crashing. It is still killed explicitly on a clean exit
@@ -291,13 +345,15 @@ async function launchFirefox({
       : `${found.name} did not open a debugging port within ${STARTUP_TIMEOUT_MS / 1000}s`);
   }
 
-  writeEndpointRecord(profileDir, { port, pid: child.pid, startedAt: Date.now() });
+  writeEndpointRecord(profileDir, {
+    port, marionettePort, pid: child.pid, startedAt: Date.now(),
+  });
 
   let cleared = null;
   const clearStarted = Date.now();
-  if (await waitForEndpoint(MARIONETTE_PORT, Date.now() + 15000)) {
+  if (await waitForEndpoint(marionettePort, Date.now() + 15000)) {
     try {
-      cleared = await clearAutomationFlag();
+      cleared = await clearAutomationFlag({ port: marionettePort });
       log('firefox.automation.cleared', { ...cleared, portMs, clearMs: Date.now() - clearStarted });
     } catch (err) {
       log('firefox.automation.error', { error: String(err.message || err).slice(0, 200) });
@@ -309,6 +365,7 @@ async function launchFirefox({
   return {
     child,
     port,
+    marionettePort,
     endpoint: `ws://127.0.0.1:${port}/session`,
     executable: found.executable,
     profileDir,
@@ -318,6 +375,6 @@ async function launchFirefox({
 }
 
 module.exports = {
-  launchFirefox, clearAutomationFlag, findFirefox, defaultProfileDir,
-  ACTIVE_KEYS, CLEAR_SCRIPT, MARIONETTE_PORT,
+  launchFirefox, clearAutomationFlag, releaseStrandedSession, findFirefox,
+  defaultProfileDir, writeMarionettePort, ACTIVE_KEYS, CLEAR_SCRIPT,
 };

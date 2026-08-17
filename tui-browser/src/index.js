@@ -38,6 +38,10 @@ function parseArgs(argv) {
 const ARGS = parseArgs(process.argv.slice(2));
 const START_URL = ARGS.url || 'https://www.google.com';
 
+// Set by the entry point so the shutdown path can reach the browser from a
+// signal handler, which has no other way to get at it.
+let setCurrentDriver = () => {};
+
 const ESC = '\x1b';
 const CTRL_C = '\x03';
 const CTRL_L = '\x0c';
@@ -1554,6 +1558,7 @@ async function main() {
       keepBrowser: ARGS.keepBrowser,
       log,
     }));
+  setCurrentDriver(driver);
   const { browser, context } = driver;
   const browserPort = driver.port;
   const rejoined = driver.rejoined;
@@ -1694,14 +1699,57 @@ function restoreTerminal() {
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
 }
 
-if (require.main === module) {
-  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-    process.on(sig, () => { restoreTerminal(); process.exit(0); });
+// The browser has to be told we are leaving, however we leave.
+//
+// Firefox serves one session at a time and does not end it when a connection
+// drops, so a reader that exits without saying so locks out the next one. That
+// is recoverable — Marionette can release a stranded session — but recovering
+// is not the same as never needing to, and every abnormal exit used to strand
+// one: the signal handlers exited without telling the driver, the error path
+// printed and exited, and an uncaught exception was not handled at all. A
+// crash from a missing method took the shortest route to the worst outcome.
+//
+// Only SIGKILL, an out-of-memory kill and losing power can get past this now.
+const SHUTDOWN_GRACE_MS = 1500;
+let shuttingDown = false;
+
+async function shutdown(code, driver) {
+  // A second Ctrl-C must not restart the wait, and must still get you out.
+  if (shuttingDown) process.exit(code);
+  shuttingDown = true;
+  restoreTerminal();
+  if (driver) {
+    // Bounded: a browser that will not answer must not keep the terminal.
+    await Promise.race([
+      driver.close().catch(() => {}),
+      new Promise((r) => setTimeout(r, SHUTDOWN_GRACE_MS)),
+    ]);
   }
+  process.exit(code);
+}
+
+if (require.main === module) {
+  // Set as soon as the driver exists, so a crash during startup still tidies
+  // up whatever was already opened.
+  let openDriverRef = null;
+  setCurrentDriver = (driver) => { openDriverRef = driver; };
+
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(sig, () => { shutdown(0, openDriverRef).catch(() => process.exit(0)); });
+  }
+
+  for (const event of ['uncaughtException', 'unhandledRejection']) {
+    process.on(event, (err) => {
+      restoreTerminal();
+      log('crash', { event, error: String(err && err.message ? err.message : err).slice(0, 300) });
+      console.error(err);
+      shutdown(1, openDriverRef).catch(() => process.exit(1));
+    });
+  }
+
   main().catch((err) => {
-    restoreTerminal();
     console.error(err);
-    process.exit(1);
+    shutdown(1, openDriverRef).catch(() => process.exit(1));
   });
 }
 
