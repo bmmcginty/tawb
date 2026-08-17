@@ -96,12 +96,28 @@ function extractVisible() {
     const isBlock = BLOCK.has(tag) || inheritedBlock;
     const startsParagraph = tag === 'p';
 
+    // Only the first text in an element begins a line. The rest continue it,
+    // because what separates them is inline styling: "teenagers are just
+    // <em>really</em> dumb in general" is three text nodes and one sentence,
+    // and the text after the </em> is no more a new line than the emphasis
+    // was. A block-level child does end the run, so a paragraph nested here
+    // still starts fresh.
+    let opened = false;
+
     for (const child of el.childNodes) {
       if (child.nodeType === Node.TEXT_NODE) {
         const text = (child.textContent || '').replace(/\s+/g, ' ').trim();
-        if (text) emit({ kind: 'text', text, block: isBlock, paragraph: startsParagraph });
+        if (!text) continue;
+        emit({
+          kind: 'text',
+          text,
+          block: isBlock && !opened,
+          paragraph: startsParagraph && !opened,
+        });
+        opened = true;
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         walk(child, false);
+        if (BLOCK.has(child.tagName.toLowerCase())) opened = false;
       }
     }
   };

@@ -36,6 +36,37 @@ function isSeparatorText(item) {
   return item.role === 'text' && SEPARATOR_ONLY.test(item.name);
 }
 
+// Prose broken up by inline styling is still one sentence.
+//
+// The accessibility tree reports emphasis as a node of its own, so
+// "teenagers are just <em>really</em> dumb in general" arrives as three
+// separate text items. One item per line then turns a sentence into three
+// lines, one of which is the single word "really" — and a one-word line is
+// indistinguishable from a heading or a link when you are stepping through
+// with the arrow keys, so it reads as a structural break that is not there.
+// Reddit comments are full of this; so is any prose with a bold word in it.
+//
+// Only prose is joined. Interactive items keep their own line, because a
+// link's position has to stay predictable, and a block boundary still ends
+// the run — separate paragraphs stay separate.
+function joinProse(before, after) {
+  if (!before) return after;
+  if (!after) return before;
+  // A space before closing punctuation would read as a gap that is not there.
+  if (/^[,.;:!?%)\]}»›…]/u.test(after)) return before + after;
+  if (/[([{«‹"'`¿¡]$/u.test(before)) return before + after;
+  return before + ' ' + after;
+}
+
+// Whether this item continues the previous line's prose rather than starting
+// something new.
+function continuesProse(item, previousBlock, atBoundary) {
+  return item.role === 'text'
+    && !atBoundary
+    && !!previousBlock
+    && previousBlock.item.role === 'text';
+}
+
 function buildBlocks(items) {
   const blocks = [];
   let pendingPrefix = '';
@@ -58,6 +89,15 @@ function buildBlocks(items) {
         previous.text += ' ' + text;
         continue;
       }
+    }
+
+    const previous = blocks[blocks.length - 1];
+    if (continuesProse(item, previous, atBoundary)) {
+      const addition = pendingPrefix ? `${pendingPrefix} ${text}` : text;
+      previous.text = joinProse(previous.text, addition);
+      previous.item.name = joinProse(previous.item.name, item.name);
+      pendingPrefix = '';
+      continue;
     }
 
     blocks.push({
@@ -99,6 +139,17 @@ function foldSeparatorBlocks(blocks) {
       block.text = `${pendingPrefix} ${block.text}`;
       pendingPrefix = '';
     }
+
+    // Same rule as above: a run of prose split only by inline styling is one
+    // line. Here the extractor has already marked which blocks begin a line,
+    // so a block that does not is a continuation of the one before it.
+    const previous = out[out.length - 1];
+    if (continuesProse(block.item, previous, block.startsBlock)) {
+      previous.text = joinProse(previous.text, block.text);
+      previous.item.name = joinProse(previous.item.name, block.item.name);
+      continue;
+    }
+
     out.push(block);
   }
 
@@ -113,4 +164,4 @@ function itemAtOffset(block) {
   return block.item.role === 'text' ? null : block.item;
 }
 
-module.exports = { buildBlocks, itemAtOffset, foldSeparatorBlocks };
+module.exports = { buildBlocks, itemAtOffset, foldSeparatorBlocks, joinProse };
