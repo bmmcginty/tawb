@@ -223,11 +223,22 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   return { browser, context, child, owned: true, port, executable: found.executable };
 }
 
+// The debugging port names the browser instance, which is what per-browser
+// state (tab claims) is keyed by. It is in the endpoint we were handed.
+function portOfEndpoint(endpoint) {
+  try {
+    const port = Number(new URL(endpoint).port);
+    return Number.isFinite(port) && port > 0 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
 async function connectToBrowser(endpoint) {
   const browser = await chromium.connectOverCDP(endpoint);
   const contexts = browser.contexts();
   if (contexts.length === 0) throw new Error(`No browser context available at ${endpoint}`);
-  return { browser, context: contexts[0], child: null, owned: false };
+  return { browser, context: contexts[0], child: null, owned: false, port: portOfEndpoint(endpoint) };
 }
 
 // Normalises the various things someone might reasonably pass: a port, a
@@ -240,7 +251,7 @@ function normaliseEndpoint(value) {
 }
 
 module.exports = {
-  launchOwnBrowser, connectToBrowser, normaliseEndpoint,
+  launchOwnBrowser, connectToBrowser, normaliseEndpoint, portOfEndpoint,
   findBrowserExecutable, defaultProfileDir, findRunningBrowser,
   readEndpointRecord, writeEndpointRecord,
 };

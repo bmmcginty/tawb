@@ -11,6 +11,7 @@ const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
 const { layoutLines } = require('./layout');
 const { remapIndex } = require('./remap');
 const { launchOwnBrowser, connectToBrowser, normaliseEndpoint, defaultProfileDir } = require('./browser');
+const { claimedTargets, claimTab, releaseTab } = require('./session');
 
 // --connect <port|host:port|url> attaches to a browser that is already
 // running with --remote-debugging-port, rather than launching one.
@@ -1081,6 +1082,19 @@ async function handleAddressKey(chunk, state, page) {
 
 // ---------------------------------------------------------------------------
 
+// A tab's identity as the browser knows it, which is the only name for it
+// that means the same thing in another session's process.
+async function targetIdFor(context, page) {
+  try {
+    const session = await context.newCDPSession(page);
+    const { targetInfo } = await session.send('Target.getTargetInfo');
+    await session.detach().catch(() => {});
+    return (targetInfo && targetInfo.targetId) || null;
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   log('start', { url: START_URL, logPath: LOG_PATH, connect: ARGS.connect || null });
 
@@ -1092,15 +1106,19 @@ async function main() {
   let context;
   let ownedChild = null;
   let rejoined = false;
+  let browserPort = null;
   if (ARGS.connect) {
-    ({ browser, context } = await timed('browser.connect', { endpoint: ARGS.connect }, () =>
-      connectToBrowser(ARGS.connect)));
+    const connected = await timed('browser.connect', { endpoint: ARGS.connect }, () =>
+      connectToBrowser(ARGS.connect));
+    ({ browser, context } = connected);
+    browserPort = connected.port;
     rejoined = true;
   } else {
     const started = await timed('browser.start', {}, () =>
       launchOwnBrowser({ profileDir: ARGS.profile || defaultProfileDir(), log }));
     ({ browser, context } = started);
     ownedChild = started.child;
+    browserPort = started.port;
     rejoined = !!started.rejoined;
   }
 
@@ -1108,18 +1126,37 @@ async function main() {
   // already showing rather than opening a blank one. Rejoining is usually
   // about reaching something already on screen — a video that is playing, a
   // form half filled in — and a fresh tab would hide exactly that.
+  //
+  // Never a tab another session is reading, though: two sessions on one tab
+  // navigate each other around. Those are skipped, and if every candidate is
+  // taken we open our own tab instead.
   let page = null;
+  let pageTargetId = null;
   if (rejoined && !ARGS.url) {
+    const taken = claimedTargets(browserPort);
     const existing = context.pages().filter((p) => {
       const url = p.url();
       return url && url !== 'about:blank';
     });
-    page = existing[existing.length - 1] || null;
-    if (page) log('page.adopt', { url: page.url().slice(0, 120), of: existing.length });
+    for (let i = existing.length - 1; i >= 0; i -= 1) {
+      const candidate = existing[i];
+      const targetId = await targetIdFor(context, candidate);
+      if (targetId && taken.has(targetId)) continue;
+      page = candidate;
+      pageTargetId = targetId;
+      break;
+    }
+    if (page) log('page.adopt', { url: page.url().slice(0, 120), of: existing.length, taken: taken.size });
+    else if (existing.length) log('page.adopt.none', { of: existing.length, taken: taken.size });
   }
 
   const adopted = !!page;
   if (!page) page = await context.newPage();
+  // Claim whichever tab we ended up on, including one we just opened and one
+  // in a browser we started: the session that joins later is the one that
+  // needs to know to leave it alone.
+  if (!pageTargetId) pageTargetId = await targetIdFor(context, page);
+  claimTab(browserPort, pageTargetId);
   page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
   page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
   if (!adopted) {
@@ -1202,6 +1239,7 @@ async function main() {
   clearInterval(counterTimer);
   flushCounters({ refreshes: state.live.refreshes });
   log('exit', {});
+  releaseTab(browserPort);
   await browser.close().catch(() => {});
   // Only tear down a browser we started; one the user was already running is
   // theirs to keep.
