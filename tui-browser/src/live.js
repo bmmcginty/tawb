@@ -308,6 +308,7 @@ async function pulse(page, live, now = Date.now()) {
   try {
     reading = await withTimeout(page.mainFrame().evaluate(PULSE_SCRIPT), PULSE_TIMEOUT_MS);
   } catch {
+    live.pulseErrors = (live.pulseErrors || 0) + 1;
     return null; // navigating, detached, or too busy to answer — try later
   }
   const ms = Date.now() - started;

@@ -35,9 +35,12 @@
 // opened and answers those four questions.
 
 const { openChromium } = require('./driver_chromium');
+const { openFirefox } = require('./driver_firefox');
 
 const ENGINES = {
   chromium: openChromium,
+  chrome: openChromium,
+  firefox: openFirefox,
 };
 
 const DEFAULT_ENGINE = 'chromium';

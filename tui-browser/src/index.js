@@ -60,8 +60,10 @@ const QUICK_NAV = {
   n: { label: 'non-link text', match: (item) => item.role === 'text' },
 };
 
-// The three views of a page, cycled by backslash.
-const SOURCES = ['ax', 'render', 'html', 'source'];
+// The views of a page, cycled by backslash. Which are available depends on
+// the engine: everything but AX is injected JavaScript and works anywhere,
+// while the accessibility tree needs the driver to compute it.
+const ALL_SOURCES = ['ax', 'render', 'html', 'source'];
 const SOURCE_LABELS = { ax: 'AX', render: 'PAGE', html: 'HTML', source: 'SOURCE' };
 // The two views built from a DOM walk keep their own page-side node array
 // and are activated through it, rather than by matching role and name.
@@ -1064,6 +1066,12 @@ function atEnd(state) {
 async function pulseLive(state, page) {
   const result = await pulse(page, state.live);
   if (result && (result.changed || result.rearmed || result.ms > 50)) log('live.pulse', result);
+  // A pulse that cannot run at all is worth knowing about: it is the safety
+  // net, and a silent one is no net.
+  if (state.live.pulseErrors) {
+    count('pulseErrors', state.live.pulseErrors);
+    state.live.pulseErrors = 0;
+  }
 }
 
 function startLiveTicker(state, page) {
@@ -1157,7 +1165,8 @@ async function handleBrowseKey(chunk, state, page) {
   // Cycle views, keeping the reader on the same content.
   if (chunk === '\\') {
     const anchor = anchorFor(state);
-    state.source = SOURCES[(SOURCES.indexOf(state.source) + 1) % SOURCES.length];
+    const cycle = state.sources;
+    state.source = cycle[(cycle.indexOf(state.source) + 1) % cycle.length];
     await refresh(state, page, { anchor });
     render(state, page);
     setStatus(state, `${SOURCE_LABELS[state.source]} view.`);
@@ -1582,11 +1591,13 @@ async function main() {
       page.goto(START_URL, { waitUntil: 'domcontentloaded' }));
   }
 
+  const sources = ALL_SOURCES.filter((s) => s !== 'ax' || driver.capabilities?.ax !== false);
   const state = {
     driver,
+    sources,
     page,
-    source: 'ax',
-    blocks: await snapshotBlocks(page, 'ax', { driver }),
+    source: sources[0],
+    blocks: await snapshotBlocks(page, sources[0], { driver }),
     lines: [],
     cursor: 0,
     col: 0,
@@ -1690,7 +1701,7 @@ module.exports = {
   render, drawList, drawAddress, drawHint, snapshotBlocks, moveSelection,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock,
-  anchorFor, restoreAnchor, diffBlocks, jumpToChange, activateCurrent, SOURCES,
+  anchorFor, restoreAnchor, diffBlocks, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
   applyTextPatches, soleBlockContaining, loadMore, atEnd,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
