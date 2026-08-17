@@ -87,15 +87,23 @@ announcing something about itself. Startup then asks a real page what it sees
 and **refuses to run** if the answer is not `false`, so a browser that would
 fail bot checks cannot slip through unnoticed.
 
-What is not there yet:
+All four views work. Three of them are injected JavaScript and care nothing
+for the engine; the accessibility tree is computed by `ax_own.js`, used only
+where Playwright is not there to do it. **Chromium keeps using Playwright's**,
+so the path that works is not put at risk by a second implementation of the
+hardest thing here — and having both means `compare` can hold them against
+each other on real pages, which is how three bugs in ours were found.
 
-| | |
-| --- | --- |
-| `[AX]` view | Playwright computes the accessibility tree with an injected script of its own, and Chromium keeps using it. Firefox needs an implementation of ours, which is the outstanding piece — so the view is not offered there rather than offered wrongly. |
-| child frames | Descending into iframes needs an element-to-context mapping that BiDi expresses differently from CDP. Until then Firefox renders the top document and stops. |
+On Wikipedia's Braille article the two trees are 1632 blocks each and agree
+line for line for the first 58. Where they differ, ours is sometimes the
+better: it folds a sentence's trailing full stop onto the link it follows,
+which Playwright does inconsistently with itself two lines later, and it names
+a frame from its `title` where Playwright emits a bare `<frame>`. Neither is
+authoritative — `compare` surfaces the difference so you can judge it.
 
-The other three views are injected JavaScript and care nothing for the
-engine. Live updating, the clock's fast text patch and the reading freeze all
+Child frames work by position, because BiDi offers no element-to-context link:
+the Nth frame element in a document belongs to the Nth child context of it.
+That is the same ordering assumption the AX path has always relied on. Live updating, the clock's fast text patch and the reading freeze all
 work identically — 28 patches and no snapshots on a one-second clock, the
 same as Chromium.
 
