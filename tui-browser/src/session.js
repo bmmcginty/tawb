@@ -4,6 +4,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const { processAlive } = require('./proc');
+
 // Which tab each running session is reading.
 //
 // Rejoining a browser adopts the tab it is already showing. That is right for
@@ -24,17 +26,6 @@ function stateDir() {
 
 function claimsPath(port) {
   return path.join(stateDir(), `tabs-${port}.json`);
-}
-
-function processAlive(pid) {
-  if (!pid) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    // EPERM means it exists and belongs to someone else, which still counts.
-    return err.code === 'EPERM';
-  }
 }
 
 function readClaims(port) {

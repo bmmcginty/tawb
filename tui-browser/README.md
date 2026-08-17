@@ -182,7 +182,9 @@ way in from here, so use the address bar to go somewhere else.
 ## Timing log
 
 Every run writes `tweb.log` next to the package (override with `TWEB_LOG`),
-one JSON record per line, timestamped from process start:
+one JSON record per line, timestamped from process start. A second session
+started while the first is still running writes `tweb-<pid>.log` instead, so
+neither log overwrites the other:
 
 ```json
 {"t":1209,"event":"snapshot","source":"ax","ms":396,"blocks":346,"frames":3}
