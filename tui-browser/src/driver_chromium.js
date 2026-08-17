@@ -1,6 +1,7 @@
 'use strict';
 
 const { launchOwnBrowser, connectToBrowser, defaultProfileDir } = require('./browser');
+const { parseAriaSnapshot } = require('./aria');
 
 // Chromium, attached to over the DevTools protocol.
 //
@@ -56,14 +57,18 @@ async function openChromium({
       }
     },
 
-    // The accessibility tree as YAML. Playwright's own, by design.
-    async axSnapshot(frame) {
-      return frame.locator('body').ariaSnapshot();
+    // The accessibility tree, flattened into reading order. Playwright's own,
+    // by design: it computes the tree with an injected script, we parse its
+    // YAML, and neither half is worth replacing here just because another
+    // engine needs an implementation of its own.
+    async axItems(frame) {
+      return parseAriaSnapshot(await frame.locator('body').ariaSnapshot());
     },
 
-    // Whoever computed the tree resolves against it.
-    async elementByRole(scope, role, name) {
-      return scope.getByRole(role, { name, exact: true }).first().elementHandle();
+    // Whoever computed the tree resolves against it. Playwright's items carry
+    // no element reference, so this goes back through role and name.
+    async axElementHandle(scope, item) {
+      return scope.getByRole(item.role, { name: item.name, exact: true }).first().elementHandle();
     },
 
     async close() {

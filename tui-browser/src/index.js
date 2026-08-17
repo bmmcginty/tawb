@@ -1255,7 +1255,7 @@ async function elementHandleFor(state, page, item) {
   if (DOM_SOURCES.has(state.source)) return domElementHandle(page, item);
   if (state.source === 'render') return renderElementHandle(page, item);
   const scope = item.frame || page;
-  return state.driver.elementByRole(scope, item.role, item.name);
+  return state.driver.axElementHandle(scope, item);
 }
 
 // ---------------------------------------------------------------------------
