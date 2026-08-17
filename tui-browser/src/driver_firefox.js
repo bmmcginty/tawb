@@ -2,6 +2,7 @@
 
 const bidi = require('./bidi');
 const { launchFirefox, defaultProfileDir } = require('./firefox');
+const { extractAxItems } = require('./ax_own');
 
 // Firefox, driven over WebDriver BiDi.
 //
@@ -14,15 +15,18 @@ const { launchFirefox, defaultProfileDir } = require('./firefox');
 //
 // What is not here yet, and is honest about it:
 //
-//   the AX view    Playwright computes the accessibility tree with an
-//                  injected script of its own. Our own implementation is the
-//                  remaining piece, and until it lands this driver reports
-//                  ax: false and the view is simply not offered. The other
-//                  three views are pure injected JavaScript and work now.
-//   child frames   descending into iframes needs an element-to-context
-//                  mapping that BiDi expresses differently from CDP. Until
-//                  then a frame reports no children and the walker stops at
-//                  the top document.
+// Two things work differently here than on the Chromium path, and both are
+// visible in this file:
+//
+//   the AX view    comes from our own implementation in ax_own.js, because
+//                  Playwright is not here to compute it. Chromium keeps
+//                  using Playwright's.
+//   child frames   BiDi has no element-to-context link, so an iframe element
+//                  is matched to its browsing context by position: the Nth
+//                  frame element in a document belongs to the Nth child
+//                  context of that document. Which is the same ordering
+//                  assumption the AX path has always relied on to splice
+//                  frames into the right place.
 
 const NAVIGATION_EVENTS = [
   'browsingContext.load',
@@ -103,11 +107,48 @@ class FirefoxFrame {
     return new FirefoxHandle(this.session, this.contextId, this.page, result.result.handle);
   }
 
-  // Descending into frames is not wired up yet, and reporting none is the
-  // honest answer: the walker then renders the top document and stops, rather
-  // than claiming an embed is empty.
-  async $$() {
-    return [];
+  // Only ever called for frame elements, and what the caller needs from each
+  // is its child document. BiDi will not map an element to a context, so what
+  // comes back is a position: the Nth frame element in this document.
+  async $$(selector) {
+    const count = await this.evaluate(
+      (sel) => document.querySelectorAll(sel).length, selector);
+    const refs = [];
+    for (let i = 0; i < count; i += 1) refs.push(new FirefoxFrameRef(this, i));
+    return refs;
+  }
+
+  // The child documents of this one, in the order the browser reports them,
+  // which is document order.
+  async childFrames() {
+    const tree = await this.session.send('browsingContext.getTree', {
+      root: this.contextId, maxDepth: 1,
+    }).catch(() => null);
+    const children = tree?.contexts?.[0]?.children || [];
+    return children.map((child) => {
+      const frame = new FirefoxFrame(this.session, child.context, this.page);
+      frame._url = child.url || 'about:blank';
+      return frame;
+    });
+  }
+}
+
+// A frame element identified by where it sits rather than by a handle, since
+// that is all BiDi offers. It answers contentFrame() and nothing else, which
+// is all the frame walker asks of it.
+class FirefoxFrameRef {
+  constructor(parent, index) {
+    this.parent = parent;
+    this.index = index;
+  }
+
+  async contentFrame() {
+    const children = await this.parent.childFrames();
+    return children[this.index] || null;
+  }
+
+  async dispose() {
+    // Nothing was held: the reference is a number.
   }
 }
 
@@ -154,6 +195,7 @@ class FirefoxPage {
     this.browserContext = browserContext;
     this._mainFrame = new FirefoxFrame(session, contextId, this);
     this._navigationHandlers = [];
+    this._seenFrames = [];
   }
 
   context() {
@@ -165,7 +207,14 @@ class FirefoxPage {
   }
 
   frames() {
-    return [this._mainFrame];
+    // Whatever the last snapshot walked into, plus the main document. Frame
+    // objects are created per snapshot here rather than tracked, so this is a
+    // report of what was reached and not a live tree.
+    return [this._mainFrame, ...this._seenFrames];
+  }
+
+  noteFrame(frame) {
+    if (!this._seenFrames.includes(frame)) this._seenFrames.push(frame);
   }
 
   url() {
@@ -357,9 +406,8 @@ async function openFirefox({
     rejoined: !child,
     session,
 
-    // Which views this engine can offer. The AX tree needs an implementation
-    // of our own, which is the piece still outstanding.
-    capabilities: { ax: false, frames: false },
+    // Which views this engine can offer.
+    capabilities: { ax: true, frames: true },
 
     async targetIdFor() {
       // BiDi context ids are already stable per tab; one tab for now, so tab
@@ -367,12 +415,21 @@ async function openFirefox({
       return top.context;
     },
 
-    async axSnapshot() {
-      throw new Error('the AX view is not implemented for Firefox yet');
+    // Our own tree, computed in the page. The items come back in the same
+    // shape the Playwright path produces, so everything downstream — prose
+    // merging, separator folding, layout — is shared.
+    async axItems(frame) {
+      return frame.evaluate(extractAxItems);
     },
 
-    async elementByRole() {
-      throw new Error('resolving by role is not implemented for Firefox yet');
+    // Ours kept a reference, so there is no need to search by role and name:
+    // the item says which node it came from.
+    async axElementHandle(scope, item) {
+      if (item.axIndex == null) {
+        throw new Error('this line carries no element reference to activate');
+      }
+      return scope.evaluateHandle(
+        (i) => (window.__twebAxNodes || [])[i], item.axIndex);
     },
 
     async close() {

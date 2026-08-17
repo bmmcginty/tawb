@@ -1,6 +1,5 @@
 'use strict';
 
-const { parseAriaSnapshot } = require('./aria');
 const { buildBlocks, foldSeparatorBlocks } = require('./blocks');
 const { snapshotDomBlocks } = require('./dom');
 const { snapshotRenderBlocks } = require('./render_html');
@@ -52,8 +51,7 @@ async function blocksForFrame(frame, source, driver = null) {
   if (source === 'html') return snapshotDomBlocks(frame);
   if (source === 'render') return foldSeparatorBlocks(await snapshotRenderBlocks(frame));
   if (!driver) throw new Error('the AX view needs a driver to read the accessibility tree');
-  const yamlText = await driver.axSnapshot(frame);
-  const blocks = buildBlocks(parseAriaSnapshot(yamlText));
+  const blocks = buildBlocks(await driver.axItems(frame));
   // AX items carry no element reference, so record the frame they came from;
   // activation resolves role/name against that frame, not the main page.
   for (const block of blocks) {
@@ -113,6 +111,9 @@ async function walk(frame, source, depth, budget, seen, visited, driver) {
   }
   const blocksMs = Date.now() - tBlocks;
   if (visited && blocks.length) visited.push(frame);
+  // Engines that build frame objects per snapshot rather than tracking a live
+  // tree need telling what was reached, so page.frames() can report it.
+  if (frame.page && typeof frame.page.noteFrame === 'function') frame.page.noteFrame(frame);
   if (blocksMs > 100) {
     log('frame.blocks.slow', { depth, ms: blocksMs, blocks: blocks.length, url: frame.url().slice(0, 100) });
   }
