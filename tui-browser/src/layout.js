@@ -11,7 +11,25 @@
 // (`start`/`end`), which is what lets a caret column map back to an inline
 // link span.
 
-function wrapWithOffsets(text, width) {
+// A row is one terminal row, so it must not contain a control character. A
+// newline written into the middle of a row moves the terminal down a line by
+// itself: every row below it then sits one place lower than the buffer
+// believes, and the cursor — the only thing telling a braille display where
+// the reader is — lands on the wrong text.
+//
+// Most content cannot do this, because every view collapses whitespace as it
+// extracts text. Two routes survive that: a <textarea>'s value, which is its
+// live content rather than extracted text, and an attribute written across
+// several lines, which HTML view prints verbatim. Both are real, and both
+// reached the screen.
+//
+// Newlines become row breaks, which is what they mean, and every other
+// control character becomes a space. Substituting rather than deleting keeps
+// each character in place, so the offsets a caret column maps through still
+// point where they did.
+const CONTROL_EXCEPT_NEWLINE = /[\u0000-\u0009\u000b-\u001f\u007f]/g;
+
+function wrapSegment(text, width) {
   const out = [];
   if (width <= 0) return [{ text, start: 0, end: text.length }];
 
@@ -44,6 +62,21 @@ function wrapWithOffsets(text, width) {
   }
 
   if (out.length === 0) out.push({ text: '', start: 0, end: 0 });
+  return out;
+}
+
+function wrapWithOffsets(text, width) {
+  const safe = text.replace(CONTROL_EXCEPT_NEWLINE, ' ');
+  if (!safe.includes('\n')) return wrapSegment(safe, width);
+
+  const out = [];
+  let base = 0;
+  for (const segment of safe.split('\n')) {
+    for (const line of wrapSegment(segment, width)) {
+      out.push({ text: line.text, start: base + line.start, end: base + line.end });
+    }
+    base += segment.length + 1; // the newline occupies a position too
+  }
   return out;
 }
 
