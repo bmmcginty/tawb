@@ -41,14 +41,18 @@ function isFrameItem(item) {
   return item && (item.role === 'iframe' || item.tag === 'iframe' || item.tag === 'frame');
 }
 
-async function blocksForFrame(frame, source) {
+// The three DOM-derived views are pure injected JavaScript and work on any
+// engine. Only the AX view needs the driver, which is the one that knows how
+// the accessibility tree is computed for the browser in hand.
+async function blocksForFrame(frame, source, driver = null) {
   // Raw HTML mode stays unfolded on purpose: it is the inspection view, so
   // it should show what is there rather than a tidied version of it. The
   // same goes double for the source view, where tidying would be a lie.
   if (source === 'source') return snapshotSourceBlocks(frame);
   if (source === 'html') return snapshotDomBlocks(frame);
   if (source === 'render') return foldSeparatorBlocks(await snapshotRenderBlocks(frame));
-  const yamlText = await frame.locator('body').ariaSnapshot();
+  if (!driver) throw new Error('the AX view needs a driver to read the accessibility tree');
+  const yamlText = await driver.axSnapshot(frame);
   const blocks = buildBlocks(parseAriaSnapshot(yamlText));
   // AX items carry no element reference, so record the frame they came from;
   // activation resolves role/name against that frame, not the main page.
@@ -89,16 +93,16 @@ async function orderedChildFrames(frame, limit = Infinity) {
 
 // `visited` collects the frames that actually contributed content, so the
 // caller can observe exactly what it displays.
-async function snapshotFrameTree(page, source, { visited = null } = {}) {
+async function snapshotFrameTree(page, source, { visited = null, driver = null } = {}) {
   const budget = { remaining: MAX_FRAMES };
-  return walk(page.mainFrame(), source, 0, budget, new Set(), visited);
+  return walk(page.mainFrame(), source, 0, budget, new Set(), visited, driver);
 }
 
-async function walk(frame, source, depth, budget, seen, visited) {
+async function walk(frame, source, depth, budget, seen, visited, driver) {
   let blocks;
   const tBlocks = Date.now();
   try {
-    blocks = await withDeadline(blocksForFrame(frame, source), FRAME_BUDGET_MS, null);
+    blocks = await withDeadline(blocksForFrame(frame, source, driver), FRAME_BUDGET_MS, null);
   } catch {
     log('frame.blocks.error', { depth, url: frame.url().slice(0, 80) });
     return []; // frame navigated or detached mid-snapshot
@@ -151,7 +155,7 @@ async function walk(frame, source, depth, budget, seen, visited) {
     budget.remaining -= 1;
     if (budget.remaining < 0) break;
 
-    const nested = await walk(child, source, depth + 1, budget, new Set([...seen, url]), visited);
+    const nested = await walk(child, source, depth + 1, budget, new Set([...seen, url]), visited, driver);
     out.push(...nested);
   }
 
