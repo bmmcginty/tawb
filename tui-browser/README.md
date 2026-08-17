@@ -120,9 +120,39 @@ left one running:
 | firefox | ~5.3s | ~35ms |
 
 `--keep-browser` leaves the browser running when you quit, so the next session
-rejoins it instead of paying the cold start again. Firefox serves **one BiDi
-session at a time**, so unlike Chromium a second reader cannot share one
-Firefox — it is told so plainly rather than left to time out.
+rejoins it instead of paying the cold start again.
+
+### One reader at a time, and what happens when one dies
+
+Firefox serves **one WebDriver session at a time**, so unlike Chromium a second
+reader cannot share one Firefox. It is refused by name — *"Another reader
+(process 1234) is already using this Firefox"* — rather than left to time out.
+
+Worse, closing a connection does not end its session: Firefox only unregisters
+the connection. There is no reattaching by session id, no ending it from
+another connection and no expiry, so a reader that dies without saying
+`session.end` used to lock every later reader out until Firefox was restarted.
+
+Two things stop that being your problem. Exits are bounded and always tell the
+browser — `SIGINT`, `SIGTERM`, `SIGHUP`, uncaught exceptions and unhandled
+rejections all end the session before going, so only `SIGKILL`, an OOM kill or
+losing power can strand one. And when one is stranded anyway, Marionette
+releases it: it shares the same session slot and deletes the session whenever a
+connection to it closes, so connecting and hanging up is the whole operation.
+Measured against a reader stopped with `SIGKILL`, the next reader detects the
+orphan, names the dead owner, releases it and starts in 36ms.
+
+A session is only ever taken from an owner whose process is gone, which is why
+the owning reader records its process id. Marionette cannot tell whose session
+it is deleting, so that check is the only thing standing between recovery and
+pulling the page out from under a reader that is still using it.
+
+This is why Marionette is left listening for the browser's whole life rather
+than shut down once the automation flag is cleared. Local port exposure is out
+of scope here — anything that can reach Marionette can reach the browser's own
+protocol port and drive it anyway — but there is a robustness consequence worth
+knowing: while it listens, anything that connects to it and disconnects will
+drop this reader's session too.
 
 ## Running more than one at a time
 
