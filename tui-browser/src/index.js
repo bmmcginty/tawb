@@ -57,8 +57,11 @@ const QUICK_NAV = {
 };
 
 // The three views of a page, cycled by backslash.
-const SOURCES = ['ax', 'render', 'html'];
-const SOURCE_LABELS = { ax: 'AX', render: 'PAGE', html: 'HTML' };
+const SOURCES = ['ax', 'render', 'html', 'source'];
+const SOURCE_LABELS = { ax: 'AX', render: 'PAGE', html: 'HTML', source: 'SOURCE' };
+// The two views built from a DOM walk keep their own page-side node array
+// and are activated through it, rather than by matching role and name.
+const DOM_SOURCES = new Set(['html', 'source']);
 
 const HEADER_ROWS = 3;   // address line, hint line, blank line
 const FOOTER_ROWS = 2;   // blank + status line
@@ -1233,7 +1236,7 @@ function withTimeout(promise, ms, label) {
 }
 
 async function elementHandleFor(state, page, item) {
-  if (state.source === 'html') return domElementHandle(page, item);
+  if (DOM_SOURCES.has(state.source)) return domElementHandle(page, item);
   if (state.source === 'render') return renderElementHandle(page, item);
   const scope = item.frame || page;
   return scope.getByRole(item.role, { name: item.name, exact: true }).first().elementHandle();
@@ -1295,7 +1298,7 @@ const TEXT_AT_FRAGMENT = (hash) => {
 // in which case the URL never changes and there is nothing else to go on.
 async function fragmentOf(state, page, item) {
   let href = null;
-  if (state.source === 'html') {
+  if (DOM_SOURCES.has(state.source)) {
     href = item.attrs && item.attrs.href;
   } else {
     try {
@@ -1368,7 +1371,7 @@ async function activateCurrent(state, page) {
       return;
     }
 
-    if (state.source === 'html') {
+    if (DOM_SOURCES.has(state.source)) {
       state.statusMsg = await activateDomItem(page, item);
     } else {
       // Activate through the DOM's own default action rather than a

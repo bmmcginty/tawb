@@ -4,6 +4,7 @@ const { parseAriaSnapshot } = require('./aria');
 const { buildBlocks, foldSeparatorBlocks } = require('./blocks');
 const { snapshotDomBlocks } = require('./dom');
 const { snapshotRenderBlocks } = require('./render_html');
+const { snapshotSourceBlocks } = require('./source_html');
 const { log } = require('./log');
 
 // Renders embedded frames inline, where they sit in the parent page.
@@ -42,7 +43,9 @@ function isFrameItem(item) {
 
 async function blocksForFrame(frame, source) {
   // Raw HTML mode stays unfolded on purpose: it is the inspection view, so
-  // it should show what is there rather than a tidied version of it.
+  // it should show what is there rather than a tidied version of it. The
+  // same goes double for the source view, where tidying would be a lie.
+  if (source === 'source') return snapshotSourceBlocks(frame);
   if (source === 'html') return snapshotDomBlocks(frame);
   if (source === 'render') return foldSeparatorBlocks(await snapshotRenderBlocks(frame));
   const yamlText = await frame.locator('body').ariaSnapshot();
