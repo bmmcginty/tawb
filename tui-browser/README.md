@@ -96,8 +96,25 @@ What is not there yet:
 
 The other three views are injected JavaScript and care nothing for the
 engine. Live updating, the clock's fast text patch and the reading freeze all
-work identically — 25 patches and no snapshots on a one-second clock, the
+work identically — 28 patches and no snapshots on a one-second clock, the
 same as Chromium.
+
+### Startup, and why it looks worse than it is
+
+A cold start is 3.7s for Chromium and 5.3s for Firefox, the difference being
+the automation clear. What makes Firefox *look* far slower is that a browser
+already running is rejoined in tens of milliseconds, and Chromium has usually
+left one running:
+
+| | cold start | rejoin |
+| --- | --- | --- |
+| chromium | ~3.7s | ~50ms |
+| firefox | ~5.3s | ~35ms |
+
+`--keep-browser` leaves the browser running when you quit, so the next session
+rejoins it instead of paying the cold start again. Firefox serves **one BiDi
+session at a time**, so unlike Chromium a second reader cannot share one
+Firefox — it is told so plainly rather than left to time out.
 
 ## Running more than one at a time
 
