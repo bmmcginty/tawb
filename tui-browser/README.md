@@ -82,6 +82,10 @@ So the rule here is:
 - **While you are pressing keys**, the buffer is frozen. What you are
   reading stays exactly where it is, even if the page changes underneath.
 - **Once you stop for a couple of seconds**, updates flow again.
+- **Text that only rewrites itself is exempt.** A clock or a counter
+  replaces text without moving anything, so it keeps ticking even while you
+  read — unless it is on the line you are actually on, which is frozen like
+  everything else.
 - **Announcements are never delayed.** `aria-live` regions — status
   messages, errors, "42 results found" — reach the status line immediately
   whether you are reading or not.
@@ -204,8 +208,9 @@ neither log overwrites the other:
 ```
 
 It records startup phases, every page snapshot with its cost, live refresh
-broken down by stage, keypresses that took longer than 20ms, and any frame
-slower than 100ms with the URL responsible. It is the fastest way to find
+broken down by stage, text splices that avoided a snapshot (`live.patch`),
+keypresses that took longer than 20ms, and any frame slower than 100ms with
+the URL responsible. It is the fastest way to find
 out why something felt slow — ad-heavy pages spawning hundreds of tracking
 iframes have been the usual culprit.
 
@@ -214,8 +219,9 @@ iframes have been the usual culprit.
 - Snapshots can spike to a couple of seconds in the first moments after an
   ad-heavy page loads, then settle to roughly 150ms. Input takes priority
   over refreshes, so it should not block you.
-- A clock updates about once a second at best, and slower on expensive
-  pages, because each update currently costs a whole-page snapshot.
+- A change that adds or removes anything still costs a whole-page snapshot,
+  so a page that appends to a list every second stays as expensive as it
+  ever was. Only replaced text takes the cheap path.
 - Some sites gate particular endpoints behind bot checks. These now pass,
   because the browser is a real one, but a challenge that demands
   interaction may still need a sighted pass in the same profile — the
