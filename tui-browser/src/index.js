@@ -640,10 +640,34 @@ function announce(state, { politeness, text }) {
 // document that no longer exists — every line refers to an element that is
 // gone, so activating one fails with an evaluation error against a stale
 // handle. Rebuild when the main frame lands somewhere new.
+// Whether two URLs are the same document reached at a different fragment.
+function sameDocumentFragment(before, after) {
+  try {
+    const a = new URL(before);
+    const b = new URL(after);
+    if (!b.hash) return false;
+    a.hash = '';
+    b.hash = '';
+    return a.href === b.href;
+  } catch {
+    return false;
+  }
+}
+
 async function onExternalNavigation(state, page) {
   const url = page.url();
   if (url === state.renderedUrl) return;
   if (state.live && state.live.refreshing) return;
+
+  // Following a fragment fires this too. Nothing was replaced — the document
+  // is the one already in the buffer — so rebuilding it and resetting the
+  // cursor would throw the reader to the top of a page they never left.
+  // Activation moves them to the target itself; a hash changed by script
+  // leaves them where they are, and the observer catches any real change.
+  if (sameDocumentFragment(state.renderedUrl, url)) {
+    state.renderedUrl = url;
+    return;
+  }
 
   state.renderedUrl = url;
   log('navigation.external', { url: url.slice(0, 120) });
@@ -1215,6 +1239,108 @@ async function elementHandleFor(state, page, item) {
   return scope.getByRole(item.role, { name: item.name, exact: true }).first().elementHandle();
 }
 
+// ---------------------------------------------------------------------------
+// Fragment links
+//
+// "Skip to content" is the first link on most pages and the one a screen
+// reader user hits first. It points at a fragment — href="#main-content" —
+// and in a graphical browser it scrolls there and moves focus.
+//
+// Here it did the opposite of what it says. Clicking it changed the URL, so
+// activation read that as a navigation, rebuilt the buffer and reset the
+// cursor: the reader asked to skip the navigation and was sent to the very
+// top of it instead.
+//
+// The buffer has no notion of document position to jump to — the AX view has
+// no node identity at all — so the target is located the way everything else
+// here is, by its content: ask the page what text sits at that fragment, and
+// find that text in the buffer.
+// ---------------------------------------------------------------------------
+
+const TEXT_AT_FRAGMENT = (hash) => {
+  let target = null;
+  try {
+    target = document.getElementById(hash) || document.querySelector(`[name="${CSS.escape(hash)}"]`);
+  } catch { /* not a usable selector */ }
+  if (!target) return null;
+
+  // The first readable text at or after the target. A skip link usually
+  // points at a container — <main id="main-content"> — whose own text is the
+  // entire rest of the page, so what identifies the place is the first thing
+  // inside it, not the container.
+  //
+  // Readable is the load-bearing word. Reddit's #main-content opens with a
+  // <script> whose source is the first text node in it; matching on that
+  // looks for `SML.load([...])` in the buffer, which no view will ever show.
+  const UNRENDERED = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TITLE', 'HEAD']);
+  const walker = document.createTreeWalker(document.body || document, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent || UNRENDERED.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
+      if ((node.data || '').replace(/\s+/g, ' ').trim().length < 2) return NodeFilter.FILTER_REJECT;
+      const style = window.getComputedStyle(parent);
+      if (style.display === 'none' || style.visibility === 'hidden') return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  walker.currentNode = target;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    return (node.data || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  }
+  return null;
+};
+
+// The href of the element we are about to activate, so a fragment link can be
+// followed even when the page cancels the click and handles it in script —
+// in which case the URL never changes and there is nothing else to go on.
+async function fragmentOf(state, page, item) {
+  let href = null;
+  if (state.source === 'html') {
+    href = item.attrs && item.attrs.href;
+  } else {
+    try {
+      const handle = await withTimeout(
+        elementHandleFor(state, page, item), ACTION_TIMEOUT_MS, 'Locating link');
+      href = await handle.evaluate((el) => el.getAttribute('href'));
+    } catch {
+      return null;
+    }
+  }
+  if (!href || !href.startsWith('#') || href.length < 2) return null;
+  return decodeURIComponent(href.slice(1));
+}
+
+// The block holding a piece of text, searched by content in both directions:
+// the buffer's line can be longer than the snippet (prose runs together) or
+// shorter (a link renders as just its name).
+function findBlockWithText(state, needle) {
+  const trimmed = (needle || '').trim();
+  if (!trimmed) return -1;
+
+  const direct = state.blocks.findIndex((b) => b.text.includes(trimmed));
+  if (direct >= 0) return direct;
+
+  // Long enough that a common word cannot match the wrong place.
+  return state.blocks.findIndex((b) => {
+    const text = b.text.trim();
+    return text.length >= 10 && trimmed.includes(text);
+  });
+}
+
+async function jumpToFragment(state, page, hash) {
+  const snippet = await page.evaluate(TEXT_AT_FRAGMENT, hash).catch(() => null);
+  if (!snippet) return false;
+
+  const blockIndex = findBlockWithText(state, snippet);
+  if (blockIndex < 0) return false;
+
+  const line = state.lines.findIndex((l) => l.blockIndex === blockIndex && !l.continuation);
+  if (line < 0) return false;
+
+  moveSelection(state, line, page);
+  return true;
+}
+
 async function activateCurrent(state, page) {
   const item = itemUnderCursor(state);
   if (!item || item.role === 'text') {
@@ -1225,6 +1351,7 @@ async function activateCurrent(state, page) {
   const previousTexts = state.blocks.map((b) => b.text);
   const previousUrl = page.url();
   const anchor = anchorFor(state);
+  const fragment = LINK_ROLES.has(item.role) ? await fragmentOf(state, page, item) : null;
 
   try {
     setStatus(state, `Activating "${item.name}"...`);
@@ -1261,6 +1388,20 @@ async function activateCurrent(state, page) {
       ? `Gave up activating "${item.name}" after ${ACTION_TIMEOUT_MS / 1000}s — it may be inside a bot check or an unreachable frame.`
       : `Error activating "${item.name}": ${err.message.split('\n')[0]}`);
     log('activate.failed', { name: String(item.name).slice(0, 80), timedOut, source: state.source });
+    return;
+  }
+
+  // A fragment link never left the document, whatever it did to the URL, so
+  // the buffer still stands and the reader keeps their place — until we move
+  // them deliberately, to where the link actually points.
+  if (fragment) {
+    await refresh(state, page, { anchor });
+    render(state, page);
+    const jumped = await jumpToFragment(state, page, fragment);
+    log('activate.fragment', { hash: fragment.slice(0, 60), jumped });
+    setStatus(state, jumped
+      ? `Moved to ${fragment}.`
+      : `"${item.name}" points at ${fragment}, which is not in this view.`);
     return;
   }
 
@@ -1572,5 +1713,6 @@ module.exports = {
   anchorFor, restoreAnchor, diffBlocks, jumpToChange, activateCurrent, SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
   applyTextPatches, soleBlockContaining, loadMore, atEnd,
+  sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation,
 };
