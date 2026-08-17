@@ -188,6 +188,66 @@ class FirefoxHandle {
   }
 }
 
+// Keys as WebDriver names them: printable characters are themselves, and
+// everything else is a code point in a private-use block. This is the mapping
+// Playwright's key names go through to reach the same place.
+const WEBDRIVER_KEYS = {
+  Enter: '\uE007',
+  Backspace: '\uE003',
+  Tab: '\uE004',
+  Escape: '\uE00C',
+  Delete: '\uE017',
+  Home: '\uE011',
+  End: '\uE010',
+  PageUp: '\uE00E',
+  PageDown: '\uE00F',
+  ArrowLeft: '\uE012',
+  ArrowUp: '\uE013',
+  ArrowRight: '\uE014',
+  ArrowDown: '\uE015',
+};
+
+// Typing, through the browser's own input pipeline.
+//
+// This is the piece that cannot be faked from inside the page: a
+// script-dispatched KeyboardEvent is untrusted and does not insert text, which
+// is why a WebExtension could never do this and why the protocol is
+// load-bearing rather than a convenience. input.performActions produces real
+// key events, so autocomplete, IME and a field's own handlers all behave as
+// they would under a human's fingers.
+class FirefoxKeyboard {
+  constructor(session, page) {
+    this.session = session;
+    this.page = page;
+  }
+
+  async #send(values) {
+    const actions = [];
+    for (const value of values) {
+      actions.push({ type: 'keyDown', value });
+      actions.push({ type: 'keyUp', value });
+    }
+    await this.session.send('input.performActions', {
+      context: this.page.contextId,
+      actions: [{ type: 'key', id: 'tweb-keyboard', actions }],
+    });
+  }
+
+  // Spread rather than split: a character outside the basic plane is two code
+  // units and one keystroke.
+  async type(text) {
+    await this.#send([...String(text)]);
+  }
+
+  async press(key) {
+    const value = WEBDRIVER_KEYS[key];
+    if (!value && String(key).length !== 1) {
+      throw new Error(`the Firefox driver has no key named "${key}"`);
+    }
+    await this.#send([value || key]);
+  }
+}
+
 class FirefoxPage {
   constructor(session, contextId, browserContext) {
     this.session = session;
@@ -196,6 +256,7 @@ class FirefoxPage {
     this._mainFrame = new FirefoxFrame(session, contextId, this);
     this._navigationHandlers = [];
     this._seenFrames = [];
+    this.keyboard = new FirefoxKeyboard(session, this);
   }
 
   context() {
@@ -449,4 +510,7 @@ async function openFirefox({
   };
 }
 
-module.exports = { openFirefox, FirefoxPage, FirefoxFrame, FirefoxHandle, toRemoteArgument };
+module.exports = {
+  openFirefox, FirefoxPage, FirefoxFrame, FirefoxHandle, FirefoxKeyboard,
+  toRemoteArgument, WEBDRIVER_KEYS,
+};
