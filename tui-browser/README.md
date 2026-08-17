@@ -1,7 +1,7 @@
 # tui-browser
 
 A terminal browser for reading the web from the command line, built for a
-blind user. It drives an ordinary Chrome or Chromium and
+blind user. It drives an ordinary Chrome, Chromium or Firefox and
 presents each page as a linear list of lines — the model a screen reader's
 browse mode uses — instead of trying to draw the page as text art.
 
@@ -17,7 +17,7 @@ npm start -- https://en.wikipedia.org/wiki/Braille
 
 ## It drives a real browser, not an automated one
 
-This starts an ordinary Chrome or Chromium and watches it. It does not let
+This starts an ordinary Chrome, Chromium or Firefox and watches it. It does not let
 Playwright launch the browser, because a Playwright-launched browser
 advertises itself as automated — `navigator.webdriver` is true — and sites
 that react to that leave you parked on pages which never load. Measured
@@ -49,6 +49,55 @@ npm start -- --connect 9222 https://example.com   # attach to a browser you star
 
 To use a browser you are already running, start it with
 `--remote-debugging-port=9222` and pass `--connect 9222`.
+
+## Firefox
+
+```
+npm start -- --browser firefox https://example.com
+npm run compare -- https://example.com      # read it in both, diff the result
+```
+
+Firefox is driven over WebDriver BiDi, because Mozilla removed CDP and
+Playwright cannot attach to a Firefox you started yourself — only launch a
+patched build of its own, which is the automated browser this project exists
+not to use.
+
+The same rule applies as everywhere else here: **a browser that fails bot
+checks is not a degraded reader, it is a broken one.** Firefox makes that
+harder in exactly one way, and it is worth being precise about which. Against
+a probe collecting what anti-bot scripts actually read — automation globals,
+document attributes, plugins, permissions state, hover and pointer media
+queries, window against screen geometry, WebGL strings, whether patched
+getters still report native code — an automated Firefox 147 differs from an
+ordinary one in a single boolean:
+
+```
+navigator.webdriver: false -> true
+```
+
+Nothing else. Not one other field. And that boolean has one source: the
+parent process publishes a shared-data key when the remote agent starts
+listening, and content reads it back — once, at startup, not per session. So
+it is cleared, through privileged JavaScript in the parent using Marionette's
+chrome context, and Marionette is then shut down behind us.
+
+Nothing in any page is touched. No getter is redefined and no `toString` is
+patched, so there is nothing for a site to catch: the browser simply stops
+announcing something about itself. Startup then asks a real page what it sees
+and **refuses to run** if the answer is not `false`, so a browser that would
+fail bot checks cannot slip through unnoticed.
+
+What is not there yet:
+
+| | |
+| --- | --- |
+| `[AX]` view | Playwright computes the accessibility tree with an injected script of its own, and Chromium keeps using it. Firefox needs an implementation of ours, which is the outstanding piece — so the view is not offered there rather than offered wrongly. |
+| child frames | Descending into iframes needs an element-to-context mapping that BiDi expresses differently from CDP. Until then Firefox renders the top document and stops. |
+
+The other three views are injected JavaScript and care nothing for the
+engine. Live updating, the clock's fast text patch and the reading freeze all
+work identically — 25 patches and no snapshots on a one-second clock, the
+same as Chromium.
 
 ## Running more than one at a time
 
