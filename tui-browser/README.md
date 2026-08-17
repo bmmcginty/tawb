@@ -101,16 +101,17 @@ line lists rather than by searching for your line again — so an insertion
 above you shifts you by exactly that many lines, and a line that rewrites
 itself (a clock) keeps you on it.
 
-## Three views of a page
+## Four views of a page
 
 Backslash (`\`) cycles between them. The current one is shown at the start
 of the address line.
 
-| View     | What it shows                                                        |
-| -------- | -------------------------------------------------------------------- |
-| `[AX]`   | The accessibility tree — what a screen reader sees.                   |
-| `[PAGE]` | Visible text derived from the DOM, for when the AX tree is wrong.     |
-| `[HTML]` | Tags and attributes, including URLs the other two views never expose. |
+| View       | What it shows                                                        |
+| ---------- | -------------------------------------------------------------------- |
+| `[AX]`     | The accessibility tree — what a screen reader sees.                   |
+| `[PAGE]`   | Visible text derived from the DOM, for when the AX tree is wrong.     |
+| `[HTML]`   | Tags and attributes, including URLs the other two views never expose. |
+| `[SOURCE]` | The markup itself, as written, tag by tag.                            |
 
 The views disagree more than you would hope, and AX is the lossy one. A
 `<video>` with a perfectly playable source often reports only its fallback
@@ -118,8 +119,36 @@ text — "Your browser does not support videos." — because that text is the
 element's content; the actual media URL appears nowhere in the AX tree.
 `HTML` view shows the URL. That is what the third view is for.
 
+`HTML` is a summary rather than the markup: it lists tags it considers
+notable and leaves out the rest, so an `<em>` or a `<strong>` — which carry
+no attributes — do not appear in it at all. `SOURCE` is the markup:
+
+```
+<p>
+teenagers are just
+<em>really</em>
+dumb in general
+</p>
+```
+
+Every element opens and closes on its own line unless it fits on one.
+Script and style bodies are summarised by size instead of printed, since a
+page can carry hundreds of kilobytes of code and none of it is markup. It
+reads the live DOM, so it shows the page after its scripts have run — the
+same page the other three views describe.
+
+`SOURCE` is not indented, deliberately. Leading spaces shift every line
+sideways, and a reader who cannot see the shape of the indentation pays the
+whole cost of it — `Home` lands on whitespace, a braille display spends
+cells on blanks — for none of the benefit. The tags say what the
+indentation would have said.
+
+Links can be followed from any view, `SOURCE` included: `l` finds the next
+`<a>` and `Enter` follows it.
+
 Switching views keeps your place: position is matched by content, since the
-three views have completely different line counts.
+four views have completely different line counts — a page that is 2000
+lines of accessibility tree is 17000 lines of markup.
 
 ## Keys
 
@@ -150,7 +179,7 @@ three views have completely different line counts.
 | -------- | --------------------------------------------------------------- |
 | `Enter`  | Activate the link, button or field on this line                  |
 | `Ctrl+L` | Address bar (scrolls sideways for long URLs; `Esc` cancels)      |
-| `\`      | Cycle view: AX → PAGE → HTML                                     |
+| `\`      | Cycle view: AX → PAGE → HTML → SOURCE                            |
 | `c` / `C`| Jump to the next / previous area that changed                    |
 | `r`      | Refresh now                                                      |
 | `L`      | Turn live updating on or off                                     |
@@ -183,7 +212,8 @@ line reads as a heading or a link when you are arrowing through, a
 structural break that is not in the page. Runs of prose are joined back
 into one line; links are not, so their position stays predictable, and a
 paragraph boundary still ends the line. `[HTML]` view is left fragmented on
-purpose, being the view for seeing what is actually there.
+purpose, being the view for seeing what is actually there, and `[SOURCE]`
+shows the emphasis itself.
 
 A line longer than the terminal wraps, and each wrapped row is navigable in
 its own right — so several rows in a row of plain prose are wrapping, while
