@@ -127,7 +127,7 @@ three views have completely different line counts.
 
 | Key            | Action                                                       |
 | -------------- | ------------------------------------------------------------ |
-| `j` / `k`, `↓` / `↑` | Next / previous line                                   |
+| `j` / `k`, `↓` / `↑` | Next / previous line (down at the end asks for more)   |
 | `→` / `←`      | Next / previous character, carrying on to the next line       |
 | `PgDn` / `PgUp`| Next / previous screen                                        |
 | `g` / `G`      | Top / bottom of the page                                      |
@@ -179,6 +179,25 @@ link rather than taking a line of its own, since a lone `|` says nothing.
 Embedded frames are rendered inline, where they sit in the parent page —
 neither the accessibility tree nor a DOM walk descends into them on its own,
 so an embedded video or comment thread would otherwise simply be missing.
+
+## Feeds do not have a bottom
+
+A feed has a scroll position instead. On Reddit, a search results page, a
+long comment thread, the posts below the fold are not in the document at all
+until something scrolls towards them — and this reader never scrolls, since
+it reads the document rather than the window onto it. So the last line of
+the list is not necessarily the end of the page, and from where you are
+sitting the two look identical.
+
+**Pressing down at the last line asks for the rest.** The page is scrolled to
+its bottom, given a moment for whatever that sets off, and rebuilt; the new
+lines appear below you and you move onto the first of them. The status line
+says how many arrived, or `End of page.` if nothing did.
+
+Nothing is rebuilt when nothing arrives — the scroll is put back as it was.
+That matters more than it sounds: scrolled to the bottom, a Wikipedia article
+collapses its table of contents and the page loses a couple of hundred lines
+you had a moment ago.
 
 ## When something changes elsewhere
 

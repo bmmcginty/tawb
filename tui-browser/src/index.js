@@ -660,6 +660,23 @@ function markInput(state) {
   if (state.live) state.live.lastInputMs = Date.now();
 }
 
+// Puts the reader back where they were after the buffer has been rebuilt.
+// The new position is worked out arithmetically from what actually changed;
+// only when the rewritten region resized under the cursor is there no exact
+// answer, and only then do we fall back to searching for the line. Reports
+// whether the arithmetic answer was available.
+function restoreCursorAfterRebuild(state, previousLineTexts, anchor) {
+  const remap = remapIndex(previousLineTexts, state.lines.map((l) => l.text), state.cursor);
+  if (remap.exact) {
+    state.cursor = Math.min(Math.max(remap.index, 0), Math.max(state.lines.length - 1, 0));
+    clampCol(state);
+    clampScroll(state);
+  } else {
+    reanchorQuietly(state, anchor);
+  }
+  return remap.exact;
+}
+
 async function runLiveRefresh(state, page) {
   const live = state.live;
   if (!refreshDue(live)) return;
@@ -683,18 +700,8 @@ async function runLiveRefresh(state, page) {
     return;
   }
 
-  // Work out the new cursor position arithmetically from what actually
-  // changed. Only if the rewritten region resized under the cursor is there
-  // no exact answer, and only then do we fall back to searching for the line.
   const tPost = Date.now();
-  const remap = remapIndex(previousLineTexts, state.lines.map((l) => l.text), state.cursor);
-  if (remap.exact) {
-    state.cursor = Math.min(Math.max(remap.index, 0), Math.max(state.lines.length - 1, 0));
-    clampCol(state);
-    clampScroll(state);
-  } else {
-    reanchorQuietly(state, anchor);
-  }
+  const remapExact = restoreCursorAfterRebuild(state, previousLineTexts, anchor);
   const reanchorMs = Date.now() - tPost;
 
   const tDiff = Date.now();
@@ -723,7 +730,7 @@ async function runLiveRefresh(state, page) {
     diffMs,
     drawMs,
     repainted,
-    remapExact: remap.exact,
+    remapExact,
     lines: state.lines.length,
     changedRegions: regions.length,
     cursor: state.cursor,
@@ -858,6 +865,163 @@ function onLiveEvent(state, page, payload) {
   live.dirty = true;
 }
 
+// ---------------------------------------------------------------------------
+// Reaching the end of a feed
+//
+// A feed has no bottom, it has a scroll position. On Reddit, a search results
+// page, a long comment thread, the posts below the fold are not in the
+// document at all until something scrolls towards them — and this reader
+// never scrolls, because it reads the document rather than the window onto
+// it. So the last line of the buffer is not the end of the page, and from
+// the reader's side the two are indistinguishable: the list simply stops,
+// with no hint that there was ever more.
+//
+// Pressing down at the last line asks for the rest. We scroll the page to
+// its bottom, wait briefly for whatever that triggers, and rebuild. New
+// lines land below the cursor, which does not move until they arrive.
+// ---------------------------------------------------------------------------
+
+// How long to wait for a feed to answer, when scrolling actually took us
+// somewhere new and a fetch is plausible. Long enough for a slow connection.
+const LOAD_MORE_TIMEOUT_MS = 2500;
+// How long when it did not — we were already at the bottom, so whatever a
+// scroll was going to trigger has had its chance. Waiting the full time here
+// is what makes the end of an ordinary page feel like a hang.
+const LOAD_MORE_SETTLED_MS = 800;
+
+const SCROLL_TO_BOTTOM = () => {
+  const root = document.scrollingElement || document.documentElement;
+  const targets = [];
+  if (root.scrollHeight > root.clientHeight + 50) targets.push(root);
+
+  // Plenty of feeds scroll an inner container rather than the document, and
+  // scrolling the document then does nothing at all. Find the tallest one
+  // that actually scrolls. The cheap size test comes first so that style
+  // resolution — the expensive half — runs on a handful of elements rather
+  // than every element on the page.
+  let best = null;
+  for (const el of document.querySelectorAll('*')) {
+    if (el.clientHeight < 200 || el.scrollHeight <= el.clientHeight + 50) continue;
+    if (!/(auto|scroll)/.test(getComputedStyle(el).overflowY)) continue;
+    if (!best || el.scrollHeight > best.scrollHeight) best = el;
+  }
+  if (best && best !== root) targets.push(best);
+
+  // Where everything was, so a scroll that gained nothing can be undone.
+  window.__twebScrollUndo = targets.map((el) => ({ el, top: el.scrollTop }));
+
+  let moved = false;
+  for (const el of targets) {
+    const before = el.scrollTop;
+    el.scrollTop = el.scrollHeight;
+    if (el.scrollTop !== before) moved = true;
+  }
+
+  return {
+    elements: document.getElementsByTagName('*').length,
+    // Nothing on the page scrolls, so no amount of waiting will produce
+    // anything: this is the end of the page and we can say so at once.
+    scrollable: targets.length > 0,
+    moved,
+  };
+};
+
+// Scrolling is not free of consequences even when it gains nothing. Sent to
+// the bottom of a Wikipedia article, the sticky table of contents collapses
+// and the page loses 216 lines — content the reader had and did not ask to
+// give up. So a scroll that produced nothing is put back.
+const RESTORE_SCROLL = () => {
+  const undo = window.__twebScrollUndo;
+  if (!undo) return false;
+  for (const entry of undo) {
+    try { entry.el.scrollTop = entry.top; } catch { /* detached since */ }
+  }
+  window.__twebScrollUndo = null;
+  return true;
+};
+
+async function loadMore(state, page) {
+  if (state.loadingMore) return;
+  state.loadingMore = true;
+  // Hold off the live refresh: the page is about to mutate heavily, and a
+  // rebuild landing in the middle of this one would fight with it.
+  const wasRefreshing = state.live.refreshing;
+  state.live.refreshing = true;
+  setStatus(state, 'Loading more…');
+
+  const t0 = Date.now();
+  const linesBefore = state.lines.length;
+  let grew = false;
+  let probe = null;
+
+  try {
+    probe = await page.evaluate(SCROLL_TO_BOTTOM);
+    if (probe.scrollable) {
+      try {
+        await page.waitForFunction(
+          (n) => document.getElementsByTagName('*').length > n,
+          probe.elements,
+          { timeout: probe.moved ? LOAD_MORE_TIMEOUT_MS : LOAD_MORE_SETTLED_MS, polling: 250 },
+        );
+        grew = true;
+      } catch {
+        grew = false; // nothing arrived; this really is the end
+      }
+    }
+  } catch (err) {
+    state.loadingMore = false;
+    state.live.refreshing = wasRefreshing;
+    setStatus(state, 'Could not ask the page for more.');
+    log('loadmore.error', { error: String(err.message || err).slice(0, 160) });
+    return;
+  }
+
+  // Nothing arrived, so there is nothing to rebuild — and a rebuild here
+  // does not merely cost a snapshot for no gain, it can lose content: put
+  // the scroll back and leave the buffer alone.
+  if (!grew) {
+    await page.evaluate(RESTORE_SCROLL).catch(() => {});
+    state.loadingMore = false;
+    state.live.refreshing = wasRefreshing;
+    log('loadmore', { ms: Date.now() - t0, grew, scrollable: probe.scrollable, added: 0, lines: state.lines.length });
+    setStatus(state, 'End of page.');
+    return;
+  }
+
+  const previousVisible = visibleRowsNow(state);
+  const previousLineTexts = state.lines.map((l) => l.text);
+  const anchor = anchorFor(state);
+
+  try {
+    await refresh(state, page);
+  } catch (err) {
+    log('loadmore.error', { error: String(err.message || err).slice(0, 160) });
+  }
+  restoreCursorAfterRebuild(state, previousLineTexts, anchor);
+
+  const added = state.lines.length - linesBefore;
+  state.live.lastPulseMs = 0; // the fingerprint is stale now; re-baseline it
+  state.live.refreshing = wasRefreshing;
+  state.loadingMore = false;
+
+  patchVisibleRows(state, previousVisible);
+  log('loadmore', { ms: Date.now() - t0, grew, added, lines: state.lines.length });
+
+  if (added > 0) {
+    // The reader asked to move down, so move down — onto the first of what
+    // just arrived, which is where they were headed.
+    moveSelection(state, state.cursor + 1, page);
+    setStatus(state, `${added} more line${added === 1 ? '' : 's'}.`);
+  } else {
+    // The page grew but said nothing worth reading: trackers, a spinner.
+    setStatus(state, 'Nothing more to read.');
+  }
+}
+
+function atEnd(state) {
+  return state.cursor >= state.lines.length - 1;
+}
+
 // A steady tick, deliberately not a debounce. Under continuous mutation a
 // debounced timer is reset before it ever fires, so refreshes never happen at
 // all — which is exactly what a page with a clock produces.
@@ -969,11 +1133,18 @@ async function handleBrowseKey(chunk, state, page) {
     return;
   }
 
-  if (chunk === ARROW_DOWN || chunk === 'j') return moveSelection(state, state.cursor + 1, page);
+  // Moving past the last line is how the reader asks a feed for more.
+  if (chunk === ARROW_DOWN || chunk === 'j') {
+    if (atEnd(state)) return loadMore(state, page);
+    return moveSelection(state, state.cursor + 1, page);
+  }
   if (chunk === ARROW_UP || chunk === 'k') return moveSelection(state, state.cursor - 1, page);
   if (chunk === ARROW_RIGHT) return moveCaretRight(state, page);
   if (chunk === ARROW_LEFT) return moveCaretLeft(state, page);
-  if (chunk === PAGE_DOWN) return moveSelection(state, state.cursor + viewportHeight(), page);
+  if (chunk === PAGE_DOWN) {
+    if (atEnd(state)) return loadMore(state, page);
+    return moveSelection(state, state.cursor + viewportHeight(), page);
+  }
   if (chunk === PAGE_UP) return moveSelection(state, state.cursor - viewportHeight(), page);
   if (chunk === 'g') return moveSelection(state, 0, page);
   if (chunk === 'G') return moveSelection(state, state.lines.length - 1, page);
@@ -1306,6 +1477,7 @@ async function main() {
     drawn: { address: null, hint: null },
     live: createLiveState(),
     statusHeldUntil: 0,
+    loadingMore: false,
   };
   relayout(state);
 
@@ -1399,6 +1571,6 @@ module.exports = {
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock,
   anchorFor, restoreAnchor, diffBlocks, jumpToChange, activateCurrent, SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
-  applyTextPatches, soleBlockContaining,
+  applyTextPatches, soleBlockContaining, loadMore, atEnd,
   renderRow, parseArgs, onExternalNavigation,
 };
