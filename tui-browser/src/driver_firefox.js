@@ -1,7 +1,9 @@
 'use strict';
 
 const bidi = require('./bidi');
-const { launchFirefox, defaultProfileDir } = require('./firefox');
+const { launchFirefox, defaultProfileDir, releaseStrandedSession } = require('./firefox');
+const { readEndpointRecord, writeEndpointRecord } = require('./endpoint');
+const { processAlive } = require('./proc');
 const { extractAxItems } = require('./ax_own');
 
 // Firefox, driven over WebDriver BiDi.
@@ -341,6 +343,66 @@ class FirefoxPage {
   }
 }
 
+// Firefox serves one WebDriver session at a time, and a closed connection does
+// not end it — Firefox only unregisters the connection. So a reader that died
+// without saying session.end leaves the session standing, and every later
+// reader is refused. It cannot be reattached to, ended from another
+// connection, or waited out.
+//
+// Which of those two situations we are in is not something the browser can
+// tell us — "Session already started" is all it says — so the reader that owns
+// the session records its own process id, and we ask whether that process is
+// still alive. A live owner is another reader, and is left alone. A dead owner
+// stranded it, and Marionette can release it.
+async function startSession(session, { profileDir, marionettePort, log }) {
+  const status = await session.send('session.status', {}).catch(() => null);
+
+  if (status && status.ready === false) {
+    const record = readEndpointRecord(profileDir) || {};
+    const owner = record.readerPid;
+
+    if (owner && processAlive(owner)) {
+      session.close();
+      throw new Error(
+        `Another reader (process ${owner}) is already using this Firefox, and Firefox `
+        + 'allows one session at a time. Quit it, or use a different --profile.',
+      );
+    }
+
+    if (!marionettePort) {
+      session.close();
+      throw new Error(
+        'This Firefox has a session left over from a reader that died, and there is no '
+        + 'Marionette port recorded to release it through. Quit Firefox and start again.',
+      );
+    }
+
+    const released = await releaseStrandedSession(marionettePort);
+    log('firefox.session.released', { owner: owner || null, marionettePort, released });
+    if (!released) {
+      session.close();
+      throw new Error(
+        'This Firefox has a session left over from a reader that died, and Marionette '
+        + 'did not answer to release it. Quit Firefox and start again.',
+      );
+    }
+  }
+
+  try {
+    await session.send('session.new', { capabilities: { alwaysMatch: {} } });
+  } catch (err) {
+    session.close();
+    throw err;
+  }
+
+  // Whoever holds the session says so, so the next reader can tell a live
+  // owner from a dead one.
+  writeEndpointRecord(profileDir, {
+    ...(readEndpointRecord(profileDir) || {}),
+    readerPid: process.pid,
+  });
+}
+
 // Whether the automation announcement really is silenced, asked from inside a
 // page rather than assumed from the clear having returned successfully. This
 // is the check that keeps a broken patch from becoming a browser that fails
@@ -359,6 +421,7 @@ async function openFirefox({
   let child = null;
   let endpoint = connect;
   let cleared = null;
+  let marionettePort = null;
 
   if (!endpoint) {
     const started = await launchFirefox({
@@ -367,23 +430,15 @@ async function openFirefox({
     child = started.child;
     endpoint = started.endpoint;
     cleared = started.cleared;
+    marionettePort = started.marionettePort;
+  } else {
+    marionettePort = (readEndpointRecord(profile || defaultProfileDir()) || {}).marionettePort;
   }
 
   const session = await bidi.connect(endpoint);
-  try {
-    await session.send('session.new', { capabilities: { alwaysMatch: {} } });
-  } catch (err) {
-    session.close();
-    // Firefox serves one BiDi session at a time, so a second reader cannot
-    // share a Firefox the way two can share a Chromium through separate tabs.
-    if (/session/i.test(err.message) && /maximum|already/i.test(err.message)) {
-      throw new Error(
-        'Another session is already reading this Firefox, and Firefox allows only '
-        + 'one at a time. Quit the other reader, or use a different --profile.',
-      );
-    }
-    throw err;
-  }
+  await startSession(session, {
+    profileDir: profile || defaultProfileDir(), marionettePort, log,
+  });
 
   const tree = await session.send('browsingContext.getTree', {});
   const top = tree.contexts[0];
@@ -498,6 +553,11 @@ async function openFirefox({
       // at a time and does not release it just because the socket went away,
       // so a session left hanging locks out the next reader entirely.
       await session.send('session.end', {}).catch(() => {});
+      const dir = profile || defaultProfileDir();
+      const record = readEndpointRecord(dir);
+      if (record && record.readerPid === process.pid) {
+        writeEndpointRecord(dir, { ...record, readerPid: null });
+      }
       // Only a browser we started is ours to shut down, and browser.close is
       // "quit Firefox" — sending it after rejoining would take down a browser
       // somebody else is reading. Disconnecting is all a rejoining session
