@@ -671,6 +671,9 @@ function sameDocumentFragment(before, after) {
 }
 
 async function onExternalNavigation(state, page) {
+  // Every tab reports its own navigations, and only the one being read
+  // should rebuild anything.
+  if (page !== state.page) return;
   const url = page.url();
   if (url === state.renderedUrl) return;
   if (state.live && state.live.refreshing) return;
@@ -917,6 +920,127 @@ function onLiveEvent(state, page, payload) {
 }
 
 // ---------------------------------------------------------------------------
+// Tabs
+//
+// A link with target="_blank" opens a tab and the browser moves to it, which
+// for a sighted user is the whole story. Here the reader was left on the page
+// they had, reading something the browser had already left behind, with no
+// way to reach what had just opened.
+//
+// So new tabs are followed when the browser gives them focus, and `<` and `>`
+// step between everything open. Tabs from every window appear in that list:
+// both protocols report tabs without saying which window they sit in, and for
+// reading purposes a window is just somewhere else a tab can be.
+// ---------------------------------------------------------------------------
+
+// Pages we have already wired navigation events to. Attaching twice would
+// rebuild the buffer twice for one navigation.
+const attachedPages = new WeakSet();
+
+// How long a newly opened tab is given to become the one on screen before we
+// conclude it opened in the background.
+const NEW_TAB_SETTLE_MS = 1200;
+
+async function tabLabel(page) {
+  try {
+    const title = await page.title();
+    if (title) return title.replace(/\s+/g, ' ').trim().slice(0, 60);
+  } catch { /* closed or navigating */ }
+  try {
+    return page.url().slice(0, 60);
+  } catch {
+    return 'untitled';
+  }
+}
+
+// Whether this tab is the one the browser is actually showing. A background
+// tab reports itself hidden, which is the same answer in both engines and
+// needs no protocol support of its own.
+async function isForeground(page) {
+  try {
+    return await page.evaluate(() => document.visibilityState === 'visible');
+  } catch {
+    return false;
+  }
+}
+
+function livePages(state) {
+  return state.driver.listTabs().filter((page) => {
+    try { return !page.isClosed(); } catch { return true; }
+  });
+}
+
+async function switchToTab(state, page, { note = '' } = {}) {
+  if (!page || page === state.page) return false;
+
+  // Move the claim with us, so another reader knows which tab is ours now and
+  // stops avoiding the one we left.
+  const targetId = await state.driver.targetIdFor(page).catch(() => null);
+  if (targetId) claimTab(state.browserPort, targetId);
+
+  state.page = page;
+  page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
+  page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
+
+  if (!attachedPages.has(page)) {
+    attachedPages.add(page);
+    page.on('framenavigated', (frame) => {
+      if (frame !== page.mainFrame()) return;
+      armFrame(frame).catch(() => {});
+      onExternalNavigation(state, page).catch(() => {});
+    });
+  }
+
+  await attachLive(state, page);
+  // The buffer described a different tab entirely, so there is no place to
+  // keep and nothing to reanchor against.
+  await refresh(state, page, { resetCursor: true });
+  render(state, page, { force: true });
+
+  const tabs = livePages(state);
+  const position = tabs.indexOf(page) + 1;
+  const label = await tabLabel(page);
+  setStatus(state, note
+    ? `${note} — tab ${position} of ${tabs.length}: ${label}`
+    : `Tab ${position} of ${tabs.length}: ${label}`);
+  log('tab.switch', { position, of: tabs.length, url: page.url().slice(0, 120) });
+  return true;
+}
+
+async function cycleTab(state, direction) {
+  const tabs = livePages(state);
+  if (tabs.length < 2) {
+    setStatus(state, 'Only one tab open.');
+    return;
+  }
+  const current = tabs.indexOf(state.page);
+  const from = current < 0 ? 0 : current;
+  const next = tabs[(from + direction + tabs.length) % tabs.length];
+  await switchToTab(state, next);
+}
+
+// A tab that opens and takes the screen is followed, because the browser has
+// already moved and the reader should be where the browser is. One that opens
+// behind is announced and left alone — nothing moves the reader without
+// saying so.
+async function onNewTab(state, page) {
+  if (!state.ready || page === state.page) return;
+
+  await new Promise((r) => setTimeout(r, NEW_TAB_SETTLE_MS));
+  if (page.isClosed && page.isClosed()) return;
+
+  const foreground = await isForeground(page);
+  log('tab.opened', { url: page.url().slice(0, 120), foreground });
+
+  if (foreground) {
+    await switchToTab(state, page, { note: 'Followed a new tab' });
+    return;
+  }
+  const label = await tabLabel(page);
+  setStatus(state, `A new tab opened in the background: ${label} — press > to reach it.`);
+}
+
+// ---------------------------------------------------------------------------
 // Reaching the end of a feed
 //
 // A feed has no bottom, it has a scroll position. On Reddit, a search results
@@ -1082,6 +1206,20 @@ function atEnd(state) {
 // second; one that found something, or was slow enough to be worth knowing
 // about on this page, is.
 async function pulseLive(state, page) {
+  // A tab can go away underneath the reader: the page closes itself, or it is
+  // closed in the browser. The buffer then describes a tab that no longer
+  // exists and every command against it fails, so move to one that does.
+  if (page.isClosed && page.isClosed()) {
+    const remaining = livePages(state).filter((other) => other !== page);
+    if (!remaining.length) {
+      setStatus(state, 'The last tab closed.');
+      return;
+    }
+    log('tab.closed', { remaining: remaining.length });
+    await switchToTab(state, remaining[remaining.length - 1], { note: 'That tab closed' });
+    return;
+  }
+
   const result = await pulse(page, state.live);
   if (result && (result.changed || result.navigated || result.rearmed || result.ms > 50)) {
     log('live.pulse', result);
@@ -1097,8 +1235,10 @@ async function pulseLive(state, page) {
 function startLiveTicker(state, page) {
   if (state.live.ticker) return;
   state.live.ticker = setInterval(() => {
-    pulseLive(state, page).catch(() => {});
-    runLiveRefresh(state, page).catch(() => {});
+    // state.page rather than the page this was started for: the reader can
+    // move to another tab, and the ticker has to follow them there.
+    pulseLive(state, state.page).catch(() => {});
+    runLiveRefresh(state, state.page).catch(() => {});
   }, TICK_MS);
   if (state.live.ticker.unref) state.live.ticker.unref();
   log('live.ticker.start', { everyMs: TICK_MS });
@@ -1213,6 +1353,9 @@ async function handleBrowseKey(chunk, state, page) {
     const line = currentLine(state);
     return moveSelection(state, state.cursor, page, line ? line.text.length - 1 : 0);
   }
+
+  if (chunk === '>') return cycleTab(state, 1);
+  if (chunk === '<') return cycleTab(state, -1);
 
   if (chunk === 'c') return jumpToChange(state, page, 1);
   if (chunk === 'C') return jumpToChange(state, page, -1);
@@ -1622,6 +1765,10 @@ async function main() {
   const state = {
     driver,
     sources,
+    browserPort,
+    // Nothing may follow a tab until the first page is drawn: the browser
+    // reports the tab we open ourselves at startup as new, like any other.
+    ready: false,
     page,
     source: sources[0],
     blocks: await snapshotBlocks(page, sources[0], { driver }),
@@ -1648,6 +1795,9 @@ async function main() {
   render(state, page, { force: true });
 
   await attachLive(state, page);
+  attachedPages.add(page);
+  state.ready = true;
+  driver.onNewTab((opened) => { onNewTab(state, opened).catch(() => {}); });
   // Re-arm only when the main document itself is replaced. Reacting to every
   // frame event would mean a round trip per ad iframe — hundreds of them,
   // queued on the same connection our snapshots use, which is what made
@@ -1662,11 +1812,13 @@ async function main() {
   process.stdout.on('resize', () => {
     relayout(state);
     process.stdout.write('\x1b[2J');
-    render(state, page, { force: true });
+    render(state, state.page, { force: true });
   });
 
   const counterTimer = setInterval(() => {
-    flushCounters({ refreshes: state.live.refreshes, lines: state.lines.length, source: state.source });
+    flushCounters({
+      refreshes: state.live.refreshes, lines: state.lines.length, source: state.source,
+    });
   }, 5000);
   if (counterTimer.unref) counterTimer.unref();
 
@@ -1677,9 +1829,12 @@ async function main() {
 
     const t0 = Date.now();
     let result;
-    if (state.mode === 'type') result = await handleTypeKey(chunk, state, page);
-    else if (state.mode === 'address') result = await handleAddressKey(chunk, state, page);
-    else result = await handleBrowseKey(chunk, state, page);
+    // state.page, not the page this loop began with: `<` and `>` move the
+    // reader between tabs and every handler must act on the one they are on.
+    const current = state.page;
+    if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
+    else if (state.mode === 'address') result = await handleAddressKey(chunk, state, current);
+    else result = await handleBrowseKey(chunk, state, current);
     const ms = Date.now() - t0;
 
     markInput(state);
@@ -1773,7 +1928,7 @@ module.exports = {
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock,
   anchorFor, restoreAnchor, diffBlocks, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
-  applyTextPatches, soleBlockContaining, loadMore, atEnd,
+  applyTextPatches, soleBlockContaining, loadMore, atEnd, switchToTab, cycleTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation,
 };
