@@ -55,17 +55,23 @@ async function openChromium({
   // One DevTools session per frame, kept because opening one is a round trip
   // and this is asked for on every snapshot of a page that needs it.
   const sessions = new Map();
+  const sessionOwners = new Map();
   const sessionFor = async (frame) => {
     if (sessions.has(frame)) return sessions.get(frame);
     let session = null;
+    let owner = null;
     try {
       // A cross-origin frame is its own target and answers for its own
       // document; anything else is answered by the page's session.
       session = await context.newCDPSession(frame);
+      owner = frame;
     } catch {
-      try { session = await context.newCDPSession(frame.page ? frame.page() : frame); } catch { session = null; }
+      try {
+        session = await context.newCDPSession(frame.page ? frame.page() : frame);
+      } catch { session = null; }
     }
     sessions.set(frame, session);
+    if (session) sessionOwners.set(session, owner);
     return session;
   };
 
@@ -85,6 +91,12 @@ async function openChromium({
   const pierceClosedShadows = async (frame) => {
     const session = await sessionFor(frame);
     if (!session) return 0;
+    // A session of the frame's own answers for that document and nothing
+    // else, so there is nothing to filter. Only the fallback — the page's
+    // session, which answers for every document in the process — needs to be
+    // told which document we meant, and comparing urls there is a guess that
+    // can go wrong on a url carrying a query string.
+    const ownSession = sessionOwners.get(session) === frame;
 
     let document;
     try {
@@ -101,7 +113,7 @@ async function openChromium({
     const collect = (node, docUrl) => {
       const here = node.nodeName === '#document' ? (node.documentURL || docUrl) : docUrl;
       for (const shadow of node.shadowRoots || []) {
-        if (shadow.shadowRootType === 'closed' && here === wanted) {
+        if (shadow.shadowRootType === 'closed' && (ownSession || here === wanted)) {
           pairs.push({ host: node.nodeId, root: shadow.nodeId });
         }
         collect(shadow, here);
@@ -224,9 +236,19 @@ async function openChromium({
     async clickInFrame(frame, x, y) {
       const session = await sessionFor(frame);
       if (!session) throw new Error('no session for that frame');
-      const at = { x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 };
-      await session.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...at });
-      await session.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at });
+      const at = { x: Math.round(x), y: Math.round(y) };
+      // Moved to, then pressed, then released, with the button state each
+      // event should carry. A bare press and release with no movement before
+      // it and no buttons on the release is not what a mouse produces, and
+      // the one place this is used — a challenge widget — is precisely where
+      // something is watching how the click was made.
+      await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at, buttons: 0 });
+      await session.send('Input.dispatchMouseEvent', {
+        type: 'mousePressed', ...at, button: 'left', buttons: 1, clickCount: 1,
+      });
+      await session.send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased', ...at, button: 'left', buttons: 0, clickCount: 1,
+      });
     },
 
     // Whoever computed the tree resolves against it. Ours kept a reference,
@@ -243,6 +265,13 @@ async function openChromium({
     },
 
     async close() {
+      // Detach what we attached. A session left open is an attachment the
+      // browser goes on maintaining for a client that has gone.
+      for (const session of sessions.values()) {
+        if (session) await session.detach().catch(() => {});
+      }
+      sessions.clear();
+      sessionOwners.clear();
       await browser.close().catch(() => {});
       // Only tear down a browser we started; one the user was already running
       // is theirs to keep. --keep-browser leaves even ours running, so the
