@@ -378,6 +378,9 @@ class Core {
     // An open dropdown, whose entries are spliced into the block list under
     // the control they belong to. See openChooser().
     this.chooser = null;
+    // The popup the reader has open, if any, named by the id its control
+    // points at. See relocatePopup().
+    this.popup = null;
     this.snapshotCostMs = 0;
     // When the page last changed under us, whether a refresh is owed, how
     // recently the reader touched anything. The rules that read it live in
@@ -515,6 +518,9 @@ class Core {
     // changing them — an embedded player's elapsed time, for instance — and
     // it is often cross-origin, so nothing else would arm it.
     armRenderedFrames(visited).catch(() => {});
+    // Every re-read puts a portaled popup back at the end of the document,
+    // so every re-read has to bring it back.
+    this.relocatePopup();
     this.snapshotCostMs = Date.now() - started;
     return this.blocks;
   }
@@ -737,6 +743,80 @@ class Core {
 
   async closeTab(page) {
     await withTimeout(page.close(), ACTION_TIMEOUT_MS, 'Closing the tab');
+  }
+
+  // -------------------------------------------------------------------------
+  // Popups that are not where their control is
+  //
+  // A menu or listbox is very often rendered into the end of <body> rather
+  // than next to the button that opens it — a "portal", done so that no
+  // ancestor's overflow or stacking can clip it. On a screen that is
+  // invisible: the menu appears under the mouse. In a line list it is
+  // catastrophic, because the reader presses a button and the thing they
+  // asked for appears hundreds of lines below them with nothing to say it is
+  // theirs. Re-reading the page finds it; it does not help them reach it.
+  //
+  // So it is moved. ax_own.js tags everything inside a popup with the id its
+  // control points at, and this puts those blocks back where the reader is
+  // standing. Nothing about the page changes — this is the buffer's reading
+  // order, which is the only thing here that was ever the reader's.
+  // -------------------------------------------------------------------------
+
+  // Start following a popup. Deliberately does not move anything yet: this is
+  // called the moment the control is pressed, when the buffer still describes
+  // the page as it was before, and the popup it names does not exist in it.
+  // The next read is what finds it.
+  followPopup(controls) {
+    this.popup = controls ? { controls } : null;
+    return this.popup;
+  }
+
+  forgetPopup() {
+    this.popup = null;
+  }
+
+  // Move the open popup's blocks to sit directly after the control that owns
+  // them. Answers how many blocks moved, and forgets the popup when the page
+  // has closed it.
+  relocatePopup() {
+    const id = this.popup && this.popup.controls;
+    if (!id) return 0;
+
+    const owned = [];
+    let control = -1;
+    this.blocks.forEach((block, index) => {
+      const item = block.item;
+      if (!item) return;
+      if (item.popup === id) owned.push(index);
+      else if (item.controls === id) control = index;
+    });
+
+    if (!owned.length) {
+      // Nothing of it in the buffer. That is either "the page has closed it",
+      // which the control will say, or "we have not read the page since it
+      // opened", which is the ordinary case one read after pressing — and
+      // forgetting on that would mean never finding it at all.
+      const closed = control >= 0 && this.blocks[control].item.expanded === false;
+      if (closed || control < 0) this.popup = null;
+      return 0;
+    }
+    if (control < 0) return 0;
+    // Already in the right place: the popup is not portaled on this page, or
+    // we moved it on a previous read.
+    if (owned[0] === control + 1) return 0;
+
+    const moved = owned.map((index) => this.blocks[index]);
+    for (let i = owned.length - 1; i >= 0; i -= 1) this.blocks.splice(owned[i], 1);
+    const before = owned.filter((index) => index < control).length;
+    this.blocks.splice(control - before + 1, 0, ...moved);
+    return moved.length;
+  }
+
+  // Where the open popup's entries begin, or -1.
+  popupAt() {
+    const id = this.popup && this.popup.controls;
+    if (!id) return -1;
+    return this.blocks.findIndex((block) => block.item && block.item.popup === id);
   }
 
   // -------------------------------------------------------------------------

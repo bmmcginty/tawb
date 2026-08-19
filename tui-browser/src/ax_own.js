@@ -326,10 +326,50 @@ function extractAxItems() {
     return nodes.length - 1;
   };
 
-  const emit = (item) => out.push(item);
+  const emit = (item) => {
+    if (insidePopup && item.role !== '__break__') item.popup = insidePopup;
+    out.push(item);
+  };
   const boundary = () => emit({ role: '__break__', name: '' });
 
-  const walk = (el) => {
+  // The popup whose subtree we are inside, if any; see ownedPopups below.
+  let insidePopup = null;
+
+  // Which elements are somebody's popup, and whose.
+  //
+  // A menu or a listbox is very often not where the control that opens it is.
+  // Frameworks render it into the end of <body> — a "portal" — so that no
+  // ancestor's overflow or stacking can clip it, which for a reader means the
+  // menu they just opened appears hundreds of lines below where they are
+  // standing, with nothing to say it is theirs. `aria-controls` (or the older
+  // `aria-owns`) is the thread back, and it is the only one there is.
+  const ownedPopups = new Map();
+  for (const opener of document.querySelectorAll('[aria-controls],[aria-owns]')) {
+    // A control that opens something says so. Without that test this would
+    // also collect tab panels, live regions and form descriptions, none of
+    // which want moving.
+    if (!opener.hasAttribute('aria-haspopup') && !opener.hasAttribute('aria-expanded')) continue;
+    const named = opener.getAttribute('aria-controls') || opener.getAttribute('aria-owns') || '';
+    for (const id of named.split(/\s+/)) {
+      if (!id) continue;
+      const target = document.getElementById(id);
+      if (target) ownedPopups.set(target, id);
+    }
+  }
+  // The id of what this control opens, if it says it opens anything.
+  //
+  // Deliberately not checking that the element exists: a portaled menu does
+  // not exist until it is opened, which is exactly the moment we need to have
+  // been told about it. The attribute declares the relationship; whether the
+  // other end is in the document yet is a separate question, answered by
+  // ownedPopups when it is.
+  const opensPopup = (el) => {
+    if (!el.hasAttribute('aria-haspopup') && !el.hasAttribute('aria-expanded')) return undefined;
+    const named = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
+    return named.split(/\s+/)[0] || undefined;
+  };
+
+  const walkInner = (el) => {
     const tag = el.tagName.toLowerCase();
     if (SKIP.has(tag)) return;
     if (hidden(el)) return;
@@ -358,6 +398,8 @@ function extractAxItems() {
         // it. Carried here as well as on fields for that reason.
         const expanded = expandedOf(el);
         if (expanded !== undefined) item.expanded = expanded;
+        const controls = opensPopup(el);
+        if (controls) item.controls = controls;
         emit(item);
       }
       return; // the name already covers everything inside
@@ -369,6 +411,7 @@ function extractAxItems() {
         name: accessibleName(el),
         value: valueOf(el, role),
         expanded: expandedOf(el),
+        controls: opensPopup(el),
         axIndex: register(el),
       });
       return;
@@ -399,6 +442,19 @@ function extractAxItems() {
     }
 
     if (blockLevel) boundary();
+  };
+
+  // Everything emitted from inside a popup is tagged with whose it is, so
+  // that whatever assembles the buffer can put it where the reader is rather
+  // than where the page happened to render it.
+  const walk = (el) => {
+    const outer = insidePopup;
+    if (ownedPopups.has(el)) insidePopup = ownedPopups.get(el);
+    try {
+      walkInner(el);
+    } finally {
+      insidePopup = outer;
+    }
   };
 
   if (document.body) walk(document.body);

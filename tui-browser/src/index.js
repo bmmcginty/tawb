@@ -1136,6 +1136,10 @@ async function handleBrowseKey(chunk, state, page) {
   markInput(state);
   if (chunk === CTRL_C || chunk === 'q') return 'quit';
 
+  // A reader inside a menu must always have a way out that also shuts it,
+  // rather than one that leaves it open and them somewhere else.
+  if (chunk === ESC && state.core.popup) return closePopup(state, page);
+
   if (chunk === CTRL_L) {
     state.mode = 'address';
     state.address = { text: page.url(), caret: page.url().length, scroll: 0 };
@@ -1343,6 +1347,9 @@ async function activateCurrent(state, page) {
 
     const done = await state.core.activate(item, page);
     state.statusMsg = done.status || `Activated: ${item.name}`;
+    // If this control says it opens something, follow it: the thing it opens
+    // is very often rendered at the end of the document rather than here.
+    if (item.controls) state.core.followPopup(item.controls);
   } catch (err) {
     const timedOut = err instanceof ActionTimeout;
     setStatus(state, timedOut
@@ -1367,6 +1374,19 @@ async function activateCurrent(state, page) {
   }
 
   await reportAfterAction(state, page, { previousTexts, previousUrl, anchor, screen });
+  moveToPopup(state, page, item);
+}
+
+// A control that opened something takes the reader to it. Without this the
+// menu is in the buffer and the reader has no way to know where, which on a
+// page that renders it into the end of <body> means it may as well not be
+// there.
+function moveToPopup(state, page, item) {
+  if (!item || !item.controls || !state.core.popup) return;
+  const line = lineForBlock(state, state.core.popupAt());
+  if (line < 0) return;
+  moveSelection(state, line, page, 0);
+  setStatus(state, `"${item.name}" opened — Esc closes it.`);
 }
 
 // What happened after something was pressed: a different page, a part of this
@@ -1411,6 +1431,34 @@ async function reportAfterAction(state, page, { previousTexts, previousUrl, anch
 // checked first and reported instead of being discovered afterwards by
 // whatever the click did instead.
 // ---------------------------------------------------------------------------
+
+// Close an open popup the way a person would: by pressing the control that
+// opened it. Leaving it open and merely walking away would leave the page in
+// a state the reader cannot see and did not choose.
+async function closePopup(state, page) {
+  const controls = state.core.popup.controls;
+  const index = state.blocks.findIndex((block) => block.item && block.item.controls === controls);
+  const control = index >= 0 ? state.blocks[index].item : null;
+  state.core.forgetPopup();
+  if (!control) {
+    await refresh(state, page, { anchor: anchorFor(state) });
+    render(state, page, { force: true });
+    return;
+  }
+  try {
+    await withTimeout(state.core.activate(control, page), ACTION_TIMEOUT_MS, 'Closing');
+  } catch {
+    // It may already be gone; the rebuild below is the truth either way.
+  }
+  await refresh(state, page, { resetCursor: false });
+  const line = lineForBlock(state, state.blocks.findIndex(
+    (block) => block.item && block.item.controls === controls));
+  if (line >= 0) state.cursor = line;
+  clampCol(state);
+  clampScroll(state);
+  render(state, page, { force: true });
+  setStatus(state, `Closed "${control.name}".`);
+}
 
 async function clickAsHuman(state, page) {
   const item = itemUnderCursor(state);
