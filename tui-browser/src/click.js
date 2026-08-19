@@ -87,14 +87,10 @@ function prepareRealClick(el) {
   // challenge meant refusing to press the one control on the page, saying it
   // was "covered by <body>", when <body> was the thing hosting it.
   //
-  // The driver leaves the roots it found on window (see driver_chromium.js),
-  // and a ShadowRoot answers elementFromPoint whether it is open or closed,
-  // so the chain can be followed the rest of the way down.
-  const shadowOf = (node) => {
-    if (node.shadowRoot) return node.shadowRoot;
-    const closed = window.__twebClosed;
-    return (closed && closed.get(node)) || null;
-  };
+  // The driver leaves what it found on the host element itself, and a
+  // ShadowRoot answers elementFromPoint whether it is open or closed, so the
+  // chain can be followed the rest of the way down.
+  const shadowOf = (node) => node.shadowRoot || node.__twebShadowRoot || null;
 
   const deepHit = (x, y) => {
     const chain = [];

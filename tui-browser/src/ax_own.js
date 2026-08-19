@@ -143,14 +143,12 @@ function extractAxItems() {
   // engines describe different pages.
   const kidsOf = (node) => {
     // A closed shadow root is invisible to page script by design: node.shadowRoot
-    // is null and there is no other way in from here. The driver can see it
-    // over the protocol, though, so when it has found one it hands the pair in
-    // through this map and the walk goes on as if the root had been open.
-    const closed = window.__twebClosed;
-    if (closed) {
-      const root = closed.get(node);
-      if (root) return Array.from(root.childNodes);
-    }
+    // is null and there is no other way in from here. Both drivers can reach
+    // one — Chromium over the DevTools protocol, Firefox through a privileged
+    // process script installed at startup — and both hang what they found off
+    // the host element under the same name, so the walk goes on from here as
+    // if the root had been open.
+    if (node.__twebShadowRoot) return Array.from(node.__twebShadowRoot.childNodes);
     if (node.shadowRoot) return Array.from(node.shadowRoot.childNodes);
     if (typeof node.assignedNodes === 'function') {
       const assigned = node.assignedNodes({ flatten: true });
@@ -484,8 +482,7 @@ function extractAxItems() {
     const outerPopup = insidePopup;
     const outerClosed = insideClosed;
     if (ownedPopups.has(el)) insidePopup = ownedPopups.get(el);
-    const closed = window.__twebClosed;
-    if (closed && closed.has(el)) insideClosed = true;
+    if (el.__twebShadowRoot) insideClosed = true;
     try {
       walkInner(el);
     } finally {

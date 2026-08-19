@@ -79,9 +79,9 @@ async function openChromium({
   // into it, in the right place in reading order, registering the elements it
   // finds so they can be activated like anything else.
   //
-  // Nothing is written to the page. The map is ours, on window, and it is
-  // rebuilt from nothing on each attempt, so a stale entry cannot outlive the
-  // document it came from.
+  // What it leaves behind is one property on each host element, under a name
+  // of ours. It cannot go stale in a way that matters: an element still has
+  // the root it was given, and a new document has no such elements in it.
   const pierceClosedShadows = async (frame) => {
     const session = await sessionFor(frame);
     if (!session) return 0;
@@ -112,7 +112,6 @@ async function openChromium({
     collect(document, document.documentURL);
     if (!pairs.length) return 0;
 
-    await frame.evaluate(() => { window.__twebClosed = new Map(); }).catch(() => {});
     let registered = 0;
     for (const pair of pairs) {
       try {
@@ -120,7 +119,7 @@ async function openChromium({
         const shadow = await session.send('DOM.resolveNode', { nodeId: pair.root });
         await session.send('Runtime.callFunctionOn', {
           objectId: host.object.objectId,
-          functionDeclaration: 'function (root) { window.__twebClosed.set(this, root); }',
+          functionDeclaration: 'function (root) { this.__twebShadowRoot = root; }',
           arguments: [{ objectId: shadow.object.objectId }],
         });
         registered += 1;
