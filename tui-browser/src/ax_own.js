@@ -135,6 +135,21 @@ function extractAxItems() {
   window.__twebAxNodes = nodes;
   const out = [];
 
+  // The flattened tree — what the browser actually renders, and what it
+  // exposes to a screen reader. An element with a shadow root renders that
+  // tree rather than its own children, and a <slot> renders what was assigned
+  // to it. Stopping at childNodes stops at every web component: Playwright's
+  // tree descends into them on Chromium, so ours has to as well or the two
+  // engines describe different pages.
+  const kidsOf = (node) => {
+    if (node.shadowRoot) return Array.from(node.shadowRoot.childNodes);
+    if (typeof node.assignedNodes === 'function') {
+      const assigned = node.assignedNodes({ flatten: true });
+      if (assigned.length) return assigned;
+    }
+    return Array.from(node.childNodes);
+  };
+
   const hidden = (el) => {
     if (el.getAttribute('aria-hidden') === 'true') return true;
     if (el.hasAttribute('hidden')) return true;
@@ -175,7 +190,7 @@ function extractAxItems() {
     // Built raw and cleaned once at the end, so the whitespace the source
     // actually had decides the spacing rather than a join character.
     let raw = '';
-    for (const child of el.childNodes) {
+    for (const child of kidsOf(el)) {
       if (child.nodeType === Node.TEXT_NODE) {
         raw += child.data || '';
       } else if (child.nodeType === Node.ELEMENT_NODE) {
@@ -328,7 +343,7 @@ function extractAxItems() {
     if (blockLevel) boundary();
 
     const before = out.length;
-    for (const child of el.childNodes) {
+    for (const child of kidsOf(el)) {
       if (child.nodeType === Node.TEXT_NODE) {
         const text = clean(child.data);
         if (text) emit({ role: 'text', name: text });

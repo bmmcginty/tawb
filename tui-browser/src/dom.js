@@ -53,6 +53,23 @@ function extractDom() {
 
   const push = (entry) => out.push(entry);
 
+  // The flattened tree — what the browser actually renders. An element with a
+  // shadow root renders that shadow tree instead of its own children, and a
+  // <slot> inside it renders whatever the light DOM assigned to it. Walking
+  // childNodes alone therefore stops dead at every web component: on a
+  // Bandcamp album page that hides the whole page footer and, with it, the
+  // cookie dialog covering the page — which the reader could neither see nor
+  // dismiss while it blocked every real click.
+  const kidsOf = (node) => {
+    if (node.shadowRoot) return Array.from(node.shadowRoot.childNodes);
+    if (typeof node.assignedNodes === 'function') {
+      const assigned = node.assignedNodes({ flatten: true });
+      if (assigned.length) return assigned;
+    }
+    return Array.from(node.childNodes);
+  };
+
+
   const walk = (el, depth) => {
     const tag = el.tagName ? el.tagName.toLowerCase() : '';
     if (SKIP.has(tag)) return;
@@ -78,7 +95,7 @@ function extractDom() {
       push({ kind: 'element', tag, attrs, depth, index });
     }
 
-    for (const child of el.childNodes) {
+    for (const child of kidsOf(el)) {
       if (child.nodeType === Node.TEXT_NODE) {
         const text = (child.textContent || '').replace(/\s+/g, ' ').trim();
         if (text) push({ kind: 'text', text, depth: depth + 1 });
