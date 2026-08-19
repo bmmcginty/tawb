@@ -5,10 +5,10 @@ const { FIELD_ROLES, LINK_ROLES, BUTTON_ROLES } = require('./aria');
 const { itemAtOffset } = require('./blocks');
 const {
   Core, ALL_SOURCES, SOURCE_LABELS, DOM_SOURCES,
-  diffBlocks, findBlockWithText, sameDocumentFragment,
+  findBlockWithText, sameDocumentFragment,
   ActionTimeout, withTimeout, readFieldState, ACTION_TIMEOUT_MS,
 } = require('./core');
-const { installLive, armFrame, refreshDue, createLiveState, pulse, TICK_MS, INPUT_GRACE_MS } = require('./live');
+const { armFrame, refreshDue, pulse, TICK_MS } = require('./live');
 const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
 const { layoutLines } = require('./layout');
 const { normaliseEndpoint } = require('./browser');
@@ -686,7 +686,7 @@ async function onExternalNavigation(state, page) {
 }
 
 function markInput(state) {
-  if (state.live) state.live.lastInputMs = Date.now();
+  if (state.core) state.core.markInput();
 }
 
 // Puts the reader back where they were after the buffer has been rebuilt.
@@ -694,13 +694,19 @@ function markInput(state) {
 // only when the rewritten region resized under the cursor is there no exact
 // answer, and only then do we fall back to searching for the line. Reports
 // whether the arithmetic answer was available.
-function restoreCursorAfterRebuild(state, previousTexts, anchor) {
-  const settled = state.core.reanchor(anchor, previousTexts);
-  const line = lineForBlock(state, settled.block);
+// Put the cursor on the line a block starts on, or leave it exactly where it
+// is when the core answered -1 for "that content is gone".
+function settleCursorOn(state, blockIndex) {
+  const line = lineForBlock(state, blockIndex);
   if (line >= 0) state.cursor = line;
   state.cursor = Math.min(Math.max(state.cursor, 0), Math.max(state.lines.length - 1, 0));
   clampCol(state);
   clampScroll(state);
+}
+
+function restoreCursorAfterRebuild(state, previousTexts, anchor) {
+  const settled = state.core.reanchor(anchor, previousTexts);
+  settleCursorOn(state, settled.block);
   return settled.exact;
 }
 
@@ -716,38 +722,33 @@ async function runLiveRefresh(state, page) {
 
   const tPrep = Date.now();
   const previousLines = state.lines.map((_, i) => renderRow(state, i));
-  const previousTexts = state.blocks.map((b) => b.text);
   const anchor = anchorFor(state);
   const prepMs = Date.now() - tPrep;
 
+  let rebuilt;
+  const tPost = Date.now();
   try {
-    await refresh(state, page);
+    // Nothing to keep across a navigation: the lines the reader was among
+    // belong to a document that is gone.
+    rebuilt = await state.core.rebuild(anchor, { page, keepPlace: !wasNavigation });
   } catch (err) {
     live.refreshing = false;
     log('live.refresh.error', { error: String(err.message || err).slice(0, 160) });
     return;
   }
+  live.snapshotCostMs = state.core.snapshotCostMs;
 
-  const tPost = Date.now();
-  // Nothing to restore across a navigation: the lines the reader was among
-  // belong to a document that is gone.
   if (wasNavigation) {
     state.cursor = 0;
     state.col = 0;
     state.scroll = 0;
   }
-  const remapExact = wasNavigation
-    ? false
-    : restoreCursorAfterRebuild(state, previousTexts, anchor);
+  relayout(state);
+  if (!wasNavigation) settleCursorOn(state, rebuilt.settled.block);
+  const remapExact = rebuilt.settled.exact;
+  const regions = rebuilt.regions;
   const reanchorMs = Date.now() - tPost;
-
-  const tDiff = Date.now();
-  const regions = diffBlocks(previousTexts, state.blocks);
-  if (regions.length) {
-    state.changes = regions;
-    state.changeIndex = -1;
-  }
-  const diffMs = Date.now() - tDiff;
+  const diffMs = 0;
 
   const tDraw = Date.now();
   const repainted = patchVisibleRows(state, previousLines);
@@ -787,7 +788,7 @@ function applyTextPatches(state, patches) {
   // Protection is only owed to a reader who is actually reading: outside the
   // input grace period a tick on the cursor's own line is no more disruptive
   // than one anywhere else.
-  const protect = Date.now() - state.live.lastInputMs < INPUT_GRACE_MS;
+  const protect = state.core.reading();
   const previousLineCount = state.lines.length;
 
   const patched = state.core.patchText(patches, { protect });
@@ -817,36 +818,32 @@ function visibleRowsNow(state) {
 }
 
 function onLiveEvent(state, page, payload) {
-  const live = state.live;
-  if (!payload) return;
-  live.notifies += 1;
-  count('mutations', payload.mutations || 0);
+  const { announcements, patches, mutations } = state.core.classify(payload);
+  count('mutations', mutations || 0);
   count('notifies');
 
-  if (!live.enabled) return;
+  for (const item of announcements) announce(state, item);
 
-  for (const item of payload.announcements || []) announce(state, item);
-
-  // Try the cheap path first. It only applies to a batch that was nothing but
-  // text replacement, and only while nothing else is rewriting the buffer —
-  // a refresh in flight is about to replace these blocks wholesale.
-  if (payload.pureText && state.mode === 'browse' && !live.refreshing) {
+  // Try the cheap path first. Splicing text in is the reader's to attempt
+  // because only the reader can see the one thing that would forbid it: new
+  // text that wraps to a different number of lines.
+  if (patches && state.mode === 'browse') {
     const before = visibleRowsNow(state);
-    const touched = applyTextPatches(state, payload.patches);
+    const touched = applyTextPatches(state, patches);
     if (touched) {
       const t0 = Date.now();
       const repainted = patchVisibleRows(state, before);
       state.changes = touched.map((index) => ({ start: index, end: index }));
       state.changeIndex = -1;
       count('patched');
-      log('live.patch', { patches: payload.patches.length, blocks: touched.length, repainted, ms: Date.now() - t0 });
+      log('live.patch', { patches: patches.length, blocks: touched.length, repainted, ms: Date.now() - t0 });
       return;
     }
     count('patchMissed');
   }
 
-  live.mutations += payload.mutations || 0;
-  live.dirty = true;
+  state.live.mutations += (mutations || 0);
+  state.live.dirty = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1162,9 +1159,7 @@ function startLiveTicker(state, page) {
 }
 
 async function attachLive(state, page) {
-  const t0 = Date.now();
-  const info = await installLive(page, (payload) => onLiveEvent(state, page, payload));
-  log('live.attach', { ms: Date.now() - t0, ...info });
+  log('live.attach', await state.core.attachLive(page, (payload) => onLiveEvent(state, page, payload)));
   startLiveTicker(state, page);
 }
 
@@ -1736,7 +1731,6 @@ async function main() {
     find: null,
     lastFind: null,
     drawn: { address: null, hint: null },
-    live: createLiveState(),
     statusHeldUntil: 0,
     loadingMore: false,
   };
@@ -1746,7 +1740,7 @@ async function main() {
   // keeps one copy of the buffer while the rest of the reader moves across at
   // its own pace, and every one of these names is a line of the protocol a
   // second front end would speak.
-  for (const key of ['driver', 'page', 'source', 'blocks', 'changes', 'changeIndex', 'renderedUrl']) {
+  for (const key of ['driver', 'page', 'source', 'blocks', 'changes', 'changeIndex', 'renderedUrl', 'live']) {
     Object.defineProperty(state, key, {
       get: () => core[key],
       set: (value) => { core[key] = value; },
