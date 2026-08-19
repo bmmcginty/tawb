@@ -833,8 +833,7 @@ function onLiveEvent(state, page, payload) {
     if (touched) {
       const t0 = Date.now();
       const repainted = patchVisibleRows(state, before);
-      state.changes = touched.map((index) => ({ start: index, end: index }));
-      state.changeIndex = -1;
+      state.core.recordChanges(touched.map((index) => ({ start: index, end: index })));
       count('patched');
       log('live.patch', { patches: patches.length, blocks: touched.length, repainted, ms: Date.now() - t0 });
       return;
@@ -1108,21 +1107,24 @@ function noteChanges(state, previousTexts) {
 }
 
 function jumpToChange(state, page, direction = 1) {
-  if (!state.changes || state.changes.length === 0) {
+  // Resolved against the buffer as it stands now, and in document order, so
+  // repeated presses walk down the page rather than around the order things
+  // happened to arrive in.
+  const targets = state.core.changeTargets();
+  if (!targets.length) {
     setStatus(state, 'No recorded changes.');
     return;
   }
-  const count = state.changes.length;
+  const count = targets.length;
   state.changeIndex = (state.changeIndex + direction + count) % count;
-  const region = state.changes[state.changeIndex];
-  const lineIndex = state.lines.findIndex((l) => l.blockIndex === region.start);
+  const target = targets[state.changeIndex];
+  const lineIndex = lineForBlock(state, target.block);
   if (lineIndex < 0) {
     setStatus(state, 'Changed area is no longer present.');
     return;
   }
   moveSelection(state, lineIndex, page, 0);
-  const size = region.end - region.start + 1;
-  setStatus(state, `Change ${state.changeIndex + 1} of ${count} (${size} line${size === 1 ? '' : 's'}).`);
+  setStatus(state, `Change ${state.changeIndex + 1} of ${count} (${target.size} line${target.size === 1 ? '' : 's'}).`);
 }
 
 // ---------------------------------------------------------------------------
