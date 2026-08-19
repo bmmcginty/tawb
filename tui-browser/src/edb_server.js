@@ -8,7 +8,10 @@ const path = require('path');
 
 const { extractForEdbrowse, resolveDescriptor, applyFieldValues } = require('./edb_page');
 const { clickThrough, prepareRealClick } = require('./click');
-const { snapshotFrameTree } = require('./frames');
+const {
+  snapshotFrameTree, readDocument, everyChildFrame, orderedChildFrames, frameKey,
+} = require('./frames');
+const { Core, ALL_SOURCES } = require('./core');
 const { log } = require('./log');
 
 // Serving the live browser to edbrowse, over http on the loopback address.
@@ -85,8 +88,8 @@ class Tabs {
   // `urls` and `startAt` are carried over when the browser is replaced: the
   // pages are gone, but the numbers are in the reader's buffer, and a number
   // that still remembers where it was pointing can be offered back.
-  constructor(driver, urls = new Map(), startAt = 1) {
-    this.driver = driver;
+  constructor(core, urls = new Map(), startAt = 1) {
+    this.core = core;
     this.numbers = new Map();   // page -> number
     this.pages = new Map();     // number -> page
     this.registries = new Map();// number -> Registry
@@ -103,9 +106,7 @@ class Tabs {
   }
 
   live() {
-    return this.driver.listTabs().filter((page) => {
-      try { return !page.isClosed(); } catch { return true; }
-    });
+    return this.core.tabs();
   }
 
   numberFor(page) {
@@ -367,22 +368,20 @@ async function handleFor(page, desc) {
   return { handle, how: resolved.how };
 }
 
-async function activate(page, desc, { real = false, driver = null } = {}) {
+async function activate(page, desc, { real = false, core = null } = {}) {
   const found = await handleFor(page, desc);
   if (!found) return { ok: false, why: 'that element is no longer on the page' };
 
+  // Resolving is ours — a descriptor we handed out in a form is not something
+  // the core knows about — but what happens to the element once we have it is
+  // the core's, timeouts and all. It is the same click the reader makes.
   if (!real) {
-    await found.handle.evaluate(clickThrough);
-    await page.waitForLoadState('domcontentloaded').catch(() => {});
+    await core.activateHandle(found.handle, page);
     return { ok: true, how: found.how };
   }
 
-  const ready = await found.handle.evaluate(prepareRealClick);
-  if (!ready || !ready.ok) {
-    return { ok: false, why: `a real click cannot reach it: it ${ready ? ready.reason : 'is gone'}` };
-  }
-  await driver.realClick(page, found.handle, { timeoutMs: ACTION_TIMEOUT_MS });
-  await page.waitForLoadState('domcontentloaded').catch(() => {});
+  const clicked = await core.realClickHandle(found.handle, page);
+  if (!clicked.ok) return { ok: false, why: `a real click cannot reach it: it ${clicked.reason}` };
   return { ok: true, how: found.how };
 }
 
@@ -501,8 +500,11 @@ function browserAlive(driver) {
 async function startEdbServer({
   driver, reopen = null, port = 0, token = null,
 } = {}) {
-  let attached = driver;
-  let tabs = new Tabs(attached);
+  // One core, and pages named per request rather than held: the reader has a
+  // tab it is on, and this serves however many edbrowse asks about. Every
+  // core method that touches a page takes it as an argument for that reason.
+  let core = new Core({ driver, page: null, source: 'ax', sources: ALL_SOURCES });
+  let tabs = new Tabs(core);
   const secret = token || crypto.randomBytes(9).toString('hex');
 
   const server = http.createServer((req, res) => {
@@ -520,17 +522,17 @@ async function startEdbServer({
   // arrive during those seconds from starting two browsers.
   let starting = null;
   async function ensureBrowser() {
-    if (browserAlive(attached)) return false;
+    if (browserAlive(core.driver)) return false;
     if (starting) { await starting; return true; }
-    log('edb.browser.gone', { engine: attached.name });
+    log('edb.browser.gone', { engine: core.driver.name });
     if (!reopen) {
       throw new Error('the browser has closed, and nothing here knows how to start another');
     }
     starting = reopen();
     try {
       const fresh = await starting;
-      tabs = new Tabs(fresh, tabs.urls, tabs.next);
-      attached = fresh;
+      core = new Core({ driver: fresh, page: null, source: 'ax', sources: ALL_SOURCES });
+      tabs = new Tabs(core, tabs.urls, tabs.next);
       log('edb.browser.restarted', { engine: fresh.name });
     } finally {
       starting = null;
@@ -565,20 +567,57 @@ async function startEdbServer({
     return ours(res, 'that tab is gone', `<p>${said}</p>\n<p>${links.join(' — ')}</p>`);
   }
 
+  // Nothing to read is what a document behind a closed shadow root looks
+  // like, and it is what a bot check looks like, so this is where edbrowse
+  // stopped being shown one at all.
+  const nothingRead = (extracted) => !extracted || !extracted.tokens || !extracted.tokens.length;
+
+  // Documents the page's own markup never mentions, in the order the browser
+  // reports them. An <iframe> inside a closed shadow root is not findable by
+  // walking for elements, so the frame tokens the extractor produced account
+  // for some of the child documents and not necessarily all.
+  async function unmentionedFrames(frame, extracted) {
+    const mentioned = (extracted.tokens || []).filter((t) => t.kind === 'frame').length;
+    const ordered = await orderedChildFrames(frame).catch(() => []);
+    const all = await everyChildFrame(frame);
+    const placed = new Set(ordered.map(frameKey));
+    const hidden = all.filter((child) => !placed.has(frameKey(child)));
+    return { ordered, hidden, mentioned };
+  }
+
+  async function readPage(frame) {
+    const extracted = await readDocument(frame, extractForEdbrowse, core.driver, nothingRead);
+    const { ordered, hidden } = await unmentionedFrames(frame, extracted);
+    // Appended rather than placed, because nothing says where in the page
+    // they belonged — the same answer the reader gives.
+    hidden.forEach((child, index) => {
+      let host = String(child.url() || '');
+      try { host = new URL(host).host || host; } catch { /* keep it raw */ }
+      extracted.tokens.push({
+        kind: 'frame',
+        desc: { tag: 'iframe', path: `hidden/${index}`, name: host, ordinal: index },
+        name: host,
+      });
+    });
+    return { extracted, ordered, hidden };
+  }
+
   async function render(res, number, base) {
     const page = tabs.page(number);
     if (!page) return goneTab(res, number);
     tabs.remember(number, page.url());
-    const extracted = await page.evaluate(extractForEdbrowse);
+    const { extracted, hidden } = await readPage(page.mainFrame());
     const html = tokensToHtml(extracted, tabs.registry(number), base, number);
-    log('edb.render', { tab: number, tokens: extracted.tokens.length, bytes: html.length });
+    log('edb.render', {
+      tab: number, tokens: extracted.tokens.length, hiddenFrames: hidden.length, bytes: html.length,
+    });
     return send(res, 200, html);
   }
 
   async function renderView(res, number, view, base) {
     const page = tabs.page(number);
     if (!page) return goneTab(res, number);
-    const blocks = await snapshotFrameTree(page, view, { driver: attached });
+    const blocks = await snapshotFrameTree(page, view, { driver: core.driver });
     const heading = { ax: 'Accessibility tree', render: 'Visible text', source: 'Markup' }[view] || view;
     log('edb.view', { tab: number, view, blocks: blocks.length });
     return send(res, 200,
@@ -626,7 +665,7 @@ async function startEdbServer({
           + `search the web for it</a> — <a href="/t/${secret}/tabs">the tabs</a></p>`);
       }
       const wanted = target.url;
-      const opened = await attached.newTab();
+      const opened = await core.driver.newTab();
       await opened.goto(wanted, { waitUntil: 'domcontentloaded' });
       await settle();
       const number = tabs.numberFor(opened);
@@ -685,7 +724,7 @@ async function startEdbServer({
 
       let how = 'nothing';
       if (pressed) {
-        const result = await activate(page, pressed.desc, { real: true, driver: attached });
+        const result = await activate(page, pressed.desc, { real: true, core });
         how = result.ok ? 'clicked' : 'refused';
         if (!result.ok) {
           return ours(res, 'cannot', `<p>${escapeHtml(result.why)}</p>`
@@ -722,7 +761,7 @@ async function startEdbServer({
       if (!record) return ours(res, 'stale', '<p>That link is from an older version of this page. Type rf.</p>');
       const real = rest[2] === 'click';
       const before = page.url();
-      const result = await activate(page, record.desc, { real, driver: attached });
+      const result = await activate(page, record.desc, { real, core });
       if (!result.ok) return ours(res, 'cannot', `<p>${escapeHtml(result.why)}</p><p><a href="${tabUrl(number)}">back to the page</a></p>`);
       const navigated = await settleAfter(page, before);
       log('edb.activate', { tab: number, id: what, real, how: result.how, navigated });
@@ -735,13 +774,21 @@ async function startEdbServer({
       const record = registry.get(Number(what.slice(1)));
       if (!record) return ours(res, 'stale', '<p>That frame is from an older version of this page. Type rf.</p>');
       const desc = record.desc;
-      const frames = page.mainFrame().childFrames ? await page.mainFrame().childFrames() : [];
-      // Frames are matched by position, the same assumption the reader has
-      // always made: the Nth frame element belongs to the Nth child context.
-      const index = Number(desc.path.split('/').pop()) || 0;
-      const frame = frames[Math.min(index, Math.max(frames.length - 1, 0))];
+      const { ordered, hidden } = await unmentionedFrames(page.mainFrame(), { tokens: [] });
+      let frame = null;
+      if (String(desc.path).startsWith('hidden/')) {
+        // One the markup never mentioned; it is named by where it sat in the
+        // browser's own list, which is the only order it has.
+        frame = hidden[Number(desc.path.slice('hidden/'.length)) || 0] || null;
+      } else {
+        // Frames the markup did mention are matched by position, the same
+        // assumption the reader has always made: the Nth frame element
+        // belongs to the Nth child context.
+        const index = Number(desc.path.split('/').pop()) || 0;
+        frame = ordered[Math.min(index, Math.max(ordered.length - 1, 0))] || null;
+      }
       if (!frame) return ours(res, 'gone', '<p>That frame is not there any more.</p>');
-      const extracted = await frame.evaluate(extractForEdbrowse);
+      const { extracted } = await readPage(frame);
       return send(res, 200, tokensToHtml(extracted, registry, base, number));
     }
 
@@ -760,7 +807,8 @@ async function startEdbServer({
     url: `http://${HOST}:${actual}/t/${secret}/tabs`,
     tabUrl: (n) => `http://${HOST}:${actual}${tabUrl(n)}`,
     get tabs() { return tabs; },
-    get driver() { return attached; },
+    get driver() { return core.driver; },
+    get core() { return core; },
     close: () => new Promise((resolve) => server.close(resolve)),
   };
 }
