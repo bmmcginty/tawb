@@ -80,6 +80,22 @@ function prepareRealClick(el) {
     return { ok: false, reason: 'is not an element' };
   }
 
+  // A closed shadow root is a shadow root for hit-testing purposes and not
+  // for scripting ones: elementFromPoint retargets out of it and answers with
+  // the host, and node.shadowRoot answers null. So the descent stopped at the
+  // host and concluded the element was covered by it — which on Cloudflare's
+  // challenge meant refusing to press the one control on the page, saying it
+  // was "covered by <body>", when <body> was the thing hosting it.
+  //
+  // The driver leaves the roots it found on window (see driver_chromium.js),
+  // and a ShadowRoot answers elementFromPoint whether it is open or closed,
+  // so the chain can be followed the rest of the way down.
+  const shadowOf = (node) => {
+    if (node.shadowRoot) return node.shadowRoot;
+    const closed = window.__twebClosed;
+    return (closed && closed.get(node)) || null;
+  };
+
   const deepHit = (x, y) => {
     const chain = [];
     let root = document;
@@ -87,8 +103,9 @@ function prepareRealClick(el) {
       const hit = root.elementFromPoint(x, y);
       if (!hit || chain[chain.length - 1] === hit) break;
       chain.push(hit);
-      if (!hit.shadowRoot) break;
-      root = hit.shadowRoot;
+      const shadow = shadowOf(hit);
+      if (!shadow) break;
+      root = shadow;
     }
     return chain;
   };
