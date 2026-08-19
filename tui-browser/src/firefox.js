@@ -179,6 +179,66 @@ function buildCommand(executable, args) {
 }
 
 // ---------------------------------------------------------------------------
+// What the parent process installs, once, so that closed shadow roots can be
+// reached later without asking Marionette anything.
+//
+// This is the whole answer to a problem that looked unsolvable. Firefox can
+// see into a closed shadow root only through openOrClosedShadowRoot, which is
+// privileged, and the privileged channel — Marionette — cannot be used while
+// the reader is running: it shares one WebDriver session slot with BiDi, and
+// merely connecting to it deletes the session already there. Patching that
+// limit from inside was the other idea, and it is the worse one: it means
+// monkey-patching internals that move between Firefox versions, to reach a
+// two-session configuration nobody supports.
+//
+// So nothing is asked of Marionette at runtime. While we legitimately hold
+// the session at startup — the same session that clears the automation flag —
+// a process script is installed into every content process, present and
+// future. It hands each window a function of its own, `__twebPierce()`, which
+// when called walks the document with privilege and hangs each closed shadow
+// root off the element hosting it as `__twebShadowRoot`.
+//
+// After that the page can reach its own shadow roots by asking, an ordinary
+// script call with no protocol round trip, and the accessibility walk needs
+// to know nothing about how that became possible. It is the same property the
+// Chromium driver sets by a different route.
+// Runs in every content process, with privilege. Handed to each window as a
+// function it can call for itself.
+const PIERCE_CHILD_SCRIPT = `
+  if (!globalThis.__twebShadowInstalled) {
+    globalThis.__twebShadowInstalled = true;
+    Services.obs.addObserver(function (win) {
+      try {
+        const pierce = function () {
+          let found = 0;
+          const walk = (root) => {
+            for (const el of root.querySelectorAll('*')) {
+              let shadow = null;
+              try { shadow = el.openOrClosedShadowRoot; } catch (e) { shadow = null; }
+              if (!shadow) continue;
+              try {
+                el.wrappedJSObject.__twebShadowRoot = shadow.wrappedJSObject || shadow;
+                found += 1;
+              } catch (e) { /* not a node we can hand over */ }
+              walk(shadow);
+            }
+          };
+          walk(win.document);
+          return found;
+        };
+        win.wrappedJSObject.__twebPierce = Cu.exportFunction(pierce, win.wrappedJSObject);
+      } catch (e) { /* a window we cannot reach; the rest still get it */ }
+    }, 'content-document-global-created');
+  }
+`;
+
+// Loads the above into every content process, present and future.
+const PIERCE_PARENT_SCRIPT = `
+  const source = 'data:text/javascript,' + encodeURIComponent(${JSON.stringify(PIERCE_CHILD_SCRIPT)});
+  Services.ppmm.loadProcessScript(source, true);
+  return true;
+`;
+
 // Marionette, used for one thing only.
 //
 // Its wire format is a length-prefixed JSON array: `<bytes>:[type, id, name,
@@ -258,6 +318,11 @@ async function clearAutomationFlag({ port, stopAfter = false } = {}) {
     await send('WebDriver:NewSession', {});
     await send('Marionette:SetContext', { value: 'chrome' });
     const result = await send('WebDriver:ExecuteScript', { script: CLEAR_SCRIPT, args: [] });
+    // The same session, because this is the only moment one can be had: from
+    // here until the browser closes, the slot belongs to the reader's BiDi
+    // connection.
+    await send('WebDriver:ExecuteScript', { script: PIERCE_PARENT_SCRIPT, args: [] })
+      .catch(() => { /* an older Firefox without ppmm; piercing is simply absent */ });
     if (stopAfter) {
       send('WebDriver:ExecuteScript', {
         script: `const { Marionette } = ChromeUtils.importESModule(
@@ -409,4 +474,5 @@ async function launchFirefox({
 module.exports = {
   launchFirefox, clearAutomationFlag, releaseStrandedSession, findFirefox,
   defaultProfileDir, writeProfilePrefs, MEDIA_PREFS, ACTIVE_KEYS, CLEAR_SCRIPT,
+  PIERCE_PARENT_SCRIPT, PIERCE_CHILD_SCRIPT,
 };

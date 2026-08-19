@@ -666,6 +666,21 @@ async function openFirefox({
     // shape the Playwright path produces, so everything downstream — prose
     // merging, separator folding, layout — is shared.
     async axItems(frame) {
+      const items = await frame.evaluate(extractAxItems);
+      if (items.length) return items;
+
+      // A document that renders and says nothing is content behind a closed
+      // shadow root, which page script cannot enter and privileged code can.
+      // The privileged half was installed at startup and left a function in
+      // the page for exactly this, so asking costs a script call rather than
+      // anything of Marionette's — which could not be asked anyway while the
+      // reader's session is open. Same policy as the Chromium driver: only
+      // when there was nothing to find without it.
+      const pierced = await frame.evaluate(
+        () => (typeof window.__twebPierce === 'function' ? window.__twebPierce() : 0),
+      ).catch(() => 0);
+      if (!pierced) return items;
+      log('shadow.pierced', { roots: pierced, url: String(frame.url()).slice(0, 100) });
       return frame.evaluate(extractAxItems);
     },
 
