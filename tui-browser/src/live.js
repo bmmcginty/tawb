@@ -31,8 +31,6 @@
 // the new text for a fraction of a millisecond instead of a whole snapshot.
 
 const BOUND = Symbol('tweb.liveBound');
-// Who the one binding should deliver to. See installLive.
-const TARGET = Symbol('tweb.liveTarget');
 
 const MIN_INTERVAL_MS = 400;
 // Refresh at most this fraction of the time, measured against how long the
@@ -119,7 +117,13 @@ const OBSERVER_SCRIPT = (force) => {
     pendingPatches = [];
     pendingPure = true;
     if (!mutations && announcements.length === 0) return;
-    window.__twebNotify({ announcements: announcements.slice(0, 5), mutations, patches, pureText });
+    // Left in the page for the reader to come and take, rather than pushed
+    // out through a callback. See installLive.
+    const key = Symbol.for('tweb.queue');
+    const queue = window[key] || (window[key] = []);
+    queue.push({ announcements: announcements.slice(0, 5), mutations, patches, pureText });
+    // A reader that has stopped asking must not make the page grow.
+    if (queue.length > 40) queue.splice(0, queue.length - 40);
   };
 
   const clean = (value) => String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
@@ -211,42 +215,39 @@ const PULSE_SCRIPT = () => ({
   ].join('|'),
 });
 
-// The callback binding lives on the BrowserContext, not on a frame: only
-// Page and BrowserContext expose bindings, and a context-level one reaches
-// every frame including cross-origin children. addInitScript then arms the
-// observer in every document created from now on, which is what keeps it
-// working across navigations; the documents that already exist are armed by
-// hand, since addInitScript only applies to future loads.
+// The observer leaves what it saw in the page, and the reader comes and takes
+// it. There is deliberately no callback out of the page any more.
 //
-// Reaching every frame also means reaching every *tab*, and that has to be
-// undone here. A context-level binding fires for anything in the browser that
-// calls it, so with the reader's own other tabs open — and this is a real
-// browser, so there are always other tabs open — every one of their mutations
-// arrived looking exactly like the read tab's own. Measured on a browser with
-// thirteen tabs of a page carrying a one-second clock: eighty notifications
-// in six seconds instead of six, each one repeated thirteen times, each
-// carrying replacement text belonging to some other document. Every one of
-// those failed to match this buffer, and every failure to match costs a
-// whole-page snapshot. A reader with tabs open was paying for all of them.
+// Exposing a binding is the obvious way to do this and it was how this
+// worked. The cost was not obvious: the machinery Playwright installs to
+// carry a binding is a pair of properties named `__playwright__binding__` and
+// `__playwright__binding__controller__`, sitting on the window of every
+// document — and "playwright" spelled out in the global namespace of a
+// Cloudflare challenge frame is the end of the conversation. Ours,
+// `__twebNotify`, sat next to them. Measured on the reader's own browser and
+// reproduced here: all three, in the challenge frame, before the page had
+// even been read.
 //
-// So the binding is registered once and delivers to one page: the tab being
-// read. A driver that cannot say which page a call came from gets the benefit
-// of the doubt, because it can only have one.
-async function installLive(page, onEvent) {
+// A queue costs a round trip per tick instead of a push. That is the same
+// tick that already asks the page whether it is still the page we think it
+// is, so the reader was going to be talking to it anyway.
+//
+// It also settles something the binding never could. A binding registered on
+// the context fires for every tab in the browser, so a reader with its own
+// other tabs open had their mutations delivered as if they were this page's —
+// eighty notifications in six seconds instead of six, on a browser with
+// thirteen tabs. That needed a filter to undo. A queue is per document, so
+// the question cannot arise: we drain the tab we are reading and no other.
+async function installLive(page) {
   const context = page.context();
   let boundNow = false;
-
-  context[TARGET] = { page, onEvent };
 
   if (!context[BOUND]) {
     context[BOUND] = true;
     boundNow = true;
-    await context.exposeBinding('__twebNotify', (source, payload) => {
-      const target = context[TARGET];
-      if (!target) return;
-      if (source && source.page && source.page !== target.page) return;
-      target.onEvent(payload);
-    });
+    // Arms the observer in every document created from now on, which is what
+    // keeps it working across navigations; documents that already exist are
+    // armed by hand below, since this only applies to future loads.
     await context.addInitScript(OBSERVER_SCRIPT);
   }
 
@@ -256,6 +257,36 @@ async function installLive(page, onEvent) {
   // a frame count that keeps growing on its own.
   const armed = (await armFrame(page.mainFrame())) ? 1 : 0;
   return { boundNow, armed, frames: page.frames().length };
+}
+
+// Everything the observers in this page have seen since we last asked.
+//
+// Only the documents we armed are drained, which is the main one plus
+// whichever frames actually contributed content to the last snapshot — the
+// same short list armRenderedFrames works from, not every tracking iframe on
+// the page.
+const DRAIN_SCRIPT = () => {
+  const queue = window[Symbol.for('tweb.queue')];
+  if (!queue || !queue.length) return null;
+  return queue.splice(0, queue.length);
+};
+
+async function collect(page) {
+  const out = [];
+  const main = page.mainFrame();
+  const frames = [main];
+  for (const frame of page.frames()) {
+    if (frame !== main && armedFrames.has(frame)) frames.push(frame);
+  }
+  for (const frame of frames) {
+    try {
+      const payloads = await frame.evaluate(DRAIN_SCRIPT);
+      if (payloads && payloads.length) out.push(...payloads);
+    } catch {
+      // Detached or navigating; whatever it had is gone with it.
+    }
+  }
+  return out;
 }
 
 // Frames we have already armed. The observer script is idempotent in the
@@ -395,6 +426,6 @@ function createLiveState() {
 }
 
 module.exports = {
-  installLive, armFrame, armRenderedFrames, refreshDue, createLiveState, pulse,
+  installLive, collect, armFrame, armRenderedFrames, refreshDue, createLiveState, pulse,
   TICK_MS, MIN_INTERVAL_MS, DUTY_CYCLE, INPUT_GRACE_MS, PULSE_MS,
 };

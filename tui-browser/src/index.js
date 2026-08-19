@@ -1089,8 +1089,12 @@ function startLiveTicker(state, page) {
   state.live.ticker = setInterval(() => {
     // state.page rather than the page this was started for: the reader can
     // move to another tab, and the ticker has to follow them there.
-    pulseLive(state, state.page).catch(() => {});
-    runLiveRefresh(state, state.page).catch(() => {});
+    // Collected before pulsing, so a change the observer already saw is in
+    // hand before we go asking whether anything changed.
+    state.core.collectLive(state.page)
+      .then(() => pulseLive(state, state.page))
+      .then(() => runLiveRefresh(state, state.page))
+      .catch(() => {});
   }, TICK_MS);
   if (state.live.ticker.unref) state.live.ticker.unref();
   log('live.ticker.start', { everyMs: TICK_MS });

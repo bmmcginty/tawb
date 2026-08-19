@@ -130,6 +130,11 @@ async function main() {
     await report(page);
     if (options.snapshot) {
       const core = new Core({ driver, page, source: 'ax', sources: ['ax'] });
+      // Exactly what the reader does, in the order it does it. Attaching the
+      // live observer is part of reading a page and it is the part that
+      // leaves the most behind, so a probe that only took a snapshot reported
+      // a page far cleaner than the reader ever leaves it.
+      await core.attachLive(page, () => {});
       await core.rescan();
       console.log('');
       console.log(`after reading it (${core.blocks.length} blocks)`);
