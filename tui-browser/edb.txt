@@ -529,3 +529,40 @@ buffer still means something.
 That choice keeps all three shapes open. Moving from A to B or C later is a
 change of transport, not a redesign: the document generator and the id scheme
 are the durable work, and they do not know how the bytes get to edbrowse.
+
+
+13. What is built, and what is not
+-----------------------------------
+
+Built, and exercised against a real browser with curl driving it the way
+edbrowse will (npm run edb, src/edb_server.js, src/edb_page.js):
+
+  - tabs list, render, close; the ax, text and source views as <pre>.
+  - ids as descriptors, resolved in the page, stable across renders.
+  - activation, and a real trusted click on /click.
+  - forms: values set on the live elements, input and change dispatched, the
+    submit pressed as a person would press it. Bandcamp's search lands on
+    "Search: ambient | Bandcamp".
+  - loose fields — no form around them — wrapped in one of their own, whose
+    button focuses the field and presses Enter in the page.
+  - 302 back to the tab after every action, and no-cache on everything, so rf
+    is a refresh rather than a repeat.
+  - the entry-point plugin and its config fragment (edbrowse-plugin/).
+
+Not built yet, in the order they are likely to be wanted:
+
+  - The media proxy (/e<id>/media). Media links currently point wherever the
+    page points, so a stream that needs the browser's cookies will 403 in
+    edbrowse's mpv plugin.
+  - Frames render by position (the Nth frame element is the Nth child
+    context, the same assumption the reader has always made) and only one
+    level deep. Nested frames are not reachable.
+  - Announcements. Nothing collects aria-live regions for the next render,
+    so anything the page says while you are reading is lost.
+  - Stale-id recovery is implemented but has not been exercised against a
+    page that really did change underneath a buffer; the third tier (409 and
+    "type rf") has never been seen.
+  - Text areas are emitted as <textarea> and edbrowse's ib should work, but
+    that path has not been tried.
+  - Nothing claims tabs the way the reader does, so a reader and an edbrowse
+    session can both be pointed at the same tab and will fight.
