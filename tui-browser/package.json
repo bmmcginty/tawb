@@ -10,7 +10,8 @@
     "firefox": "node src/index.js --browser firefox",
     "edb": "node src/edb.js",
     "testpage": "node tools/serve.js",
-    "dump": "node tools/dump.js"
+    "dump": "node tools/dump.js",
+    "probe": "node tools/probe.js"
   },
   "keywords": [],
   "type": "commonjs",
