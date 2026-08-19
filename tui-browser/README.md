@@ -370,6 +370,7 @@ direction — which is how you reverse one.
 | `Enter`  | Activate the link, button or field on this line                  |
 | `/` / `?`| Find text forward / backward (empty repeats the last search)     |
 | `Ctrl+G` | Find the same text again                                        |
+| `m`      | Send a real click — trusted, carries user activation             |
 | `Ctrl+L` | Address bar (scrolls sideways for long URLs; `Esc` cancels)      |
 | `\`      | Cycle view: AX → PAGE → HTML → SOURCE                            |
 | `>` / `<`| Next / previous tab                                              |
@@ -484,6 +485,51 @@ covering the middle of the element. Events bubble from there back up through
 the element itself, so a handler on either one hears it. The aim uses layout
 boxes rather than `elementFromPoint`, which answers only for what is on
 screen and would make an off-screen control unclickable again.
+
+## A click the browser accepts as a person's
+
+`Enter` activates through the DOM's own default action. That is the right
+default for reading — it needs no viewport, and it reaches controls that are
+off-screen, which is where skip links and visually hidden controls live —
+but it cannot produce **user activation**. The browser knows perfectly well
+that nobody touched anything, so everything gated on a real gesture refuses:
+playing audio, going fullscreen, reading the clipboard, opening a window.
+No amount of cleverness inside the page changes that, since the gate exists
+precisely to tell the two apart.
+
+**`m` sends a real click** — through the browser's own input pipeline, above
+content, where the events are trusted and carry activation. Measured on a
+Bandcamp play button: `mousedown`, `mouseup` and `click` all arrive with
+`isTrusted: true` and `navigator.userActivation.isActive` true, on the inner
+element the browser hit-tested to, and the track plays.
+
+It is a separate key rather than a smarter `Enter` because it is a different
+act with different costs. A real click goes to a *point on the screen*, so
+the element has to be scrolled into view, and whatever is painted on top of
+that point receives it. Both are checked first and reported rather than
+discovered afterwards from whatever the click did instead:
+
+```
+Cannot click "Play Weird Fish": it is covered by <div.overlay-background>.
+Enter activates it without a real click.
+```
+
+That was a cookie consent dialog dimming the whole page — a real click there
+would have hit the modal, and saying so is more use than clicking the wrong
+thing. Where the element sits is ours to choose, though, so it is placed four
+ways (centre, top, bottom, nearest) and the first placement that leaves it
+reachable is the one the click uses; a control under a sticky bar in the
+middle of the window is often clear at the top of it.
+
+Hit testing descends through shadow roots, because `elementFromPoint`
+retargets to the shadow host — a custom element several hundred pixels away
+would otherwise be reported as the thing in the way.
+
+Chromium gets this from Playwright's own click, which is real input over the
+DevTools protocol. Firefox performs the pointer actions itself over BiDi,
+naming the target by shared reference so the browser computes the element's
+centre rather than trusting coordinates we worked out — the same road its
+keyboard already takes.
 
 ## If an action cannot complete
 
