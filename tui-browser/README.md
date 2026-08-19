@@ -250,9 +250,43 @@ indentation would have said.
 Links can be followed from any view, `SOURCE` included: `l` finds the next
 `<a>` and `Enter` follows it.
 
-Switching views keeps your place: position is matched by content, since the
-four views have completely different line counts — a page that is 2000
-lines of accessibility tree is 17000 lines of markup.
+### Switching views keeps your place
+
+Position is matched by **element**, not by line number and not by text. The
+four views have completely different line counts — a Bandcamp album page is
+135 lines of accessibility tree and 1500 lines of markup — so a line number
+means nothing across a switch, and the text does not carry either: the play
+button that reads `[*Play Weird Fish]` in the accessibility tree is
+`<a aria-label=Play Weird Fish>` in `HTML` and
+`<a role="button" aria-label="Play Weird Fish">` in `SOURCE`, with the
+`<div class="playbutton">` inside it on another line again.
+
+Every view already knows which element each of its lines came from, because
+that is how a line is activated. So switching asks the view you are leaving
+which element you are on, and the view you are entering which of its lines
+that element produced. Standing on the play button in any view and cycling
+all the way round lands you back on the play button.
+
+Two cases need more than that, and the status line says so — *"HTML view —
+nearest place."* — rather than leaving you to work out why you are somewhere
+else:
+
+- **Prose has no element of its own.** It is a text node, and the views
+  number elements. The nearest element above you is the anchor, and your own
+  line is then found again by its text, searched *down from where that
+  element landed* — so repeated text does not throw you across the page.
+- **Playwright's accessibility tree carries no element references**, so on
+  Chromium the `AX` view can be left by resolving a line's role and name to
+  an element, but not entered that way. Entering it matches the element's own
+  label — the `aria-label` that gave the AX line its name — and where several
+  lines could match, the one nearest that element's position in the document.
+  Firefox has no such gap: we compute that tree ourselves and keep the
+  references, so all four views match exactly.
+
+An element that simply is not in the view you are entering — `PAGE` lists
+only what is visible — puts you on the nearest line above where it would
+have been, which is a much smaller move than landing wherever its text first
+matched.
 
 ## Keys
 
