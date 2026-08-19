@@ -59,15 +59,27 @@ function extractVisible() {
       return nodes.length - 1;
     };
 
+    const explicitRole = (el.getAttribute('role') || '').toLowerCase();
+    const label = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+    const own = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+
     // Interactive and atomic elements: emit whole, do not descend.
-    if (tag === 'a' && el.getAttribute('href') != null) {
-      const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (text) emit({ kind: 'link', text, index: register(), block: true });
+    //
+    // A control is named by whatever names it — its own text, its value, or
+    // the label it carries. A play button is an icon and a label and nothing
+    // else, so a view that only looks at text drops it entirely: on a
+    // Bandcamp album page every play button was missing here while the
+    // accessibility view listed all twelve. And role="button" makes a button
+    // whatever tag it was built from, which is how most of them are built.
+    if (tag === 'button' || explicitRole === 'button'
+      || (tag === 'input' && ['button', 'submit', 'reset'].includes(el.type))) {
+      const text = own || el.value || label;
+      if (text) emit({ kind: 'button', text, index: register(), block: true });
       return;
     }
-    if (tag === 'button' || (tag === 'input' && ['button', 'submit', 'reset'].includes(el.type))) {
-      const text = (el.innerText || el.value || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
-      if (text) emit({ kind: 'button', text, index: register(), block: true });
+    if ((tag === 'a' && el.getAttribute('href') != null) || explicitRole === 'link') {
+      const text = own || label;
+      if (text) emit({ kind: 'link', text, index: register(), block: true });
       return;
     }
     if (tag === 'input' || tag === 'textarea' || tag === 'select') {
@@ -75,8 +87,7 @@ function extractVisible() {
       return;
     }
     if (/^h[1-6]$/.test(tag)) {
-      const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (text) emit({ kind: 'heading', level: Number(tag[1]), text, index: register(), block: true });
+      if (own) emit({ kind: 'heading', level: Number(tag[1]), text: own, index: register(), block: true });
       return;
     }
     if (tag === 'img') {

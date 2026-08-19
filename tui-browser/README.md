@@ -245,6 +245,14 @@ text — "Your browser does not support videos." — because that text is the
 element's content; the actual media URL appears nowhere in the AX tree.
 `HTML` view shows the URL. That is what the third view is for.
 
+`PAGE` names a control by whatever names it — its own text, its value, or
+the label it carries — rather than by text alone. A play button is an icon
+and an `aria-label` and nothing else, so a view that reads only text drops it
+completely: every play button on that Bandcamp album was missing from `PAGE`
+while the accessibility view listed all twelve. `role="button"` counts as a
+button too, whatever tag it was built from, which is how most of them are
+built.
+
 `HTML` is a summary rather than the markup: it lists tags it considers
 notable and leaves out the rest, so an `<em>` or a `<strong>` — which carry
 no attributes — do not appear in it at all. `SOURCE` is the markup:
