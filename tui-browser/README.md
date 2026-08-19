@@ -107,6 +107,28 @@ That is the same ordering assumption the AX path has always relied on. Live upda
 work identically — 28 patches and no snapshots on a one-second clock, the
 same as Chromium.
 
+### Playing media
+
+Firefox would not play audio a link started: `NotAllowedError: The play
+method is not allowed by the user agent` on a Bandcamp album that played in
+Chrome. That is autoplay blocking, and it is not wrong about what it saw —
+activation here goes through the element's own default action rather than a
+mouse driven at coordinates, and a script-initiated click carries no user
+activation.
+
+The gesture it is looking for did happen: the reader pressed Enter on the
+play button. It simply cannot be conveyed over the protocol. So the profile
+is configured the way a user who ticked Firefox's own **Allow Audio and
+Video** would have it — `media.autoplay.default`, its blocking policy, and
+`media.block-autoplay-until-in-foreground`, that last one because the tab
+being read is not always the tab on screen and playback that waits for the
+foreground never starts.
+
+These are profile preferences, not page tampering, and they are written to
+`user.js` before launch since Firefox reads them at startup. A Firefox that
+is already running is rejoined as it is, so a change here takes effect the
+next time one is started.
+
 ### Startup, and why it looks worse than it is
 
 A cold start is 3.7s for Chromium and 5.3s for Firefox, the difference being

@@ -71,18 +71,42 @@ const CLEAR_SCRIPT = `
   return { before, after: keys.map((k) => Services.ppmm.sharedData.get(k) ?? false) };
 `;
 
-// Firefox reads this at startup, so it has to be in the profile before launch.
-function writeMarionettePort(profileDir, port) {
-  const line = `user_pref("marionette.port", ${port});\n`;
+// Media has to be allowed to start without a user gesture, because there is
+// no gesture to give.
+//
+// The reader activates a control through the DOM's own default action —
+// element.click() — rather than by driving a mouse at coordinates, since a
+// blind user has no viewport and legitimate targets sit off-screen. That
+// click carries no user activation, so Firefox refuses to play the audio it
+// starts: `NotAllowedError: The play method is not allowed by the user agent`
+// on a Bandcamp album page, while Chrome played the same page.
+//
+// The gesture the browser is looking for did happen — the reader pressed
+// Enter on the play button — it simply cannot be conveyed through the
+// protocol. So the profile is configured the way a user who ticked Firefox's
+// own "Allow Audio and Video" would have it, per profile and nothing to do
+// with any page. `block-autoplay-until-in-foreground` matters too: the tab
+// being read is not always the tab the browser has on screen, and playback
+// that waits for the foreground never starts.
+const MEDIA_PREFS = {
+  'media.autoplay.default': 0,          // 0 allow, 1 block audible, 5 block all
+  'media.autoplay.blocking_policy': 0,  // ask once per profile, not per gesture
+  'media.block-autoplay-until-in-foreground': false,
+};
+
+// Firefox reads user.js at startup, so everything here has to be in the
+// profile before launch. Ours are rewritten every time rather than appended
+// to, so a stale port or a pref we have since changed does not survive.
+function writeProfilePrefs(profileDir, prefs) {
   const target = path.join(profileDir, 'user.js');
-  let existing = '';
+  const ours = Object.keys(prefs);
+  let kept = [];
   try {
-    existing = fs.readFileSync(target, 'utf8').split('\n')
-      .filter((l) => !l.includes('marionette.port'))
-      .join('\n');
+    kept = fs.readFileSync(target, 'utf8').split('\n')
+      .filter((line) => line.trim() && !ours.some((name) => line.includes(`"${name}"`)));
   } catch { /* no user.js yet */ }
-  if (existing && !existing.endsWith('\n')) existing += '\n';
-  fs.writeFileSync(target, existing + line);
+  const written = ours.map((name) => `user_pref("${name}", ${JSON.stringify(prefs[name])});`);
+  fs.writeFileSync(target, [...kept, ...written].join('\n') + '\n');
 }
 
 function defaultProfileDir() {
@@ -303,7 +327,7 @@ async function launchFirefox({
 
   const port = await freePort();
   const marionettePort = await freePort();
-  writeMarionettePort(profileDir, marionettePort);
+  writeProfilePrefs(profileDir, { ...MEDIA_PREFS, 'marionette.port': marionettePort });
 
   const args = [
     '--no-remote',
@@ -376,5 +400,5 @@ async function launchFirefox({
 
 module.exports = {
   launchFirefox, clearAutomationFlag, releaseStrandedSession, findFirefox,
-  defaultProfileDir, writeMarionettePort, ACTIVE_KEYS, CLEAR_SCRIPT,
+  defaultProfileDir, writeProfilePrefs, MEDIA_PREFS, ACTIVE_KEYS, CLEAR_SCRIPT,
 };
