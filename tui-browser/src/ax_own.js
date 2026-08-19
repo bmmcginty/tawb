@@ -177,6 +177,16 @@ function extractAxItems() {
     const attr = el.getAttribute('aria-expanded');
     if (attr === 'true') return true;
     if (attr === 'false') return false;
+    // A native disclosure says the same thing in its own way: <details>
+    // carries the state and <summary> is the control that opens it, with no
+    // aria-expanded anywhere. The page is not obliged to spell out in ARIA
+    // what the element already means, and a reader that only reads the
+    // attribute would announce the one native disclosure control the web has
+    // as though it opened nothing.
+    const parent = el.parentElement;
+    if (el.tagName === 'SUMMARY' && parent && parent.tagName === 'DETAILS') {
+      return !!parent.open;
+    }
     return undefined;
   };
 

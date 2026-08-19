@@ -90,9 +90,10 @@ page talks to the network.</p>
 <section>
   <h2>6. Native disclosure</h2>
   <p>A <code>&lt;details&gt;</code> element carries its open state in the DOM
-  rather than in <code>aria-expanded</code>, so a reader that only reads the
-  attribute has nothing to report here. Known gap, kept on the page on
-  purpose.</p>
+  rather than in <code>aria-expanded</code>, and hides its contents by a route
+  no computed style property reports. Both are read here: the summary should
+  say collapsed or expanded, and the paragraph below should be absent from the
+  page until it is opened.</p>
   <details>
     <summary>Delivery options</summary>
     <p>Standard delivery arrives in three to five days.</p>
