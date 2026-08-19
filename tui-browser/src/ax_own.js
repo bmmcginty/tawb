@@ -76,7 +76,16 @@ const INPUT_ROLES = {
 
 // Runs in the page, so it is one self-contained function with its tables
 // inlined — it is serialised across and cannot close over anything here.
-function extractAxItems() {
+// `options.pairs` is a list of [host, closedShadowRoot] the driver found and
+// is handing in for this call only. Nothing is written to the page to carry
+// it: a mark left on a page's own elements is a mark on the one document
+// where being noticed matters most — a challenge frame — and it undoes the
+// very thing a closed shadow root was closed for.
+//
+// `options.pierce` is Firefox's route to the same list, where the pairs come
+// from a privileged function installed at startup rather than over a
+// protocol, and so can only be fetched from inside the page.
+function extractAxItems(options) {
   const NAME_FROM_CONTENT = new Set(['button', 'cell', 'checkbox', 'columnheader',
     'gridcell', 'heading', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
     'option', 'radio', 'row', 'rowheader', 'switch', 'tab', 'tooltip', 'treeitem']);
@@ -141,14 +150,27 @@ function extractAxItems() {
   // to it. Stopping at childNodes stops at every web component: Playwright's
   // tree descends into them on Chromium, so ours has to as well or the two
   // engines describe different pages.
+  const opts = options || {};
+  const closedRoots = new Map();
+  for (const pair of opts.pairs || []) {
+    if (pair && pair[0] && pair[1]) closedRoots.set(pair[0], pair[1]);
+  }
+  if (opts.pierce && typeof window.__twebPierce === 'function') {
+    try {
+      for (const pair of window.__twebPierce() || []) {
+        if (pair && pair[0] && pair[1]) closedRoots.set(pair[0], pair[1]);
+      }
+    } catch { /* the privileged half is not installed here */ }
+  }
+
   const kidsOf = (node) => {
     // A closed shadow root is invisible to page script by design: node.shadowRoot
     // is null and there is no other way in from here. Both drivers can reach
     // one — Chromium over the DevTools protocol, Firefox through a privileged
-    // process script installed at startup — and both hang what they found off
-    // the host element under the same name, so the walk goes on from here as
-    // if the root had been open.
-    if (node.__twebShadowRoot) return Array.from(node.__twebShadowRoot.childNodes);
+    // process script — and hand the pairs to this call, so the walk goes on
+    // from here as if the root had been open.
+    const closed = closedRoots.get(node);
+    if (closed) return Array.from(closed.childNodes);
     if (node.shadowRoot) return Array.from(node.shadowRoot.childNodes);
     if (typeof node.assignedNodes === 'function') {
       const assigned = node.assignedNodes({ flatten: true });
@@ -482,7 +504,7 @@ function extractAxItems() {
     const outerPopup = insidePopup;
     const outerClosed = insideClosed;
     if (ownedPopups.has(el)) insidePopup = ownedPopups.get(el);
-    if (el.__twebShadowRoot) insideClosed = true;
+    if (closedRoots.has(el)) insideClosed = true;
     try {
       walkInner(el);
     } finally {

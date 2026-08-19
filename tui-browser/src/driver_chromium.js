@@ -85,9 +85,11 @@ async function openChromium({
   // into it, in the right place in reading order, registering the elements it
   // finds so they can be activated like anything else.
   //
-  // What it leaves behind is one property on each host element, under a name
-  // of ours. It cannot go stale in a way that matters: an element still has
-  // the root it was given, and a new document has no such elements in it.
+  // Nothing is left behind. The pairs go into an array that lives only as a
+  // protocol handle — never referenced from window, never hung off one of the
+  // page's own elements — and are handed to the extractor as the receiver of
+  // a single call. A mark on a page's objects is exactly what must not be
+  // there in the one document where being noticed decides everything.
   const pierceClosedShadows = async (frame) => {
     const session = await sessionFor(frame);
     if (!session) return 0;
@@ -124,23 +126,35 @@ async function openChromium({
     collect(document, document.documentURL);
     if (!pairs.length) return 0;
 
+    // An array belonging to nothing the page can name.
+    let basket;
+    try {
+      basket = (await session.send('Runtime.evaluate', { expression: '[]' })).result.objectId;
+    } catch {
+      return null;
+    }
+
     let registered = 0;
     for (const pair of pairs) {
       try {
         const host = await session.send('DOM.resolveNode', { nodeId: pair.host });
         const shadow = await session.send('DOM.resolveNode', { nodeId: pair.root });
         await session.send('Runtime.callFunctionOn', {
-          objectId: host.object.objectId,
-          functionDeclaration: 'function (root) { this.__twebShadowRoot = root; }',
-          arguments: [{ objectId: shadow.object.objectId }],
+          objectId: basket,
+          functionDeclaration: 'function (host, root) { this.push([host, root]); }',
+          arguments: [{ objectId: host.object.objectId }, { objectId: shadow.object.objectId }],
         });
         registered += 1;
       } catch {
         // The node went away between listing it and resolving it.
       }
     }
+    if (!registered) {
+      await session.send('Runtime.releaseObject', { objectId: basket }).catch(() => {});
+      return null;
+    }
     log('shadow.pierced', { roots: registered, url: String(wanted).slice(0, 100) });
-    return registered;
+    return { session, basket };
   };
 
   return {
@@ -183,8 +197,21 @@ async function openChromium({
       // neither of which has a single closed shadow root in it. Doing this
       // unconditionally would double the cost of every snapshot to serve a
       // handful of pages.
-      if (!(await pierceClosedShadows(frame))) return items;
-      return frame.evaluate(extractAxItems);
+      const pierced = await pierceClosedShadows(frame);
+      if (!pierced) return items;
+
+      // Called with the pairs as the receiver, so they are an argument to one
+      // call rather than a property of anything the page owns.
+      try {
+        const answer = await pierced.session.send('Runtime.callFunctionOn', {
+          objectId: pierced.basket,
+          returnByValue: true,
+          functionDeclaration: `function () { const extract = ${extractAxItems.toString()}; return extract({ pairs: this }); }`,
+        });
+        return answer.result.value || items;
+      } finally {
+        await pierced.session.send('Runtime.releaseObject', { objectId: pierced.basket }).catch(() => {});
+      }
     },
 
     // Every tab the browser has, across all its windows. Order is creation

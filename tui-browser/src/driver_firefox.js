@@ -676,12 +676,14 @@ async function openFirefox({
       // anything of Marionette's — which could not be asked anyway while the
       // reader's session is open. Same policy as the Chromium driver: only
       // when there was nothing to find without it.
-      const pierced = await frame.evaluate(
-        () => (typeof window.__twebPierce === 'function' ? window.__twebPierce() : 0),
+      const available = await frame.evaluate(
+        () => (typeof window.__twebPierce === 'function' ? (window.__twebPierce() || []).length : 0),
       ).catch(() => 0);
-      if (!pierced) return items;
-      log('shadow.pierced', { roots: pierced, url: String(frame.url()).slice(0, 100) });
-      return frame.evaluate(extractAxItems);
+      if (!available) return items;
+      log('shadow.pierced', { roots: available, url: String(frame.url()).slice(0, 100) });
+      // The pairs never leave the page and are never written into it: the
+      // extractor asks for them itself, inside the same call that uses them.
+      return frame.evaluate(extractAxItems, { pierce: true });
     },
 
     // A click the browser treats as a person's.

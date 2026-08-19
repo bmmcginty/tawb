@@ -87,10 +87,23 @@ function prepareRealClick(el) {
   // challenge meant refusing to press the one control on the page, saying it
   // was "covered by <body>", when <body> was the thing hosting it.
   //
-  // The driver leaves what it found on the host element itself, and a
-  // ShadowRoot answers elementFromPoint whether it is open or closed, so the
-  // chain can be followed the rest of the way down.
-  const shadowOf = (node) => node.shadowRoot || node.__twebShadowRoot || null;
+  // Which is answered from the target's side rather than the page's, and
+  // needs nothing handed in. getRootNode() works from *inside* a closed
+  // shadow root even though nothing outside can see in, so walking up from
+  // the element gives every host between it and the document. If the point
+  // answers with one of those, the retargeting is the reason and the element
+  // really is what is under the cursor.
+  const hostsAbove = (node) => {
+    const hosts = new Set();
+    let current = node;
+    for (let depth = 0; depth < 8; depth += 1) {
+      const root = current.getRootNode ? current.getRootNode() : null;
+      if (!root || !root.host) break;
+      hosts.add(root.host);
+      current = root.host;
+    }
+    return hosts;
+  };
 
   const deepHit = (x, y) => {
     const chain = [];
@@ -99,9 +112,8 @@ function prepareRealClick(el) {
       const hit = root.elementFromPoint(x, y);
       if (!hit || chain[chain.length - 1] === hit) break;
       chain.push(hit);
-      const shadow = shadowOf(hit);
-      if (!shadow) break;
-      root = shadow;
+      if (!hit.shadowRoot) break;
+      root = hit.shadowRoot;
     }
     return chain;
   };
@@ -139,8 +151,12 @@ function prepareRealClick(el) {
     }
 
     // A descendant under the point is the normal case, not something in the
-    // way: that is where a mouse lands anyway, and the event travels up.
-    if (chain.some((node) => node === el || el.contains(node))) {
+    // way: that is where a mouse lands anyway, and the event travels up. A
+    // host above it is the same answer wearing a disguise — elementFromPoint
+    // retargets out of a shadow root, so <body> being reported for something
+    // inside <body>'s own closed shadow root means the point is right.
+    const hosts = hostsAbove(el);
+    if (chain.some((node) => node === el || el.contains(node) || hosts.has(node))) {
       return { ok: true, x: Math.round(x), y: Math.round(y), placed: block };
     }
 
