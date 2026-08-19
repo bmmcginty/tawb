@@ -258,6 +258,81 @@ const TEXT_AT_FRAGMENT = (hash) => {
 };
 
 // ---------------------------------------------------------------------------
+// Reaching the end of a feed
+// ---------------------------------------------------------------------------
+
+// How long to wait for a feed to answer, when scrolling actually took us
+// somewhere new and a fetch is plausible. Long enough for a slow connection.
+const LOAD_MORE_TIMEOUT_MS = 2500;
+// How long when it did not — we were already at the bottom, so whatever a
+// scroll was going to trigger has had its chance. Waiting the full time here
+// is what makes the end of an ordinary page feel like a hang.
+const LOAD_MORE_SETTLED_MS = 800;
+
+const SCROLL_TO_BOTTOM = () => {
+  const root = document.scrollingElement || document.documentElement;
+  const targets = [];
+  if (root.scrollHeight > root.clientHeight + 50) targets.push(root);
+
+  // Plenty of feeds scroll an inner container rather than the document, and
+  // scrolling the document then does nothing at all. Find the tallest one
+  // that actually scrolls. The cheap size test comes first so that style
+  // resolution — the expensive half — runs on a handful of elements rather
+  // than every element on the page.
+  let best = null;
+  for (const el of document.querySelectorAll('*')) {
+    if (el.clientHeight < 200 || el.scrollHeight <= el.clientHeight + 50) continue;
+    if (!/(auto|scroll)/.test(getComputedStyle(el).overflowY)) continue;
+    if (!best || el.scrollHeight > best.scrollHeight) best = el;
+  }
+  if (best && best !== root) targets.push(best);
+
+  // Where everything was, so a scroll that gained nothing can be undone.
+  window.__twebScrollUndo = targets.map((el) => ({ el, top: el.scrollTop }));
+
+  let moved = false;
+  for (const el of targets) {
+    const before = el.scrollTop;
+    el.scrollTop = el.scrollHeight;
+    if (el.scrollTop !== before) moved = true;
+  }
+
+  // Which element was actually scrolled, in a form a log can carry. When a
+  // feed does not respond on a real site, the first question is always
+  // whether we scrolled the thing the feed is in.
+  const name = (el) => {
+    if (!el || el === root) return 'document';
+    const id = el.id ? `#${el.id}` : '';
+    const cls = typeof el.className === 'string' && el.className
+      ? `.${el.className.trim().split(/\s+/).slice(0, 2).join('.')}` : '';
+    return `${el.tagName.toLowerCase()}${id}${cls}`;
+  };
+
+  return {
+    elements: document.getElementsByTagName('*').length,
+    // Nothing on the page scrolls, so no amount of waiting will produce
+    // anything: this is the end of the page and we can say so at once.
+    scrollable: targets.length > 0,
+    moved,
+    target: targets.map(name).join(' + ') || 'nothing',
+  };
+};
+
+// Scrolling is not free of consequences even when it gains nothing. Sent to
+// the bottom of a Wikipedia article, the sticky table of contents collapses
+// and the page loses 216 lines — content the reader had and did not ask to
+// give up. So a scroll that produced nothing is put back.
+const RESTORE_SCROLL = () => {
+  const undo = window.__twebScrollUndo;
+  if (!undo) return false;
+  for (const entry of undo) {
+    try { entry.el.scrollTop = entry.top; } catch { /* detached since */ }
+  }
+  window.__twebScrollUndo = null;
+  return true;
+};
+
+// ---------------------------------------------------------------------------
 
 class Core {
   constructor({ driver, page, source, sources, browserPort = null }) {
@@ -285,6 +360,59 @@ class Core {
     // recently the reader touched anything. The rules that read it live in
     // live.js; what is here is the orchestration those rules drive.
     this.live = createLiveState();
+    // What the page looked like the last time asking it for more produced
+    // nothing. See noMoreToLoad().
+    this.exhausted = null;
+  }
+
+  // Whether asking this page for more has already been tried and answered no.
+  //
+  // Without this, every press of the down key at the last line paid the full
+  // scroll-and-wait again — measured at 2.5 seconds per keypress, for ever,
+  // on any page at all. The trap is that "can this page scroll" is nearly
+  // always yes: a document taller than the window scrolls, which is most
+  // documents, and it has nothing to do with whether more content exists.
+  // The buffer already holds the whole document either way, because the walk
+  // reads the DOM and not the viewport. Only lazily loaded content is ever at
+  // stake, and the only way to find out is to try — so try once, and remember.
+  //
+  // The answer stops applying the moment the page is a different page or has
+  // a different number of blocks in it, which covers both a navigation and a
+  // feed that finally delivered something.
+  noMoreToLoad() {
+    return !!this.exhausted
+      && this.exhausted.url === this.renderedUrl
+      && this.exhausted.blocks === this.blocks.length;
+  }
+
+  // Ask the page for more content: scroll whatever scrolls to the bottom and
+  // watch for elements to appear. Puts the scroll back when nothing does,
+  // because scrolling is not free of consequences even when it gains nothing
+  // — sent to the bottom of a Wikipedia article, the sticky table of contents
+  // collapses and the page loses 216 lines the reader had and did not ask to
+  // give up.
+  async askForMore(page = this.page) {
+    const probe = await page.evaluate(SCROLL_TO_BOTTOM);
+    let grew = false;
+
+    if (probe.scrollable) {
+      try {
+        await page.waitForFunction(
+          (n) => document.getElementsByTagName('*').length > n,
+          probe.elements,
+          { timeout: probe.moved ? LOAD_MORE_TIMEOUT_MS : LOAD_MORE_SETTLED_MS, polling: 250 },
+        );
+        grew = true;
+      } catch {
+        grew = false; // nothing arrived; this really is the end
+      }
+    }
+
+    if (!grew) {
+      await page.evaluate(RESTORE_SCROLL).catch(() => {});
+      this.exhausted = { url: this.renderedUrl, blocks: this.blocks.length };
+    }
+    return { grew, scrollable: probe.scrollable, moved: probe.moved, target: probe.target };
   }
 
   // The reader did something. Live refreshes hold off while this is recent,
