@@ -219,6 +219,17 @@ async function openChromium({
       await handle.click({ timeout: timeoutMs });
     },
 
+    // A real click at a point inside a frame's own viewport, for a document
+    // whose contents could not be read even after piercing. Dispatched on
+    // that frame's own session, so the coordinates are its own.
+    async clickInFrame(frame, x, y) {
+      const session = await sessionFor(frame);
+      if (!session) throw new Error('no session for that frame');
+      const at = { x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 };
+      await session.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...at });
+      await session.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at });
+    },
+
     // Whoever computed the tree resolves against it. Ours kept a reference,
     // so the item says which node it came from and there is nothing to
     // search for. Playwright's items carry none, so that path goes back

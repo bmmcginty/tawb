@@ -217,8 +217,21 @@ async function walk(frame, source, depth, budget, seen, visited, driver) {
     let host = url;
     try { host = new URL(url).host || url; } catch { /* keep the raw url */ }
     log('frame.hidden', { depth, url: url.slice(0, 100), blocks: nested.length });
-    out.push({ text: `<frame: ${host}>`, item: { role: 'iframe', name: host } });
-    out.push(...nested);
+
+    // A frame nothing could be read out of is still something the reader may
+    // need to press — a challenge behind a closed shadow root is exactly
+    // that, and on an engine that cannot pierce one it is the only way in. So
+    // the marker becomes a control, carrying the frame itself, and activating
+    // it aims a real click into the middle of that document.
+    if (nested.length) {
+      out.push({ text: `<frame: ${host}>`, item: { role: 'iframe', name: host } });
+      out.push(...nested);
+    } else {
+      out.push({
+        text: `[*frame: ${host} — press to reach it]`,
+        item: { role: 'button', name: `frame: ${host}`, pressFrame: child },
+      });
+    }
   }
 
   return out;

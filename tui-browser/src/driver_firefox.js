@@ -710,6 +710,45 @@ async function openFirefox({
       }
     },
 
+    // A real click at a point inside a frame's own viewport, for a document
+    // whose contents we cannot see.
+    //
+    // Firefox cannot enter a closed shadow root at all: page script gets null
+    // from node.shadowRoot by definition, BiDi has no equivalent of Chrome's
+    // piercing document scan, and Marionette — which could, through the
+    // privileged openOrClosedShadowRoot — cannot be used while the reader is
+    // running. It refuses a second session with "Maximum number of active
+    // sessions", and merely connecting to it deletes the session that is
+    // already there, which is exactly how releaseStrandedSession recovers a
+    // dead reader's slot. Asking it would take the page out from under the
+    // person using it.
+    //
+    // Hit testing does not care about shadow boundaries, though, so a real
+    // pointer action aimed into the frame reaches what is drawn there
+    // whoever can see it. Measured against Cloudflare's challenge: the
+    // widget's own document receives "body:trusted" — retargeted to the
+    // shadow host, which is the proof it went inside.
+    async clickInFrame(frame, x, y) {
+      const context = frame && frame.contextId ? frame.contextId : page.contextId;
+      try {
+        await session.send('input.performActions', {
+          context,
+          actions: [{
+            type: 'pointer',
+            id: 'tweb-mouse',
+            parameters: { pointerType: 'mouse' },
+            actions: [
+              { type: 'pointerMove', x: Math.round(x), y: Math.round(y), origin: 'viewport' },
+              { type: 'pointerDown', button: 0 },
+              { type: 'pointerUp', button: 0 },
+            ],
+          }],
+        });
+      } finally {
+        await session.send('input.releaseActions', { context }).catch(() => {});
+      }
+    },
+
     // Ours kept a reference, so there is no need to search by role and name:
     // the item says which node it came from.
     async axElementHandle(scope, item) {

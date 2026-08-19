@@ -1116,6 +1116,7 @@ class Core {
   // would land — see click.js — since a site is free to listen below the
   // control it labelled.
   async activate(item, page = this.page) {
+    if (item.pressFrame) return this.pressFrame(item);
     if (DOM_SOURCES.has(this.source)) {
       return { how: 'dom', status: await activateDomItem(page, item) };
     }
@@ -1126,6 +1127,30 @@ class Core {
       handle.evaluate(clickThrough),
     ]), ACTION_TIMEOUT_MS, 'Activating');
     return { how: 'default-action', status: null };
+  }
+
+  // Press into a document we cannot read.
+  //
+  // Content behind a closed shadow root is unreachable by any means the page
+  // offers, and on Firefox unreachable by any means at all — but hit testing
+  // does not care about shadow boundaries, so a real pointer action aimed at
+  // the frame lands on whatever is drawn there. It is aimed at the middle,
+  // because there is nothing to aim at more precisely: we cannot see what is
+  // in it. That is a poor substitute for reading it and it is a great deal
+  // better than a reader stuck at a bot check with nothing to press.
+  async pressFrame(item, page = this.page) {
+    const frame = item.pressFrame;
+    if (!frame || typeof this.driver.clickInFrame !== 'function') {
+      return { how: 'frame', status: `Cannot reach into ${item.name} with this browser.` };
+    }
+    const size = await frame.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }))
+      .catch(() => null);
+    if (!size || !size.w || !size.h) {
+      return { how: 'frame', status: `${item.name} has nothing on screen to press.` };
+    }
+    await withTimeout(
+      this.driver.clickInFrame(frame, size.w / 2, size.h / 2), ACTION_TIMEOUT_MS, 'Pressing the frame');
+    return { how: 'frame', status: `Pressed the middle of ${item.name}.` };
   }
 
   canRealClick() {
