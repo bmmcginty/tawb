@@ -233,6 +233,28 @@ line lists rather than by searching for your line again — so an insertion
 above you shifts you by exactly that many lines, and a line that rewrites
 itself (a clock) keeps you on it.
 
+## Only what changed is repainted
+
+A repainted row is re-read by a screen reader and re-flashed by a braille
+display whether or not it says anything new, so the screen is redrawn by
+comparing rows and touching only the ones whose text differs.
+
+That rule used to apply to updates the *page* made and not to updates *you*
+made. Pressing `Enter` on a play button repainted all 19 rows of a 24-row
+terminal — 904 bytes — where two rows had changed and cost 52. Activating,
+sending a real click, `r`, leaving a text field, submitting a form in place
+and asking a feed for more all take the same path now:
+
+| | bytes written |
+| --- | --- |
+| `Enter` on the play button | 904 → 183 |
+| `r` (rescan, nothing changed) | 849 → 35 |
+| `m` (real click) | 904 → 138 |
+
+A full repaint is still the right answer when a row-by-row comparison cannot
+mean anything, and those cases fall back to one deliberately: a navigation, a
+view switch, a scroll (every row moved), and a terminal resize.
+
 ## Four views of a page
 
 Backslash (`\`) cycles between them. The current one is shown at the start
