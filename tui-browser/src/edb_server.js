@@ -445,11 +445,6 @@ function send(res, status, body, type = 'text/html; charset=utf-8') {
   res.end(body);
 }
 
-function sendPage(res, title, body) {
-  send(res, 200, `<html><head><title>${escapeHtml(title)}</title></head>\n`
-    + `<body>\n${body}\n</body></html>\n`);
-}
-
 function redirect(res, to) {
   res.writeHead(302, { location: to, 'cache-control': 'no-cache, no-store' });
   res.end('');
@@ -521,16 +516,25 @@ async function startEdbServer({
 
   // Returns true if a new browser had to be started, so the caller can say so
   // rather than silently answering about a page the reader never opened.
+  // Starting one takes seconds; `starting` is what stops two requests that
+  // arrive during those seconds from starting two browsers.
+  let starting = null;
   async function ensureBrowser() {
     if (browserAlive(attached)) return false;
+    if (starting) { await starting; return true; }
     log('edb.browser.gone', { engine: attached.name });
     if (!reopen) {
       throw new Error('the browser has closed, and nothing here knows how to start another');
     }
-    const fresh = await reopen();
-    tabs = new Tabs(fresh, tabs.urls, tabs.next);
-    attached = fresh;
-    log('edb.browser.restarted', { engine: fresh.name });
+    starting = reopen();
+    try {
+      const fresh = await starting;
+      tabs = new Tabs(fresh, tabs.urls, tabs.next);
+      attached = fresh;
+      log('edb.browser.restarted', { engine: fresh.name });
+    } finally {
+      starting = null;
+    }
     return true;
   }
 
@@ -540,8 +544,14 @@ async function startEdbServer({
   // Pages of our own — the tab list, and everything tweb has to say when it
   // cannot do what was asked — carry the address bar too, because those are
   // exactly the pages a reader is on when they want to go somewhere else.
-  const ours = (res, title, body) =>
-    sendPage(res, title, `${openBar(`/t/${secret}/open`)}\n${body}`);
+  //
+  // And a <base>, because the entry-point plugin can land the reader here
+  // directly (`b tweb://tabs`), and then the buffer's own filename is a
+  // tweb:// url that no relative link on this page resolves against.
+  const ours = (res, title, body) => send(res, 200,
+    `<html><head><title>${escapeHtml(title)}</title>`
+    + `<base href="http://${HOST}:${server.address().port}/t/${secret}/"></head>\n`
+    + `<body>\n${openBar(`/t/${secret}/open`)}\n${body}\n</body></html>\n`);
 
   // A tab number that names nothing: closed by the reader, or lost with the
   // browser it lived in. Either way the useful answer is the page it held.
