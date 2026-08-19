@@ -77,7 +77,8 @@ async function main() {
   process.stdout.write(`tweb is serving ${args.engine} for edbrowse.\n\n`);
   process.stdout.write(`  tabs:   ${server.url}\n`);
   if (first) process.stdout.write(`  page:   ${first}\n`);
-  process.stdout.write(`  open:   b tweb://<url>      (with the plugin installed)\n`);
+  process.stdout.write(`  open:   <t <address>        in edbrowse, once the plugin is\n`);
+  process.stdout.write(`                              installed — see edbrowse-plugin/\n`);
   process.stdout.write(`\nStop with ctrl-c; the browser stays as you left it.\n`);
 
   const shutdown = async (code) => {
