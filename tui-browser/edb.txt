@@ -1,0 +1,473 @@
+tweb as an edbrowse backend
+===========================
+
+A discussion of how to hand live pages from a real browser to edbrowse and
+let edbrowse render, navigate and fill them out, written after reading the
+edbrowse source in edbrowse/src and the plugin in edbrowse/plugins.
+
+Everything asserted about edbrowse below was checked against that source,
+with file and line references so it can be re-checked when edbrowse changes.
+
+Short version: the protocol-plugin idea works for reading, and cannot work
+for forms. edbrowse refuses to submit a form to any protocol other than
+http, https, gopher, gophers and mailto (src/html.c:3081-3095, message
+"cannot submit using protocol %s"). The way out is small and keeps the
+plugin: serve the pages from a loopback HTTP origin and let the entry-point
+plugin hand back a document carrying <base href="http://127.0.0.1:PORT/...">,
+which edbrowse honours (src/html-tags.c:1541). From that point every link
+and every form action is an ordinary http URL, and all of edbrowse's
+machinery — g, i=, i*, ib, A, rf, ^ — works with no special cases.
+
+
+1. What the existing plugin does, and why we need something else
+---------------------------------------------------------------
+
+edbrowse/plugins/config/render-chrome.rc declares:
+
+    plugin {
+        type = */*
+        desc = Render page with Chrome
+        protocol = chrmrndr
+        program = edbrowse-plugin-chrome %i
+        outtype = h
+    }
+
+and edbrowse/plugins/scripts/edbrowse-plugin-chrome is 40 lines of Python
+that starts headless Chrome through selenium, polls driver.page_source until
+it stops changing, and writes the HTML to stdout.
+
+It is exactly the right shape and exactly the wrong browser. Three problems,
+in increasing order of importance:
+
+  - It is headless and selenium-launched, which is the automated browser this
+    project exists not to use. Cloudflare's check on pastebin.com never
+    clears under it. Any tweb version of this plugin must attach to the
+    ordinary browser tweb already drives, not start one of its own.
+
+  - It is one-shot. The page is rendered once and handed over dead: no click
+    reaches the live DOM afterwards, so anything that happens after load —
+    a play button, a menu, a form that posts by script — is unreachable.
+
+  - It renders whatever the page looks like at that instant with no identity
+    for anything in it. There is no way to say "activate that element".
+
+What we want is the same entry point with a live session behind it, which is
+what the tab-element ids are for.
+
+
+2. How edbrowse's plugin machinery actually works
+-------------------------------------------------
+
+Measured, not remembered:
+
+  - A plugin matches by protocol, suffix, content type or urlmatch
+    (src/isup.c:3054 findMimeByURL; protocol is tried first unless sxfirst).
+
+  - For a protocol match, edbrowse never fetches anything itself. It calls
+    runPluginCommand with the URL and takes the program's stdout as the
+    buffer (src/http.c:851-882). %i is the URL. %o would name an output
+    file; without it the output is piped. %p prompts for a parameter.
+
+  - outtype = h means "the output is html, carry on and browse it";
+    outtype = t means text; no outtype means the plugin is a player and
+    consumes the data itself (users guide, Plugin Descriptors).
+
+  - Cookies that edbrowse would have sent are exported in the environment
+    variable PLUGINHEADERS. We will not need them: our browser has its own
+    cookie jar, which is the entire point.
+
+  - Plugins can be turned off globally with pg-, or for one command with g-.
+
+  - .ebrc can define functions invoked as <name, and the chrome plugin uses
+    that to build commands out of the A command's output. That trick is
+    worth stealing verbatim; see section 6.
+
+So a `tweb://` protocol plugin gets us: `b tweb://https://site` starts a
+session and the buffer fills with our html. That much is a fifteen-line
+shell or node script.
+
+
+3. The wall: forms cannot submit to a custom protocol
+------------------------------------------------------
+
+src/html.c:3081-3095, in infPush(), the code path taken when you press a
+submit button with i*:
+
+    if (post_string) {
+        if (stringEqualCI(prot, "mailto")) { ... }
+        else if (stringEqualCI(prot, "http") || stringEqualCI(prot, "gopher")) { ... }
+        else if (!stringEqualCI(prot, "https") && !stringEqualCI(prot, "gophers")) {
+            setError(MSG_SubmitProtBad, prot);
+            goto fail;
+        }
+    }
+
+MSG_SubmitProtBad is "cannot submit using protocol %s" (lang/msg-en). The
+check applies to get and post alike — it is on the protocol of the action,
+before the method is consulted.
+
+Note also that runPluginCommand is only ever handed a URL (src/http.c:864).
+There is no channel for a request body. Even if the protocol check were
+relaxed, a POST to a plugin would arrive with its body dropped.
+
+This kills the pure-plugin design for anything interactive. A search box, a
+login, a comment field, a select — none of them can be submitted. Since half
+the reason to drive a real browser is that we can log in and stay logged in,
+that is not a limitation to accept.
+
+
+4. The shape that works: a loopback HTTP origin
+------------------------------------------------
+
+tweb listens on 127.0.0.1 on an ephemeral port and serves the live tabs as
+ordinary web pages. edbrowse talks http to it exactly as it would to any
+site. Nothing about a custom protocol is needed for the session itself, and
+everything edbrowse can do to a web page it can now do to ours.
+
+Local port exposure is already an explicit non-issue for this project:
+anything that can reach a new listener here can already reach the browser's
+own debugging port and drive the browser directly. Bind to 127.0.0.1 anyway,
+and put a random per-session token in the path (section 5) so that a stray
+process cannot enumerate tabs by guessing URLs.
+
+The plugin still earns its place as the entry point, because typing
+`b http://127.0.0.1:41xxx/...` is nobody's idea of a URL bar:
+
+    plugin {
+        type = */*
+        desc = Read a page through tweb's browser
+        protocol = tweb
+        program = edbrowse-plugin-tweb %i
+        outtype = h
+    }
+
+`b tweb://https://skt222.bandcamp.com/album/weird-fish` runs the plugin; the
+plugin asks the running tweb (or starts one) to open that URL in a tab and
+prints the rendered document; that document begins with
+
+    <base href="http://127.0.0.1:41xxx/t/<token>/3/">
+
+and edbrowse resolves every relative link and every form action against it
+(src/html-tags.c:1541 sets cf->hbase from <base>, and src/html.c:3054 uses
+hbase as the default form action). From the second page onward the buffer is
+a plain http URL and the plugin is out of the loop.
+
+One consequence to design for deliberately. After the first navigation the
+buffer's filename is our http URL, and rf re-reads that URL
+(src/buffers.c:5437-5466: rf turns into `b <same url>` with nostack). If an
+element-activation URL is the thing being re-read, rf would click the button
+again. Use the post/redirect/get pattern: activation URLs answer 302 to the
+tab's idempotent view URL, edbrowse follows the redirect and adopts the final
+URL as the filename (src/http.c:3332, changeFileName). Then rf always means
+"render this tab as it is now", which is exactly the refresh semantics we
+want, and it is the closest thing edbrowse has to our live updating.
+
+Serve `Cache-Control: no-cache` (src/http.c:210-223 honours no-cache in
+Cache-Control or Pragma), or rf will sometimes hand back the previous render.
+
+
+5. Tab-element ids
+------------------
+
+The id space is the heart of it. Proposed URL shapes, all under a per-session
+token so the paths are unguessable:
+
+    /t/<token>/<tab>/                  the tab, rendered (idempotent)
+    /t/<token>/<tab>/ax                the accessibility view
+    /t/<token>/<tab>/text              the visible-text view
+    /t/<token>/<tab>/source            the markup, as tweb's SOURCE view
+    /t/<token>/<tab>/e<id>             activate element (302 back to the tab)
+    /t/<token>/<tab>/e<id>/click       activate with a real, trusted click
+    /t/<token>/<tab>/e<id>/media       proxy the element's media bytes
+    /t/<token>/<tab>/submit/e<id>      form submit, fields named e<id>
+    /t/<token>/<tab>/close             close the tab
+    /t/<token>/tabs                    the tab list
+
+The id itself: `<generation>.<index>`, where generation is bumped on every
+render of that tab and index is the position in the array of activatable
+elements found by that render. tweb keeps, per tab, a map from id to a live
+element handle — the same handles the reader already holds. This is better
+than a DOM path or a selector because it survives the page mutating around
+the element, and it costs nothing: we already register every element we
+describe.
+
+Staleness is the interesting case, and it is not hypothetical: the buffer in
+edbrowse is a snapshot, the page moves on, and the reader activates a link
+from a render three generations old. Three-tier answer, all of which tweb
+already has the machinery for:
+
+  1. If the handle is still attached to the document, use it. Nothing else
+     matters — the element is the element.
+  2. If it is detached, re-resolve by the same evidence place.js uses across
+     views: the accessible name, the tag, and the element's position in
+     document order (describeElement/locateElement). If exactly one candidate
+     matches well, use it and say so in the response.
+  3. Otherwise answer 409 with a one-line page saying the element is gone and
+     the page has changed, and let the reader type rf. Never guess.
+
+Generations also give a cheap staleness signal: if the reader activates an
+id from generation 4 while the tab is at generation 9, we know to re-check
+before acting rather than after.
+
+Which elements get an id: everything tweb's HTML view already considers
+notable (a, button, input, select, textarea, summary, details, and friends),
+plus anything carrying an interactive ARIA role, plus anything with
+tabindex, plus — the useful heuristic — anything whose computed cursor is
+`pointer`. That last one catches the div-with-a-click-handler that has been
+the recurring problem on real pages; the Bandcamp play button is exactly
+that shape (an <a role=button> whose handler lives on the <div> inside it).
+
+Chromium could do better than heuristics via DOMDebugger.getEventListeners,
+which really does enumerate listeners; Firefox over BiDi has no equivalent.
+Since the two engines must describe the same page, the heuristic set is the
+honest common denominator, and the /click URL covers whatever it misses.
+
+
+6. Mapping each interaction
+---------------------------
+
+Links. Rendered as ordinary anchors pointing at /e<id>. edbrowse shows them
+as {text} and g follows them. Nothing to invent.
+
+Real clicks. tweb distinguishes activation through the DOM's default action
+(Enter) from a trusted click carrying user activation (m), and the
+distinction matters on real pages — audio will not play without it. In
+edbrowse there is no second key to press, so it becomes a second URL,
+/e<id>/click, and a function in .ebrc that rewrites the link on the current
+line. This is precisely what the chrome plugin does with the A command, so
+the idiom is established:
+
+    function+twebclick {
+        db0
+        A
+        2,d
+        s;^<br/*><a href='\(.*\)'>$;b $1/click;f
+        bw
+        up
+        js-
+        db1
+        <*-1
+    }
+
+Line by line, and this is render-chrome.rc's own shape: A pushes a scratch
+session holding `<br><a href='URL'>` for each link on the line (users guide,
+Web And Email Addresses); 2,d keeps the first; the substitution rewrites it
+into the edbrowse command `b <url>/click`, with the f flag so the reader's
+own search and substitute strings are left alone; bw marks the scratch buffer
+written so it can be discarded; up returns to the page; <*-1 runs the command
+sitting one buffer down in the history, stopping on error. The reader types
+<twebclick on the line holding the play button.
+
+The same construction, with a different substitution, gives the other two
+things worth binding: <twebrf for refresh-in-place (section 7) and a "what is
+this line" that prints the element id, though g? already prints the URL.
+
+Buttons that are not submit buttons. edbrowse presses these with i*, which
+runs their javascript — and we will be running with js off, because our
+browser has already run the page's scripts and edbrowse must not run them
+again. So do not render them as <button>. Render every non-form control as a
+link to /e<id>. It costs nothing in readability: edbrowse shows {Play Weird
+Fish} either way, and g works.
+
+Forms. Render as real forms, with the action pointing at
+/submit/e<submit-button-id> and every field named after its own element id:
+
+    <form action="submit/e9.31" method="post">
+    <input name="e9.28" value="">
+    <select name="e9.29"> ... </select>
+    <input type="submit" name="e9.31" value="Search">
+    </form>
+
+edbrowse then does what it is good at: i? describes the field, i= sets it,
+i?string filters a long select, ib gives a textarea its own editing session,
+ipass hides a password, i* presses the button. On submit we receive a body
+of id=value pairs with no ambiguity about which control each belongs to.
+
+What tweb does with that body, in order: set each field's value on the live
+element, dispatch input and change events so the site's own handlers and
+validation run, then activate the submit button with a *trusted* click. The
+values are set programmatically rather than typed, which is fast and right
+for ordinary fields; the submit is a real click, which is what earns user
+activation for whatever the submission sets off. Where a site genuinely
+demands per-keystroke behaviour (an autocomplete that only fires on keydown),
+the fallback is to focus the field and type it through the browser's input
+pipeline, as tweb's typing mode already does — slower, so make it the
+exception, chosen per element rather than globally.
+
+Method: use post. GET would put the values in the URL, which then becomes the
+buffer's filename, which rf would replay — and replaying a submission is the
+one thing we are trying to avoid. Post, then 302 to the tab view.
+
+Text areas. Render as <textarea>; edbrowse's ib/if machinery is nicer than
+anything we would build. The value arrives in the post body like any other
+field.
+
+File uploads. Not supported, and probably never: the browser will not accept
+a path from us for a file input, and edbrowse has no notion of attaching one
+to a form. Render the control as text saying so.
+
+Frames. tweb already inlines child frames where they sit, including
+cross-origin ones the page-side script could never reach. Keep doing that and
+do not emit <iframe>, or edbrowse will show a {frame} link and try to fetch
+the real site itself — without the browser's session, which is the whole
+advantage.
+
+Media and downloads. An <audio> or a link to an .mp3 is where edbrowse's own
+plugins shine: mpv or mpg123 will play it if edbrowse can fetch it. But the
+bytes usually need the browser's cookies. Serve /e<id>/media as a proxy that
+streams what the browser would have fetched, so edbrowse's media plugins get
+an authenticated stream from a plain http URL. Range requests matter here if
+seeking is to work.
+
+Images. Alt text, as edbrowse already renders [alt text]; nothing to do.
+
+Tabs. /tabs is a page of links, one per open tab, plus a close link each.
+Shift+F4 in the reader becomes "g on the close link", and edbrowse's own
+sessions (e1, e2, …) can hold different tabs if the reader wants them side
+by side. Do not try to drive edbrowse's session numbers from our side; there
+is no channel for it.
+
+The four views. /ax, /text, /source alongside the default render. Backslash
+becomes "browse a different URL", which loses the keep-your-place behaviour
+that took real work to get right (place.js). Mitigation in section 7.
+
+
+7. What does not map, and what to do about it
+----------------------------------------------
+
+Live updates. edbrowse has no way to be told anything. There is no channel
+from a plugin or an http response to an idle buffer. Everything tweb does
+with a MutationObserver, the freeze-while-you-read rule, the cheap text
+patches, the "3 areas changed, press c" status — all of it evaporates. What
+remains is rf, which is cheap and idempotent by design (section 4). This is
+the single largest loss in the whole exercise and it is worth being clear
+about it before starting.
+
+Announcements. aria-live regions currently reach the reader immediately. In
+edbrowse they can only be seen when something is rendered. Two partial
+answers: pin any announcement that arrived since the last render to the top
+of the next one (so rf shows it), and expose /tabN/announce as a page of the
+recent ones for a reader who wants to check. Neither is immediate; nothing
+can be.
+
+Keeping your place across rf. rf builds a fresh window (src/buffers.c:5437,
+noStack = 2) and the previous line number does not come with it. Since we
+generate the html we can give every element an anchor id, and edbrowse jumps
+to a #fragment when browsing a URL that has one. So a refresh-in-place
+function is possible: capture the current line's element id with A, rewrite
+it to the tab view plus #e<id>, and browse that. Same trick as <clickreal,
+and it is the closest thing to tweb's re-anchoring available here.
+
+The reading model. tweb's line list is one item per line with the terminal
+cursor as the position, and its column-level movement reads straight through
+a page. edbrowse's line is edbrowse's line: its own wrapping at ~80
+characters at phrase boundaries, its own {link} and <field> notation, its own
+table pipes. That is the trade being made deliberately — edbrowse's renderer
+in exchange for tweb's — and it is a reasonable one, since edbrowse's
+handling of tables, lists and forms is better than ours and its editor is far
+better than our buffer.
+
+Accessible names. Handing edbrowse the raw DOM loses everything the
+accessibility tree knows. An icon-only control renders as {} — a link with no
+text — and the page becomes unreadable in exactly the places tweb currently
+reads best. So the document we generate must be enriched: where an element's
+rendered text is empty and it has an accessible name, emit that name as the
+element's text. This is the AX work paying for itself inside edbrowse's
+renderer, and it is why "just hand over document.documentElement.outerHTML"
+is not good enough.
+
+Character-level position, quick-nav keys (h/l/f/b/n/p), the change list, the
+view cycle and the freeze rules are all reader features that simply do not
+exist on the other side. edbrowse has its own vocabulary for most of it —
+searching, line numbers, the stack — and the reader will use that instead.
+
+
+8. The document we generate
+----------------------------
+
+Rules, all of which we already have the pieces for:
+
+  - Start from the live DOM (the same source SOURCE view reads), not the
+    network response. The page has already run its scripts in a real browser;
+    that state is the thing worth handing over.
+  - Strip <script>, <style>, <link rel=stylesheet>, and every on* attribute.
+    edbrowse must not run any of it: its javascript engine would be
+    interpreting a page that has already run, in a DOM that is a copy, with
+    no network identity. Recommend js- in the session as well.
+  - Rewrite every href, action and src that we own into ids; leave external
+    media URLs alone only if we do not need cookies for them.
+  - Inline child frames in document order, as the reader already does.
+  - Inject accessible names where the visible text is empty.
+  - Emit an anchor id for every element that has an id, so #fragments work.
+  - Keep the output stable across renders when the page has not changed: the
+    same page must serialise the same way twice, or rf will look like churn.
+  - Keep <table>, <ul>, <ol>, <dl>, <h1>-<h6>, <pre> exactly as they are.
+    This is the whole reason for the exercise — edbrowse renders these well
+    and tweb's line list flattens them.
+
+Size is worth watching: SOURCE view of a Wikipedia article is ~17,000 lines,
+and edbrowse will parse and hold whatever we send.
+
+
+9. Failure modes to design for
+-------------------------------
+
+  - The page navigated under the reader between render and activation. Detect
+    via the generation, re-render, and answer 409 with an explanation rather
+    than clicking something arbitrary.
+  - A real click is refused because something covers the element (a cookie
+    dialog, a modal). tweb already detects this precisely and names the
+    covering element; return that text as the page rather than a silent
+    failure. Since the dialog is in the document we serve, the reader can go
+    and dismiss it — which is exactly what the shadow-DOM work made possible.
+  - Activation takes too long. Everything in tweb is already bounded at six
+    seconds; the http response must be bounded too, and must say what it was
+    waiting for.
+  - The browser is not running. The plugin should start one, the same way the
+    reader does, and say so.
+  - Two edbrowse sessions on one tab. tweb already claims tabs per reader
+    (session.js); the same claim logic applies to edbrowse sessions, and the
+    tabs page should show which are claimed.
+  - Never, under any pressure, fall back to a headless or automation-launched
+    browser to make any of this easier. That is the one rule the whole
+    project rests on.
+
+
+10. What to build first
+------------------------
+
+Smallest useful thing, in order. Each step is usable on its own.
+
+  1. The http server with /t/<token>/<tab>/ and the document generator, no
+     ids, no activation. Read-only pages from the live browser, rendered by
+     edbrowse. This alone is already better than the chrome plugin: a real
+     browser's post-javascript DOM, logged in, no bot checks.
+  2. The entry-point plugin and <base href>, so `b tweb://url` works and
+     relative links resolve. Still read-only.
+  3. Ids and /e<id> activation with the 302-back-to-view pattern. Links and
+     buttons now work, and rf is safe.
+  4. Forms: /submit/e<id>, value-setting, events, trusted click on submit.
+     This is the step that makes it a browser rather than a viewer.
+  5. /e<id>/click plus the .ebrc functions for the real click and for
+     refresh-in-place with a fragment.
+  6. The extra views, the tabs page, the media proxy.
+
+Stopping after 3 leaves something genuinely usable for reading the web in
+edbrowse. Stopping after 4 leaves something that can log in and search.
+
+
+11. Decisions I cannot make for you
+------------------------------------
+
+  - Does the edbrowse path replace the tweb reader, or live beside it? They
+    can share everything below the terminal layer, but the freeze/announce
+    policy and place-keeping only pay off in the reader, and maintaining both
+    means maintaining two answers to "where is the user".
+  - One tab per edbrowse session, or one session driving many tabs through
+    the tabs page? The first is more natural in edbrowse and needs no state;
+    the second matches how tweb thinks today.
+  - How much of the AX view's judgement should leak into the html: only names
+    where text is missing (conservative, recommended), or roles and states as
+    well, which would mean generating markup that is not what the page says.
+  - Whether the media proxy is worth it, or whether handing edbrowse the raw
+    media URL and accepting the occasional 403 is good enough.
