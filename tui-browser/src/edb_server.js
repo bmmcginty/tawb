@@ -299,6 +299,39 @@ function linesToHtml(title, base, heading, lines) {
 }
 
 // ---------------------------------------------------------------------------
+// What the reader typed
+// ---------------------------------------------------------------------------
+
+// Every url bar in the world accepts `timeanddate.com`, and a reader who has
+// just typed a page's name should not have to think about which of two
+// transport protocols a site prefers. What arrives here is whatever came
+// after tweb:// — or whatever was typed into the open field on the page —
+// and it becomes something a browser can be sent to, or an admission that it
+// is not an address at all.
+//
+// Bare host with a dot: https, because that is the web now, and a site that
+// is still plaintext will redirect us there itself. localhost and the
+// loopback addresses get http, since they usually have no certificate.
+// Anything with no dot in it is not an address; say so, and offer to search
+// for it rather than quietly sending what was typed to a search engine.
+function normaliseTarget(text) {
+  const wanted = String(text || '').trim();
+  if (!wanted) return { error: 'nothing to open' };
+  // A scheme, and not a windows path or a bare host:port.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(wanted) || /^(mailto|data|about|file):/i.test(wanted)) {
+    return { url: wanted };
+  }
+  const host = wanted.split(/[/?#]/)[0];
+  if (/^(localhost|127(\.\d{1,3}){3}|\[::1\])(:\d+)?$/i.test(host) || /\.local(:\d+)?$/i.test(host)) {
+    return { url: `http://${wanted}` };
+  }
+  if (/^[^\s@]+\.[a-z][a-z0-9-]{1,}(:\d+)?$/i.test(host)) return { url: `https://${wanted}` };
+  return { search: wanted };
+}
+
+const SEARCH_URL = 'https://duckduckgo.com/html/?q=';
+
+// ---------------------------------------------------------------------------
 // Acting on the page
 // ---------------------------------------------------------------------------
 
@@ -538,8 +571,20 @@ async function startEdbServer({
     // then a redirect to it, so the buffer ends up holding the tab's own
     // address rather than the command that opened it.
     if (rest[0] === 'open') {
-      const wanted = url.searchParams.get('url');
-      if (!wanted) return send(res, 400, '<html><body><p>tweb: no url</p></body></html>');
+      // Either from the plugin, which puts it in the query, or from the open
+      // field at the top of every page, which posts it.
+      const typed = req.method === 'POST'
+        ? new URLSearchParams(await readBody(req)).get('url')
+        : url.searchParams.get('url');
+      const target = normaliseTarget(typed);
+      if (target.error) return send(res, 400, `<html><body><p>tweb: ${escapeHtml(target.error)}</p></body></html>`);
+      if (target.search) {
+        return sendPage(res, 'not an address',
+          `<p>${escapeHtml(target.search)} is not a url — it has no host in it.</p>\n`
+          + `<p><a href="${openUrl(SEARCH_URL + encodeURIComponent(target.search))}">`
+          + `search the web for it</a> — <a href="/t/${secret}/tabs">the tabs</a></p>`);
+      }
+      const wanted = target.url;
       const opened = await attached.newTab();
       await opened.goto(wanted, { waitUntil: 'domcontentloaded' });
       await settle();
@@ -681,5 +726,5 @@ async function startEdbServer({
 
 module.exports = {
   startEdbServer, readEndpoint, endpointPath, tokensToHtml, linesToHtml,
-  Registry, Tabs, escapeHtml,
+  Registry, Tabs, escapeHtml, normaliseTarget, explain,
 };
