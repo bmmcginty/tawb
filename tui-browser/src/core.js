@@ -1,7 +1,7 @@
 'use strict';
 
 const { snapshotFrameTree } = require('./frames');
-const { armRenderedFrames, createLiveState, installLive, INPUT_GRACE_MS } = require('./live');
+const { armRenderedFrames, createLiveState, installLive, collect, INPUT_GRACE_MS } = require('./live');
 const { activateDomItem, domElementHandle } = require('./dom');
 const { clickThrough, prepareRealClick } = require('./click');
 const { renderElementHandle } = require('./render_html');
@@ -457,8 +457,19 @@ class Core {
 
   async attachLive(page, onMutation) {
     const t0 = Date.now();
-    const info = await installLive(page, onMutation);
+    this.onMutation = onMutation;
+    const info = await installLive(page);
     return { ms: Date.now() - t0, ...info };
+  }
+
+  // Take what the observers have seen and hand it on. The page is asked
+  // rather than pushing to us, so this has to be called; the reader's ticker
+  // does it, on the same beat that pulses the page.
+  async collectLive(page = this.page) {
+    if (!this.onMutation) return 0;
+    const payloads = await collect(page).catch(() => []);
+    for (const payload of payloads) this.onMutation(payload);
+    return payloads.length;
   }
 
   // What a batch of mutations means, without acting on any of it. The caller
