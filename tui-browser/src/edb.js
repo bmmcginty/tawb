@@ -46,15 +46,26 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   log('edb.start', { engine: args.engine, logPath: LOG_PATH });
 
-  const driver = await timed('browser.start', { engine: args.engine }, () => openDriver({
+  // One way to get a browser, used twice: once now, and again whenever the
+  // reader closes the one they were reading. Nothing about this server
+  // outlives a browser, so the second time has to be the same as the first —
+  // an ordinary browser, started or rejoined exactly as before, never an
+  // automated one.
+  const open = () => openDriver({
     engine: args.engine,
     connect: args.connect,
     profile: args.profile,
     keepBrowser: args.keepBrowser,
     log,
-  }));
+  });
 
-  const server = await startEdbServer({ driver, port: args.port });
+  const driver = await timed('browser.start', { engine: args.engine }, open);
+
+  const server = await startEdbServer({
+    driver,
+    reopen: () => timed('browser.restart', { engine: args.engine }, open),
+    port: args.port,
+  });
 
   let first = null;
   if (args.url) {
@@ -71,7 +82,7 @@ async function main() {
 
   const shutdown = async (code) => {
     await server.close().catch(() => {});
-    await driver.close().catch(() => {});
+    await server.driver.close().catch(() => {});
     process.exit(code);
   };
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
