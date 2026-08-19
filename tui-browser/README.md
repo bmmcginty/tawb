@@ -288,6 +288,22 @@ only what is visible — puts you on the nearest line above where it would
 have been, which is a much smaller move than landing wherever its text first
 matched.
 
+## Finding text
+
+`/` searches forward, `?` backward. The cursor lands on the matching text
+itself, not merely on the line holding it, so a braille display or screen
+reader reads from the match.
+
+Case follows what you type: an all-lowercase search ignores case, one with a
+capital in it does not — so `braille` finds the heading and `Braille` finds
+the name. Searches wrap, and say so when they do.
+
+There is no `n` for the next match: `n` is non-link text in the JAWS
+vocabulary this reader uses, and taking a jump key away to save two
+keystrokes is a poor trade. `Ctrl+G` repeats the search, which is Firefox's
+key for it, and `/` or `?` with nothing typed repeats the last search in that
+direction — which is how you reverse one.
+
 ## Keys
 
 ### Moving
@@ -316,6 +332,8 @@ matched.
 | Key      | Action                                                          |
 | -------- | --------------------------------------------------------------- |
 | `Enter`  | Activate the link, button or field on this line                  |
+| `/` / `?`| Find text forward / backward (empty repeats the last search)     |
+| `Ctrl+G` | Find the same text again                                        |
 | `Ctrl+L` | Address bar (scrolls sideways for long URLs; `Esc` cancels)      |
 | `\`      | Cycle view: AX → PAGE → HTML → SOURCE                            |
 | `>` / `<`| Next / previous tab                                              |

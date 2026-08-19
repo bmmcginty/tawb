@@ -46,6 +46,7 @@ let setCurrentDriver = () => {};
 const ESC = '\x1b';
 const CTRL_C = '\x03';
 const CTRL_L = '\x0c';
+const CTRL_G = '\x07';
 const BACKSPACE = '\x7f';
 const BACKSPACE_ALT = '\x08';
 const ARROW_UP = '\x1b[A';
@@ -283,7 +284,8 @@ function drawAddress(state, page, { force = false } = {}) {
 function hintText(state) {
   if (state.mode === 'address') return 'Address — Enter: go  Esc: cancel';
   if (state.mode === 'type') return 'Typing — Esc: stop  Enter: submit';
-  return 'j/k line  h/l/f/b/n/p nav  \\ view  ^L address  c changes  L live  q quit';
+  if (state.mode === 'find') return 'Find — Enter: search  Esc: cancel';
+  return 'j/k line  h/l/f/b/n/p nav  / find  \\ view  ^L address  c changes  L live  q quit';
 }
 
 // Deliberately carries no line counter. A position indicator here would
@@ -339,6 +341,10 @@ function setStatus(state, msg) {
 function parkCursor(state) {
   if (state.mode === 'address') {
     drawAddress(state, state.page, { force: true });
+    return;
+  }
+  if (state.mode === 'find') {
+    drawFind(state);
     return;
   }
   if (state.mode === 'type') {
@@ -435,6 +441,93 @@ function jumpTo(state, page, found, label, direction) {
     return;
   }
   moveSelection(state, found.line, page, found.col);
+}
+
+// ---------------------------------------------------------------------------
+// Finding text
+//
+// `/` searches forward, `?` backward, over the lines as they are written —
+// so a match lands the cursor on the matching text itself, not merely on the
+// line holding it, which is what a braille display and a screen reader
+// follow. Wrapped rows are searched like any other, since each is navigable
+// in its own right.
+//
+// Case follows what was typed: an all-lowercase search ignores case, and one
+// with a capital in it does not. It is the rule vi and less use, and it means
+// searching for "braille" finds the heading while searching for "Braille"
+// finds only the name.
+//
+// There is no `n` for the next match: `n` is non-link text in the JAWS
+// vocabulary this reader uses, and taking a jump key away to save two
+// keystrokes is a poor trade. `Ctrl+G` repeats the search — Firefox's key for
+// exactly this — and `/` or `?` with nothing typed repeats it in that
+// direction, which is how a search is reversed.
+// ---------------------------------------------------------------------------
+
+function findText(state, needle, direction) {
+  const total = state.lines.length;
+  if (!total || !needle) return null;
+
+  // Smart case: a capital anywhere means the reader meant it.
+  const sensitive = /[A-Z]/.test(needle);
+  const want = sensitive ? needle : needle.toLowerCase();
+  const textAt = (index) => {
+    const text = lineText(state, index);
+    return sensitive ? text : text.toLowerCase();
+  };
+
+  // One extra step so the line the search started on is examined again from
+  // its own start after the wrap, rather than being the one place a match
+  // could hide.
+  for (let step = 0; step <= total; step += 1) {
+    const index = (((state.cursor + direction * step) % total) + total) % total;
+    const text = textAt(index);
+
+    let at;
+    if (step === 0) {
+      // Start from just past the cursor, so repeating a search advances
+      // within a long line instead of finding the same match again.
+      at = direction > 0
+        ? text.indexOf(want, state.col + 1)
+        : (state.col > 0 ? text.lastIndexOf(want, state.col - 1) : -1);
+    } else {
+      at = direction > 0 ? text.indexOf(want) : text.lastIndexOf(want);
+    }
+
+    if (at >= 0) {
+      const wrapped = step > 0 && (direction > 0
+        ? index <= state.cursor
+        : index >= state.cursor);
+      return { line: index, col: at, wrapped };
+    }
+  }
+
+  return null;
+}
+
+function runSearch(state, page, needle, direction) {
+  const found = findText(state, needle, direction);
+  if (!found) {
+    setStatus(state, `"${needle}" not found.`);
+    return;
+  }
+  moveSelection(state, found.line, page, found.col);
+  setStatus(state, `"${needle}" — line ${found.line + 1} of ${state.lines.length}`
+    + `${found.wrapped ? ', wrapped' : ''}.`);
+}
+
+// The prompt lives on the status line, where the cursor goes with it: the
+// address bar is at the top because that is where an address belongs, but a
+// search is about the list below and putting the prompt there would mean
+// jumping the cursor over the whole page to type.
+function findPrompt(state) {
+  return (state.find.direction > 0 ? '/' : '?') + state.find.text;
+}
+
+function drawFind(state) {
+  const cols = termSize().cols;
+  writeLine(statusRow(), findPrompt(state).slice(0, cols));
+  moveCursor(statusRow(), Math.min(state.find.caret + 2, cols));
 }
 
 // ---------------------------------------------------------------------------
@@ -1402,6 +1495,22 @@ async function handleBrowseKey(chunk, state, page) {
     return;
   }
 
+  if (chunk === '/' || chunk === '?') {
+    state.mode = 'find';
+    state.find = { text: '', caret: 0, direction: chunk === '/' ? 1 : -1 };
+    drawHint(state);
+    drawFind(state);
+    return;
+  }
+
+  if (chunk === CTRL_G) {
+    if (!state.lastFind) {
+      setStatus(state, 'Nothing searched for yet — press / to search.');
+      return;
+    }
+    return runSearch(state, page, state.lastFind.text, state.lastFind.direction);
+  }
+
   if (chunk === 'p' || chunk === 'P') {
     const direction = chunk === 'p' ? 1 : -1;
     return jumpTo(state, page, findParagraph(state, direction), 'paragraph', direction);
@@ -1669,6 +1778,49 @@ async function handleTypeKey(chunk, state, page) {
   moveCursor(row, caretCol);
 }
 
+async function handleFindKey(chunk, state, page) {
+  markInput(state);
+  const find = state.find;
+
+  if (chunk === ESC || chunk === CTRL_C) {
+    state.mode = 'browse';
+    drawHint(state);
+    setStatus(state, 'Search cancelled.');
+    return;
+  }
+
+  if (chunk === '\r' || chunk === '\n') {
+    // Nothing typed repeats the last search, in the direction this prompt was
+    // opened with — which is the only way to search backwards through what
+    // you just found without retyping it.
+    const needle = find.text || (state.lastFind ? state.lastFind.text : '');
+    state.mode = 'browse';
+    drawHint(state);
+    if (!needle) {
+      setStatus(state, 'Nothing searched for yet — type what to find.');
+      return;
+    }
+    state.lastFind = { text: needle, direction: find.direction };
+    return runSearch(state, page, needle, find.direction);
+  }
+
+  if (chunk === ARROW_LEFT) find.caret = Math.max(0, find.caret - 1);
+  else if (chunk === ARROW_RIGHT) find.caret = Math.min(find.text.length, find.caret + 1);
+  else if (chunk === HOME_KEY) find.caret = 0;
+  else if (chunk === END_KEY) find.caret = find.text.length;
+  else if (chunk === BACKSPACE || chunk === BACKSPACE_ALT) {
+    if (find.caret > 0) {
+      find.text = find.text.slice(0, find.caret - 1) + find.text.slice(find.caret);
+      find.caret -= 1;
+    }
+  } else if (!chunk.startsWith(ESC)) {
+    find.text = find.text.slice(0, find.caret) + chunk + find.text.slice(find.caret);
+    find.caret += chunk.length;
+  }
+
+  drawFind(state);
+}
+
 async function handleAddressKey(chunk, state, page) {
   markInput(state);
   const a = state.address;
@@ -1801,9 +1953,11 @@ async function main() {
     col: 0,
     scroll: 0,
     statusMsg: '',
-    mode: 'browse', // 'browse' | 'type' | 'address'
+    mode: 'browse', // 'browse' | 'type' | 'address' | 'find'
     typing: null,
     address: null,
+    find: null,
+    lastFind: null,
     changes: [],
     changeIndex: -1,
     renderedUrl: page.url(),
@@ -1858,6 +2012,7 @@ async function main() {
     const current = state.page;
     if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
     else if (state.mode === 'address') result = await handleAddressKey(chunk, state, current);
+    else if (state.mode === 'find') result = await handleFindKey(chunk, state, current);
     else result = await handleBrowseKey(chunk, state, current);
     const ms = Date.now() - t0;
 
@@ -1946,7 +2101,8 @@ if (require.main === module) {
 }
 
 module.exports = {
-  readFieldState, handleBrowseKey, handleTypeKey, handleAddressKey,
+  readFieldState, handleBrowseKey, handleTypeKey, handleAddressKey, handleFindKey,
+  findText, runSearch,
   render, drawList, drawAddress, drawHint, snapshotBlocks, moveSelection,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock,
