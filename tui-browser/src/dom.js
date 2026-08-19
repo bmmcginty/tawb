@@ -1,5 +1,7 @@
 'use strict';
 
+const { clickThrough } = require('./click');
+
 // HTML mode: builds the line list from the DOM itself instead of the
 // accessibility tree.
 //
@@ -168,10 +170,11 @@ async function activateDomItem(page, item) {
     return `Entered ${item.tag}: ${url}`;
   }
 
-  await (item.frame || page).evaluate((i) => {
-    const el = window.__twebNodes && window.__twebNodes[i];
-    if (el) el.click();
-  }, item.domIndex);
+  // Aimed where a mouse would land rather than at the element itself: a
+  // handler bound to a child hears a real click and would never hear ours.
+  const handle = await domElementHandle(page, item);
+  await handle.evaluate(clickThrough);
+  await handle.dispose().catch(() => {});
   await page.waitForLoadState('domcontentloaded').catch(() => {});
   return `Activated <${item.tag}>`;
 }

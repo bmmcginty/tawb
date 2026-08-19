@@ -445,6 +445,32 @@ Pressing a button often updates a part of the page you are not looking at.
 When that happens the status line says so — *"3 areas changed, press c to
 jump"* — and `c` walks through them. Nothing moves you automatically.
 
+## Where a click lands
+
+`Enter` activates through the element's own default action, not by driving a
+mouse at coordinates: a blind user has no viewport, and legitimate targets —
+skip links, visually hidden controls — sit off-screen where a pointer could
+never reach them.
+
+But `element.click()` fires at that element, and a real click does not. A
+mouse lands on the innermost element under the pointer and the event travels
+*up* from there, so a handler bound below the labelled control hears a real
+click and never heard ours. On a Bandcamp album page the control is
+
+```
+<a role="button" aria-label="Play Weird Fish"><div class="play_status"></div></a>
+```
+
+and the player listens on the inner `div`. Pressing `Enter` on the play
+button did nothing at all, in both browsers, and the only way to play a
+track was to switch to `HTML` view and activate the bare `<div>` there.
+
+So the click is aimed the way a mouse would be: at the deepest descendant
+covering the middle of the element. Events bubble from there back up through
+the element itself, so a handler on either one hears it. The aim uses layout
+boxes rather than `elementFromPoint`, which answers only for what is on
+screen and would make an off-screen control unclickable again.
+
 ## If an action cannot complete
 
 Activation is bounded at six seconds. Some controls genuinely cannot be
