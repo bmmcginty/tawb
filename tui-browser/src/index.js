@@ -4,7 +4,7 @@
 const { FIELD_ROLES, LINK_ROLES, BUTTON_ROLES } = require('./aria');
 const { itemAtOffset } = require('./blocks');
 const { activateDomItem, domElementHandle } = require('./dom');
-const { clickThrough } = require('./click');
+const { clickThrough, prepareRealClick } = require('./click');
 const { renderElementHandle } = require('./render_html');
 const { snapshotFrameTree } = require('./frames');
 const { installLive, armFrame, armRenderedFrames, refreshDue, createLiveState, pulse, TICK_MS, INPUT_GRACE_MS } = require('./live');
@@ -286,7 +286,7 @@ function hintText(state) {
   if (state.mode === 'address') return 'Address — Enter: go  Esc: cancel';
   if (state.mode === 'type') return 'Typing — Esc: stop  Enter: submit';
   if (state.mode === 'find') return 'Find — Enter: search  Esc: cancel';
-  return 'j/k line  h/l/f/b/n/p nav  / find  \\ view  ^L address  c changes  L live  q quit';
+  return 'j/k line  h/l/f/b/n/p nav  / find  m click  \\ view  ^L address  c changes  q quit';
 }
 
 // Deliberately carries no line counter. A position indicator here would
@@ -1496,6 +1496,8 @@ async function handleBrowseKey(chunk, state, page) {
     return;
   }
 
+  if (chunk === 'm') return clickAsHuman(state, page);
+
   if (chunk === '/' || chunk === '?') {
     state.mode = 'find';
     state.find = { text: '', caret: 0, direction: chunk === '/' ? 1 : -1 };
@@ -1720,6 +1722,13 @@ async function activateCurrent(state, page) {
     return;
   }
 
+  await reportAfterAction(state, page, { previousTexts, previousUrl, anchor });
+}
+
+// What happened after something was pressed: a different page, a part of this
+// one rewritten, or nothing at all. Nothing here moves the reader unless the
+// page did — a rebuilt buffer keeps their place by content.
+async function reportAfterAction(state, page, { previousTexts, previousUrl, anchor }) {
   const navigated = page.url() !== previousUrl;
   await refresh(state, page, navigated ? { resetCursor: true } : { anchor });
 
@@ -1732,6 +1741,77 @@ async function activateCurrent(state, page) {
   } else {
     setStatus(state, `${state.statusMsg} — no visible change.`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// A click the browser treats as a person's
+//
+// Enter activates through the DOM's own default action, which is the right
+// default for reading: it needs no viewport and it reaches controls that are
+// off-screen, which is where skip links and visually hidden controls live.
+// What it cannot produce is *user activation*. The browser knows nobody
+// touched anything, so everything gated on a real gesture — playing audio,
+// fullscreen, the clipboard, opening a window — refuses, and no amount of
+// page-side cleverness changes that: the gate exists precisely to tell the
+// two apart.
+//
+// So `m` sends a click through the browser's own input pipeline, above
+// content, where the events are trusted and carry activation. It is a
+// separate key rather than a smarter Enter because it is a different act with
+// different costs: it goes to a point on the screen, so the element has to be
+// scrolled into view and whatever is on top of it gets the click. Both are
+// checked first and reported instead of being discovered afterwards by
+// whatever the click did instead.
+// ---------------------------------------------------------------------------
+
+async function clickAsHuman(state, page) {
+  const item = itemUnderCursor(state);
+  if (!item) {
+    setStatus(state, 'Nothing on this line to click.');
+    return;
+  }
+  if (typeof state.driver.realClick !== 'function') {
+    setStatus(state, `The ${state.driver.name} driver cannot send a real click.`);
+    return;
+  }
+
+  const previousTexts = state.blocks.map((b) => b.text);
+  const previousUrl = page.url();
+  const anchor = anchorFor(state);
+  const started = Date.now();
+
+  try {
+    setStatus(state, `Clicking "${item.name}" as a person would...`);
+    const handle = await withTimeout(
+      elementHandleFor(state, page, item), ACTION_TIMEOUT_MS, 'Locating element');
+
+    const ready = await withTimeout(
+      handle.evaluate(prepareRealClick), ACTION_TIMEOUT_MS, 'Bringing it on screen');
+    if (!ready || !ready.ok) {
+      const reason = ready ? ready.reason : 'could not be found on the page';
+      log('click.real.refused', { name: String(item.name).slice(0, 80), reason });
+      setStatus(state, `Cannot click "${item.name}": it ${reason}.`
+        + ' Enter activates it without a real click.');
+      return;
+    }
+
+    await withTimeout(Promise.all([
+      page.waitForLoadState('domcontentloaded').catch(() => {}),
+      state.driver.realClick(item.frame || page, handle, { timeoutMs: ACTION_TIMEOUT_MS }),
+    ]), ACTION_TIMEOUT_MS, 'Clicking');
+
+    log('click.real', { name: String(item.name).slice(0, 80), ms: Date.now() - started, source: state.source });
+    state.statusMsg = `Clicked "${item.name}"`;
+  } catch (err) {
+    const timedOut = err instanceof ActionTimeout;
+    setStatus(state, timedOut
+      ? `Gave up clicking "${item.name}" after ${ACTION_TIMEOUT_MS / 1000}s.`
+      : `Could not click "${item.name}": ${err.message.split('\n')[0]}`);
+    log('click.real.failed', { name: String(item.name).slice(0, 80), timedOut, source: state.source });
+    return;
+  }
+
+  await reportAfterAction(state, page, { previousTexts, previousUrl, anchor });
 }
 
 async function handleTypeKey(chunk, state, page) {
@@ -2109,6 +2189,7 @@ module.exports = {
   render, drawList, drawAddress, drawHint, snapshotBlocks, moveSelection,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock,
+  clickAsHuman, reportAfterAction,
   anchorFor, restoreAnchor, capturePlace, restorePlace, diffBlocks, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
   applyTextPatches, soleBlockContaining, loadMore, atEnd, switchToTab, cycleTab, onNewTab,

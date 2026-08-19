@@ -33,9 +33,15 @@
 //                     resolves against it — by role and name for Playwright,
 //                     whose items carry no reference, and directly for an
 //                     implementation that kept one.
+//   realClick()       a click the browser treats as a person's, which only
+//                     the protocol can produce: real input dispatched above
+//                     content, so the events are trusted and carry user
+//                     activation. Playwright's own click does it for
+//                     Chromium; the Firefox driver performs the pointer
+//                     actions itself, the same road its keyboard takes.
 //
 // A driver is a plain object, not a class hierarchy. It holds the browser it
-// opened and answers those four questions.
+// opened and answers those questions.
 
 const { openChromium } = require('./driver_chromium');
 const { openFirefox } = require('./driver_firefox');

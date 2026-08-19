@@ -57,4 +57,84 @@ function clickThrough(el) {
   return node !== el;
 }
 
-module.exports = { clickThrough };
+// Runs in the page before a real click: brings the element onto the screen
+// and reports whether a click there would actually reach it.
+//
+// A real click goes where a real click goes — at a point, through whatever is
+// painted on top. A reader cannot see that a cookie banner has landed over
+// the button, so the check is made here and reported rather than discovered
+// afterwards by whatever the click did instead.
+//
+// Where the element sits on screen is ours to choose, though, and a control
+// hidden under a sticky bar in the middle of the window is often perfectly
+// clear a moment later at the top of it. So the element is placed four
+// different ways and the first placement that leaves it reachable is the one
+// the click uses.
+//
+// Hit testing descends through shadow roots. elementFromPoint retargets to
+// the shadow host — a custom element several hundred pixels away reports as
+// the thing in the way — which is both useless to report and wrong to judge:
+// what matters is the innermost element the click would actually reach.
+function prepareRealClick(el) {
+  if (!el || typeof el.getBoundingClientRect !== 'function') {
+    return { ok: false, reason: 'is not an element' };
+  }
+
+  const deepHit = (x, y) => {
+    const chain = [];
+    let root = document;
+    for (let depth = 0; depth < 8; depth += 1) {
+      const hit = root.elementFromPoint(x, y);
+      if (!hit || chain[chain.length - 1] === hit) break;
+      chain.push(hit);
+      if (!hit.shadowRoot) break;
+      root = hit.shadowRoot;
+    }
+    return chain;
+  };
+
+  const name = (node) => {
+    const tag = node.tagName ? node.tagName.toLowerCase() : 'something';
+    const id = node.id ? `#${node.id}` : '';
+    const cls = typeof node.className === 'string' && node.className.trim()
+      ? `.${node.className.trim().split(/\s+/)[0]}` : '';
+    return `<${tag}${id}${cls}>`;
+  };
+
+  let blocked = null;
+
+  for (const block of ['center', 'start', 'end', 'nearest']) {
+    // Instant, not the page's own scroll behaviour: a smooth scroll is still
+    // animating when the next line measures the element, and everything after
+    // that would be about where it used to be.
+    el.scrollIntoView({ block, inline: 'center', behavior: 'instant' });
+
+    const box = el.getBoundingClientRect();
+    if (!box.width || !box.height) return { ok: false, reason: 'has no size on screen' };
+
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) {
+      blocked = blocked || { ok: false, reason: 'cannot be brought onto the screen' };
+      continue;
+    }
+
+    const chain = deepHit(x, y);
+    if (!chain.length) {
+      blocked = blocked || { ok: false, reason: 'is not visible at its own centre' };
+      continue;
+    }
+
+    // A descendant under the point is the normal case, not something in the
+    // way: that is where a mouse lands anyway, and the event travels up.
+    if (chain.some((node) => node === el || el.contains(node))) {
+      return { ok: true, x: Math.round(x), y: Math.round(y), placed: block };
+    }
+
+    blocked = { ok: false, reason: `is covered by ${name(chain[chain.length - 1])}`, covered: true };
+  }
+
+  return blocked || { ok: false, reason: 'could not be reached' };
+}
+
+module.exports = { clickThrough, prepareRealClick };

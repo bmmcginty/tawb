@@ -121,7 +121,11 @@ class FirefoxFrame {
     if (result.type === 'exception') {
       throw new Error(result.exceptionDetails?.text || 'the page threw while evaluating');
     }
-    return new FirefoxHandle(this.session, this.contextId, this.page, result.result.handle);
+    // The shared id, not just the handle: a pointer action names its target
+    // by shared reference, and nothing else in BiDi will accept a handle for
+    // it. They are two names for one node and both come back here.
+    return new FirefoxHandle(
+      this.session, this.contextId, this.page, result.result.handle, result.result.sharedId);
   }
 
   // Only ever called for frame elements, and what the caller needs from each
@@ -170,11 +174,12 @@ class FirefoxFrameRef {
 }
 
 class FirefoxHandle {
-  constructor(session, contextId, page, handle) {
+  constructor(session, contextId, page, handle, sharedId = null) {
     this.session = session;
     this.contextId = contextId;
     this.page = page;
     this.handle = handle;
+    this.sharedId = sharedId || null;
   }
 
   async evaluate(fn, arg) {
@@ -647,6 +652,47 @@ async function openFirefox({
     // merging, separator folding, layout — is shared.
     async axItems(frame) {
       return frame.evaluate(extractAxItems);
+    },
+
+    // A click the browser treats as a person's.
+    //
+    // Everything else here activates through the DOM's own default action,
+    // which is right for reading: it needs no viewport and reaches controls
+    // that are off-screen. What it cannot produce is user activation — the
+    // browser knows perfectly well that nobody touched anything — so a page
+    // that gates on a real gesture (audio, fullscreen, the clipboard, a
+    // popup) refuses, and there is nothing the page side can do about it.
+    //
+    // input.performActions is the same road the keyboard already takes: the
+    // browser's own input pipeline, above content, so the events are trusted
+    // and carry activation. The target is named by shared reference rather
+    // than by coordinates we worked out, so the browser computes the
+    // element's own centre point and hits what we meant.
+    async realClick(scope, handle) {
+      if (!handle || !handle.sharedId) {
+        throw new Error('this line carries no element reference to click');
+      }
+      const context = scope && scope.contextId ? scope.contextId : page.contextId;
+      const target = { type: 'element', element: { sharedId: handle.sharedId } };
+      try {
+        await session.send('input.performActions', {
+          context,
+          actions: [{
+            type: 'pointer',
+            id: 'tweb-mouse',
+            parameters: { pointerType: 'mouse' },
+            actions: [
+              { type: 'pointerMove', x: 0, y: 0, origin: target },
+              { type: 'pointerDown', button: 0 },
+              { type: 'pointerUp', button: 0 },
+            ],
+          }],
+        });
+      } finally {
+        // A pointer left pressed belongs to nobody once this returns, and the
+        // next action would inherit it.
+        await session.send('input.releaseActions', { context }).catch(() => {});
+      }
     },
 
     // Ours kept a reference, so there is no need to search by role and name:

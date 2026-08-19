@@ -82,6 +82,23 @@ async function openChromium({
       return context.newPage();
     },
 
+    // A click the browser treats as a person's.
+    //
+    // Everything else here activates through the DOM's own default action,
+    // which is right for reading: it needs no viewport and reaches controls
+    // that are off-screen. What it cannot produce is user activation — the
+    // browser knows nobody touched anything — so a page that gates on a real
+    // gesture (audio, fullscreen, the clipboard, a popup) refuses.
+    //
+    // Playwright's click is real input over the DevTools protocol, dispatched
+    // above content, so the events are trusted and carry activation. It also
+    // brings the element into view and refuses to click one that something
+    // else is covering, which is exactly the honesty wanted here: a click
+    // that lands on a modal instead of the button is worse than no click.
+    async realClick(scope, handle, { timeoutMs = 5000 } = {}) {
+      await handle.click({ timeout: timeoutMs });
+    },
+
     // Whoever computed the tree resolves against it. Playwright's items carry
     // no element reference, so this goes back through role and name.
     async axElementHandle(scope, item) {
