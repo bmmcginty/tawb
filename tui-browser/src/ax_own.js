@@ -141,7 +141,7 @@ function extractAxItems(options) {
     .trim();
 
   const nodes = [];
-  window.__twebAxNodes = nodes;
+  window[Symbol.for('tweb.ax')] = nodes;
   const out = [];
 
   // The flattened tree — what the browser actually renders, and what it
@@ -155,9 +155,10 @@ function extractAxItems(options) {
   for (const pair of opts.pairs || []) {
     if (pair && pair[0] && pair[1]) closedRoots.set(pair[0], pair[1]);
   }
-  if (opts.pierce && typeof window.__twebPierce === 'function') {
+  const privileged = window[Symbol.for('tweb.pierce')];
+  if (opts.pierce && typeof privileged === 'function') {
     try {
-      for (const pair of window.__twebPierce() || []) {
+      for (const pair of privileged() || []) {
         if (pair && pair[0] && pair[1]) closedRoots.set(pair[0], pair[1]);
       }
     } catch { /* the privileged half is not installed here */ }

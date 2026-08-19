@@ -41,11 +41,17 @@ const { log } = require('./log');
 
 // Where each view stashes the elements its lines came from, and the property
 // on an item that indexes into it.
+//
+// Named by symbol rather than by a plain property, here and everywhere else
+// this program keeps something on a page's window. A string property is
+// listed by Object.keys, by for...in and by getOwnPropertyNames, so anything
+// we leave behind is there to be found by name — and the documents this
+// program most needs to be unremarkable in are the ones looking hardest.
 const NODE_ARRAY = {
-  render: '__twebRenderNodes',
-  html: '__twebNodes',
-  source: '__twebNodes',
-  ax: '__twebAxNodes',
+  render: 'tweb.render',
+  html: 'tweb.dom',
+  source: 'tweb.dom',
+  ax: 'tweb.ax',
 };
 const INDEX_KEY = {
   render: 'renderIndex', html: 'domIndex', source: 'domIndex', ax: 'axIndex',
@@ -89,7 +95,7 @@ function describeElement(el) {
 // reader was is a much smaller move than landing wherever the text happened
 // to match first.
 function locateElement({ el, arrayName }) {
-  const nodes = window[arrayName];
+  const nodes = window[Symbol.for(arrayName)];
   if (!nodes || !nodes.length || !el) return null;
 
   const positions = new Map();

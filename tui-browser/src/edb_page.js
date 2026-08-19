@@ -250,7 +250,7 @@ function resolveDescriptor(desc) {
   const found = byPath(desc.path);
   if (found && found.tagName.toLowerCase() === desc.tag
     && (!wanted || nameOf(found) === wanted)) {
-    window.__twebResolved = found;
+    window[Symbol.for('tweb.resolved')] = found;
     return { how: 'path' };
   }
 
@@ -267,11 +267,11 @@ function resolveDescriptor(desc) {
     if (!best || distance < best.distance) best = { el, distance };
   }
   if (best) {
-    window.__twebResolved = best.el;
+    window[Symbol.for('tweb.resolved')] = best.el;
     return { how: 'name' };
   }
 
-  window.__twebResolved = null;
+  window[Symbol.for('tweb.resolved')] = null;
   return null;
 }
 

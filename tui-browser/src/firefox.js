@@ -228,7 +228,13 @@ const PIERCE_CHILD_SCRIPT = `
           walk(win.document);
           return Cu.cloneInto(found, win.wrappedJSObject, { wrapReflectors: true });
         };
-        win.wrappedJSObject.__twebPierce = Cu.exportFunction(pierce, win.wrappedJSObject);
+        // Under a symbol rather than a name, like everything else this
+        // program leaves on a page: a string property is listed by
+        // getOwnPropertyNames and by Object.keys, and this one is installed
+        // in every document there is — including the ones looking hardest for
+        // exactly this.
+        win.wrappedJSObject[Symbol.for('tweb.pierce')] =
+          Cu.exportFunction(pierce, win.wrappedJSObject);
       } catch (e) { /* a window we cannot reach; the rest still get it */ }
     }, 'content-document-global-created');
   }
