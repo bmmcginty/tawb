@@ -60,6 +60,28 @@ async function blocksForFrame(frame, source, driver = null) {
   return blocks;
 }
 
+// A key that means "the same document" across two listings of it. Playwright
+// hands back the same Frame object every time and can be compared directly;
+// the BiDi driver builds a fresh object per call, so its context id is what
+// stays the same.
+function frameKey(frame) {
+  return frame && frame.contextId ? frame.contextId : frame;
+}
+
+// Every child document, however it got there. Asked of the browser rather
+// than of the page's own markup, which is the whole point: an <iframe> inside
+// a closed shadow root cannot be found by querySelectorAll, so a walker that
+// only ever looks at elements will never learn that document exists at all.
+async function everyChildFrame(frame) {
+  if (typeof frame.childFrames !== 'function') return [];
+  try {
+    const children = frame.childFrames();
+    return Array.isArray(children) ? children : await children;
+  } catch {
+    return [];
+  }
+}
+
 // Child frames in document order, paired with the iframe element that hosts
 // each one. Ordering is what lets us match the Nth iframe line to the Nth
 // child frame without needing an element reference in AX mode.
@@ -135,10 +157,14 @@ async function walk(frame, source, depth, budget, seen, visited, driver) {
   if (kidsMs > 100) {
     log('frame.children.slow', { depth, ms: kidsMs, found: children.length, url: frame.url().slice(0, 100) });
   }
-  if (children.length === 0) return blocks;
+  // Deliberately not returning when no iframe element was found. That used to
+  // mean "no child documents", and on a page that hides its iframe in a closed
+  // shadow root it is exactly wrong: there are no elements to find and there
+  // is a document all the same.
 
   const out = [];
   let childIndex = 0;
+  const placed = new Set();
 
   for (const block of blocks) {
     out.push(block);
@@ -147,6 +173,7 @@ async function walk(frame, source, depth, budget, seen, visited, driver) {
     const child = children[childIndex];
     childIndex += 1;
     if (!child) continue;
+    placed.add(frameKey(child));
 
     const url = child.url();
     // about:blank frames are placeholders, and a frame that reappears at the
@@ -160,7 +187,41 @@ async function walk(frame, source, depth, budget, seen, visited, driver) {
     out.push(...nested);
   }
 
+  // Documents the page's own markup never mentioned.
+  //
+  // Splicing a child frame in after the element that hosts it only works when
+  // the element can be found, and an <iframe> inside a closed shadow root
+  // cannot be: querySelectorAll does not cross that boundary and neither does
+  // any walk built on it. Cloudflare's challenge is exactly this — the widget
+  // frame is real, the browser lists it, and the host page reports zero
+  // iframe elements — so the reader was shown nothing at all where a bot
+  // check was standing.
+  //
+  // There is no way to know where such a frame belongs, so it goes at the
+  // end, named, rather than being dropped. A frame the reader can reach at
+  // the wrong place beats one they cannot reach at all.
+  const hidden = (await everyChildFrame(frame)).filter((child) => !placed.has(frameKey(child)));
+  for (const child of hidden) {
+    if (budget.remaining <= 0) break;
+    let url = '';
+    try { url = child.url() || ''; } catch { url = ''; }
+    if (!url || url === 'about:blank' || seen.has(url)) continue;
+
+    budget.remaining -= 1;
+    const nested = await walk(child, source, depth + 1, budget, new Set([...seen, url]), visited, driver);
+
+    // The marker goes in even when nothing could be read out of the frame.
+    // A document whose contents are behind a closed shadow root reads as
+    // empty, and "there is a Cloudflare frame here that I cannot see into" is
+    // a great deal more use to a reader than silence where a bot check is.
+    let host = url;
+    try { host = new URL(url).host || url; } catch { /* keep the raw url */ }
+    log('frame.hidden', { depth, url: url.slice(0, 100), blocks: nested.length });
+    out.push({ text: `<frame: ${host}>`, item: { role: 'iframe', name: host } });
+    out.push(...nested);
+  }
+
   return out;
 }
 
-module.exports = { snapshotFrameTree, isFrameItem, blocksForFrame, orderedChildFrames };
+module.exports = { snapshotFrameTree, isFrameItem, blocksForFrame, orderedChildFrames, everyChildFrame };
