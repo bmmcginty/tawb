@@ -9,3 +9,8 @@ tweb-*.log
 # (cf_clearance, login sessions) and must never be committed.
 out/
 *.saz
+
+# A checkout of edbrowse, kept here to read its source while designing the
+# integration. It is upstream's repository with its own .git, not ours to
+# vendor — remove this line if it should be a submodule instead.
+tui-browser/edbrowse/
