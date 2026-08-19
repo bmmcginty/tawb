@@ -1,0 +1,45 @@
+# Read the live web through tweb, which drives an ordinary Chrome, Chromium
+# or Firefox and hands the result to edbrowse as html.
+#
+#   b tweb://https://example.com
+#
+# Start the server first, in the tui-browser directory:
+#
+#   npm run edb                 (or: npm run edb -- --browser firefox)
+#
+# Every link and form in the page that comes back points at the server over
+# http, so edbrowse's own machinery — g, i=, i*, ib, rf, ^ — works normally
+# from there on, and the browser keeps your logins and clearance cookies.
+
+plugin {
+    type = */*
+    desc = Read a page through tweb's browser
+    protocol = tweb
+    program = edbrowse-plugin-tweb %i
+    outtype = h
+}
+
+# Send a real click, the kind the browser treats as a person's, to the link
+# on the current line. Audio, fullscreen, the clipboard and popups are gated
+# on that gesture; an ordinary g is a script-initiated click and is not.
+# Adapted from edbrowse's own render-chrome.rc.
+function+twebclick {
+    db0
+    A
+    2,d
+    s;^<br/*><a href='\(.*\)'>$;b $1/click;f
+    bw
+    up
+    db1
+    <*-1
+}
+
+# The accessibility tree, the visible text and the markup, as tweb's reader
+# sees them, for when edbrowse's rendering of a page is not the useful one.
+function+twebax {
+    b ax
+}
+
+function+twebsource {
+    b source
+}
