@@ -375,6 +375,9 @@ class Core {
     // news. Keyed by block index, which holds still for as long as only text
     // is being replaced — which is exactly the case this is about.
     this.tickers = new Map();
+    // An open dropdown, whose entries are spliced into the block list under
+    // the control they belong to. See openChooser().
+    this.chooser = null;
     this.snapshotCostMs = 0;
     // When the page last changed under us, whether a refresh is owed, how
     // recently the reader touched anything. The rules that read it live in
@@ -734,6 +737,132 @@ class Core {
 
   async closeTab(page) {
     await withTimeout(page.close(), ACTION_TIMEOUT_MS, 'Closing the tab');
+  }
+
+  // -------------------------------------------------------------------------
+  // Dropdowns
+  //
+  // A native <select> is not a text field and never was, and the popup it
+  // opens is drawn by the browser rather than by the page — no click can
+  // reach it and no amount of walking the DOM will find it. What *is* in the
+  // DOM is the list of options, all of it, always. So there is nothing to
+  // open: the entries are read straight off the element and spliced into the
+  // buffer underneath the control, where they can be moved through and
+  // filtered like anything else the reader can see.
+  // -------------------------------------------------------------------------
+
+  // The entries of a native select, or null if this item is not one.
+  async optionsFor(item, page = this.page) {
+    const handle = await withTimeout(
+      this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating the control');
+    return handle.evaluate((el) => {
+      if (!el || el.tagName !== 'SELECT') return null;
+      return {
+        multiple: !!el.multiple,
+        selectedIndex: el.selectedIndex,
+        options: Array.from(el.options).map((option) => ({
+          text: (option.textContent || '').replace(/\s+/g, ' ').trim() || option.value,
+          disabled: !!option.disabled,
+          selected: !!option.selected,
+        })),
+      };
+    });
+  }
+
+  // Choose the nth entry, in the one way that is both exact and trusted.
+  //
+  // Every obvious route is wrong. Clicking the option cannot work: measured
+  // on both engines, an <option> of a closed select has no box to click and
+  // the attempt times out, because the open popup is browser chrome rather
+  // than page content. Setting `selected` and dispatching the events by hand
+  // works but the page can see they are not a person's. Typing the entry's
+  // name cannot express which entry is meant — "United States" is a strict
+  // prefix of "United States Minor Outlying Islands" — and a widget built on
+  // a framework has no key handler to type at in the first place. Walking
+  // there with arrow keys is trusted and exact, but a closed select fires a
+  // change event for every entry passed on the way: measured at forty change
+  // events to move forty places, which on a country field that reloads its
+  // region list is forty page loads.
+  //
+  // What works is to move silently to the entry *next to* the target — a
+  // script assignment fires nothing at all — and then send one real arrow
+  // key. Measured on Chromium and on Firefox: the page sees exactly one
+  // input and one change, both trusted, carrying the right value.
+  async chooseOption(item, index, page = this.page) {
+    const handle = await withTimeout(
+      this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating the control');
+
+    const key = await handle.evaluate((el, target) => {
+      if (!el || el.tagName !== 'SELECT') return null;
+      el.focus();
+      if (el.selectedIndex === target) return 'already';
+      // Land next to it, from whichever side exists, and let the real key
+      // make the move the page is told about.
+      el.selectedIndex = target > 0 ? target - 1 : target + 1;
+      return target > 0 ? 'ArrowDown' : 'ArrowUp';
+    }, index);
+
+    if (key === null) return { changed: false, reason: 'not a select' };
+    if (key === 'already') return { changed: false, reason: 'already chosen' };
+    await page.keyboard.press(key);
+    return { changed: true };
+  }
+
+  // Splice a dropdown's entries into the buffer under its control. They are
+  // ordinary blocks from here on, so moving through them, wrapping them and
+  // finding text in them all work without knowing anything about dropdowns.
+  openChooser(blockIndex, listing) {
+    this.closeChooser();
+    this.chooser = {
+      blockIndex,
+      at: blockIndex + 1,
+      count: 0,
+      filter: '',
+      shown: [],
+      options: listing.options,
+      multiple: listing.multiple,
+    };
+    this.showChooser();
+    return this.chooser;
+  }
+
+  // (Re)draw the entries, honouring the filter. Filtering happens here and
+  // never at the page: these are our lines, and typing at the control would
+  // reach a widget that may have no key handler at all.
+  showChooser(filter = null) {
+    const chooser = this.chooser;
+    if (!chooser) return 0;
+    if (filter !== null) chooser.filter = filter;
+    if (chooser.count) this.blocks.splice(chooser.at, chooser.count);
+
+    const needle = chooser.filter.trim().toLowerCase();
+    const shown = [];
+    const blocks = [];
+    chooser.options.forEach((option, index) => {
+      if (needle && !option.text.toLowerCase().includes(needle)) return;
+      shown.push(index);
+      blocks.push({
+        text: `    ${option.selected ? '(*)' : '( )'} ${option.text}`
+          + (option.disabled ? ' — unavailable' : ''),
+        item: { role: 'option', name: option.text, chooserIndex: index, disabled: option.disabled },
+      });
+    });
+
+    this.blocks.splice(chooser.at, 0, ...blocks);
+    chooser.count = blocks.length;
+    chooser.shown = shown;
+    return blocks.length;
+  }
+
+  closeChooser() {
+    if (this.chooser && this.chooser.count) this.blocks.splice(this.chooser.at, this.chooser.count);
+    this.chooser = null;
+  }
+
+  // Whether a block index is one of the open dropdown's entries.
+  inChooser(blockIndex) {
+    const chooser = this.chooser;
+    return !!chooser && blockIndex >= chooser.at && blockIndex < chooser.at + chooser.count;
   }
 
   blockText(index) {

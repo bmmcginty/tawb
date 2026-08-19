@@ -275,6 +275,7 @@ function hintText(state) {
   if (state.mode === 'address') return 'Address — Enter: go  Esc: cancel';
   if (state.mode === 'type') return 'Typing — Esc: stop  Enter: submit';
   if (state.mode === 'find') return 'Find — Enter: search  Esc: cancel';
+  if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
   return 'j/k line  h/l/f/b/n/p nav  / find  m click  \\ view  ^L address  c changes  q quit';
 }
 
@@ -1316,6 +1317,18 @@ async function activateCurrent(state, page) {
   try {
     setStatus(state, `Activating "${item.name}"...`);
     if (FIELD_ROLES.has(item.role)) {
+      // A native select is a list of choices, not a field to type into. It
+      // came through here as a combobox and landed the reader in typing mode
+      // over a control that has no text in it — the only thing typing could
+      // ever do there was the browser's own prefix matching, which cannot
+      // say which of two entries sharing a prefix was meant.
+      const listing = await withTimeout(
+        state.core.optionsFor(item, page), ACTION_TIMEOUT_MS, 'Reading the choices');
+      if (listing) {
+        openChooser(state, page, item, listing);
+        return;
+      }
+
       const handle = await withTimeout(
         state.core.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating field');
       await withTimeout(handle.evaluate((el) => el.focus()), ACTION_TIMEOUT_MS, 'Focusing field');
@@ -1438,6 +1451,147 @@ async function clickAsHuman(state, page) {
   }
 
   await reportAfterAction(state, page, { previousTexts, previousUrl, anchor, screen });
+}
+
+// ---------------------------------------------------------------------------
+// Choosing from a dropdown
+//
+// The core splices the entries into the buffer under the control, so they are
+// ordinary lines and everything that works on lines works on them. What this
+// adds is a mode: movement that cannot wander out of the list, typing that
+// filters our own lines rather than being sent at a control that may have no
+// key handler at all, and Enter meaning "this one".
+// ---------------------------------------------------------------------------
+
+// The first and last screen line the open dropdown occupies.
+function chooserLines(state) {
+  const chooser = state.core.chooser;
+  if (!chooser || !chooser.count) return null;
+  let first = -1;
+  let last = -1;
+  state.lines.forEach((line, index) => {
+    if (line.blockIndex < chooser.at || line.blockIndex >= chooser.at + chooser.count) return;
+    if (first < 0) first = index;
+    last = index;
+  });
+  return first < 0 ? null : { first, last };
+}
+
+function openChooser(state, page, item, listing) {
+  const blockIndex = state.lines[state.cursor] ? state.lines[state.cursor].blockIndex : 0;
+  state.core.openChooser(blockIndex, listing);
+  // Hold off live rebuilds while the list is open: a refresh would replace
+  // the block list and take the entries with it, mid-choice.
+  state.live.refreshing = true;
+  state.mode = 'choose';
+  state.chooser = { item, from: blockIndex };
+
+  relayout(state);
+  const range = chooserLines(state);
+  const chosen = listing.options.findIndex((option) => option.selected);
+  const offset = chosen >= 0 ? state.core.chooser.shown.indexOf(chosen) : 0;
+  state.cursor = range ? Math.min(range.first + Math.max(offset, 0), range.last) : state.cursor;
+  clampScroll(state);
+  render(state, page, { force: true });
+  setStatus(state, `${listing.options.length} choice${listing.options.length === 1 ? '' : 's'} for "${item.name}" — type to filter, Enter to choose, Esc to cancel.`);
+}
+
+function closeChooser(state, page, { note }) {
+  const from = state.chooser ? state.chooser.from : 0;
+  state.core.closeChooser();
+  state.live.refreshing = false;
+  state.mode = 'browse';
+  state.chooser = null;
+  relayout(state);
+  const line = lineForBlock(state, from);
+  if (line >= 0) state.cursor = line;
+  clampCol(state);
+  clampScroll(state);
+  render(state, page, { force: true });
+  if (note) setStatus(state, note);
+}
+
+async function handleChooseKey(chunk, state, page) {
+  markInput(state);
+  const chooser = state.core.chooser;
+  if (!chooser) { state.mode = 'browse'; return; }
+
+  if (chunk === ESC) {
+    closeChooser(state, page, { note: `Left "${state.chooser.item.name}" as it was.` });
+    return;
+  }
+
+  if (chunk === '\r' || chunk === '\n') {
+    const line = state.lines[state.cursor];
+    const item = line ? state.blocks[line.blockIndex].item : null;
+    if (!item || item.chooserIndex == null) {
+      setStatus(state, 'Move to a choice first.');
+      return;
+    }
+    if (item.disabled) {
+      setStatus(state, `"${item.name}" is not available.`);
+      return;
+    }
+    const control = state.chooser.item;
+    const chosen = item.name;
+    let outcome;
+    try {
+      outcome = await withTimeout(
+        state.core.chooseOption(control, item.chooserIndex, page), ACTION_TIMEOUT_MS, 'Choosing');
+    } catch (err) {
+      closeChooser(state, page, { note: `Could not choose "${chosen}": ${err.message.split('\n')[0]}` });
+      return;
+    }
+    log('chooser.choose', { control: String(control.name).slice(0, 60), chosen: chosen.slice(0, 60), changed: outcome.changed });
+    closeChooser(state, page, { note: null });
+    // The page may have reacted to the choice — a region list reloading is
+    // the ordinary case — so read it again before saying anything.
+    await refresh(state, page, { anchor: anchorFor(state) });
+    render(state, page, { force: true });
+    setStatus(state, outcome.changed ? `Chose "${chosen}".` : `"${chosen}" was already chosen.`);
+    return;
+  }
+
+  const range = chooserLines(state);
+  if (chunk === ARROW_DOWN || chunk === 'DOWN') {
+    if (range) moveSelection(state, Math.min(state.cursor + 1, range.last), page);
+    return;
+  }
+  if (chunk === ARROW_UP) {
+    if (range) moveSelection(state, Math.max(state.cursor - 1, range.first), page);
+    return;
+  }
+  if (chunk === PAGE_DOWN) {
+    if (range) moveSelection(state, Math.min(state.cursor + viewportHeight(), range.last), page);
+    return;
+  }
+  if (chunk === PAGE_UP) {
+    if (range) moveSelection(state, Math.max(state.cursor - viewportHeight(), range.first), page);
+    return;
+  }
+
+  if (chunk === BACKSPACE || chunk === BACKSPACE_ALT) {
+    refilter(state, page, chooser.filter.slice(0, -1));
+    return;
+  }
+  if (chunk.startsWith(ESC)) return; // an escape sequence we do not use here
+  if (chunk >= ' ') {
+    refilter(state, page, chooser.filter + chunk);
+    return;
+  }
+}
+
+function refilter(state, page, filter) {
+  const shown = state.core.showChooser(filter);
+  relayout(state);
+  const range = chooserLines(state);
+  if (range) state.cursor = range.first;
+  clampCol(state);
+  clampScroll(state);
+  render(state, page, { force: true });
+  setStatus(state, filter
+    ? `${shown} of ${state.core.chooser.options.length} matching "${filter}".`
+    : `${shown} choice${shown === 1 ? '' : 's'}.`);
 }
 
 async function handleTypeKey(chunk, state, page) {
@@ -1670,8 +1824,9 @@ async function main() {
     col: 0,
     scroll: 0,
     statusMsg: '',
-    mode: 'browse', // 'browse' | 'type' | 'address' | 'find'
+    mode: 'browse', // 'browse' | 'choose' | 'type' | 'address' | 'find'
     typing: null,
+    chooser: null,
     address: null,
     find: null,
     lastFind: null,
@@ -1738,7 +1893,8 @@ async function main() {
     // state.page, not the page this loop began with: `<` and `>` move the
     // reader between tabs and every handler must act on the one they are on.
     const current = state.page;
-    if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
+    if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
+    else if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
     else if (state.mode === 'address') result = await handleAddressKey(chunk, state, current);
     else if (state.mode === 'find') result = await handleFindKey(chunk, state, current);
     else result = await handleBrowseKey(chunk, state, current);
