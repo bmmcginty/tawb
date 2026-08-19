@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tweb test page: dropdowns, menus and live regions</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 50rem; padding: 0 1rem; }
+  section { border-top: 1px solid #ccc; padding-top: 1rem; margin-top: 2rem; }
+  .listbox { list-style: none; margin: 0; padding: 0; border: 1px solid #666; max-height: 12rem; overflow-y: auto; }
+  .listbox li { padding: .25rem .5rem; cursor: pointer; }
+  .listbox li:hover { background: #eef; }
+  .menu { position: absolute; background: #fff; border: 1px solid #666; padding: .25rem; list-style: none; }
+  .menu li { padding: .25rem 1rem; cursor: pointer; }
+  #log { font-family: monospace; white-space: pre-wrap; background: #f6f6f6; padding: .5rem; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<h1>tweb test page</h1>
+
+<p>Every control here reports what it received, at the bottom of the page,
+including whether the browser considered the event trusted. Nothing on this
+page talks to the network.</p>
+
+<section>
+  <h2>1. Native select, with a prefix collision</h2>
+  <p>"United States" is a strict prefix of two other entries, and the longer
+  ones come first. Type-ahead cannot express "I meant the short one".</p>
+  <label for="country">Country</label>
+  <select id="country" name="country">
+    <option>Ukraine</option>
+    <option>United Arab Emirates</option>
+    <option>United States Minor Outlying Islands</option>
+    <option>United States Virgin Islands</option>
+    <option selected>United States</option>
+    <option>United Kingdom</option>
+    <option>Uruguay</option>
+  </select>
+</section>
+
+<section>
+  <h2>2. Native select, long enough that position matters</h2>
+  <p>Sixty entries, so the chosen one has to be scrolled to rather than
+  merely found.</p>
+  <label for="year">Year</label>
+  <select id="year" name="year"></select>
+</section>
+
+<section>
+  <h2>3. Custom combobox — click only, deliberately</h2>
+  <p>Built the way a framework builds one: the button carries
+  <code>aria-expanded</code> and <code>aria-controls</code>, the options are
+  list items with <code>click</code> handlers, and <strong>no key handler
+  exists anywhere on it</strong>. Sending keystrokes at it does nothing at
+  all, which is the point.</p>
+  <button id="fruit-button" aria-haspopup="listbox" aria-expanded="false" aria-controls="fruit-list">
+    Fruit: none chosen
+  </button>
+  <ul id="fruit-list" class="listbox" role="listbox" aria-label="Fruit" hidden>
+    <li role="option" tabindex="-1">Apricot</li>
+    <li role="option" tabindex="-1">Blackcurrant</li>
+    <li role="option" tabindex="-1">Cloudberry</li>
+    <li role="option" tabindex="-1">Damson</li>
+    <li role="option" tabindex="-1">Elderberry</li>
+  </ul>
+</section>
+
+<section>
+  <h2>4. Menu button whose menu is portaled to the end of the document</h2>
+  <p>The hard case. When this opens, the menu is appended to the very end of
+  <code>&lt;body&gt;</code> — nowhere near the button. In a line list it
+  appears hundreds of lines below wherever the reader is standing, so
+  "activate it and re-read the page" finds nothing.
+  <code>aria-controls</code> is the only thread back to it.</p>
+  <button id="account-button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu">
+    Account
+  </button>
+</section>
+
+<section>
+  <h2>5. Two controls with the same accessible name</h2>
+  <p>Both are called "Open". Resolving a line by role and name reaches the
+  first one whichever was pressed; resolving it by the node the tree recorded
+  reaches the right one. The log below says which fired.</p>
+  <p>Settings <button class="open-btn" data-which="settings">Open</button></p>
+  <p>Archive <button class="open-btn" data-which="archive">Open</button></p>
+</section>
+
+<section>
+  <h2>6. Native disclosure</h2>
+  <p>A <code>&lt;details&gt;</code> element carries its open state in the DOM
+  rather than in <code>aria-expanded</code>, so a reader that only reads the
+  attribute has nothing to report here. Known gap, kept on the page on
+  purpose.</p>
+  <details>
+    <summary>Delivery options</summary>
+    <p>Standard delivery arrives in three to five days.</p>
+  </details>
+</section>
+
+<section>
+  <h2>7. Text that rewrites itself, and text that announces itself</h2>
+  <p>The clock replaces its own text once a second and changes nothing else,
+  which is the case the fast text patch exists for. The announcement is an
+  <code>aria-live</code> region, which may never be held back by the reading
+  freeze.</p>
+  <p>Clock: <span id="clock">--:--:--</span></p>
+  <p><button id="announce-button">Announce something</button></p>
+  <p id="announcer" role="status" aria-live="polite"></p>
+</section>
+
+<section>
+  <h2>8. Content that grows</h2>
+  <p>Adds three paragraphs at the end, which no text patch can account for:
+  the buffer has to be rebuilt, and the reader has to stay where they were.</p>
+  <p><button id="grow-button">Add three paragraphs</button></p>
+  <div id="grown"></div>
+</section>
+
+<section>
+  <h2>What the page received</h2>
+  <div id="log">nothing yet</div>
+</section>
+
+<script>
+(function () {
+  var log = document.getElementById('log');
+  var lines = [];
+  function note(text, event) {
+    var trust = event ? ' [' + event.type + (event.isTrusted ? ', trusted' : ', SYNTHETIC') + ']' : '';
+    lines.push(text + trust);
+    if (lines.length > 12) lines.shift();
+    log.textContent = lines.join('\n');
+  }
+
+  // 2. sixty years
+  var year = document.getElementById('year');
+  for (var y = 1966; y <= 2025; y++) {
+    var opt = document.createElement('option');
+    opt.textContent = String(y);
+    if (y === 2011) opt.selected = true;
+    year.appendChild(opt);
+  }
+
+  // 1 and 2: a native select reports every change, however it was made.
+  ['country', 'year'].forEach(function (id) {
+    var el = document.getElementById(id);
+    el.addEventListener('change', function (e) {
+      note(id + ' changed to "' + el.value + '"', e);
+    });
+  });
+
+  // 3. custom combobox. Click handlers only — no keydown anywhere.
+  var fruitButton = document.getElementById('fruit-button');
+  var fruitList = document.getElementById('fruit-list');
+  fruitButton.addEventListener('click', function (e) {
+    var open = fruitButton.getAttribute('aria-expanded') === 'true';
+    fruitButton.setAttribute('aria-expanded', open ? 'false' : 'true');
+    fruitList.hidden = open;
+    note('fruit list ' + (open ? 'closed' : 'opened'), e);
+  });
+  fruitList.addEventListener('click', function (e) {
+    var option = e.target.closest('[role="option"]');
+    if (!option) return;
+    Array.prototype.forEach.call(fruitList.children, function (li) {
+      li.setAttribute('aria-selected', li === option ? 'true' : 'false');
+    });
+    fruitButton.textContent = 'Fruit: ' + option.textContent.trim();
+    fruitButton.setAttribute('aria-expanded', 'false');
+    fruitList.hidden = true;
+    note('fruit chosen: "' + option.textContent.trim() + '"', e);
+  });
+
+  // 4. menu button, portaled to the end of <body> when opened.
+  var accountButton = document.getElementById('account-button');
+  var accountMenu = null;
+  accountButton.addEventListener('click', function (e) {
+    if (accountMenu) {
+      accountMenu.remove();
+      accountMenu = null;
+      accountButton.setAttribute('aria-expanded', 'false');
+      note('account menu closed', e);
+      return;
+    }
+    accountMenu = document.createElement('ul');
+    accountMenu.id = 'account-menu';
+    accountMenu.className = 'menu';
+    accountMenu.setAttribute('role', 'menu');
+    accountMenu.setAttribute('aria-label', 'Account');
+    ['Profile', 'Billing', 'Sign out'].forEach(function (label) {
+      var li = document.createElement('li');
+      li.setAttribute('role', 'menuitem');
+      li.tabIndex = -1;
+      li.textContent = label;
+      li.addEventListener('click', function (ev) {
+        note('menu item chosen: "' + label + '"', ev);
+        accountMenu.remove();
+        accountMenu = null;
+        accountButton.setAttribute('aria-expanded', 'false');
+      });
+      accountMenu.appendChild(li);
+    });
+    // The whole point: it lands at the end of the document, not next to the
+    // button that opened it.
+    document.body.appendChild(accountMenu);
+    accountButton.setAttribute('aria-expanded', 'true');
+    note('account menu opened, appended at end of body', e);
+  });
+
+  // 5. duplicate names
+  Array.prototype.forEach.call(document.querySelectorAll('.open-btn'), function (btn) {
+    btn.addEventListener('click', function (e) {
+      note('Open pressed: ' + btn.dataset.which, e);
+    });
+  });
+
+  // 7. clock and announcement
+  var clock = document.getElementById('clock');
+  setInterval(function () {
+    clock.textContent = new Date().toTimeString().slice(0, 8);
+  }, 1000);
+
+  var announceCount = 0;
+  document.getElementById('announce-button').addEventListener('click', function (e) {
+    announceCount += 1;
+    document.getElementById('announcer').textContent =
+      'Announcement number ' + announceCount + '.';
+    note('announced ' + announceCount, e);
+  });
+
+  // 8. growth
+  var grown = document.getElementById('grown');
+  var grownCount = 0;
+  document.getElementById('grow-button').addEventListener('click', function (e) {
+    for (var i = 0; i < 3; i++) {
+      grownCount += 1;
+      var p = document.createElement('p');
+      p.textContent = 'Added paragraph number ' + grownCount + '.';
+      grown.appendChild(p);
+    }
+    note('added three paragraphs', e);
+  });
+}());
+</script>
+</body>
+</html>
