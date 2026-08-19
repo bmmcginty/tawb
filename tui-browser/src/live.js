@@ -31,6 +31,8 @@
 // the new text for a fraction of a millisecond instead of a whole snapshot.
 
 const BOUND = Symbol('tweb.liveBound');
+// Who the one binding should deliver to. See installLive.
+const TARGET = Symbol('tweb.liveTarget');
 
 const MIN_INTERVAL_MS = 400;
 // Refresh at most this fraction of the time, measured against how long the
@@ -215,14 +217,36 @@ const PULSE_SCRIPT = () => ({
 // observer in every document created from now on, which is what keeps it
 // working across navigations; the documents that already exist are armed by
 // hand, since addInitScript only applies to future loads.
+//
+// Reaching every frame also means reaching every *tab*, and that has to be
+// undone here. A context-level binding fires for anything in the browser that
+// calls it, so with the reader's own other tabs open — and this is a real
+// browser, so there are always other tabs open — every one of their mutations
+// arrived looking exactly like the read tab's own. Measured on a browser with
+// thirteen tabs of a page carrying a one-second clock: eighty notifications
+// in six seconds instead of six, each one repeated thirteen times, each
+// carrying replacement text belonging to some other document. Every one of
+// those failed to match this buffer, and every failure to match costs a
+// whole-page snapshot. A reader with tabs open was paying for all of them.
+//
+// So the binding is registered once and delivers to one page: the tab being
+// read. A driver that cannot say which page a call came from gets the benefit
+// of the doubt, because it can only have one.
 async function installLive(page, onEvent) {
   const context = page.context();
   let boundNow = false;
 
+  context[TARGET] = { page, onEvent };
+
   if (!context[BOUND]) {
     context[BOUND] = true;
     boundNow = true;
-    await context.exposeBinding('__twebNotify', (_source, payload) => onEvent(payload));
+    await context.exposeBinding('__twebNotify', (source, payload) => {
+      const target = context[TARGET];
+      if (!target) return;
+      if (source && source.page && source.page !== target.page) return;
+      target.onEvent(payload);
+    });
     await context.addInitScript(OBSERVER_SCRIPT);
   }
 
