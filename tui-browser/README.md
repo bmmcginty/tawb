@@ -617,6 +617,59 @@ the URL responsible. It is the fastest way to find
 out why something felt slow — ad-heavy pages spawning hundreds of tracking
 iframes have been the usual culprit.
 
+## Reading through edbrowse instead
+
+edbrowse renders html, tables, lists and forms better than a line list does,
+and it is an editor as well as a browser. What it cannot do is run a page.
+So `npm run edb` starts the same browser — ordinary, attached to, never
+automation-launched — and serves its tabs to edbrowse as html over loopback
+http:
+
+```
+npm run edb                       # or: npm run edb -- --browser firefox
+```
+
+It prints a tab list address and writes `~/.local/share/tui-browser/edb.json`
+so the entry-point plugin can find it. Install the plugin (once):
+
+```
+cp edbrowse-plugin/edbrowse-plugin-tweb ~/bin/       # anywhere on your PATH
+cat edbrowse-plugin/tweb.rc >> ~/.ebrc               # or include the file
+```
+
+Then, in edbrowse:
+
+```
+b tweb://https://skt222.bandcamp.com/album/weird-fish
+```
+
+From there it is an ordinary web page as far as edbrowse is concerned: `g`
+follows a link, `i=` fills a field, `i*` presses a button, `ib` gives a
+textarea its own session, `rf` re-renders the tab as it is now, `^` goes
+back. The browser keeps your logins and clearance cookies, and the page has
+already run its javascript, so what edbrowse renders is the page as it
+actually is rather than the markup that arrived from the server.
+
+One line at the top of each page says which site you are really on and links
+to the other three views (`ax`, `text`, `source` — the reader's own line
+lists) and to the tab list. `Shift+F4` has no meaning here; the tab list has
+a close link per tab.
+
+**`m` has no meaning here either**, so a real click — the kind that carries
+user activation, which audio needs — is a second address: `<twebclick` on the
+line, a function the config fragment installs. Everything else about
+activation is the same as in the reader.
+
+What does not survive the trip: live updating and immediate announcements.
+edbrowse has no way to be told anything by an idle buffer, so `rf` is the
+whole story, and it is cheap and idempotent by design.
+
+`patches/` holds two small changes to edbrowse itself — `rf` keeping your
+place, and allowing form submission to plugin protocols. Neither is needed
+for any of the above; both are useful on their own and are meant for
+upstream. `edb.txt` is the long-form discussion of how the two programs fit
+together, including what was measured in edbrowse's source to decide it.
+
 ## If this is ever rewritten or embedded elsewhere
 
 [`PORTING.md`](PORTING.md) is the seam: which ~970 lines must stay JavaScript
