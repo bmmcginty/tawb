@@ -677,7 +677,10 @@ async function openFirefox({
       // reader's session is open. Same policy as the Chromium driver: only
       // when there was nothing to find without it.
       const available = await frame.evaluate(
-        () => (typeof window.__twebPierce === 'function' ? (window.__twebPierce() || []).length : 0),
+        () => {
+          const pierce = window[Symbol.for('tweb.pierce')];
+          return typeof pierce === 'function' ? (pierce() || []).length : 0;
+        },
       ).catch(() => 0);
       if (!available) return items;
       log('shadow.pierced', { roots: available, url: String(frame.url()).slice(0, 100) });
@@ -773,7 +776,7 @@ async function openFirefox({
         throw new Error('this line carries no element reference to activate');
       }
       return scope.evaluateHandle(
-        (i) => (window.__twebAxNodes || [])[i], item.axIndex);
+        (i) => (window[Symbol.for('tweb.ax')] || [])[i], item.axIndex);
     },
 
     async close() {

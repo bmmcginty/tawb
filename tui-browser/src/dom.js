@@ -48,7 +48,7 @@ function extractDom() {
     'controls', 'poster', 'download', 'target', 'placeholder', 'aria-label'];
 
   const nodes = [];
-  window.__twebNodes = nodes;
+  window[Symbol.for('tweb.dom')] = nodes;
   const out = [];
 
   const push = (entry) => out.push(entry);
@@ -198,7 +198,7 @@ async function activateDomItem(page, item) {
 
 async function domElementHandle(page, item) {
   const target = item.frame || page;
-  return target.evaluateHandle((i) => window.__twebNodes && window.__twebNodes[i], item.domIndex);
+  return target.evaluateHandle((i) => window[Symbol.for('tweb.dom')] && window[Symbol.for('tweb.dom')][i], item.domIndex);
 }
 
 module.exports = {

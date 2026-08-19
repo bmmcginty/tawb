@@ -286,7 +286,7 @@ async function openChromium({
     // to a different control than the one on the line.
     async axElementHandle(scope, item) {
       if (item.axIndex != null) {
-        return scope.evaluateHandle((i) => (window.__twebAxNodes || [])[i], item.axIndex);
+        return scope.evaluateHandle((i) => (window[Symbol.for('tweb.ax')] || [])[i], item.axIndex);
       }
       return scope.getByRole(item.role, { name: item.name, exact: true }).first().elementHandle();
     },

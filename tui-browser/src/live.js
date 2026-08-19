@@ -68,9 +68,9 @@ const OBSERVER_SCRIPT = (force) => {
   // any more. The window survives, so a plain "already installed" check
   // would refuse to re-arm and the page would go silent for good. Re-arm
   // whenever the root we are watching is no longer the live one.
-  if (window.__twebObserver) {
-    if (window.__twebObserverRoot === document.documentElement) return;
-    try { window.__twebObserver.disconnect(); } catch { /* already dead */ }
+  if (window[Symbol.for('tweb.observer')]) {
+    if (window[Symbol.for('tweb.observerRoot')] === document.documentElement) return;
+    try { window[Symbol.for('tweb.observer')].disconnect(); } catch { /* already dead */ }
   }
 
   // Documents are armed one of two ways. Frames we actually render are armed
@@ -193,8 +193,8 @@ const OBSERVER_SCRIPT = (force) => {
     attributeFilter: ['aria-label', 'aria-live', 'value', 'src', 'href', 'alt', 'title', 'hidden'],
   });
 
-  window.__twebObserver = observer;
-  window.__twebObserverRoot = document.documentElement;
+  window[Symbol.for('tweb.observer')] = observer;
+  window[Symbol.for('tweb.observerRoot')] = document.documentElement;
 };
 
 // Asked once a second, so it has to be cheap: is the observer still watching
@@ -202,7 +202,7 @@ const OBSERVER_SCRIPT = (force) => {
 // element count, the title and the URL are enough to notice a document being
 // swapped out from under us — and cost a fraction of what a snapshot does.
 const PULSE_SCRIPT = () => ({
-  observing: !!(window.__twebObserver && window.__twebObserverRoot === document.documentElement),
+  observing: !!(window[Symbol.for('tweb.observer')] && window[Symbol.for('tweb.observerRoot')] === document.documentElement),
   href: location.href,
   print: [
     document.getElementsByTagName('*').length,

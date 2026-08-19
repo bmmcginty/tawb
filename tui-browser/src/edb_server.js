@@ -363,7 +363,7 @@ const SEARCH_URL = 'https://duckduckgo.com/html/?q=';
 async function handleFor(page, desc) {
   const resolved = await page.evaluate(resolveDescriptor, desc);
   if (!resolved) return null;
-  const handle = await page.evaluateHandle(() => window.__twebResolved);
+  const handle = await page.evaluateHandle(() => window[Symbol.for('tweb.resolved')]);
   return { handle, how: resolved.how };
 }
 
@@ -700,7 +700,7 @@ async function startEdbServer({
         if (field) {
           await page.evaluate(resolveDescriptor, field);
           await page.evaluate(() => {
-            const el = window.__twebResolved;
+            const el = window[Symbol.for('tweb.resolved')];
             if (el && typeof el.focus === 'function') el.focus();
           });
           await page.keyboard.press('Enter');

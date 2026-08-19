@@ -37,7 +37,7 @@ function extractVisible() {
   };
 
   const nodes = [];
-  window.__twebRenderNodes = nodes;
+  window[Symbol.for('tweb.render')] = nodes;
 
   const emit = (entry) => out.push(entry);
 
@@ -205,7 +205,7 @@ async function snapshotRenderBlocks(target) {
 async function renderElementHandle(page, item) {
   const target = item.frame || page;
   return target.evaluateHandle(
-    (i) => window.__twebRenderNodes && window.__twebRenderNodes[i],
+    (i) => window[Symbol.for('tweb.render')] && window[Symbol.for('tweb.render')][i],
     item.renderIndex,
   );
 }

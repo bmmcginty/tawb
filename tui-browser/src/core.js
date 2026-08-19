@@ -304,7 +304,7 @@ const SCROLL_TO_BOTTOM = () => {
   if (best && best !== root) targets.push(best);
 
   // Where everything was, so a scroll that gained nothing can be undone.
-  window.__twebScrollUndo = targets.map((el) => ({ el, top: el.scrollTop }));
+  window[Symbol.for('tweb.scroll')] = targets.map((el) => ({ el, top: el.scrollTop }));
 
   let moved = false;
   for (const el of targets) {
@@ -339,12 +339,12 @@ const SCROLL_TO_BOTTOM = () => {
 // and the page loses 216 lines — content the reader had and did not ask to
 // give up. So a scroll that produced nothing is put back.
 const RESTORE_SCROLL = () => {
-  const undo = window.__twebScrollUndo;
+  const undo = window[Symbol.for('tweb.scroll')];
   if (!undo) return false;
   for (const entry of undo) {
     try { entry.el.scrollTop = entry.top; } catch { /* detached since */ }
   }
-  window.__twebScrollUndo = null;
+  window[Symbol.for('tweb.scroll')] = null;
   return true;
 };
 

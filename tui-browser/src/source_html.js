@@ -50,7 +50,7 @@ function extractSource() {
   const ATTR_LIMIT = 120;
 
   const nodes = [];
-  window.__twebNodes = nodes;
+  window[Symbol.for('tweb.dom')] = nodes;
   const out = [];
 
   const attrsOf = (el) => {
