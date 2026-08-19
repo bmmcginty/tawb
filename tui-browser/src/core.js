@@ -170,6 +170,22 @@ const REANCHOR_WINDOW = 250;
 // them.
 const CONTEXT_RADIUS = 3;
 
+// How long something that changed stays worth being told about, how many such
+// places are remembered, and what separates news from a thing that simply
+// ticks.
+//
+// The last is the one that matters. Every path used to *replace* the record
+// of what had changed, so a clock rewriting itself once a second erased the
+// fact that a menu had opened at the other end of the page — press c and you
+// went to the clock, every time, for ever. A block that has changed this many
+// times inside this window is a clock, a countdown or a view counter: it goes
+// on being patched and goes on being readable, it just stops being reported
+// as news.
+const CHANGE_MEMORY_MS = 60000;
+const CHANGE_LIMIT = 20;
+const TICKER_WINDOW_MS = 10000;
+const TICKER_REPEATS = 3;
+
 // ---------------------------------------------------------------------------
 // Acting on the page
 //
@@ -355,6 +371,10 @@ class Core {
     this.cursorBlock = -1;
     this.changes = [];
     this.changeIndex = -1;
+    // How often each place has changed lately, so a ticker can be told from
+    // news. Keyed by block index, which holds still for as long as only text
+    // is being replaced — which is exactly the case this is about.
+    this.tickers = new Map();
     this.snapshotCostMs = 0;
     // When the page last changed under us, whether a refresh is owed, how
     // recently the reader touched anything. The rules that read it live in
@@ -459,11 +479,7 @@ class Core {
     const settled = keepPlace
       ? this.reanchor(anchor, previousTexts)
       : { block: -1, exact: false };
-    const regions = diffBlocks(previousTexts, this.blocks);
-    if (regions.length) {
-      this.changes = regions;
-      this.changeIndex = -1;
-    }
+    const regions = this.recordChanges(diffBlocks(previousTexts, this.blocks));
     return { settled, regions, previousTexts };
   }
 
@@ -502,12 +518,85 @@ class Core {
 
   setView(source) {
     this.source = source;
+    // A different view numbers its blocks differently, so what was known
+    // about which of them tick means nothing here.
+    this.tickers.clear();
+    this.changes = [];
+    this.changeIndex = -1;
+  }
+
+  // Whether this place has changed often enough lately to be a ticker rather
+  // than news.
+  ticking(index, now) {
+    const entry = this.tickers.get(index);
+    const fresh = entry && now - entry.last <= TICKER_WINDOW_MS
+      ? { count: entry.count + 1, last: now }
+      : { count: 1, last: now };
+    this.tickers.set(index, fresh);
+    return fresh.count > TICKER_REPEATS;
+  }
+
+  // Add to what is known to have changed, rather than replacing it. Returns
+  // only what was worth reporting, which is what the reader is told about.
+  //
+  // Each entry remembers its text as well as its position, because the next
+  // rebuild renumbers everything; the position is where to start looking and
+  // the text is what to look for. See changeTargets().
+  recordChanges(regions) {
+    const now = Date.now();
+    const news = [];
+    for (const region of regions) {
+      if (this.ticking(region.start, now)) continue;
+      news.push({
+        start: region.start,
+        end: region.end,
+        text: this.blockText(region.start),
+        at: now,
+      });
+    }
+    if (!news.length) return [];
+
+    const superseded = new Set(news.map((entry) => entry.text));
+    this.changes = this.changes
+      .filter((entry) => !superseded.has(entry.text) && now - entry.at < CHANGE_MEMORY_MS)
+      .concat(news)
+      .slice(-CHANGE_LIMIT);
+    this.changeIndex = -1;
+    return news;
   }
 
   noteChanges(previousTexts) {
-    this.changes = diffBlocks(previousTexts, this.blocks);
-    this.changeIndex = -1;
-    return this.changes;
+    return this.recordChanges(diffBlocks(previousTexts, this.blocks));
+  }
+
+  // The nearest block to `start` whose text still matches, or -1.
+  findNear(start, text) {
+    if (!this.blocks.length) return -1;
+    const from = Math.min(Math.max(start, 0), this.blocks.length - 1);
+    for (let distance = 0; distance < this.blocks.length; distance += 1) {
+      for (const index of (distance === 0 ? [from] : [from - distance, from + distance])) {
+        if (index < 0 || index >= this.blocks.length) continue;
+        if (this.blocks[index].text === text) return index;
+      }
+    }
+    return -1;
+  }
+
+  // Everywhere worth going, in document order, resolved against the buffer as
+  // it stands now. Entries whose text is nowhere to be found have been
+  // overwritten again since, and are dropped rather than pointing somewhere
+  // arbitrary.
+  changeTargets() {
+    const now = Date.now();
+    const out = [];
+    for (const entry of this.changes) {
+      if (now - entry.at >= CHANGE_MEMORY_MS) continue;
+      const block = this.findNear(entry.start, entry.text);
+      if (block < 0) continue;
+      out.push({ block, size: entry.end - entry.start + 1, at: entry.at });
+    }
+    out.sort((a, b) => a.block - b.block);
+    return out;
   }
 
   // Splices replaced text straight into the buffer, skipping the snapshot.
