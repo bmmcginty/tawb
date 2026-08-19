@@ -195,8 +195,11 @@ function buildCommand(executable, args) {
 // the session at startup — the same session that clears the automation flag —
 // a process script is installed into every content process, present and
 // future. It hands each window a function of its own, `__twebPierce()`, which
-// when called walks the document with privilege and hangs each closed shadow
-// root off the element hosting it as `__twebShadowRoot`.
+// when called walks the document with privilege and returns the pairs it
+// found — each a host element and the closed shadow root on it. It returns
+// them rather than marking the elements, because a mark left on a page's own
+// objects is exactly what must not be there in the one document where being
+// noticed decides everything: a challenge frame.
 //
 // After that the page can reach its own shadow roots by asking, an ordinary
 // script call with no protocol round trip, and the accessibility walk needs
@@ -210,21 +213,20 @@ const PIERCE_CHILD_SCRIPT = `
     Services.obs.addObserver(function (win) {
       try {
         const pierce = function () {
-          let found = 0;
+          const found = [];
           const walk = (root) => {
             for (const el of root.querySelectorAll('*')) {
               let shadow = null;
               try { shadow = el.openOrClosedShadowRoot; } catch (e) { shadow = null; }
               if (!shadow) continue;
               try {
-                el.wrappedJSObject.__twebShadowRoot = shadow.wrappedJSObject || shadow;
-                found += 1;
+                found.push([el.wrappedJSObject || el, shadow.wrappedJSObject || shadow]);
               } catch (e) { /* not a node we can hand over */ }
               walk(shadow);
             }
           };
           walk(win.document);
-          return found;
+          return Cu.cloneInto(found, win.wrappedJSObject, { wrapReflectors: true });
         };
         win.wrappedJSObject.__twebPierce = Cu.exportFunction(pierce, win.wrappedJSObject);
       } catch (e) { /* a window we cannot reach; the rest still get it */ }
