@@ -5,6 +5,7 @@ const { armRenderedFrames } = require('./live');
 const { activateDomItem, domElementHandle } = require('./dom');
 const { clickThrough, prepareRealClick } = require('./click');
 const { renderElementHandle } = require('./render_html');
+const { remapIndex } = require('./remap');
 const { log } = require('./log');
 
 // The core: everything about a page that is not about a terminal.
@@ -146,6 +147,27 @@ function sameDocumentFragment(before, after) {
     return false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Keeping the reader's place
+//
+// All of this used to be worked out in line space, over the terminal's
+// wrapped lines. It is worked out in block space now, which is not merely
+// tidier: a block is what the page produced, so the same buffer re-read at a
+// different terminal width gives the same answer, and the arithmetic remap
+// below can no longer be thrown off by a line that rewrapped when nothing
+// about the page had changed at all.
+// ---------------------------------------------------------------------------
+
+// How far from the old position a re-anchor will look. A live update must
+// never relocate the reader across the page: past this, staying put is the
+// better answer.
+const REANCHOR_WINDOW = 250;
+// How many neighbours on each side identify a position. Block text is
+// routinely duplicated — an HTML view is full of repeated <svg> and
+// <option> — so what tells two identical blocks apart is what sits around
+// them.
+const CONTEXT_RADIUS = 3;
 
 // ---------------------------------------------------------------------------
 // Acting on the page
@@ -360,6 +382,136 @@ class Core {
     return { touched, undo, generation: this.generation };
   }
 
+  blockText(index) {
+    const block = this.blocks[index];
+    return block ? block.text : '';
+  }
+
+  // Where the reader is, described well enough to find again in a buffer
+  // that has been rebuilt: by the element if the view knows one, by the text
+  // otherwise, by the neighbours when the text repeats, and by proportion
+  // when nothing else survived.
+  anchor() {
+    const index = this.cursorBlock;
+    const block = this.blocks[index] || null;
+    return {
+      text: block ? block.text : '',
+      name: block && block.item ? block.item.name : '',
+      identity: identityOf(block),
+      block: index,
+      context: Array.from(
+        { length: CONTEXT_RADIUS * 2 + 1 },
+        (_, i) => this.blockText(index + i - CONTEXT_RADIUS),
+      ),
+      ratio: this.blocks.length ? index / this.blocks.length : 0,
+    };
+  }
+
+  // Putting the reader back after a change they asked for — a view switch, a
+  // refresh they pressed for. Always answers with somewhere, falling back to
+  // the same proportion of a buffer whose line count may be wildly different,
+  // because the reader asked for this and has to arrive somewhere.
+  restore(anchor) {
+    if (!anchor || !this.blocks.length) return 0;
+    const needle = (anchor.name || anchor.text || '').trim();
+
+    if (needle) {
+      const exact = this.blocks.findIndex((b) => b.text === anchor.text);
+      if (exact >= 0) return exact;
+
+      const partial = this.blocks.findIndex((b) => b.text.includes(needle));
+      if (partial >= 0) return partial;
+    }
+
+    return Math.min(
+      Math.round(anchor.ratio * this.blocks.length),
+      this.blocks.length - 1,
+    );
+  }
+
+  // Putting the reader back after a change they did not ask for.
+  //
+  // Unlike restore(), this never falls back to a proportional guess, and
+  // answers -1 for "stay exactly where you are": if what they were reading
+  // has gone, standing still is far less disorienting than being silently
+  // moved somewhere proportional. Nor does it search from the top of the
+  // document — block text is often not unique, so the first match can be
+  // thousands of blocks from where the reader actually is.
+  //
+  // In order: the arithmetic answer, which is right whenever the page
+  // rewrote one contiguous region and is the only thing that gets a ticking
+  // clock right; then the element itself; then the nearest matching text,
+  // searched outward; then the surroundings alone.
+  reanchor(anchor, previousTexts = null) {
+    if (!anchor) return { block: -1, exact: false };
+
+    if (previousTexts) {
+      const remap = remapIndex(previousTexts, this.texts(), anchor.block);
+      if (remap.exact) return { block: remap.index, exact: true };
+    }
+
+    if (anchor.identity != null) {
+      const found = this.blocks.findIndex((b) => identityOf(b) === anchor.identity);
+      // Node numbering comes from walk order, so inserting an element earlier
+      // in the document renumbers everything after it and the same number can
+      // name a different node. Trust the match only when a second signal
+      // agrees: the text is unchanged, or it is somewhere plausibly nearby.
+      if (found >= 0) {
+        const sameText = this.blocks[found].text === anchor.text;
+        if (sameText || Math.abs(found - anchor.block) <= REANCHOR_WINDOW) {
+          return { block: found, exact: false };
+        }
+      }
+    }
+
+    const start = Math.min(Math.max(anchor.block, 0), Math.max(this.blocks.length - 1, 0));
+
+    // How much of the remembered neighbourhood a candidate still agrees with.
+    const contextScore = (index) => {
+      let score = 0;
+      for (let offset = -CONTEXT_RADIUS; offset <= CONTEXT_RADIUS; offset += 1) {
+        if (offset === 0) continue;
+        const expected = anchor.context[offset + CONTEXT_RADIUS];
+        if (expected && expected === this.blockText(index + offset)) score += 1;
+      }
+      return score;
+    };
+
+    // Searched outward from where they were, so the nearest of several
+    // identical blocks wins, with context breaking the tie.
+    const search = (accept) => {
+      let best = null;
+      for (let distance = 0; distance <= REANCHOR_WINDOW; distance += 1) {
+        const candidates = distance === 0 ? [start] : [start - distance, start + distance];
+        for (const index of candidates) {
+          if (index < 0 || index >= this.blocks.length) continue;
+          const score = accept(index);
+          if (score == null) continue;
+          if (!best || score > best.score) best = { index, score };
+          if (best.score === CONTEXT_RADIUS * 2) return best;
+        }
+      }
+      return best;
+    };
+
+    const byText = search((index) => (
+      this.blocks[index].text === anchor.text ? contextScore(index) : null));
+    if (byText) return { block: byText.index, exact: false };
+
+    // Nothing matched by text — which is the normal case for a block whose
+    // own content is what changed. A clock rewrites itself every second, so
+    // its text is never the text we anchored on, yet its neighbours are
+    // unchanged. Locate it by surroundings alone, ignoring the centre.
+    const MIN_CONTEXT_SCORE = 3;
+    const byContext = search((index) => {
+      const score = contextScore(index);
+      return score >= MIN_CONTEXT_SCORE ? score : null;
+    });
+    if (byContext) return { block: byContext.index, exact: false };
+
+    return { block: -1, exact: false };
+  }
+
   // The element behind an item, in whichever view produced it. The two views
   // built from a DOM walk keep their own page-side node array and are
   // resolved through it; the accessibility tree is resolved by the driver,
@@ -446,6 +598,7 @@ class Core {
 
 module.exports = {
   Core, ActionTimeout, withTimeout, readFieldState, ACTION_TIMEOUT_MS,
+  REANCHOR_WINDOW, CONTEXT_RADIUS,
   ALL_SOURCES, SOURCE_LABELS, DOM_SOURCES,
   snapshotBlocks, identityOf, diffBlocks, soleBlockContaining, findBlockWithText,
   sameDocumentFragment,
