@@ -3,12 +3,10 @@
 
 const { FIELD_ROLES, LINK_ROLES, BUTTON_ROLES } = require('./aria');
 const { itemAtOffset } = require('./blocks');
-const { activateDomItem, domElementHandle } = require('./dom');
-const { clickThrough, prepareRealClick } = require('./click');
-const { renderElementHandle } = require('./render_html');
 const {
   Core, ALL_SOURCES, SOURCE_LABELS, DOM_SOURCES,
   identityOf, diffBlocks, findBlockWithText, sameDocumentFragment,
+  ActionTimeout, withTimeout, readFieldState, ACTION_TIMEOUT_MS,
 } = require('./core');
 const { installLive, armFrame, refreshDue, createLiveState, pulse, TICK_MS, INPUT_GRACE_MS } = require('./live');
 const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
@@ -108,29 +106,6 @@ function viewportHeight() {
 
 function contentWidth() {
   return Math.max(20, termSize().cols - GUTTER - 1);
-}
-
-// Reads the field's live text + caret straight from the DOM. Real
-// <input>/<textarea> elements expose selectionStart, which is the source of
-// truth (handles autoformatting, IME, etc.). contenteditable/custom widgets
-// don't, so we fall back to textContent and track the caret locally.
-//
-// Takes an ElementHandle, not a Locator: a locator re-resolves by role+name
-// on every call, and a field's accessible name can change while you type
-// (Wikipedia's search box renames itself once suggestions open), which makes
-// the locator stop matching mid-edit.
-async function readFieldState(handle) {
-  return handle.evaluate((el) => {
-    if ('value' in el && typeof el.value === 'string') {
-      return {
-        text: el.value,
-        caret: el.selectionStart != null ? el.selectionStart : el.value.length,
-        native: true,
-      };
-    }
-    const text = el.textContent || '';
-    return { text, caret: text.length, native: false };
-  });
 }
 
 function setupRawInput() {
@@ -1403,7 +1378,7 @@ async function handleBrowseKey(chunk, state, page) {
   if (chunk === '\\') {
     const anchor = anchorFor(state);
     const place = await withTimeout(
-      capturePlace(state, (item) => elementHandleFor(state, page, item)),
+      capturePlace(state, (item) => state.core.handleFor(item, page)),
       ACTION_TIMEOUT_MS, 'Marking your place',
     ).catch(() => null);
 
@@ -1508,31 +1483,10 @@ async function handleBrowseKey(chunk, state, page) {
   if (chunk.startsWith(ESC)) log('key.unknown', { bytes: JSON.stringify(chunk) });
 }
 
-// Nothing the reader triggers may block the interface indefinitely.
-// Playwright's default timeout is 30 seconds, so a click that cannot resolve
-// — a control inside a bot-check frame, an element that vanished mid-page —
-// froze the whole terminal for half a minute with no way out. Bound it, and
-// report the failure on the status line instead.
-const ACTION_TIMEOUT_MS = 6000;
+// How long a page load and a navigation get. The bound on an action the
+// reader triggers is the core's, since the action is.
 const OPERATION_TIMEOUT_MS = 8000;
 const NAVIGATION_TIMEOUT_MS = 20000;
-
-class ActionTimeout extends Error {}
-
-function withTimeout(promise, ms, label) {
-  let timer;
-  const guard = new Promise((_resolve, reject) => {
-    timer = setTimeout(() => reject(new ActionTimeout(`${label} timed out after ${ms}ms`)), ms);
-  });
-  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
-}
-
-async function elementHandleFor(state, page, item) {
-  if (DOM_SOURCES.has(state.source)) return domElementHandle(page, item);
-  if (state.source === 'render') return renderElementHandle(page, item);
-  const scope = item.frame || page;
-  return state.driver.axElementHandle(scope, item);
-}
 
 // ---------------------------------------------------------------------------
 // Fragment links
@@ -1552,65 +1506,8 @@ async function elementHandleFor(state, page, item) {
 // find that text in the buffer.
 // ---------------------------------------------------------------------------
 
-const TEXT_AT_FRAGMENT = (hash) => {
-  let target = null;
-  try {
-    target = document.getElementById(hash) || document.querySelector(`[name="${CSS.escape(hash)}"]`);
-  } catch { /* not a usable selector */ }
-  if (!target) return null;
-
-  // The first readable text at or after the target. A skip link usually
-  // points at a container — <main id="main-content"> — whose own text is the
-  // entire rest of the page, so what identifies the place is the first thing
-  // inside it, not the container.
-  //
-  // Readable is the load-bearing word. Reddit's #main-content opens with a
-  // <script> whose source is the first text node in it; matching on that
-  // looks for `SML.load([...])` in the buffer, which no view will ever show.
-  const UNRENDERED = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TITLE', 'HEAD']);
-  const walker = document.createTreeWalker(document.body || document, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const parent = node.parentElement;
-      if (!parent || UNRENDERED.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
-      if ((node.data || '').replace(/\s+/g, ' ').trim().length < 2) return NodeFilter.FILTER_REJECT;
-      const style = window.getComputedStyle(parent);
-      if (style.display === 'none' || style.visibility === 'hidden') return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  walker.currentNode = target;
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    return (node.data || '').replace(/\s+/g, ' ').trim().slice(0, 120);
-  }
-  return null;
-};
-
-// The href of the element we are about to activate, so a fragment link can be
-// followed even when the page cancels the click and handles it in script —
-// in which case the URL never changes and there is nothing else to go on.
-async function fragmentOf(state, page, item) {
-  let href = null;
-  if (DOM_SOURCES.has(state.source)) {
-    href = item.attrs && item.attrs.href;
-  } else {
-    try {
-      const handle = await withTimeout(
-        elementHandleFor(state, page, item), ACTION_TIMEOUT_MS, 'Locating link');
-      href = await handle.evaluate((el) => el.getAttribute('href'));
-    } catch {
-      return null;
-    }
-  }
-  if (!href || !href.startsWith('#') || href.length < 2) return null;
-  return decodeURIComponent(href.slice(1));
-}
-
-
 async function jumpToFragment(state, page, hash) {
-  const snippet = await page.evaluate(TEXT_AT_FRAGMENT, hash).catch(() => null);
-  if (!snippet) return false;
-
-  const blockIndex = findBlockWithText(state.blocks, snippet);
+  const blockIndex = await state.core.blockAtFragment(hash, page);
   if (blockIndex < 0) return false;
 
   const line = state.lines.findIndex((l) => l.blockIndex === blockIndex && !l.continuation);
@@ -1631,13 +1528,13 @@ async function activateCurrent(state, page) {
   const previousUrl = page.url();
   const anchor = anchorFor(state);
   const screen = screenBefore(state);
-  const fragment = LINK_ROLES.has(item.role) ? await fragmentOf(state, page, item) : null;
+  const fragment = LINK_ROLES.has(item.role) ? await state.core.fragmentOf(item, page) : null;
 
   try {
     setStatus(state, `Activating "${item.name}"...`);
     if (FIELD_ROLES.has(item.role)) {
       const handle = await withTimeout(
-        elementHandleFor(state, page, item), ACTION_TIMEOUT_MS, 'Locating field');
+        state.core.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating field');
       await withTimeout(handle.evaluate((el) => el.focus()), ACTION_TIMEOUT_MS, 'Focusing field');
       const info = await readFieldState(handle);
       state.mode = 'type';
@@ -1648,22 +1545,8 @@ async function activateCurrent(state, page) {
       return;
     }
 
-    if (DOM_SOURCES.has(state.source)) {
-      state.statusMsg = await activateDomItem(page, item);
-    } else {
-      // Activate through the DOM's own default action rather than a
-      // mouse-coordinate click: a blind user has no viewport, and legitimate
-      // targets (skip links, visually hidden controls) sit off-screen. The
-      // click is still aimed where a mouse would land — see click.js — since
-      // a site is free to listen below the control it labelled.
-      const handle = await withTimeout(
-        elementHandleFor(state, page, item), ACTION_TIMEOUT_MS, 'Locating element');
-      await withTimeout(Promise.all([
-        page.waitForLoadState('domcontentloaded').catch(() => {}),
-        handle.evaluate(clickThrough),
-      ]), ACTION_TIMEOUT_MS, 'Activating');
-      state.statusMsg = `Activated: ${item.name}`;
-    }
+    const done = await state.core.activate(item, page);
+    state.statusMsg = done.status || `Activated: ${item.name}`;
   } catch (err) {
     const timedOut = err instanceof ActionTimeout;
     setStatus(state, timedOut
@@ -1739,7 +1622,7 @@ async function clickAsHuman(state, page) {
     setStatus(state, 'Nothing on this line to click.');
     return;
   }
-  if (typeof state.driver.realClick !== 'function') {
+  if (!state.core.canRealClick()) {
     setStatus(state, `The ${state.driver.name} driver cannot send a real click.`);
     return;
   }
@@ -1752,23 +1635,13 @@ async function clickAsHuman(state, page) {
 
   try {
     setStatus(state, `Clicking "${item.name}" as a person would...`);
-    const handle = await withTimeout(
-      elementHandleFor(state, page, item), ACTION_TIMEOUT_MS, 'Locating element');
-
-    const ready = await withTimeout(
-      handle.evaluate(prepareRealClick), ACTION_TIMEOUT_MS, 'Bringing it on screen');
-    if (!ready || !ready.ok) {
-      const reason = ready ? ready.reason : 'could not be found on the page';
-      log('click.real.refused', { name: String(item.name).slice(0, 80), reason });
-      setStatus(state, `Cannot click "${item.name}": it ${reason}.`
+    const clicked = await state.core.realClick(item, page);
+    if (!clicked.ok) {
+      log('click.real.refused', { name: String(item.name).slice(0, 80), reason: clicked.reason });
+      setStatus(state, `Cannot click "${item.name}": it ${clicked.reason}.`
         + ' Enter activates it without a real click.');
       return;
     }
-
-    await withTimeout(Promise.all([
-      page.waitForLoadState('domcontentloaded').catch(() => {}),
-      state.driver.realClick(item.frame || page, handle, { timeoutMs: ACTION_TIMEOUT_MS }),
-    ]), ACTION_TIMEOUT_MS, 'Clicking');
 
     log('click.real', { name: String(item.name).slice(0, 80), ms: Date.now() - started, source: state.source });
     state.statusMsg = `Clicked "${item.name}"`;
@@ -2174,7 +2047,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  readFieldState, handleBrowseKey, handleTypeKey, handleAddressKey, handleFindKey,
+  handleBrowseKey, handleTypeKey, handleAddressKey, handleFindKey,
   findText, runSearch,
   render, drawList, drawAddress, drawHint, moveSelection,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,

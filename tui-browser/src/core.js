@@ -2,6 +2,9 @@
 
 const { snapshotFrameTree } = require('./frames');
 const { armRenderedFrames } = require('./live');
+const { activateDomItem, domElementHandle } = require('./dom');
+const { clickThrough, prepareRealClick } = require('./click');
+const { renderElementHandle } = require('./render_html');
 const { log } = require('./log');
 
 // The core: everything about a page that is not about a terminal.
@@ -145,6 +148,89 @@ function sameDocumentFragment(before, after) {
 }
 
 // ---------------------------------------------------------------------------
+// Acting on the page
+//
+// Nothing in here decides what to say about what happened; it reports what
+// happened and leaves the wording to whoever has a reader to tell. That is
+// not tidiness — a front end that is not a terminal has its own idea of how
+// to say "that control cannot be clicked", and edbrowse would say it in a
+// buffer rather than on a status line.
+// ---------------------------------------------------------------------------
+
+// Nothing the reader triggers may block the interface indefinitely.
+// Playwright's default timeout is 30 seconds, so a click that cannot resolve
+// — a control inside a bot-check frame, an element that vanished mid-page —
+// froze the whole terminal for half a minute with no way out. Bound it, and
+// report the failure to whoever asked instead.
+const ACTION_TIMEOUT_MS = 6000;
+
+class ActionTimeout extends Error {}
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  const guard = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new ActionTimeout(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+}
+
+// Reads the field's live text + caret straight from the DOM. Real
+// <input>/<textarea> elements expose selectionStart, which is the source of
+// truth (handles autoformatting, IME, etc.). contenteditable/custom widgets
+// don't, so we fall back to textContent and track the caret locally.
+//
+// Takes an ElementHandle, not a Locator: a locator re-resolves by role+name
+// on every call, and a field's accessible name can change while you type
+// (Wikipedia's search box renames itself once suggestions open), which makes
+// the locator stop matching mid-edit.
+async function readFieldState(handle) {
+  return handle.evaluate((el) => {
+    if ('value' in el && typeof el.value === 'string') {
+      return {
+        text: el.value,
+        caret: el.selectionStart != null ? el.selectionStart : el.value.length,
+        native: true,
+      };
+    }
+    const text = el.textContent || '';
+    return { text, caret: text.length, native: false };
+  });
+}
+
+const TEXT_AT_FRAGMENT = (hash) => {
+  let target = null;
+  try {
+    target = document.getElementById(hash) || document.querySelector(`[name="${CSS.escape(hash)}"]`);
+  } catch { /* not a usable selector */ }
+  if (!target) return null;
+
+  // The first readable text at or after the target. A skip link usually
+  // points at a container — <main id="main-content"> — whose own text is the
+  // entire rest of the page, so what identifies the place is the first thing
+  // inside it, not the container.
+  //
+  // Readable is the load-bearing word. Reddit's #main-content opens with a
+  // <script> whose source is the first text node in it; matching on that
+  // looks for `SML.load([...])` in the buffer, which no view will ever show.
+  const UNRENDERED = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TITLE', 'HEAD']);
+  const walker = document.createTreeWalker(document.body || document, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent || UNRENDERED.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
+      if ((node.data || '').replace(/\s+/g, ' ').trim().length < 2) return NodeFilter.FILTER_REJECT;
+      const style = window.getComputedStyle(parent);
+      if (style.display === 'none' || style.visibility === 'hidden') return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  walker.currentNode = target;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    return (node.data || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  }
+  return null;
+};
+
+// ---------------------------------------------------------------------------
 
 class Core {
   constructor({ driver, page, source, sources }) {
@@ -273,10 +359,93 @@ class Core {
 
     return { touched, undo, generation: this.generation };
   }
+
+  // The element behind an item, in whichever view produced it. The two views
+  // built from a DOM walk keep their own page-side node array and are
+  // resolved through it; the accessibility tree is resolved by the driver,
+  // in the frame the item came from.
+  async handleFor(item, page = this.page) {
+    if (DOM_SOURCES.has(this.source)) return domElementHandle(page, item);
+    if (this.source === 'render') return renderElementHandle(page, item);
+    const scope = item.frame || page;
+    return this.driver.axElementHandle(scope, item);
+  }
+
+  // The DOM's own default action, rather than a mouse-coordinate click: a
+  // blind user has no viewport, and legitimate targets (skip links, visually
+  // hidden controls) sit off-screen. The click is still aimed where a mouse
+  // would land — see click.js — since a site is free to listen below the
+  // control it labelled.
+  async activate(item, page = this.page) {
+    if (DOM_SOURCES.has(this.source)) {
+      return { how: 'dom', status: await activateDomItem(page, item) };
+    }
+    const handle = await withTimeout(
+      this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating element');
+    await withTimeout(Promise.all([
+      page.waitForLoadState('domcontentloaded').catch(() => {}),
+      handle.evaluate(clickThrough),
+    ]), ACTION_TIMEOUT_MS, 'Activating');
+    return { how: 'default-action', status: null };
+  }
+
+  canRealClick() {
+    return typeof this.driver.realClick === 'function';
+  }
+
+  // A click the browser accounts a person's, at real coordinates, carrying
+  // user activation. Refuses rather than guesses when the element cannot be
+  // brought somewhere a mouse could reach it.
+  async realClick(item, page = this.page) {
+    const handle = await withTimeout(
+      this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating element');
+
+    const ready = await withTimeout(
+      handle.evaluate(prepareRealClick), ACTION_TIMEOUT_MS, 'Bringing it on screen');
+    if (!ready || !ready.ok) {
+      return { ok: false, reason: ready ? ready.reason : 'could not be found on the page' };
+    }
+
+    await withTimeout(Promise.all([
+      page.waitForLoadState('domcontentloaded').catch(() => {}),
+      this.driver.realClick(item.frame || page, handle, { timeoutMs: ACTION_TIMEOUT_MS }),
+    ]), ACTION_TIMEOUT_MS, 'Clicking');
+    return { ok: true };
+  }
+
+  // The href of the element we are about to activate, so a fragment link can
+  // be followed even when the page cancels the click and handles it in
+  // script — in which case the URL never changes and there is nothing else
+  // to go on.
+  async fragmentOf(item, page = this.page) {
+    let href = null;
+    if (DOM_SOURCES.has(this.source)) {
+      href = item.attrs && item.attrs.href;
+    } else {
+      try {
+        const handle = await withTimeout(
+          this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating link');
+        href = await handle.evaluate((el) => el.getAttribute('href'));
+      } catch {
+        return null;
+      }
+    }
+    if (!href || !href.startsWith('#') || href.length < 2) return null;
+    return decodeURIComponent(href.slice(1));
+  }
+
+  // Which block a fragment points at, found through the text at the target:
+  // the buffer has no ids in it, and the anchor itself is usually an empty
+  // element with nothing to match on.
+  async blockAtFragment(hash, page = this.page) {
+    const snippet = await page.evaluate(TEXT_AT_FRAGMENT, hash).catch(() => null);
+    if (!snippet) return -1;
+    return findBlockWithText(this.blocks, snippet);
+  }
 }
 
 module.exports = {
-  Core,
+  Core, ActionTimeout, withTimeout, readFieldState, ACTION_TIMEOUT_MS,
   ALL_SOURCES, SOURCE_LABELS, DOM_SOURCES,
   snapshotBlocks, identityOf, diffBlocks, soleBlockContaining, findBlockWithText,
   sameDocumentFragment,
