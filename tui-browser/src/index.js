@@ -171,7 +171,7 @@ function currentLine(state) {
 
 function currentBlock(state) {
   const line = currentLine(state);
-  return line ? state.blocks[line.blockIndex] : null;
+  return line ? state.core.blocks[line.blockIndex] : null;
 }
 
 function itemUnderCursor(state) {
@@ -214,7 +214,7 @@ function syncCursor(state) {
 }
 
 function relayout(state) {
-  state.lines = layoutLines(state.blocks, contentWidth());
+  state.lines = layoutLines(state.core.blocks, contentWidth());
   if (state.cursor >= state.lines.length) state.cursor = Math.max(state.lines.length - 1, 0);
   clampCol(state);
   clampScroll(state);
@@ -243,7 +243,7 @@ function addressText(state, page) {
 // The address is one line and URLs are routinely longer than the terminal is
 // wide, so it scrolls horizontally around the caret instead of wrapping.
 function drawAddress(state, page, { force = false } = {}) {
-  const label = `[${SOURCE_LABELS[state.source]}] `;
+  const label = `[${SOURCE_LABELS[state.core.source]}] `;
   const width = Math.max(10, termSize().cols - label.length);
   const full = addressText(state, page);
 
@@ -331,7 +331,7 @@ function setStatus(state, msg) {
 // Puts the terminal cursor back where the reader is.
 function parkCursor(state) {
   if (state.mode === 'address') {
-    drawAddress(state, state.page, { force: true });
+    drawAddress(state, state.core.page, { force: true });
     return;
   }
   if (state.mode === 'find') {
@@ -380,13 +380,13 @@ function repaintList(state, page, before) {
 
   if (before && before.scroll === state.scroll && before.height === viewportHeight()) {
     const repainted = patchVisibleRows(state, before.rows);
-    log('repaint', { rows: repainted, of: before.height, source: state.source });
+    log('repaint', { rows: repainted, of: before.height, source: state.core.source });
     return repainted;
   }
 
   drawList(state);
   parkCursor(state);
-  log('repaint', { rows: viewportHeight(), of: viewportHeight(), full: true, source: state.source });
+  log('repaint', { rows: viewportHeight(), of: viewportHeight(), full: true, source: state.core.source });
   return null;
 }
 
@@ -441,7 +441,7 @@ function findQuickNav(state, match, direction) {
   for (let i = state.cursor + step; i >= 0 && i < state.lines.length; i += step) {
     const line = state.lines[i];
     if (line.continuation) continue;
-    const block = state.blocks[line.blockIndex];
+    const block = state.core.blocks[line.blockIndex];
     if (block.item && match(block.item)) return { line: i, col: 0 };
   }
   return null;
@@ -454,7 +454,7 @@ function findParagraph(state, direction) {
   for (let i = state.cursor + step; i >= 0 && i < state.lines.length; i += step) {
     const line = state.lines[i];
     if (line.continuation) continue;
-    const block = state.blocks[line.blockIndex];
+    const block = state.core.blocks[line.blockIndex];
     if (!block.item || block.item.role !== 'text') continue;
     if (block.startsBlock || block.isParagraph) return { line: i, col: 0 };
   }
@@ -584,7 +584,7 @@ function restoreAnchor(state, anchor) {
 
 async function refresh(state, page, { resetCursor = false, anchor = null } = {}) {
   await state.core.rescan({ page });
-  if (state.live) state.live.snapshotCostMs = state.core.snapshotCostMs;
+  if (state.core.live) state.core.live.snapshotCostMs = state.core.snapshotCostMs;
   if (resetCursor) { state.cursor = 0; state.scroll = 0; state.col = 0; }
   relayout(state);
   if (anchor) restoreAnchor(state, anchor);
@@ -644,8 +644,8 @@ function announce(state, { politeness, text }) {
     state.statusHeldUntil = Date.now() + (politeness === 'assertive' ? 8000 : 4000);
     setStatus(state, text.slice(0, termSize().cols));
   } else {
-    state.live.queue.push({ politeness, text });
-    if (state.live.queue.length > 5) state.live.queue.shift();
+    state.core.live.queue.push({ politeness, text });
+    if (state.core.live.queue.length > 5) state.core.live.queue.shift();
   }
 }
 
@@ -660,22 +660,22 @@ function announce(state, { politeness, text }) {
 async function onExternalNavigation(state, page) {
   // Every tab reports its own navigations, and only the one being read
   // should rebuild anything.
-  if (page !== state.page) return;
+  if (page !== state.core.page) return;
   const url = page.url();
-  if (url === state.renderedUrl) return;
-  if (state.live && state.live.refreshing) return;
+  if (url === state.core.renderedUrl) return;
+  if (state.core.live && state.core.live.refreshing) return;
 
   // Following a fragment fires this too. Nothing was replaced — the document
   // is the one already in the buffer — so rebuilding it and resetting the
   // cursor would throw the reader to the top of a page they never left.
   // Activation moves them to the target itself; a hash changed by script
   // leaves them where they are, and the observer catches any real change.
-  if (sameDocumentFragment(state.renderedUrl, url)) {
-    state.renderedUrl = url;
+  if (sameDocumentFragment(state.core.renderedUrl, url)) {
+    state.core.renderedUrl = url;
     return;
   }
 
-  state.renderedUrl = url;
+  state.core.renderedUrl = url;
   log('navigation.external', { url: url.slice(0, 120) });
   try {
     await refresh(state, page, { resetCursor: true });
@@ -712,7 +712,7 @@ function restoreCursorAfterRebuild(state, previousTexts, anchor) {
 }
 
 async function runLiveRefresh(state, page) {
-  const live = state.live;
+  const live = state.core.live;
   if (!refreshDue(live)) return;
 
   const cycle = Date.now();
@@ -761,7 +761,7 @@ async function runLiveRefresh(state, page) {
   live.refreshing = false;
 
   log('live.refresh', {
-    source: state.source,
+    source: state.core.source,
     totalMs: Date.now() - cycle,
     snapshotMs: live.snapshotCostMs,
     prepMs,
@@ -842,8 +842,8 @@ function onLiveEvent(state, page, payload) {
     count('patchMissed');
   }
 
-  state.live.mutations += (mutations || 0);
-  state.live.dirty = true;
+  state.core.live.mutations += (mutations || 0);
+  state.core.live.dirty = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -869,7 +869,7 @@ const attachedPages = new WeakSet();
 const NEW_TAB_SETTLE_MS = 1200;
 
 async function switchToTab(state, page, { note = '' } = {}) {
-  if (!page || page === state.page) return false;
+  if (!page || page === state.core.page) return false;
 
   await state.core.adoptTab(page);
 
@@ -912,7 +912,7 @@ async function cycleTab(state, direction) {
 // buffer and nothing to move to — the browser would still be running with
 // nothing in it — so the key does nothing and says why. Quitting is `q`.
 async function closeCurrentTab(state) {
-  const current = state.page;
+  const current = state.core.page;
   const next = state.core.tabAfter(current);
   if (!next) {
     setStatus(state, 'This is the only tab open — press q to quit.');
@@ -938,7 +938,7 @@ async function closeCurrentTab(state) {
 // behind is announced and left alone — nothing moves the reader without
 // saying so.
 async function onNewTab(state, page) {
-  if (!state.ready || page === state.page) return;
+  if (!state.ready || page === state.core.page) return;
 
   await new Promise((r) => setTimeout(r, NEW_TAB_SETTLE_MS));
   if (page.isClosed && page.isClosed()) return;
@@ -983,8 +983,8 @@ async function loadMore(state, page) {
   state.loadingMore = true;
   // Hold off the live refresh: the page is about to mutate heavily, and a
   // rebuild landing in the middle of this one would fight with it.
-  const wasRefreshing = state.live.refreshing;
-  state.live.refreshing = true;
+  const wasRefreshing = state.core.live.refreshing;
+  state.core.live.refreshing = true;
   setStatus(state, 'Loading more…');
 
   const t0 = Date.now();
@@ -995,7 +995,7 @@ async function loadMore(state, page) {
     asked = await state.core.askForMore(page);
   } catch (err) {
     state.loadingMore = false;
-    state.live.refreshing = wasRefreshing;
+    state.core.live.refreshing = wasRefreshing;
     setStatus(state, 'Could not ask the page for more.');
     log('loadmore.error', { error: String(err.message || err).slice(0, 160) });
     return;
@@ -1006,7 +1006,7 @@ async function loadMore(state, page) {
   // put the scroll back and remembered the answer.
   if (!asked.grew) {
     state.loadingMore = false;
-    state.live.refreshing = wasRefreshing;
+    state.core.live.refreshing = wasRefreshing;
     log('loadmore', {
       ms: Date.now() - t0, grew: false, scrollable: asked.scrollable,
       scrolled: asked.target, added: 0, lines: state.lines.length,
@@ -1016,7 +1016,7 @@ async function loadMore(state, page) {
   }
 
   const screen = screenBefore(state);
-  const previousTexts = state.blocks.map((b) => b.text);
+  const previousTexts = state.core.blocks.map((b) => b.text);
   const anchor = anchorFor(state);
 
   try {
@@ -1027,8 +1027,8 @@ async function loadMore(state, page) {
   restoreCursorAfterRebuild(state, previousTexts, anchor);
 
   const added = state.lines.length - linesBefore;
-  state.live.lastPulseMs = 0; // the fingerprint is stale now; re-baseline it
-  state.live.refreshing = wasRefreshing;
+  state.core.live.lastPulseMs = 0; // the fingerprint is stale now; re-baseline it
+  state.core.live.refreshing = wasRefreshing;
   state.loadingMore = false;
 
   repaintList(state, page, screen);
@@ -1072,31 +1072,31 @@ async function pulseLive(state, page) {
     return;
   }
 
-  const result = await pulse(page, state.live);
+  const result = await pulse(page, state.core.live);
   if (result && (result.changed || result.navigated || result.rearmed || result.ms > 50)) {
     log('live.pulse', result);
   }
   // A pulse that cannot run at all is worth knowing about: it is the safety
   // net, and a silent one is no net.
-  if (state.live.pulseErrors) {
-    count('pulseErrors', state.live.pulseErrors);
-    state.live.pulseErrors = 0;
+  if (state.core.live.pulseErrors) {
+    count('pulseErrors', state.core.live.pulseErrors);
+    state.core.live.pulseErrors = 0;
   }
 }
 
 function startLiveTicker(state, page) {
-  if (state.live.ticker) return;
-  state.live.ticker = setInterval(() => {
-    // state.page rather than the page this was started for: the reader can
+  if (state.core.live.ticker) return;
+  state.core.live.ticker = setInterval(() => {
+    // state.core.page rather than the page this was started for: the reader can
     // move to another tab, and the ticker has to follow them there.
     // Collected before pulsing, so a change the observer already saw is in
     // hand before we go asking whether anything changed.
-    state.core.collectLive(state.page)
-      .then(() => pulseLive(state, state.page))
-      .then(() => runLiveRefresh(state, state.page))
+    state.core.collectLive(state.core.page)
+      .then(() => pulseLive(state, state.core.page))
+      .then(() => runLiveRefresh(state, state.core.page))
       .catch(() => {});
   }, TICK_MS);
-  if (state.live.ticker.unref) state.live.ticker.unref();
+  if (state.core.live.ticker.unref) state.core.live.ticker.unref();
   log('live.ticker.start', { everyMs: TICK_MS });
 }
 
@@ -1121,15 +1121,15 @@ function jumpToChange(state, page, direction = 1) {
     return;
   }
   const count = targets.length;
-  state.changeIndex = (state.changeIndex + direction + count) % count;
-  const target = targets[state.changeIndex];
+  state.core.changeIndex = (state.core.changeIndex + direction + count) % count;
+  const target = targets[state.core.changeIndex];
   const lineIndex = lineForBlock(state, target.block);
   if (lineIndex < 0) {
     setStatus(state, 'Changed area is no longer present.');
     return;
   }
   moveSelection(state, lineIndex, page, 0);
-  setStatus(state, `Change ${state.changeIndex + 1} of ${count} (${target.size} line${target.size === 1 ? '' : 's'}).`);
+  setStatus(state, `Change ${state.core.changeIndex + 1} of ${count} (${target.size} line${target.size === 1 ? '' : 's'}).`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1153,7 +1153,7 @@ async function handleBrowseKey(chunk, state, page) {
   }
 
   if (chunk === 'r') {
-    const previous = state.blocks.map((b) => b.text);
+    const previous = state.core.blocks.map((b) => b.text);
     const anchor = anchorFor(state);
     const screen = screenBefore(state);
     await refresh(state, page, { anchor });
@@ -1180,7 +1180,7 @@ async function handleBrowseKey(chunk, state, page) {
     ).catch(() => null);
 
     const cycle = state.sources;
-    state.source = cycle[(cycle.indexOf(state.source) + 1) % cycle.length];
+    state.core.source = cycle[(cycle.indexOf(state.core.source) + 1) % cycle.length];
     await refresh(state, page);
 
     const kept = await withTimeout(
@@ -1192,8 +1192,8 @@ async function handleBrowseKey(chunk, state, page) {
 
     render(state, page);
     setStatus(state, kept === 'exact' || (!place && !kept)
-      ? `${SOURCE_LABELS[state.source]} view.`
-      : `${SOURCE_LABELS[state.source]} view — nearest place.`);
+      ? `${SOURCE_LABELS[state.core.source]} view.`
+      : `${SOURCE_LABELS[state.core.source]} view — nearest place.`);
     return;
   }
 
@@ -1236,8 +1236,8 @@ async function handleBrowseKey(chunk, state, page) {
   // A page that updates itself is not always welcome: a clock or a ticker
   // would keep marking changes while you are trying to read something else.
   if (chunk === 'L') {
-    state.live.enabled = !state.live.enabled;
-    setStatus(state, state.live.enabled
+    state.core.live.enabled = !state.core.live.enabled;
+    setStatus(state, state.core.live.enabled
       ? 'Live updates on.'
       : 'Live updates off — press r to refresh manually.');
     return;
@@ -1316,7 +1316,7 @@ async function activateCurrent(state, page) {
     return;
   }
 
-  const previousTexts = state.blocks.map((b) => b.text);
+  const previousTexts = state.core.blocks.map((b) => b.text);
   const previousUrl = page.url();
   const anchor = anchorFor(state);
   const screen = screenBefore(state);
@@ -1359,7 +1359,7 @@ async function activateCurrent(state, page) {
     setStatus(state, timedOut
       ? `Gave up activating "${item.name}" after ${ACTION_TIMEOUT_MS / 1000}s — it may be inside a bot check or an unreachable frame.`
       : `Error activating "${item.name}": ${err.message.split('\n')[0]}`);
-    log('activate.failed', { name: String(item.name).slice(0, 80), timedOut, source: state.source });
+    log('activate.failed', { name: String(item.name).slice(0, 80), timedOut, source: state.core.source });
     return;
   }
 
@@ -1441,8 +1441,8 @@ async function reportAfterAction(state, page, { previousTexts, previousUrl, anch
 // a state the reader cannot see and did not choose.
 async function closePopup(state, page) {
   const controls = state.core.popup.controls;
-  const index = state.blocks.findIndex((block) => block.item && block.item.controls === controls);
-  const control = index >= 0 ? state.blocks[index].item : null;
+  const index = state.core.blocks.findIndex((block) => block.item && block.item.controls === controls);
+  const control = index >= 0 ? state.core.blocks[index].item : null;
   state.core.forgetPopup();
   if (!control) {
     await refresh(state, page, { anchor: anchorFor(state) });
@@ -1455,7 +1455,7 @@ async function closePopup(state, page) {
     // It may already be gone; the rebuild below is the truth either way.
   }
   await refresh(state, page, { resetCursor: false });
-  const line = lineForBlock(state, state.blocks.findIndex(
+  const line = lineForBlock(state, state.core.blocks.findIndex(
     (block) => block.item && block.item.controls === controls));
   if (line >= 0) state.cursor = line;
   clampCol(state);
@@ -1471,11 +1471,11 @@ async function clickAsHuman(state, page) {
     return;
   }
   if (!state.core.canRealClick()) {
-    setStatus(state, `The ${state.driver.name} driver cannot send a real click.`);
+    setStatus(state, `The ${state.core.driver.name} driver cannot send a real click.`);
     return;
   }
 
-  const previousTexts = state.blocks.map((b) => b.text);
+  const previousTexts = state.core.blocks.map((b) => b.text);
   const previousUrl = page.url();
   const anchor = anchorFor(state);
   const screen = screenBefore(state);
@@ -1491,14 +1491,14 @@ async function clickAsHuman(state, page) {
       return;
     }
 
-    log('click.real', { name: String(item.name).slice(0, 80), ms: Date.now() - started, source: state.source });
+    log('click.real', { name: String(item.name).slice(0, 80), ms: Date.now() - started, source: state.core.source });
     state.statusMsg = `Clicked "${item.name}"`;
   } catch (err) {
     const timedOut = err instanceof ActionTimeout;
     setStatus(state, timedOut
       ? `Gave up clicking "${item.name}" after ${ACTION_TIMEOUT_MS / 1000}s.`
       : `Could not click "${item.name}": ${err.message.split('\n')[0]}`);
-    log('click.real.failed', { name: String(item.name).slice(0, 80), timedOut, source: state.source });
+    log('click.real.failed', { name: String(item.name).slice(0, 80), timedOut, source: state.core.source });
     return;
   }
 
@@ -1534,7 +1534,7 @@ function openChooser(state, page, item, listing) {
   state.core.openChooser(blockIndex, listing);
   // Hold off live rebuilds while the list is open: a refresh would replace
   // the block list and take the entries with it, mid-choice.
-  state.live.refreshing = true;
+  state.core.live.refreshing = true;
   state.mode = 'choose';
   state.chooser = { item, from: blockIndex };
 
@@ -1551,7 +1551,7 @@ function openChooser(state, page, item, listing) {
 function closeChooser(state, page, { note }) {
   const from = state.chooser ? state.chooser.from : 0;
   state.core.closeChooser();
-  state.live.refreshing = false;
+  state.core.live.refreshing = false;
   state.mode = 'browse';
   state.chooser = null;
   relayout(state);
@@ -1575,7 +1575,7 @@ async function handleChooseKey(chunk, state, page) {
 
   if (chunk === '\r' || chunk === '\n') {
     const line = state.lines[state.cursor];
-    const item = line ? state.blocks[line.blockIndex].item : null;
+    const item = line ? state.core.blocks[line.blockIndex].item : null;
     if (!item || item.chooserIndex == null) {
       setStatus(state, 'Move to a choice first.');
       return;
@@ -1886,21 +1886,6 @@ async function main() {
     statusHeldUntil: 0,
     loadingMore: false,
   };
-  // The reader still reaches these through `state`, because the four hundred
-  // places in this file that say `state.blocks` are not what the split is
-  // about — but the core is what owns them. Reading and writing through to it
-  // keeps one copy of the buffer while the rest of the reader moves across at
-  // its own pace, and every one of these names is a line of the protocol a
-  // second front end would speak.
-  for (const key of ['driver', 'page', 'source', 'blocks', 'changes', 'changeIndex', 'renderedUrl', 'live']) {
-    Object.defineProperty(state, key, {
-      get: () => core[key],
-      set: (value) => { core[key] = value; },
-      enumerable: true,
-      configurable: true,
-    });
-  }
-
   relayout(state);
 
   setupRawInput();
@@ -1925,12 +1910,12 @@ async function main() {
   process.stdout.on('resize', () => {
     relayout(state);
     process.stdout.write('\x1b[2J');
-    render(state, state.page, { force: true });
+    render(state, state.core.page, { force: true });
   });
 
   const counterTimer = setInterval(() => {
     flushCounters({
-      refreshes: state.live.refreshes, lines: state.lines.length, source: state.source,
+      refreshes: state.core.live.refreshes, lines: state.lines.length, source: state.core.source,
     });
   }, 5000);
   if (counterTimer.unref) counterTimer.unref();
@@ -1942,9 +1927,9 @@ async function main() {
 
     const t0 = Date.now();
     let result;
-    // state.page, not the page this loop began with: `<` and `>` move the
+    // state.core.page, not the page this loop began with: `<` and `>` move the
     // reader between tabs and every handler must act on the one they are on.
-    const current = state.page;
+    const current = state.core.page;
     if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
     else if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
     else if (state.mode === 'address') result = await handleAddressKey(chunk, state, current);
@@ -1965,7 +1950,7 @@ async function main() {
   }
 
   clearInterval(counterTimer);
-  flushCounters({ refreshes: state.live.refreshes });
+  flushCounters({ refreshes: state.core.live.refreshes });
   log('exit', {});
   releaseTab(browserPort);
   await driver.close();
