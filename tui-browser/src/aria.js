@@ -135,7 +135,11 @@ function parseTree(yamlText) {
       name,
       suffix,
       checked: /\[checked\]/.test(states),
-      expanded: /\[expanded\]/.test(states),
+      // ariaSnapshot marks an open control and says nothing about a closed
+      // one, so this path can report "expanded" but never "collapsed" —
+      // undefined here means "no idea", not "no". ax_own.js reads the
+      // attribute itself and knows the difference.
+      expanded: /\[expanded\]/.test(states) || undefined,
       level: (states.match(/\[level=(\d+)\]/) || [])[1],
       children: [],
     };
@@ -166,7 +170,7 @@ function flattenNode(node, out) {
 
   if (ATOMIC_ROLES.has(role)) {
     if (name) {
-      out.push({ role, name, level: node.level, checked: node.checked });
+      out.push({ role, name, level: node.level, checked: node.checked, expanded: node.expanded });
     }
     return; // name already covers everything inside
   }
@@ -226,15 +230,27 @@ function parseAriaSnapshot(yamlText) {
   return out;
 }
 
+// Whether a control that opens something is open, in the words a screen
+// reader uses. Words rather than a symbol on purpose: an arrow glyph is noise
+// on a braille display and silence in speech, and this is the difference
+// between "press this to see the menu" and "the menu you asked for is already
+// on the page, below". Absent means the control does not open anything, which
+// is most of them, and says nothing.
+function expansion(item) {
+  if (item.expanded === true) return ', expanded';
+  if (item.expanded === false) return ', collapsed';
+  return '';
+}
+
 function renderLine(item) {
   const { role, name, value, level } = item;
   if (role === 'heading') {
     const marker = level ? '#'.repeat(Number(level)) + ' ' : '## ';
     return marker + name;
   }
-  if (LINK_ROLES.has(role)) return `{${name}}`;
-  if (BUTTON_ROLES.has(role)) return `[*${name}]`;
-  if (FIELD_ROLES.has(role)) return `[${value ? name + ': ' + value : name}]`;
+  if (LINK_ROLES.has(role)) return `{${name}${expansion(item)}}`;
+  if (BUTTON_ROLES.has(role)) return `[*${name}${expansion(item)}]`;
+  if (FIELD_ROLES.has(role)) return `[${value ? name + ': ' + value : name}${expansion(item)}]`;
   if (role === 'img') return `(image) ${name}`;
   // A frame marks where embedded content begins; the frame's own lines are
   // spliced in after it, so it needs to survive even when unnamed.

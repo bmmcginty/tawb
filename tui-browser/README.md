@@ -438,7 +438,21 @@ One item per line, so positions stay predictable:
 [Search Wikipedia: dots]a field, with its current value
 (image) Wikipedia logo  an image, by its alt text
 Braille was based on…   ordinary text
+[*Account, collapsed]   a control that opens something, closed
+[*Account, expanded]    the same control, with its menu now on the page
 ```
+
+A control only says `collapsed` or `expanded` if the page says so, through
+`aria-expanded`. Most controls say nothing, and nothing is what they get: a
+plain button is not a closed anything. The distinction is the difference
+between "press this to see the menu" and "the menu is already here, further
+down" — which, with no screen to glance at, is otherwise invisible.
+
+Only the accessibility view knows this. `PAGE`, `HTML` and `SOURCE` are DOM
+walks with no notion of a control's state, and Playwright's own accessibility
+snapshot marks a control that is open but says nothing about one that is
+closed, so a Chromium session still on that snapshot reports `expanded` and
+never `collapsed`.
 
 Separator punctuation (`|`, `,`) is folded onto the end of the preceding
 link rather than taking a line of its own, since a lone `|` says nothing.
