@@ -153,6 +153,18 @@ function extractAxItems() {
   const hidden = (el) => {
     if (el.getAttribute('aria-hidden') === 'true') return true;
     if (el.hasAttribute('hidden')) return true;
+    // Content the browser is not rendering, whatever the mechanism. Computed
+    // style is not enough on its own: the contents of a closed <details> come
+    // back display:block, visibility:visible, content-visibility:visible and
+    // with a client rect, and are hidden all the same — Chromium and Firefox
+    // both answer false here and both are right. Without this the reader is
+    // read the inside of every collapsed disclosure on the page as though it
+    // were open, which is the opposite of what the control says.
+    //
+    // Default options on purpose: content-visibility:auto is content the
+    // browser has merely not got to yet, and skipping that would drop
+    // exactly the off-screen text this program exists to reach.
+    if (typeof el.checkVisibility === 'function' && !el.checkVisibility()) return true;
     const cs = window.getComputedStyle(el);
     return cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse';
   };

@@ -25,6 +25,9 @@ function extractVisible() {
   const out = [];
 
   const isHidden = (el) => {
+    // See ax_own.js: a closed <details> hides its contents by a route no
+    // computed property reports, and this is the question that catches it.
+    if (typeof el.checkVisibility === 'function' && !el.checkVisibility()) return true;
     const cs = window.getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') return true;
     if (cs.opacity === '0') return true;
