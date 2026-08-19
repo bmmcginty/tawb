@@ -617,6 +617,15 @@ the URL responsible. It is the fastest way to find
 out why something felt slow — ad-heavy pages spawning hundreds of tracking
 iframes have been the usual culprit.
 
+## If this is ever rewritten or embedded elsewhere
+
+[`PORTING.md`](PORTING.md) is the seam: which ~970 lines must stay JavaScript
+because they run inside the page, what the Playwright dependency actually
+amounts to call by call, which parts are policy that took real pages to
+discover and should be copied rather than re-derived, and what changes if this
+becomes a backend something else drives instead of a program that owns a
+terminal.
+
 ## Known rough edges
 
 - Snapshots can spike to a couple of seconds in the first moments after an
