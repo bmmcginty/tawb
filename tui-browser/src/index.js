@@ -1521,19 +1521,24 @@ async function handleTypeKey(chunk, state, page) {
   if (chunk === '\r' || chunk === '\n') {
     const previousUrl = page.url();
     const screen = screenBefore(state);
+    const anchor = anchorFor(state);
     await page.keyboard.press('Enter');
     await page.waitForLoadState('domcontentloaded').catch(() => {});
     state.mode = 'browse';
     state.typing = null;
-    await refresh(state, page, { resetCursor: true });
-    // A search that submitted in place is the same screen with a different
-    // list on it; one that navigated is a new page. The cursor reset moves
-    // the view in both cases, and repaintList notices that for itself.
-    if (page.url() === previousUrl) repaintList(state, page, screen);
-    else render(state, page);
-    setStatus(state, page.url() === previousUrl
-      ? `Submitted "${t.item.name}".`
-      : `Submitted "${t.item.name}" — loaded ${page.url()}`);
+
+    // A submit that navigated is a new page and there is nothing to keep. One
+    // that submitted in place is the same page with a different list on it,
+    // and the reader is still standing in the form they just filled in —
+    // resetting the cursor there threw them to the top of the document for no
+    // reason they could see.
+    const navigated = page.url() !== previousUrl;
+    await refresh(state, page, navigated ? { resetCursor: true } : { anchor });
+    if (navigated) render(state, page);
+    else repaintList(state, page, screen);
+    setStatus(state, navigated
+      ? `Submitted "${t.item.name}" — loaded ${page.url()}`
+      : `Submitted "${t.item.name}".`);
     return;
   }
 
