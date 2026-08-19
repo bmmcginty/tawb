@@ -1124,7 +1124,7 @@ async function loadMore(state, page) {
   }
 
   const screen = screenBefore(state);
-  const previousLineTexts = state.lines.map((l) => l.text);
+  const previousTexts = state.blocks.map((b) => b.text);
   const anchor = anchorFor(state);
 
   try {
@@ -1132,7 +1132,7 @@ async function loadMore(state, page) {
   } catch (err) {
     log('loadmore.error', { error: String(err.message || err).slice(0, 160) });
   }
-  restoreCursorAfterRebuild(state, previousLineTexts, anchor);
+  restoreCursorAfterRebuild(state, previousTexts, anchor);
 
   const added = state.lines.length - linesBefore;
   state.live.lastPulseMs = 0; // the fingerprint is stale now; re-baseline it
