@@ -1,0 +1,65 @@
+#!/usr/bin/env node
+'use strict';
+
+// The entry point: `b tweb://https://example.com` in edbrowse.
+//
+// It does almost nothing, and that is deliberate. edbrowse forks this script
+// for every fetch of a tweb:// url, so it must not be where the browser
+// lives; it asks the tweb server — which holds the browser session and the
+// element ids — to open the page, and prints what comes back. Every link and
+// form in that page points at the server directly (the document carries a
+// <base href>), so this script is out of the loop from the second page on.
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+function endpointPath() {
+  const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+  return path.join(base, 'tui-browser', 'edb.json');
+}
+
+function page(title, body) {
+  return `<html><head><title>${title}</title></head><body>\n${body}\n</body></html>\n`;
+}
+
+async function main() {
+  const argument = process.argv[2] || '';
+  const wanted = argument.replace(/^tweb:\/\//, '');
+  if (!wanted) {
+    process.stdout.write(page('tweb', '<p>Usage: b tweb://https://example.com</p>'));
+    return;
+  }
+
+  let endpoint = null;
+  try {
+    endpoint = JSON.parse(fs.readFileSync(endpointPath(), 'utf8'));
+  } catch {
+    endpoint = null;
+  }
+  if (!endpoint || !endpoint.port) {
+    process.stdout.write(page('tweb is not running',
+      '<p>tweb is not serving a browser. Start it with:</p>'
+      + '<p>npm run edb</p>'
+      + `<p>in the tui-browser directory, then try again. It writes ${endpointPath()}.</p>`));
+    return;
+  }
+
+  const base = `http://127.0.0.1:${endpoint.port}/t/${endpoint.token}`;
+  const url = `${base}/open?url=${encodeURIComponent(wanted)}`;
+
+  try {
+    const response = await fetch(url, { redirect: 'follow' });
+    const text = await response.text();
+    process.stdout.write(text);
+  } catch (err) {
+    process.stdout.write(page('tweb did not answer',
+      `<p>tweb is listening on port ${endpoint.port} according to ${endpointPath()},`
+      + ` but the request failed: ${String(err && err.message || err)}.</p>`
+      + '<p>It may have stopped. Start it again with npm run edb.</p>'));
+  }
+}
+
+main().catch((err) => {
+  process.stdout.write(page('tweb', `<p>${String(err && err.message || err)}</p>`));
+});

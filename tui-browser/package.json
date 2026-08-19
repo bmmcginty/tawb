@@ -7,7 +7,8 @@
     "start": "node src/index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "compare": "node tools/compare.js",
-    "firefox": "node src/index.js --browser firefox"
+    "firefox": "node src/index.js --browser firefox",
+    "edb": "node src/edb.js"
   },
   "keywords": [],
   "type": "commonjs",
