@@ -10,7 +10,8 @@ tweb-*.log
 out/
 *.saz
 
-# A checkout of edbrowse, kept here to read its source while designing the
-# integration. It is upstream's repository with its own .git, not ours to
-# vendor — remove this line if it should be a submodule instead.
-tui-browser/edbrowse/
+# The edbrowse side of the integration — the plugin, its .ebrc fragment, the
+# patches to edbrowse and the study — is its own repository living here. It
+# carries its own .git and its own edbrowse checkout; it is not ours to
+# track.
+edbrowse-plugin/
