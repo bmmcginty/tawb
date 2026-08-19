@@ -395,6 +395,7 @@ direction — which is how you reverse one.
 | `Ctrl+L` | Address bar (scrolls sideways for long URLs; `Esc` cancels)      |
 | `\`      | Cycle view: AX → PAGE → HTML → SOURCE                            |
 | `>` / `<`| Next / previous tab                                              |
+| `Shift+F4`| Close this tab (never the last one)                              |
 | `c` / `C`| Jump to the next / previous area that changed                    |
 | `r`      | Refresh now                                                      |
 | `L`      | Turn live updating on or off                                     |
@@ -474,6 +475,20 @@ somewhere else a tab can be.
 If the tab you are reading closes — the page closes itself, or you close it in
 the browser — you are moved to one that still exists rather than left holding
 a buffer full of lines that refer to nothing.
+
+**`Shift+F4` closes the tab you are on** and moves you to the next one, so
+closing repeatedly walks forward through what is open rather than doubling
+back. The last tab is never closed: a reader with no tab has no page, no
+buffer and nowhere to be moved to, so the key says so and does nothing.
+Quitting is `q`.
+
+Function keys are the least standardised part of terminal input, so four
+encodings of Shift+F4 are recognised: `\e[1;2S` (xterm, VTE, kitty,
+alacritty, tmux), `\eO2S`, `\e[14;2~`, and `\e[26~` — the Linux console and
+rxvt, which send a shifted function key as a higher-numbered one, so Shift+F4
+arrives as F14. Any escape sequence nothing claims is written to `tweb.log`
+with its bytes, so a terminal speaking a fifth dialect can be added by
+reading the log.
 
 ## When something changes elsewhere
 
