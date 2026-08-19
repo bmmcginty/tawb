@@ -13,7 +13,7 @@ const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
 const { layoutLines } = require('./layout');
 const { normaliseEndpoint } = require('./browser');
 const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
-const { claimedTargets, claimTab, releaseTab } = require('./session');
+const { claimedTargets, releaseTab } = require('./session');
 const { capturePlace, restorePlace } = require('./place');
 
 // --connect <port|host:port|url> attaches to a browser that is already
@@ -871,46 +871,10 @@ const attachedPages = new WeakSet();
 // conclude it opened in the background.
 const NEW_TAB_SETTLE_MS = 1200;
 
-async function tabLabel(page) {
-  try {
-    const title = await page.title();
-    if (title) return title.replace(/\s+/g, ' ').trim().slice(0, 60);
-  } catch { /* closed or navigating */ }
-  try {
-    return page.url().slice(0, 60);
-  } catch {
-    return 'untitled';
-  }
-}
-
-// Whether this tab is the one the browser is actually showing. A background
-// tab reports itself hidden, which is the same answer in both engines and
-// needs no protocol support of its own.
-async function isForeground(page) {
-  try {
-    return await page.evaluate(() => document.visibilityState === 'visible');
-  } catch {
-    return false;
-  }
-}
-
-function livePages(state) {
-  return state.driver.listTabs().filter((page) => {
-    try { return !page.isClosed(); } catch { return true; }
-  });
-}
-
 async function switchToTab(state, page, { note = '' } = {}) {
   if (!page || page === state.page) return false;
 
-  // Move the claim with us, so another reader knows which tab is ours now and
-  // stops avoiding the one we left.
-  const targetId = await state.driver.targetIdFor(page).catch(() => null);
-  if (targetId) claimTab(state.browserPort, targetId);
-
-  state.page = page;
-  page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
-  page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
+  await state.core.adoptTab(page);
 
   if (!attachedPages.has(page)) {
     attachedPages.add(page);
@@ -927,25 +891,21 @@ async function switchToTab(state, page, { note = '' } = {}) {
   await refresh(state, page, { resetCursor: true });
   render(state, page, { force: true });
 
-  const tabs = livePages(state);
-  const position = tabs.indexOf(page) + 1;
-  const label = await tabLabel(page);
+  const { position, of } = state.core.where(page);
+  const label = await state.core.tabLabel(page);
   setStatus(state, note
-    ? `${note} — tab ${position} of ${tabs.length}: ${label}`
-    : `Tab ${position} of ${tabs.length}: ${label}`);
-  log('tab.switch', { position, of: tabs.length, url: page.url().slice(0, 120) });
+    ? `${note} — tab ${position} of ${of}: ${label}`
+    : `Tab ${position} of ${of}: ${label}`);
+  log('tab.switch', { position, of, url: page.url().slice(0, 120) });
   return true;
 }
 
 async function cycleTab(state, direction) {
-  const tabs = livePages(state);
-  if (tabs.length < 2) {
+  const next = state.core.nextTab(direction);
+  if (!next) {
     setStatus(state, 'Only one tab open.');
     return;
   }
-  const current = tabs.indexOf(state.page);
-  const from = current < 0 ? 0 : current;
-  const next = tabs[(from + direction + tabs.length) % tabs.length];
   await switchToTab(state, next);
 }
 
@@ -955,27 +915,24 @@ async function cycleTab(state, direction) {
 // buffer and nothing to move to — the browser would still be running with
 // nothing in it — so the key does nothing and says why. Quitting is `q`.
 async function closeCurrentTab(state) {
-  const tabs = livePages(state);
-  if (tabs.length < 2) {
+  const current = state.page;
+  const next = state.core.tabAfter(current);
+  if (!next) {
     setStatus(state, 'This is the only tab open — press q to quit.');
     return;
   }
 
-  const current = state.page;
-  const index = tabs.indexOf(current);
-  // The tab `>` would have taken you to, so closing repeatedly walks forward
-  // rather than doubling back.
-  const next = tabs[((index < 0 ? 0 : index) + 1) % tabs.length];
-  const label = await tabLabel(current);
+  const { of } = state.core.where(current);
+  const label = await state.core.tabLabel(current);
 
   try {
-    await withTimeout(current.close(), ACTION_TIMEOUT_MS, 'Closing the tab');
+    await state.core.closeTab(current);
   } catch (err) {
     setStatus(state, `Could not close this tab: ${err.message.split('\n')[0]}`);
     return;
   }
 
-  log('tab.close', { of: tabs.length, url: current.url ? String(current.url()).slice(0, 120) : '' });
+  log('tab.close', { of, url: current.url ? String(current.url()).slice(0, 120) : '' });
   await switchToTab(state, next, { note: `Closed "${label}"` });
 }
 
@@ -989,14 +946,14 @@ async function onNewTab(state, page) {
   await new Promise((r) => setTimeout(r, NEW_TAB_SETTLE_MS));
   if (page.isClosed && page.isClosed()) return;
 
-  const foreground = await isForeground(page);
+  const foreground = await state.core.isForeground(page);
   log('tab.opened', { url: page.url().slice(0, 120), foreground });
 
   if (foreground) {
     await switchToTab(state, page, { note: 'Followed a new tab' });
     return;
   }
-  const label = await tabLabel(page);
+  const label = await state.core.tabLabel(page);
   setStatus(state, `A new tab opened in the background: ${label} — press > to reach it.`);
 }
 
@@ -1170,7 +1127,7 @@ async function pulseLive(state, page) {
   // closed in the browser. The buffer then describes a tab that no longer
   // exists and every command against it fails, so move to one that does.
   if (page.isClosed && page.isClosed()) {
-    const remaining = livePages(state).filter((other) => other !== page);
+    const remaining = state.core.tabs().filter((other) => other !== page);
     if (!remaining.length) {
       setStatus(state, 'The last tab closed.');
       return;
@@ -1378,11 +1335,6 @@ async function handleBrowseKey(chunk, state, page) {
   // blind reader nothing to go on; the log gives the bytes.
   if (chunk.startsWith(ESC)) log('key.unknown', { bytes: JSON.stringify(chunk) });
 }
-
-// How long a page load and a navigation get. The bound on an action the
-// reader triggers is the core's, since the action is.
-const OPERATION_TIMEOUT_MS = 8000;
-const NAVIGATION_TIMEOUT_MS = 20000;
 
 // ---------------------------------------------------------------------------
 // Fragment links
@@ -1735,7 +1687,6 @@ async function main() {
   // navigate each other around. Those are skipped, and if every candidate is
   // taken we open our own tab instead.
   let page = null;
-  let pageTargetId = null;
   if (rejoined && !ARGS.url) {
     const taken = claimedTargets(browserPort);
     const existing = context.pages().filter((p) => {
@@ -1747,7 +1698,6 @@ async function main() {
       const targetId = await driver.targetIdFor(candidate);
       if (targetId && taken.has(targetId)) continue;
       page = candidate;
-      pageTargetId = targetId;
       break;
     }
     if (page) log('page.adopt', { url: page.url().slice(0, 120), of: existing.length, taken: taken.size });
@@ -1756,20 +1706,17 @@ async function main() {
 
   const adopted = !!page;
   if (!page) page = await context.newPage();
+
+  const sources = ALL_SOURCES.filter((s) => s !== 'ax' || driver.capabilities?.ax !== false);
+  const core = new Core({ driver, page, source: sources[0], sources, browserPort });
   // Claim whichever tab we ended up on, including one we just opened and one
   // in a browser we started: the session that joins later is the one that
   // needs to know to leave it alone.
-  if (!pageTargetId) pageTargetId = await driver.targetIdFor(page);
-  claimTab(browserPort, pageTargetId);
-  page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
-  page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
+  await core.adoptTab(page);
   if (!adopted) {
     await timed('goto', { url: START_URL }, () =>
       page.goto(START_URL, { waitUntil: 'domcontentloaded' }));
   }
-
-  const sources = ALL_SOURCES.filter((s) => s !== 'ax' || driver.capabilities?.ax !== false);
-  const core = new Core({ driver, page, source: sources[0], sources });
   await core.rescan();
   const state = {
     core,

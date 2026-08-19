@@ -6,6 +6,7 @@ const { activateDomItem, domElementHandle } = require('./dom');
 const { clickThrough, prepareRealClick } = require('./click');
 const { renderElementHandle } = require('./render_html');
 const { remapIndex } = require('./remap');
+const { claimTab } = require('./session');
 const { log } = require('./log');
 
 // The core: everything about a page that is not about a terminal.
@@ -185,6 +186,10 @@ const CONTEXT_RADIUS = 3;
 // froze the whole terminal for half a minute with no way out. Bound it, and
 // report the failure to whoever asked instead.
 const ACTION_TIMEOUT_MS = 6000;
+// What a page itself is given: longer, because a load is allowed to take
+// longer than a control is allowed to take to answer.
+const OPERATION_TIMEOUT_MS = 8000;
+const NAVIGATION_TIMEOUT_MS = 20000;
 
 class ActionTimeout extends Error {}
 
@@ -255,9 +260,10 @@ const TEXT_AT_FRAGMENT = (hash) => {
 // ---------------------------------------------------------------------------
 
 class Core {
-  constructor({ driver, page, source, sources }) {
+  constructor({ driver, page, source, sources, browserPort = null }) {
     this.driver = driver;
     this.page = page;
+    this.browserPort = browserPort;
     this.sources = sources;
     this.source = source;
     this.blocks = [];
@@ -380,6 +386,81 @@ class Core {
     }
 
     return { touched, undo, generation: this.generation };
+  }
+
+  // -------------------------------------------------------------------------
+  // Tabs
+  //
+  // Which tabs exist, which one is ours, and taking one over. What a tab
+  // switch then *means* — that the buffer describes a different document now,
+  // so there is no place to keep — is decided by whoever asked for it.
+  // -------------------------------------------------------------------------
+
+  tabs() {
+    return this.driver.listTabs().filter((page) => {
+      try { return !page.isClosed(); } catch { return true; }
+    });
+  }
+
+  async tabLabel(page) {
+    try {
+      const title = await page.title();
+      if (title) return title.replace(/\s+/g, ' ').trim().slice(0, 60);
+    } catch { /* closed or navigating */ }
+    try {
+      return page.url().slice(0, 60);
+    } catch {
+      return 'untitled';
+    }
+  }
+
+  // Whether this tab is the one the browser is actually showing. A background
+  // tab reports itself hidden, which is the same answer in both engines and
+  // needs no protocol support of its own.
+  async isForeground(page) {
+    try {
+      return await page.evaluate(() => document.visibilityState === 'visible');
+    } catch {
+      return false;
+    }
+  }
+
+  where(page = this.page) {
+    const tabs = this.tabs();
+    return { position: tabs.indexOf(page) + 1, of: tabs.length };
+  }
+
+  // The tab `>` or `<` would move to, or null when there is only one.
+  nextTab(direction) {
+    const tabs = this.tabs();
+    if (tabs.length < 2) return null;
+    const current = tabs.indexOf(this.page);
+    const from = current < 0 ? 0 : current;
+    return tabs[(from + direction + tabs.length) % tabs.length];
+  }
+
+  // The tab closing would leave you on: the one `>` would have taken you to,
+  // so closing repeatedly walks forward rather than doubling back.
+  tabAfter(page) {
+    const tabs = this.tabs();
+    if (tabs.length < 2) return null;
+    const index = tabs.indexOf(page);
+    return tabs[((index < 0 ? 0 : index) + 1) % tabs.length];
+  }
+
+  // Take a tab as ours. The claim moves with us, so another reader knows
+  // which tab is ours now and stops avoiding the one we left.
+  async adoptTab(page) {
+    const targetId = await this.driver.targetIdFor(page).catch(() => null);
+    if (targetId && this.browserPort != null) claimTab(this.browserPort, targetId);
+    page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
+    page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
+    this.page = page;
+    return targetId;
+  }
+
+  async closeTab(page) {
+    await withTimeout(page.close(), ACTION_TIMEOUT_MS, 'Closing the tab');
   }
 
   blockText(index) {
@@ -597,7 +678,8 @@ class Core {
 }
 
 module.exports = {
-  Core, ActionTimeout, withTimeout, readFieldState, ACTION_TIMEOUT_MS,
+  Core, ActionTimeout, withTimeout, readFieldState,
+  ACTION_TIMEOUT_MS, OPERATION_TIMEOUT_MS, NAVIGATION_TIMEOUT_MS,
   REANCHOR_WINDOW, CONTEXT_RADIUS,
   ALL_SOURCES, SOURCE_LABELS, DOM_SOURCES,
   snapshotBlocks, identityOf, diffBlocks, soleBlockContaining, findBlockWithText,
