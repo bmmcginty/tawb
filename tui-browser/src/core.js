@@ -544,20 +544,68 @@ class Core {
     };
   }
 
+  // How much of the remembered neighbourhood a candidate still agrees with.
+  contextScore(index, anchor) {
+    let score = 0;
+    for (let offset = -CONTEXT_RADIUS; offset <= CONTEXT_RADIUS; offset += 1) {
+      if (offset === 0) continue;
+      const expected = anchor.context[offset + CONTEXT_RADIUS];
+      if (expected && expected === this.blockText(index + offset)) score += 1;
+    }
+    return score;
+  }
+
+  // Searched outward from where the reader was, so the nearest of several
+  // identical blocks wins and context breaks the tie. `accept` returns a
+  // score, or null for "not a candidate at all".
+  //
+  // Outward rather than from the top is the whole point. Block text repeats
+  // constantly — two buttons both called "Open", a page of <option value=30>
+  // — and the first match from the top can be the length of the document away
+  // from the one the reader was actually standing on.
+  searchOutward(start, accept, window = REANCHOR_WINDOW) {
+    let best = null;
+    for (let distance = 0; distance <= window; distance += 1) {
+      const candidates = distance === 0 ? [start] : [start - distance, start + distance];
+      let anyInRange = false;
+      for (const index of candidates) {
+        if (index < 0 || index >= this.blocks.length) continue;
+        anyInRange = true;
+        const score = accept(index);
+        if (score == null) continue;
+        if (!best || score > best.score) best = { index, score };
+        if (best.score === CONTEXT_RADIUS * 2) return best;
+      }
+      // Both ends have run off the buffer; nothing further to visit.
+      if (!anyInRange && distance > 0) break;
+    }
+    return best;
+  }
+
   // Putting the reader back after a change they asked for — a view switch, a
-  // refresh they pressed for. Always answers with somewhere, falling back to
-  // the same proportion of a buffer whose line count may be wildly different,
-  // because the reader asked for this and has to arrive somewhere.
+  // refresh they pressed for, the page redrawing after they pressed
+  // something. Always answers with somewhere, falling back to the same
+  // proportion of a buffer whose block count may be wildly different, because
+  // the reader asked for this and has to arrive somewhere.
+  //
+  // The search spans the whole buffer, because they asked and it must find
+  // the thing if the thing is there — but it still runs outward from where
+  // they were, so that of two blocks reading exactly the same it chooses the
+  // one they were standing on rather than the first one on the page.
   restore(anchor) {
     if (!anchor || !this.blocks.length) return 0;
     const needle = (anchor.name || anchor.text || '').trim();
+    const start = Math.min(Math.max(anchor.block, 0), this.blocks.length - 1);
+    const whole = this.blocks.length;
 
     if (needle) {
-      const exact = this.blocks.findIndex((b) => b.text === anchor.text);
-      if (exact >= 0) return exact;
+      const exact = this.searchOutward(start,
+        (i) => (this.blocks[i].text === anchor.text ? this.contextScore(i, anchor) : null), whole);
+      if (exact) return exact.index;
 
-      const partial = this.blocks.findIndex((b) => b.text.includes(needle));
-      if (partial >= 0) return partial;
+      const partial = this.searchOutward(start,
+        (i) => (this.blocks[i].text.includes(needle) ? this.contextScore(i, anchor) : null), whole);
+      if (partial) return partial.index;
     }
 
     return Math.min(
@@ -603,36 +651,12 @@ class Core {
 
     const start = Math.min(Math.max(anchor.block, 0), Math.max(this.blocks.length - 1, 0));
 
-    // How much of the remembered neighbourhood a candidate still agrees with.
-    const contextScore = (index) => {
-      let score = 0;
-      for (let offset = -CONTEXT_RADIUS; offset <= CONTEXT_RADIUS; offset += 1) {
-        if (offset === 0) continue;
-        const expected = anchor.context[offset + CONTEXT_RADIUS];
-        if (expected && expected === this.blockText(index + offset)) score += 1;
-      }
-      return score;
-    };
-
-    // Searched outward from where they were, so the nearest of several
-    // identical blocks wins, with context breaking the tie.
-    const search = (accept) => {
-      let best = null;
-      for (let distance = 0; distance <= REANCHOR_WINDOW; distance += 1) {
-        const candidates = distance === 0 ? [start] : [start - distance, start + distance];
-        for (const index of candidates) {
-          if (index < 0 || index >= this.blocks.length) continue;
-          const score = accept(index);
-          if (score == null) continue;
-          if (!best || score > best.score) best = { index, score };
-          if (best.score === CONTEXT_RADIUS * 2) return best;
-        }
-      }
-      return best;
-    };
-
-    const byText = search((index) => (
-      this.blocks[index].text === anchor.text ? contextScore(index) : null));
+    // Matching a single block is not enough when the text repeats — a page of
+    // <option value=30> entries offers dozens of equally good candidates. The
+    // neighbours disambiguate: the right one sits in the same surroundings it
+    // did before.
+    const byText = this.searchOutward(start, (index) => (
+      this.blocks[index].text === anchor.text ? this.contextScore(index, anchor) : null));
     if (byText) return { block: byText.index, exact: false };
 
     // Nothing matched by text — which is the normal case for a block whose
@@ -640,8 +664,8 @@ class Core {
     // its text is never the text we anchored on, yet its neighbours are
     // unchanged. Locate it by surroundings alone, ignoring the centre.
     const MIN_CONTEXT_SCORE = 3;
-    const byContext = search((index) => {
-      const score = contextScore(index);
+    const byContext = this.searchOutward(start, (index) => {
+      const score = this.contextScore(index, anchor);
       return score >= MIN_CONTEXT_SCORE ? score : null;
     });
     if (byContext) return { block: byContext.index, exact: false };
