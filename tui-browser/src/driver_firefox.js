@@ -549,7 +549,15 @@ async function openFirefox({
 
       session.on('script.message', (params) => {
         if (params.channel !== name) return;
-        callback({}, bidi.fromRemoteValue(params.data));
+        // Which tab called, so a binding registered for the whole browser is
+        // not delivered as though every tab were the one being read. A child
+        // frame's realm names its own context and matches no page, and that
+        // answer is left as null: the receiving side reads null as "cannot
+        // say" and delivers it, which is right, because a child frame of the
+        // read tab is the read tab.
+        const context = params.source && params.source.context;
+        const page = this.pages().find((open) => open.contextId === context) || null;
+        callback({ page }, bidi.fromRemoteValue(params.data));
       });
     },
     async addInitScript(fn) {
