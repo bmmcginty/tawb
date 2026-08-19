@@ -1,7 +1,7 @@
 'use strict';
 
 const { snapshotFrameTree } = require('./frames');
-const { armRenderedFrames } = require('./live');
+const { armRenderedFrames, createLiveState, installLive, INPUT_GRACE_MS } = require('./live');
 const { activateDomItem, domElementHandle } = require('./dom');
 const { clickThrough, prepareRealClick } = require('./click');
 const { renderElementHandle } = require('./render_html');
@@ -281,6 +281,62 @@ class Core {
     this.changes = [];
     this.changeIndex = -1;
     this.snapshotCostMs = 0;
+    // When the page last changed under us, whether a refresh is owed, how
+    // recently the reader touched anything. The rules that read it live in
+    // live.js; what is here is the orchestration those rules drive.
+    this.live = createLiveState();
+  }
+
+  // The reader did something. Live refreshes hold off while this is recent,
+  // so the buffer is never swapped mid-keystroke. Over a socket this is the
+  // same one-way notification as at(): the arrival of a request is itself the
+  // evidence that somebody is reading.
+  markInput() {
+    this.live.lastInputMs = Date.now();
+  }
+
+  // Whether the reader is close enough behind their last keystroke to be
+  // owed the buffer holding still.
+  reading() {
+    return Date.now() - this.live.lastInputMs < INPUT_GRACE_MS;
+  }
+
+  async attachLive(page, onMutation) {
+    const t0 = Date.now();
+    const info = await installLive(page, onMutation);
+    return { ms: Date.now() - t0, ...info };
+  }
+
+  // What a batch of mutations means, without acting on any of it. The caller
+  // gets the announcements to speak and, when the batch was nothing but text
+  // replacement, the patches that might be spliced in; anything else marks
+  // the buffer dirty and a whole-page refresh follows in its own time.
+  classify(payload) {
+    if (!payload) return { announcements: [], patches: null };
+    this.live.notifies += 1;
+    const announcements = this.live.enabled ? (payload.announcements || []) : [];
+    if (!this.live.enabled) return { announcements, patches: null };
+
+    // Only while nothing else is rewriting the buffer: a refresh in flight is
+    // about to replace these blocks wholesale.
+    const patches = payload.pureText && !this.live.refreshing ? (payload.patches || null) : null;
+    return { announcements, patches, mutations: payload.mutations || 0 };
+  }
+
+  // Everything a live rebuild is except drawing it: read the page again, work
+  // out where the reader belongs in the new buffer, and record what changed.
+  async rebuild(anchor, { page = this.page, keepPlace = true } = {}) {
+    const previousTexts = this.texts();
+    await this.rescan({ page });
+    const settled = keepPlace
+      ? this.reanchor(anchor, previousTexts)
+      : { block: -1, exact: false };
+    const regions = diffBlocks(previousTexts, this.blocks);
+    if (regions.length) {
+      this.changes = regions;
+      this.changeIndex = -1;
+    }
+    return { settled, regions, previousTexts };
   }
 
   // The front end reporting a move. One way, no reply, cheap enough to send
