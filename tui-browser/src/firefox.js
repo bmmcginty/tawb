@@ -155,6 +155,14 @@ function portOpen(port) {
   });
 }
 
+// The virtual screen is given a desktop's dimensions. xvfb-run defaults to
+// 640x480, and a 640x480 screen is not a small window, it is a different web:
+// pages serve their narrow layout, sticky bars cover most of what is left,
+// and a control in the middle of the page can end up with a cookie banner
+// permanently on top of it. 1280x1024 is an ordinary desktop and costs
+// nothing but virtual pixels.
+const SCREEN = '1280x1024x24';
+
 // A headless browser fails the checks a real one passes, so with no display we
 // run under Xvfb — a real browser drawing to a virtual screen.
 function buildCommand(executable, args) {
@@ -167,7 +175,7 @@ function buildCommand(executable, args) {
       + 'Install xvfb, or run inside a graphical session.',
     );
   }
-  return { command: xvfb, args: ['-a', executable, ...args] };
+  return { command: xvfb, args: ['-a', '-s', `-screen 0 ${SCREEN}`, executable, ...args] };
 }
 
 // ---------------------------------------------------------------------------
