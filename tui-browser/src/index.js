@@ -970,67 +970,16 @@ async function onNewTab(state, page) {
 // lines land below the cursor, which does not move until they arrive.
 // ---------------------------------------------------------------------------
 
-// How long to wait for a feed to answer, when scrolling actually took us
-// somewhere new and a fetch is plausible. Long enough for a slow connection.
-const LOAD_MORE_TIMEOUT_MS = 2500;
-// How long when it did not — we were already at the bottom, so whatever a
-// scroll was going to trigger has had its chance. Waiting the full time here
-// is what makes the end of an ordinary page feel like a hang.
-const LOAD_MORE_SETTLED_MS = 800;
-
-const SCROLL_TO_BOTTOM = () => {
-  const root = document.scrollingElement || document.documentElement;
-  const targets = [];
-  if (root.scrollHeight > root.clientHeight + 50) targets.push(root);
-
-  // Plenty of feeds scroll an inner container rather than the document, and
-  // scrolling the document then does nothing at all. Find the tallest one
-  // that actually scrolls. The cheap size test comes first so that style
-  // resolution — the expensive half — runs on a handful of elements rather
-  // than every element on the page.
-  let best = null;
-  for (const el of document.querySelectorAll('*')) {
-    if (el.clientHeight < 200 || el.scrollHeight <= el.clientHeight + 50) continue;
-    if (!/(auto|scroll)/.test(getComputedStyle(el).overflowY)) continue;
-    if (!best || el.scrollHeight > best.scrollHeight) best = el;
-  }
-  if (best && best !== root) targets.push(best);
-
-  // Where everything was, so a scroll that gained nothing can be undone.
-  window.__twebScrollUndo = targets.map((el) => ({ el, top: el.scrollTop }));
-
-  let moved = false;
-  for (const el of targets) {
-    const before = el.scrollTop;
-    el.scrollTop = el.scrollHeight;
-    if (el.scrollTop !== before) moved = true;
-  }
-
-  return {
-    elements: document.getElementsByTagName('*').length,
-    // Nothing on the page scrolls, so no amount of waiting will produce
-    // anything: this is the end of the page and we can say so at once.
-    scrollable: targets.length > 0,
-    moved,
-  };
-};
-
-// Scrolling is not free of consequences even when it gains nothing. Sent to
-// the bottom of a Wikipedia article, the sticky table of contents collapses
-// and the page loses 216 lines — content the reader had and did not ask to
-// give up. So a scroll that produced nothing is put back.
-const RESTORE_SCROLL = () => {
-  const undo = window.__twebScrollUndo;
-  if (!undo) return false;
-  for (const entry of undo) {
-    try { entry.el.scrollTop = entry.top; } catch { /* detached since */ }
-  }
-  window.__twebScrollUndo = null;
-  return true;
-};
-
 async function loadMore(state, page) {
   if (state.loadingMore) return;
+
+  // Already asked, already answered. The reader gets the truth immediately
+  // instead of the same two and a half seconds of waiting for it.
+  if (state.core.noMoreToLoad()) {
+    setStatus(state, 'End of page.');
+    return;
+  }
+
   state.loadingMore = true;
   // Hold off the live refresh: the page is about to mutate heavily, and a
   // rebuild landing in the middle of this one would fight with it.
@@ -1040,23 +989,10 @@ async function loadMore(state, page) {
 
   const t0 = Date.now();
   const linesBefore = state.lines.length;
-  let grew = false;
-  let probe = null;
+  let asked;
 
   try {
-    probe = await page.evaluate(SCROLL_TO_BOTTOM);
-    if (probe.scrollable) {
-      try {
-        await page.waitForFunction(
-          (n) => document.getElementsByTagName('*').length > n,
-          probe.elements,
-          { timeout: probe.moved ? LOAD_MORE_TIMEOUT_MS : LOAD_MORE_SETTLED_MS, polling: 250 },
-        );
-        grew = true;
-      } catch {
-        grew = false; // nothing arrived; this really is the end
-      }
-    }
+    asked = await state.core.askForMore(page);
   } catch (err) {
     state.loadingMore = false;
     state.live.refreshing = wasRefreshing;
@@ -1065,14 +1001,16 @@ async function loadMore(state, page) {
     return;
   }
 
-  // Nothing arrived, so there is nothing to rebuild — and a rebuild here
-  // does not merely cost a snapshot for no gain, it can lose content: put
-  // the scroll back and leave the buffer alone.
-  if (!grew) {
-    await page.evaluate(RESTORE_SCROLL).catch(() => {});
+  // Nothing arrived, so there is nothing to rebuild — and a rebuild here does
+  // not merely cost a snapshot for no gain, it can lose content. The core has
+  // put the scroll back and remembered the answer.
+  if (!asked.grew) {
     state.loadingMore = false;
     state.live.refreshing = wasRefreshing;
-    log('loadmore', { ms: Date.now() - t0, grew, scrollable: probe.scrollable, added: 0, lines: state.lines.length });
+    log('loadmore', {
+      ms: Date.now() - t0, grew: false, scrollable: asked.scrollable,
+      scrolled: asked.target, added: 0, lines: state.lines.length,
+    });
     setStatus(state, 'End of page.');
     return;
   }
@@ -1094,7 +1032,7 @@ async function loadMore(state, page) {
   state.loadingMore = false;
 
   repaintList(state, page, screen);
-  log('loadmore', { ms: Date.now() - t0, grew, added, lines: state.lines.length });
+  log('loadmore', { ms: Date.now() - t0, grew: true, scrolled: asked.target, added, lines: state.lines.length });
 
   if (added > 0) {
     // The reader asked to move down, so move down — onto the first of what
