@@ -8,7 +8,9 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "compare": "node tools/compare.js",
     "firefox": "node src/index.js --browser firefox",
-    "edb": "node src/edb.js"
+    "edb": "node src/edb.js",
+    "testpage": "node tools/serve.js",
+    "dump": "node tools/dump.js"
   },
   "keywords": [],
   "type": "commonjs",
