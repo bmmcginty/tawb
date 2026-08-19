@@ -1,0 +1,31 @@
+Patches to edbrowse
+===================
+
+Two small, general changes to edbrowse, both written against the checkout in
+edbrowse/ and applied to it here. Neither is specific to tweb; both are worth
+sending upstream on their own merits, and nothing in tweb requires either of
+them — the loopback http server (src/edb_server.js) works with stock edbrowse.
+
+Apply with:
+
+    cd edbrowse && git apply ../patches/*.patch
+
+edbrowse-rf-keeps-your-place.patch
+  rf rebuilds the buffer in a new window, so the line you were on is lost.
+  edbrowse already has the concept: f_dot ("forward dot, in case we browse
+  again", eb.h) carries your line across ub and b. This gives refresh the
+  same treatment. A url naming a #section still jumps to that section, since
+  that is what refresh has always done there.
+
+edbrowse-submit-to-plugin-protocols.patch
+  infPush refuses to submit a form whose action is not http, https, gopher,
+  gophers or mailto — "cannot submit using protocol %s" — and the check is on
+  the protocol, before the method is looked at, so get forms fail too. A
+  protocol with a plugin behind it can now take a form as well as a link. No
+  new plumbing is needed for the data: the action already arrives at the
+  plugin with the form data appended, ?data for get and \1data for post, and
+  runPluginCommand passes it through as %i.
+
+Both files pass cc -fsyntax-only. Neither has been run: building edbrowse
+needs quickjs and unixodbc, which are not installed here, so the patches are
+compiled-but-untested and should be tried before being trusted.
