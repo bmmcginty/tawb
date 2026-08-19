@@ -40,6 +40,12 @@ A headless browser fails those checks even when started normally, so with no
 `DISPLAY` the browser runs under Xvfb — a real browser drawing to a virtual
 screen. Install `xvfb` if you are not in a graphical session.
 
+That screen is 1280x1024. `xvfb-run` defaults to 640x480, and 640x480 is not
+a small window, it is a different web: pages serve their narrow layout,
+sticky bars cover most of what is left, and the browser window came out
+620x373 in Chromium and 576x347 in Firefox. On a desktop-sized screen they
+open at 1050x917 and 1152x836 without being told to.
+
 Your profile persists between runs, so logins and cookies survive:
 
 ```
