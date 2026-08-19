@@ -142,6 +142,15 @@ function extractAxItems() {
   // tree descends into them on Chromium, so ours has to as well or the two
   // engines describe different pages.
   const kidsOf = (node) => {
+    // A closed shadow root is invisible to page script by design: node.shadowRoot
+    // is null and there is no other way in from here. The driver can see it
+    // over the protocol, though, so when it has found one it hands the pair in
+    // through this map and the walk goes on as if the root had been open.
+    const closed = window.__twebClosed;
+    if (closed) {
+      const root = closed.get(node);
+      if (root) return Array.from(root.childNodes);
+    }
     if (node.shadowRoot) return Array.from(node.shadowRoot.childNodes);
     if (typeof node.assignedNodes === 'function') {
       const assigned = node.assignedNodes({ flatten: true });

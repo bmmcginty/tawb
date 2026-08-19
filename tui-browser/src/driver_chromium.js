@@ -3,6 +3,7 @@
 const { launchOwnBrowser, connectToBrowser, defaultProfileDir } = require('./browser');
 const { parseAriaSnapshot } = require('./aria');
 const { extractAxItems } = require('./ax_own');
+const { log } = require('./log');
 
 // Chromium, attached to over the DevTools protocol.
 //
@@ -51,6 +52,86 @@ async function openChromium({
 
   const ownAx = ax !== 'playwright';
 
+  // One DevTools session per frame, kept because opening one is a round trip
+  // and this is asked for on every snapshot of a page that needs it.
+  const sessions = new Map();
+  const sessionFor = async (frame) => {
+    if (sessions.has(frame)) return sessions.get(frame);
+    let session = null;
+    try {
+      // A cross-origin frame is its own target and answers for its own
+      // document; anything else is answered by the page's session.
+      session = await context.newCDPSession(frame);
+    } catch {
+      try { session = await context.newCDPSession(frame.page ? frame.page() : frame); } catch { session = null; }
+    }
+    sessions.set(frame, session);
+    return session;
+  };
+
+  // Find the closed shadow roots in a frame and hand each one to the page,
+  // paired with the element hosting it.
+  //
+  // Page script cannot do this. A closed shadow root reports nothing through
+  // node.shadowRoot — that is what closed means — so a walk built on the DOM
+  // will never enter one however it is written. The protocol can see them,
+  // and once the pair is in the page's own hands the ordinary walk carries on
+  // into it, in the right place in reading order, registering the elements it
+  // finds so they can be activated like anything else.
+  //
+  // Nothing is written to the page. The map is ours, on window, and it is
+  // rebuilt from nothing on each attempt, so a stale entry cannot outlive the
+  // document it came from.
+  const pierceClosedShadows = async (frame) => {
+    const session = await sessionFor(frame);
+    if (!session) return 0;
+
+    let document;
+    try {
+      ({ root: document } = await session.send('DOM.getDocument', { depth: -1, pierce: true }));
+    } catch {
+      return 0;
+    }
+
+    // Only this frame's own roots. A session on the page answers for every
+    // document in the process, and registering another frame's root into this
+    // frame's map would be meaningless at best.
+    const wanted = frame.url();
+    const pairs = [];
+    const collect = (node, docUrl) => {
+      const here = node.nodeName === '#document' ? (node.documentURL || docUrl) : docUrl;
+      for (const shadow of node.shadowRoots || []) {
+        if (shadow.shadowRootType === 'closed' && here === wanted) {
+          pairs.push({ host: node.nodeId, root: shadow.nodeId });
+        }
+        collect(shadow, here);
+      }
+      if (node.contentDocument) collect(node.contentDocument, node.contentDocument.documentURL);
+      for (const child of node.children || []) collect(child, here);
+    };
+    collect(document, document.documentURL);
+    if (!pairs.length) return 0;
+
+    await frame.evaluate(() => { window.__twebClosed = new Map(); }).catch(() => {});
+    let registered = 0;
+    for (const pair of pairs) {
+      try {
+        const host = await session.send('DOM.resolveNode', { nodeId: pair.host });
+        const shadow = await session.send('DOM.resolveNode', { nodeId: pair.root });
+        await session.send('Runtime.callFunctionOn', {
+          objectId: host.object.objectId,
+          functionDeclaration: 'function (root) { window.__twebClosed.set(this, root); }',
+          arguments: [{ objectId: shadow.object.objectId }],
+        });
+        registered += 1;
+      } catch {
+        // The node went away between listing it and resolving it.
+      }
+    }
+    log('shadow.pierced', { roots: registered, url: String(wanted).slice(0, 100) });
+    return registered;
+  };
+
   return {
     name: ownAx ? 'chromium' : 'chromium-playwright',
     ax: ownAx ? 'own' : 'playwright',
@@ -79,8 +160,20 @@ async function openChromium({
     // everything downstream (prose merging, separator folding, layout) is
     // untouched by which one computed it.
     async axItems(frame) {
-      if (ownAx) return frame.evaluate(extractAxItems);
-      return parseAriaSnapshot(await frame.locator('body').ariaSnapshot());
+      if (!ownAx) return parseAriaSnapshot(await frame.locator('body').ariaSnapshot());
+
+      const items = await frame.evaluate(extractAxItems);
+      if (items.length) return items;
+
+      // A document that renders and says nothing is the signature of content
+      // behind a closed shadow root, and it is the only case worth paying for
+      // a piercing scan of the whole node tree. Measured: 4ms on a Turnstile
+      // widget frame, but 146ms on a Wikipedia article and 329ms on Reddit —
+      // neither of which has a single closed shadow root in it. Doing this
+      // unconditionally would double the cost of every snapshot to serve a
+      // handful of pages.
+      if (!(await pierceClosedShadows(frame))) return items;
+      return frame.evaluate(extractAxItems);
     },
 
     // Every tab the browser has, across all its windows. Order is creation
