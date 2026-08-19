@@ -414,6 +414,22 @@ function extractAxItems() {
         controls: opensPopup(el),
         axIndex: register(el),
       });
+
+      // A listbox is the one field whose contents are the point of it. Every
+      // other field holds a value; a listbox holds the choices, and returning
+      // here meant a page's own dropdown had no entries in the buffer at all
+      // — the reader could open it and find nothing inside.
+      //
+      // A native <select> is excluded on purpose. Its options are in the DOM
+      // too, but they are not part of the reading order: they are reached by
+      // opening the control, which splices them in and takes them out again,
+      // and a sixty-entry year field does not belong in the middle of the
+      // page it sits on.
+      if (role === 'listbox' && tag !== 'select') {
+        for (const child of kidsOf(el)) {
+          if (child.nodeType === Node.ELEMENT_NODE) walk(child);
+        }
+      }
       return;
     }
 
