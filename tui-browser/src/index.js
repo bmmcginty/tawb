@@ -5,13 +5,12 @@ const { FIELD_ROLES, LINK_ROLES, BUTTON_ROLES } = require('./aria');
 const { itemAtOffset } = require('./blocks');
 const {
   Core, ALL_SOURCES, SOURCE_LABELS, DOM_SOURCES,
-  identityOf, diffBlocks, findBlockWithText, sameDocumentFragment,
+  diffBlocks, findBlockWithText, sameDocumentFragment,
   ActionTimeout, withTimeout, readFieldState, ACTION_TIMEOUT_MS,
 } = require('./core');
 const { installLive, armFrame, refreshDue, createLiveState, pulse, TICK_MS, INPUT_GRACE_MS } = require('./live');
 const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
 const { layoutLines } = require('./layout');
-const { remapIndex } = require('./remap');
 const { normaliseEndpoint } = require('./browser');
 const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
 const { claimedTargets, claimTab, releaseTab } = require('./session');
@@ -564,37 +563,20 @@ function drawFind(state) {
 // wildly between the three views, so an index would land somewhere arbitrary;
 // matching the text puts you on the same thing you were reading.
 function anchorFor(state) {
-  const block = currentBlock(state);
-  return {
-    text: block ? block.text : '',
-    name: block && block.item ? block.item.name : '',
-    identity: identityOf(block),
-    line: state.cursor,
-    // Snapshot of the neighbouring lines, used to tell repeated text apart.
-    context: Array.from(
-      { length: CONTEXT_RADIUS * 2 + 1 },
-      (_, i) => lineText(state, state.cursor + i - CONTEXT_RADIUS),
-    ),
-    ratio: state.lines.length ? state.cursor / state.lines.length : 0,
-  };
+  return state.core.anchor();
+}
+
+// The line a block starts on. Every block has one; a block index that is not
+// in this buffer at all answers -1.
+function lineForBlock(state, blockIndex) {
+  if (blockIndex < 0) return -1;
+  return state.lines.findIndex((l) => l.blockIndex === blockIndex && !l.continuation);
 }
 
 function restoreAnchor(state, anchor) {
   if (!anchor) return;
-  const needle = (anchor.name || anchor.text || '').trim();
-
-  if (needle) {
-    const exact = state.lines.findIndex((l) => !l.continuation && state.blocks[l.blockIndex].text === anchor.text);
-    if (exact >= 0) { state.cursor = exact; state.col = 0; clampScroll(state); return; }
-
-    const partial = state.lines.findIndex((l) => !l.continuation && l.text.includes(needle));
-    if (partial >= 0) { state.cursor = partial; state.col = 0; clampScroll(state); return; }
-  }
-
-  state.cursor = Math.min(
-    Math.round(anchor.ratio * state.lines.length),
-    Math.max(state.lines.length - 1, 0),
-  );
+  const line = lineForBlock(state, state.core.restore(anchor));
+  if (line >= 0) state.cursor = line;
   state.col = 0;
   clampScroll(state);
 }
@@ -617,99 +599,16 @@ async function refresh(state, page, { resetCursor = false, anchor = null } = {})
 // where the reader actually is. Identity first, then the *nearest* text match
 // searched outward from the previous position, then stay put. A live update
 // must never relocate the reader across the page.
-const REANCHOR_WINDOW = 250;
-const CONTEXT_RADIUS = 3;
-
+// A live update the reader did not ask for. The core decides where they
+// belong now, in block space; all that is left here is finding the line that
+// block starts on, and -1 meaning "stay exactly where you are".
 function reanchorQuietly(state, anchor) {
   if (!anchor) return;
-
-  const settle = () => {
-    state.cursor = Math.min(Math.max(state.cursor, 0), Math.max(state.lines.length - 1, 0));
-    clampCol(state);
-    clampScroll(state);
-  };
-
-  if (anchor.identity != null) {
-    const found = state.lines.findIndex(
-      (l) => !l.continuation && identityOf(state.blocks[l.blockIndex]) === anchor.identity);
-    // Node numbering comes from walk order, so inserting an element earlier
-    // in the document renumbers everything after it and the same number can
-    // name a different node. Trust the match only when a second signal
-    // agrees: the text is unchanged, or it is somewhere plausibly nearby.
-    if (found >= 0) {
-      const sameText = state.blocks[state.lines[found].blockIndex].text === anchor.text;
-      if (sameText || Math.abs(found - anchor.line) <= REANCHOR_WINDOW) {
-        state.cursor = found;
-        settle();
-        return;
-      }
-    }
-  }
-
-  const start = Math.min(Math.max(anchor.line, 0), Math.max(state.lines.length - 1, 0));
-
-  // Matching a single line is not enough when the text repeats — a page of
-  // <option value=30> entries offers dozens of equally good candidates. The
-  // neighbours disambiguate: the right one sits in the same surroundings it
-  // did before, so candidates are scored on how much of their context still
-  // agrees, with distance breaking ties.
-  let best = null;
-
-  for (let distance = 0; distance <= REANCHOR_WINDOW; distance += 1) {
-    const candidates = distance === 0 ? [start] : [start - distance, start + distance];
-    for (const index of candidates) {
-      const line = state.lines[index];
-      if (!line || line.continuation) continue;
-      if (state.blocks[line.blockIndex].text !== anchor.text) continue;
-
-      let score = 0;
-      for (let offset = -CONTEXT_RADIUS; offset <= CONTEXT_RADIUS; offset += 1) {
-        if (offset === 0) continue;
-        const expected = anchor.context[offset + CONTEXT_RADIUS];
-        const actual = lineText(state, index + offset);
-        if (expected != null && expected === actual) score += 1;
-      }
-
-      if (!best || score > best.score) best = { index, score };
-      if (best.score === CONTEXT_RADIUS * 2) break; // perfect context, done
-    }
-    if (best && best.score === CONTEXT_RADIUS * 2) break;
-  }
-
-  if (best) { state.cursor = best.index; settle(); return; }
-
-  // Nothing matched by text — which is the normal case for a line whose own
-  // content is what changed. A clock rewrites itself every second, so its
-  // text is never the text we anchored on, yet its neighbours are unchanged.
-  // Locate it by surroundings alone, ignoring the centre line. Without this,
-  // reading a clock while lines shift above it leaves the cursor sitting on
-  // whatever slid into that index.
-  const MIN_CONTEXT_SCORE = 3;
-  let byContext = null;
-
-  for (let distance = 0; distance <= REANCHOR_WINDOW; distance += 1) {
-    const candidates = distance === 0 ? [start] : [start - distance, start + distance];
-    for (const index of candidates) {
-      const line = state.lines[index];
-      if (!line || line.continuation) continue;
-
-      let score = 0;
-      for (let offset = -CONTEXT_RADIUS; offset <= CONTEXT_RADIUS; offset += 1) {
-        if (offset === 0) continue;
-        const expected = anchor.context[offset + CONTEXT_RADIUS];
-        if (expected && expected === lineText(state, index + offset)) score += 1;
-      }
-
-      if (score >= MIN_CONTEXT_SCORE && (!byContext || score > byContext.score)) {
-        byContext = { index, score };
-      }
-      if (byContext && byContext.score === CONTEXT_RADIUS * 2) break;
-    }
-    if (byContext && byContext.score === CONTEXT_RADIUS * 2) break;
-  }
-
-  if (byContext) state.cursor = byContext.index;
-  settle();
+  const line = lineForBlock(state, state.core.reanchor(anchor).block);
+  if (line >= 0) state.cursor = line;
+  state.cursor = Math.min(Math.max(state.cursor, 0), Math.max(state.lines.length - 1, 0));
+  clampCol(state);
+  clampScroll(state);
 }
 
 // Repaints only the visible rows whose text actually changed, then puts the
@@ -795,16 +694,14 @@ function markInput(state) {
 // only when the rewritten region resized under the cursor is there no exact
 // answer, and only then do we fall back to searching for the line. Reports
 // whether the arithmetic answer was available.
-function restoreCursorAfterRebuild(state, previousLineTexts, anchor) {
-  const remap = remapIndex(previousLineTexts, state.lines.map((l) => l.text), state.cursor);
-  if (remap.exact) {
-    state.cursor = Math.min(Math.max(remap.index, 0), Math.max(state.lines.length - 1, 0));
-    clampCol(state);
-    clampScroll(state);
-  } else {
-    reanchorQuietly(state, anchor);
-  }
-  return remap.exact;
+function restoreCursorAfterRebuild(state, previousTexts, anchor) {
+  const settled = state.core.reanchor(anchor, previousTexts);
+  const line = lineForBlock(state, settled.block);
+  if (line >= 0) state.cursor = line;
+  state.cursor = Math.min(Math.max(state.cursor, 0), Math.max(state.lines.length - 1, 0));
+  clampCol(state);
+  clampScroll(state);
+  return settled.exact;
 }
 
 async function runLiveRefresh(state, page) {
@@ -820,7 +717,6 @@ async function runLiveRefresh(state, page) {
   const tPrep = Date.now();
   const previousLines = state.lines.map((_, i) => renderRow(state, i));
   const previousTexts = state.blocks.map((b) => b.text);
-  const previousLineTexts = state.lines.map((l) => l.text);
   const anchor = anchorFor(state);
   const prepMs = Date.now() - tPrep;
 
@@ -842,7 +738,7 @@ async function runLiveRefresh(state, page) {
   }
   const remapExact = wasNavigation
     ? false
-    : restoreCursorAfterRebuild(state, previousLineTexts, anchor);
+    : restoreCursorAfterRebuild(state, previousTexts, anchor);
   const reanchorMs = Date.now() - tPost;
 
   const tDiff = Date.now();
