@@ -58,6 +58,18 @@ const PAGE_UP = '\x1b[5~';
 const PAGE_DOWN = '\x1b[6~';
 const HOME_KEY = '\x1b[H';
 const END_KEY = '\x1b[F';
+// Shift+F4 closes the tab, as the terminals in use actually send it. Function
+// keys are the least standardised part of terminal input: xterm and its
+// descendants add a modifier parameter, while rxvt and the Linux console send
+// a shifted function key as a higher-numbered one — shift+F4 arrives as F14.
+// Anything unrecognised is logged with its bytes, so a terminal that speaks
+// some fifth dialect can be added by reading tweb.log.
+const CLOSE_TAB_KEYS = new Set([
+  '\x1b[1;2S',   // xterm, VTE, kitty, alacritty, tmux, screen
+  '\x1bO2S',     // xterm keeping SS3 with a modifier
+  '\x1b[14;2~',  // terminals that number F4 as 14
+  '\x1b[26~',    // Linux console and rxvt: shift+F4 is F14
+]);
 
 // Quick navigation follows the JAWS vocabulary: h headings, f form fields,
 // b buttons, n non-link text, p paragraphs. Uppercase goes backwards. JAWS
@@ -1114,6 +1126,36 @@ async function cycleTab(state, direction) {
   await switchToTab(state, next);
 }
 
+// Closing the tab the reader is on, which is only ever theirs to ask for.
+//
+// The last tab is not closed. A reader left with no tab has no page, no
+// buffer and nothing to move to — the browser would still be running with
+// nothing in it — so the key does nothing and says why. Quitting is `q`.
+async function closeCurrentTab(state) {
+  const tabs = livePages(state);
+  if (tabs.length < 2) {
+    setStatus(state, 'This is the only tab open — press q to quit.');
+    return;
+  }
+
+  const current = state.page;
+  const index = tabs.indexOf(current);
+  // The tab `>` would have taken you to, so closing repeatedly walks forward
+  // rather than doubling back.
+  const next = tabs[((index < 0 ? 0 : index) + 1) % tabs.length];
+  const label = await tabLabel(current);
+
+  try {
+    await withTimeout(current.close(), ACTION_TIMEOUT_MS, 'Closing the tab');
+  } catch (err) {
+    setStatus(state, `Could not close this tab: ${err.message.split('\n')[0]}`);
+    return;
+  }
+
+  log('tab.close', { of: tabs.length, url: current.url ? String(current.url()).slice(0, 120) : '' });
+  await switchToTab(state, next, { note: `Closed "${label}"` });
+}
+
 // A tab that opens and takes the screen is followed, because the browser has
 // already moved and the reader should be where the browser is. One that opens
 // behind is announced and left alone — nothing moves the reader without
@@ -1474,6 +1516,7 @@ async function handleBrowseKey(chunk, state, page) {
 
   if (chunk === '>') return cycleTab(state, 1);
   if (chunk === '<') return cycleTab(state, -1);
+  if (CLOSE_TAB_KEYS.has(chunk)) return closeCurrentTab(state);
 
   if (chunk === 'c') return jumpToChange(state, page, 1);
   if (chunk === 'C') return jumpToChange(state, page, -1);
@@ -1526,6 +1569,11 @@ async function handleBrowseKey(chunk, state, page) {
   }
 
   if (chunk === '\r' || chunk === '\n') return activateCurrent(state, page);
+
+  // An escape sequence nobody claimed is almost always a key this reader
+  // could support and does not recognise from this terminal. Silence gives a
+  // blind reader nothing to go on; the log gives the bytes.
+  if (chunk.startsWith(ESC)) log('key.unknown', { bytes: JSON.stringify(chunk) });
 }
 
 // Nothing the reader triggers may block the interface indefinitely.
@@ -2192,7 +2240,7 @@ module.exports = {
   clickAsHuman, reportAfterAction,
   anchorFor, restoreAnchor, capturePlace, restorePlace, diffBlocks, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
-  applyTextPatches, soleBlockContaining, loadMore, atEnd, switchToTab, cycleTab, onNewTab,
+  applyTextPatches, soleBlockContaining, loadMore, atEnd, switchToTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation,
 };
