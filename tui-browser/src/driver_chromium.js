@@ -3,6 +3,7 @@
 const { launchOwnBrowser, connectToBrowser, defaultProfileDir } = require('./browser');
 const { parseAriaSnapshot } = require('./aria');
 const { extractAxItems } = require('./ax_own');
+const { readDocument } = require('./frames');
 const { log } = require('./log');
 
 // Chromium, attached to over the DevTools protocol.
@@ -184,21 +185,19 @@ async function openChromium({
     // the page, in the same item shape the Playwright path produced — so
     // everything downstream (prose merging, separator folding, layout) is
     // untouched by which one computed it.
-    async axItems(frame) {
-      if (!ownAx) return parseAriaSnapshot(await frame.locator('body').ariaSnapshot());
-
-      const items = await frame.evaluate(extractAxItems);
-      if (items.length) return items;
-
-      // A document that renders and says nothing is the signature of content
-      // behind a closed shadow root, and it is the only case worth paying for
-      // a piercing scan of the whole node tree. Measured: 4ms on a Turnstile
-      // widget frame, but 146ms on a Wikipedia article and 329ms on Reddit —
-      // neither of which has a single closed shadow root in it. Doing this
-      // unconditionally would double the cost of every snapshot to serve a
-      // handful of pages.
+    // Run a page-side extractor again, with the closed shadow roots supplied.
+    //
+    // Any walk of a document hits the same wall, not just the accessibility
+    // one: page script cannot enter a closed shadow root however it is
+    // written. So this is the capability rather than a feature of one
+    // extractor — whatever wants to read a document can ask for it, and the
+    // reader and the edbrowse server both do.
+    //
+    // Answers null when there was nothing to pierce, so the caller can keep
+    // whatever it already had.
+    async pierceAndRun(frame, pageFunction) {
       const pierced = await pierceClosedShadows(frame);
-      if (!pierced) return items;
+      if (!pierced) return null;
 
       // Called with the pairs as the receiver, so they are an argument to one
       // call rather than a property of anything the page owns.
@@ -206,12 +205,17 @@ async function openChromium({
         const answer = await pierced.session.send('Runtime.callFunctionOn', {
           objectId: pierced.basket,
           returnByValue: true,
-          functionDeclaration: `function () { const extract = ${extractAxItems.toString()}; return extract({ pairs: this }); }`,
+          functionDeclaration: `function () { const run = ${pageFunction.toString()}; return run({ pairs: this }); }`,
         });
-        return answer.result.value || items;
+        return answer.result.value;
       } finally {
         await pierced.session.send('Runtime.releaseObject', { objectId: pierced.basket }).catch(() => {});
       }
+    },
+
+    async axItems(frame) {
+      if (!ownAx) return parseAriaSnapshot(await frame.locator('body').ariaSnapshot());
+      return readDocument(frame, extractAxItems, this, (items) => !items || !items.length);
     },
 
     // Every tab the browser has, across all its windows. Order is creation
