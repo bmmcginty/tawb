@@ -120,6 +120,15 @@ page talks to the network.</p>
 </section>
 
 <section>
+  <h2>9. A file input</h2>
+  <p>The same shape of problem as a native select: the picker is the
+  operating system's, not the page's, so nothing the page can be told to do
+  will open it. Whatever fills this in has to come from the protocol.</p>
+  <p><input type="file" id="picker" multiple></p>
+  <p id="picked">nothing picked</p>
+</section>
+
+<section>
   <h2>What the page received</h2>
   <div id="log">nothing yet</div>
 </section>
@@ -228,6 +237,16 @@ page talks to the network.</p>
     document.getElementById('announcer').textContent =
       'Announcement number ' + announceCount + '.';
     note('announced ' + announceCount, e);
+  });
+
+  // 9. file input
+  document.getElementById('picker').addEventListener('change', function (e) {
+    var names = Array.prototype.map.call(e.target.files, function (f) {
+      return f.name + ' (' + f.size + ' bytes)';
+    });
+    document.getElementById('picked').textContent =
+      names.length ? 'picked: ' + names.join(', ') : 'nothing picked';
+    note('file input changed: ' + names.length + ' file(s)', e);
   });
 
   // 8. growth
