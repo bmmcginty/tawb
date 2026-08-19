@@ -147,6 +147,29 @@ function escapeHtml(text) {
     .replace(/"/g, '&quot;');
 }
 
+// The address bar.
+//
+// There is no key here to press for one, and a reader should not have to
+// remember an incantation to reach the web — least of all `b tweb://` plus a
+// scheme they were not thinking about. So every page tweb serves begins with
+// a field to type an address into, which is the one form of instruction that
+// cannot be forgotten: it is in the buffer, on line one, where the reader
+// already is.
+//
+// One line, one field, one button, because edbrowse numbers input fields
+// within the current line: on line 1 of any tweb page,
+//
+//     i=example.com
+//     i*
+//
+// with no number to count out and no url to remember. `action` is relative to
+// the <base href> every page carries, which points at the tab.
+function openBar(action = '../open') {
+  return `<p><form action="${action}" method="post">Open: `
+    + `<input name="url" value=""> <input type="submit" name="go" value="Go">`
+    + `</form></p>`;
+}
+
 // Tokens in, html out. The only interesting decisions are which elements
 // become links (all activatable ones, named by whatever names them, so an
 // icon button is not an empty {} in the buffer) and how fields that sit
@@ -254,7 +277,7 @@ function tokensToHtml(extracted, registry, base, tab) {
     + ` <a href="ax">ax</a> <a href="render">text</a> <a href="source">source</a>`
     + ` <a href="../tabs">tabs</a></p>`;
   return `<html><head><title>${title}</title><base href="${escapeHtml(base)}"></head>\n`
-    + `<body>\n${header}\n${parts.join('\n')}\n</body></html>\n`;
+    + `<body>\n${openBar()}\n${header}\n${parts.join('\n')}\n</body></html>\n`;
 }
 
 function fieldHtml(token, id) {
@@ -294,7 +317,9 @@ function fieldHtml(token, id) {
 function linesToHtml(title, base, heading, lines) {
   const body = lines.map((line) => escapeHtml(line)).join('\n');
   return `<html><head><title>${escapeHtml(title)}</title>`
-    + `<base href="${escapeHtml(base)}"></head>\n<body>\n<h1>${escapeHtml(heading)}</h1>\n`
+    + `<base href="${escapeHtml(base)}"></head>\n<body>\n${openBar()}\n`
+    + `<p><a href="./">the page</a> <a href="../tabs">tabs</a></p>\n`
+    + `<h1>${escapeHtml(heading)}</h1>\n`
     + `<pre>\n${body}\n</pre>\n</body></html>\n`;
 }
 
@@ -512,6 +537,12 @@ async function startEdbServer({
   const tabUrl = (number) => `/t/${secret}/${number}/`;
   const openUrl = (target) => `/t/${secret}/open?url=${encodeURIComponent(target)}`;
 
+  // Pages of our own — the tab list, and everything tweb has to say when it
+  // cannot do what was asked — carry the address bar too, because those are
+  // exactly the pages a reader is on when they want to go somewhere else.
+  const ours = (res, title, body) =>
+    sendPage(res, title, `${openBar(`/t/${secret}/open`)}\n${body}`);
+
   // A tab number that names nothing: closed by the reader, or lost with the
   // browser it lived in. Either way the useful answer is the page it held.
   function goneTab(res, number, { restarted = false } = {}) {
@@ -521,7 +552,7 @@ async function startEdbServer({
       : 'That tab is not open any more.';
     const links = [`<a href="/t/${secret}/tabs">the tabs</a>`];
     if (last) links.unshift(`<a href="${openUrl(last)}">open ${escapeHtml(last)} again</a>`);
-    return sendPage(res, 'that tab is gone', `<p>${said}</p>\n<p>${links.join(' — ')}</p>`);
+    return ours(res, 'that tab is gone', `<p>${said}</p>\n<p>${links.join(' — ')}</p>`);
   }
 
   async function render(res, number, base) {
@@ -564,7 +595,7 @@ async function startEdbServer({
         return `<p><a href="${number}/">${escapeHtml(title || page.url())}</a>`
           + ` — <a href="${number}/close">close</a></p>`;
       }));
-      return sendPage(res, 'tweb tabs', rows.join('\n') || '<p>No tabs open.</p>');
+      return ours(res, 'tweb tabs', rows.join('\n') || '<p>No tabs open.</p>');
     }
 
     // open?url=… is how the entry-point plugin hands us a url: a new tab,
@@ -579,7 +610,7 @@ async function startEdbServer({
       const target = normaliseTarget(typed);
       if (target.error) return send(res, 400, `<html><body><p>tweb: ${escapeHtml(target.error)}</p></body></html>`);
       if (target.search) {
-        return sendPage(res, 'not an address',
+        return ours(res, 'not an address',
           `<p>${escapeHtml(target.search)} is not a url — it has no host in it.</p>\n`
           + `<p><a href="${openUrl(SEARCH_URL + encodeURIComponent(target.search))}">`
           + `search the web for it</a> — <a href="/t/${secret}/tabs">the tabs</a></p>`);
@@ -622,7 +653,7 @@ async function startEdbServer({
       const targetId = Number(String(rest[2] || '').replace(/^e/, ''));
       const registry = tabs.registry(number);
       const target = registry.get(targetId);
-      if (!target) return sendPage(res, 'stale', '<p>That form is from an older version of this page. Type rf.</p>');
+      if (!target) return ours(res, 'stale', '<p>That form is from an older version of this page. Type rf.</p>');
 
       const body = await readBody(req);
       const fields = new URLSearchParams(body);
@@ -647,8 +678,8 @@ async function startEdbServer({
         const result = await activate(page, pressed.desc, { real: true, driver: attached });
         how = result.ok ? 'clicked' : 'refused';
         if (!result.ok) {
-          return sendPage(res, 'cannot', `<p>${escapeHtml(result.why)}</p>`
-            + '<p><a href="./">back to the page</a></p>');
+          return ours(res, 'cannot', `<p>${escapeHtml(result.why)}</p>`
+            + `<p><a href="${tabUrl(number)}">back to the page</a></p>`);
         }
       } else {
         // Nothing to press: the page submits in script and expects Enter,
@@ -678,11 +709,11 @@ async function startEdbServer({
     if (/^e\d+$/.test(what)) {
       const registry = tabs.registry(number);
       const record = registry.get(Number(what.slice(1)));
-      if (!record) return sendPage(res, 'stale', '<p>That link is from an older version of this page. Type rf.</p>');
+      if (!record) return ours(res, 'stale', '<p>That link is from an older version of this page. Type rf.</p>');
       const real = rest[2] === 'click';
       const before = page.url();
       const result = await activate(page, record.desc, { real, driver: attached });
-      if (!result.ok) return sendPage(res, 'cannot', `<p>${escapeHtml(result.why)}</p><p><a href="./">back to the page</a></p>`);
+      if (!result.ok) return ours(res, 'cannot', `<p>${escapeHtml(result.why)}</p><p><a href="${tabUrl(number)}">back to the page</a></p>`);
       const navigated = await settleAfter(page, before);
       log('edb.activate', { tab: number, id: what, real, how: result.how, navigated });
       return redirect(res, tabUrl(number));
@@ -692,14 +723,14 @@ async function startEdbServer({
     if (/^f\d+$/.test(what)) {
       const registry = tabs.registry(number);
       const record = registry.get(Number(what.slice(1)));
-      if (!record) return sendPage(res, 'stale', '<p>That frame is from an older version of this page. Type rf.</p>');
+      if (!record) return ours(res, 'stale', '<p>That frame is from an older version of this page. Type rf.</p>');
       const desc = record.desc;
       const frames = page.mainFrame().childFrames ? await page.mainFrame().childFrames() : [];
       // Frames are matched by position, the same assumption the reader has
       // always made: the Nth frame element belongs to the Nth child context.
       const index = Number(desc.path.split('/').pop()) || 0;
       const frame = frames[Math.min(index, Math.max(frames.length - 1, 0))];
-      if (!frame) return sendPage(res, 'gone', '<p>That frame is not there any more.</p>');
+      if (!frame) return ours(res, 'gone', '<p>That frame is not there any more.</p>');
       const extracted = await frame.evaluate(extractForEdbrowse);
       return send(res, 200, tokensToHtml(extracted, registry, base, number));
     }
@@ -726,5 +757,5 @@ async function startEdbServer({
 
 module.exports = {
   startEdbServer, readEndpoint, endpointPath, tokensToHtml, linesToHtml,
-  Registry, Tabs, escapeHtml, normaliseTarget, explain,
+  Registry, Tabs, escapeHtml, normaliseTarget, explain, openBar,
 };
