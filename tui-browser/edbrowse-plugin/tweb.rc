@@ -43,3 +43,33 @@ function+twebax {
 function+twebsource {
     b source
 }
+
+# Shortcuts, so that reaching the web is one short word and an address.
+# ~0 is everything you typed after the function name; the tweb server takes
+# an address the way a url bar does, so no scheme is needed.
+#
+#   <t example.com
+#   <t en.wikipedia.org/wiki/Braille
+#   <t https://skt222.bandcamp.com/album/weird-fish
+#
+# Rename these to whatever your fingers prefer — they are two lines each.
+function+t {
+    b tweb://~0
+}
+
+function+tweb {
+    b tweb://~0
+}
+
+# The tab list, which is also where the address field is when you have not
+# decided where to go yet.
+function+tt {
+    b tweb://tabs
+}
+
+# Search, in the browser, with its cookies and no bot check to fail.
+#
+#   <ts kangaroo habitat
+function+ts {
+    b tweb://https://duckduckgo.com/html/?q=~0
+}

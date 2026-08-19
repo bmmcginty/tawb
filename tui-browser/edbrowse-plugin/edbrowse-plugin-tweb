@@ -25,11 +25,7 @@ function page(title, body) {
 
 async function main() {
   const argument = process.argv[2] || '';
-  const wanted = argument.replace(/^tweb:\/\//, '');
-  if (!wanted) {
-    process.stdout.write(page('tweb', '<p>Usage: b tweb://https://example.com</p>'));
-    return;
-  }
+  const wanted = argument.replace(/^tweb:\/\//, '').trim();
 
   let endpoint = null;
   try {
@@ -45,8 +41,18 @@ async function main() {
     return;
   }
 
+  // `b tweb://` with nothing after it, and `b tweb://tabs`, both mean the tab
+  // list: it is the page with the address field on it, so it is the answer to
+  // "I want tweb but I have not decided where yet".
+  //
+  // Everything else is handed on as typed. The server decides what it means —
+  // it is the half that can see whether a host resolves, and it is what the
+  // address field on the page posts to, so there is one answer to
+  // "example.com" rather than two.
   const base = `http://127.0.0.1:${endpoint.port}/t/${endpoint.token}`;
-  const url = `${base}/open?url=${encodeURIComponent(wanted)}`;
+  const url = (!wanted || wanted === 'tabs' || wanted === 'tabs/')
+    ? `${base}/tabs`
+    : `${base}/open?url=${encodeURIComponent(wanted)}`;
 
   try {
     const response = await fetch(url, { redirect: 'follow' });
