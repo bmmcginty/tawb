@@ -336,13 +336,21 @@ function extractAxItems() {
   };
 
   const emit = (item) => {
-    if (insidePopup && item.role !== '__break__') item.popup = insidePopup;
+    if (item.role !== '__break__') {
+      if (insidePopup) item.popup = insidePopup;
+      if (insideClosed) item.pierced = true;
+    }
     out.push(item);
   };
   const boundary = () => emit({ role: '__break__', name: '' });
 
   // The popup whose subtree we are inside, if any; see ownedPopups below.
   let insidePopup = null;
+  // Whether we are inside a closed shadow root the driver opened for us.
+  // Carried on the items so that activating one knows it has to be a real
+  // click: a closed shadow root is what a bot check is built out of, and the
+  // DOM's own default action is not a person pressing anything.
+  let insideClosed = false;
 
   // Which elements are somebody's popup, and whose.
   //
@@ -473,12 +481,16 @@ function extractAxItems() {
   // that whatever assembles the buffer can put it where the reader is rather
   // than where the page happened to render it.
   const walk = (el) => {
-    const outer = insidePopup;
+    const outerPopup = insidePopup;
+    const outerClosed = insideClosed;
     if (ownedPopups.has(el)) insidePopup = ownedPopups.get(el);
+    const closed = window.__twebClosed;
+    if (closed && closed.has(el)) insideClosed = true;
     try {
       walkInner(el);
     } finally {
-      insidePopup = outer;
+      insidePopup = outerPopup;
+      insideClosed = outerClosed;
     }
   };
 

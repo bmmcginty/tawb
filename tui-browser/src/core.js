@@ -1120,6 +1120,17 @@ class Core {
     if (DOM_SOURCES.has(this.source)) {
       return { how: 'dom', status: await activateDomItem(page, item) };
     }
+
+    // Something behind a closed shadow root gets a real click rather than the
+    // DOM's own default action. A closed shadow root is what a bot check is
+    // built out of, and a challenge does not care what the DOM would have
+    // done — it wants to know a person pressed it. Falling back if the click
+    // cannot be placed, because that is still better than nothing and the
+    // reader can be told why.
+    if (item.pierced && this.canRealClick()) {
+      const clicked = await this.realClick(item, page).catch(() => null);
+      if (clicked && clicked.ok) return { how: 'real-click', status: null };
+    }
     const handle = await withTimeout(
       this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating element');
     await withTimeout(Promise.all([
