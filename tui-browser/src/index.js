@@ -377,6 +377,41 @@ function render(state, page, { force = false } = {}) {
   parkCursor(state);
 }
 
+// What is on screen now, so it can be compared with what is on screen after.
+// Sparse and indexed by line number, which is how patchVisibleRows reads it,
+// and only as wide as the viewport — the buffer behind it can be 17,000 lines.
+function screenBefore(state) {
+  return { rows: visibleRowsNow(state), scroll: state.scroll, height: viewportHeight() };
+}
+
+// Repainting after something the reader did.
+//
+// The list area is redrawn the way a live update redraws it: only the rows
+// whose text actually changed. A repainted row is re-read by a screen reader
+// and re-flashed by a braille display whether or not it says anything new,
+// which is why live updates have always been careful about it — and pressing
+// Enter was not. Activating a play button repainted all 19 rows of a 24-row
+// terminal, 904 bytes, where two rows had changed and cost 52.
+//
+// It falls back to a full repaint whenever a row-by-row comparison cannot
+// mean anything: the view scrolled, so every row moved; the terminal was
+// resized under us; or there is no record of what was on screen before.
+function repaintList(state, page, before) {
+  drawAddress(state, page);
+  drawHint(state);
+
+  if (before && before.scroll === state.scroll && before.height === viewportHeight()) {
+    const repainted = patchVisibleRows(state, before.rows);
+    log('repaint', { rows: repainted, of: before.height, source: state.source });
+    return repainted;
+  }
+
+  drawList(state);
+  parkCursor(state);
+  log('repaint', { rows: viewportHeight(), of: viewportHeight(), full: true, source: state.source });
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Movement
 // ---------------------------------------------------------------------------
@@ -1300,7 +1335,7 @@ async function loadMore(state, page) {
     return;
   }
 
-  const previousVisible = visibleRowsNow(state);
+  const screen = screenBefore(state);
   const previousLineTexts = state.lines.map((l) => l.text);
   const anchor = anchorFor(state);
 
@@ -1316,7 +1351,7 @@ async function loadMore(state, page) {
   state.live.refreshing = wasRefreshing;
   state.loadingMore = false;
 
-  patchVisibleRows(state, previousVisible);
+  repaintList(state, page, screen);
   log('loadmore', { ms: Date.now() - t0, grew, added, lines: state.lines.length });
 
   if (added > 0) {
@@ -1452,9 +1487,10 @@ async function handleBrowseKey(chunk, state, page) {
   if (chunk === 'r') {
     const previous = state.blocks.map((b) => b.text);
     const anchor = anchorFor(state);
+    const screen = screenBefore(state);
     await refresh(state, page, { anchor });
     noteChanges(state, previous);
-    render(state, page);
+    repaintList(state, page, screen);
     setStatus(state, 'Rescanned.');
     return;
   }
@@ -1714,6 +1750,7 @@ async function activateCurrent(state, page) {
   const previousTexts = state.blocks.map((b) => b.text);
   const previousUrl = page.url();
   const anchor = anchorFor(state);
+  const screen = screenBefore(state);
   const fragment = LINK_ROLES.has(item.role) ? await fragmentOf(state, page, item) : null;
 
   try {
@@ -1761,7 +1798,7 @@ async function activateCurrent(state, page) {
   // them deliberately, to where the link actually points.
   if (fragment) {
     await refresh(state, page, { anchor });
-    render(state, page);
+    repaintList(state, page, screen);
     const jumped = await jumpToFragment(state, page, fragment);
     log('activate.fragment', { hash: fragment.slice(0, 60), jumped });
     setStatus(state, jumped
@@ -1770,18 +1807,22 @@ async function activateCurrent(state, page) {
     return;
   }
 
-  await reportAfterAction(state, page, { previousTexts, previousUrl, anchor });
+  await reportAfterAction(state, page, { previousTexts, previousUrl, anchor, screen });
 }
 
 // What happened after something was pressed: a different page, a part of this
 // one rewritten, or nothing at all. Nothing here moves the reader unless the
 // page did — a rebuilt buffer keeps their place by content.
-async function reportAfterAction(state, page, { previousTexts, previousUrl, anchor }) {
+async function reportAfterAction(state, page, { previousTexts, previousUrl, anchor, screen = null }) {
   const navigated = page.url() !== previousUrl;
   await refresh(state, page, navigated ? { resetCursor: true } : { anchor });
 
   const regions = navigated ? [] : noteChanges(state, previousTexts);
-  render(state, page);
+  // A different page is a different screen, so there is nothing to compare
+  // against and everything to draw. Staying on the same one usually rewrites
+  // a line or two.
+  if (navigated) render(state, page);
+  else repaintList(state, page, screen);
 
   if (navigated) setStatus(state, state.statusMsg);
   else if (regions.length) {
@@ -1826,6 +1867,7 @@ async function clickAsHuman(state, page) {
   const previousTexts = state.blocks.map((b) => b.text);
   const previousUrl = page.url();
   const anchor = anchorFor(state);
+  const screen = screenBefore(state);
   const started = Date.now();
 
   try {
@@ -1859,7 +1901,7 @@ async function clickAsHuman(state, page) {
     return;
   }
 
-  await reportAfterAction(state, page, { previousTexts, previousUrl, anchor });
+  await reportAfterAction(state, page, { previousTexts, previousUrl, anchor, screen });
 }
 
 async function handleTypeKey(chunk, state, page) {
@@ -1868,22 +1910,31 @@ async function handleTypeKey(chunk, state, page) {
   if (!t) { state.mode = 'browse'; return; }
 
   if (chunk === ESC) {
+    // Captured while the field is still drawn as it is on screen, so the one
+    // row that changes — the field, back to its ordinary form — is the one
+    // row repainted.
+    const screen = screenBefore(state);
     state.mode = 'browse';
     state.typing = null;
     await refresh(state, page, { anchor: anchorFor(state) });
-    render(state, page);
+    repaintList(state, page, screen);
     setStatus(state, `Stopped typing into "${t.item.name}".`);
     return;
   }
 
   if (chunk === '\r' || chunk === '\n') {
     const previousUrl = page.url();
+    const screen = screenBefore(state);
     await page.keyboard.press('Enter');
     await page.waitForLoadState('domcontentloaded').catch(() => {});
     state.mode = 'browse';
     state.typing = null;
     await refresh(state, page, { resetCursor: true });
-    render(state, page);
+    // A search that submitted in place is the same screen with a different
+    // list on it; one that navigated is a new page. The cursor reset moves
+    // the view in both cases, and repaintList notices that for itself.
+    if (page.url() === previousUrl) repaintList(state, page, screen);
+    else render(state, page);
     setStatus(state, page.url() === previousUrl
       ? `Submitted "${t.item.name}".`
       : `Submitted "${t.item.name}" — loaded ${page.url()}`);
@@ -2240,6 +2291,7 @@ module.exports = {
   clickAsHuman, reportAfterAction,
   anchorFor, restoreAnchor, capturePlace, restorePlace, diffBlocks, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
+  screenBefore, repaintList, visibleRowsNow,
   applyTextPatches, soleBlockContaining, loadMore, atEnd, switchToTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation,
