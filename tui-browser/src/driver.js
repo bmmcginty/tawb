@@ -21,18 +21,16 @@
 //                     two sessions avoid reading the same tab. CDP calls it a
 //                     target; BiDi calls it a browsing context.
 //   axItems()         the accessibility tree, flattened into reading order.
-//                     Playwright computes it with an injected script of its
-//                     own, so the Chromium driver hands the job to Playwright
-//                     and the Firefox driver brings its own — deliberately,
-//                     so that the working Chromium path is not disturbed by a
-//                     second implementation of the hardest part of this
-//                     program. Items, not text: inventing a serialisation
+//                     Both engines now use ax_own.js, computed in the page.
+//                     Playwright's own tree stays reachable as a separate
+//                     engine name, because it is what ours was validated
+//                     against. Items, not text: inventing a serialisation
 //                     just to parse it back would be the only reason to.
 //   axElementHandle() locating the element an AX line came from, which is how
 //                     the line is activated. Whoever computed the tree
-//                     resolves against it — by role and name for Playwright,
-//                     whose items carry no reference, and directly for an
-//                     implementation that kept one.
+//                     resolves against it — directly, for an implementation
+//                     that kept a reference to the node, and by role and name
+//                     for Playwright's, whose items carry none.
 //   realClick()       a click the browser treats as a person's, which only
 //                     the protocol can produce: real input dispatched above
 //                     content, so the events are trusted and carry user
@@ -50,6 +48,12 @@ const ENGINES = {
   chromium: openChromium,
   chrome: openChromium,
   firefox: openFirefox,
+  // The same browser reading the page with Playwright's accessibility tree
+  // instead of ours. Not a browser anyone should choose to read with — it
+  // has to search the page by role and name to activate a line — but it is
+  // the implementation ours was validated against, and keeping it selectable
+  // is what lets `compare` go on judging a disagreement between the two.
+  'chromium-playwright': (options) => openChromium({ ...options, ax: 'playwright' }),
 };
 
 const DEFAULT_ENGINE = 'chromium';
