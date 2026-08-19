@@ -6,8 +6,11 @@ const { itemAtOffset } = require('./blocks');
 const { activateDomItem, domElementHandle } = require('./dom');
 const { clickThrough, prepareRealClick } = require('./click');
 const { renderElementHandle } = require('./render_html');
-const { snapshotFrameTree } = require('./frames');
-const { installLive, armFrame, armRenderedFrames, refreshDue, createLiveState, pulse, TICK_MS, INPUT_GRACE_MS } = require('./live');
+const {
+  Core, ALL_SOURCES, SOURCE_LABELS, DOM_SOURCES,
+  identityOf, diffBlocks, findBlockWithText, sameDocumentFragment,
+} = require('./core');
+const { installLive, armFrame, refreshDue, createLiveState, pulse, TICK_MS, INPUT_GRACE_MS } = require('./live');
 const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
 const { layoutLines } = require('./layout');
 const { remapIndex } = require('./remap');
@@ -82,15 +85,6 @@ const QUICK_NAV = {
   n: { label: 'non-link text', match: (item) => item.role === 'text' },
 };
 
-// The views of a page, cycled by backslash. Which are available depends on
-// the engine: everything but AX is injected JavaScript and works anywhere,
-// while the accessibility tree needs the driver to compute it.
-const ALL_SOURCES = ['ax', 'render', 'html', 'source'];
-const SOURCE_LABELS = { ax: 'AX', render: 'PAGE', html: 'HTML', source: 'SOURCE' };
-// The two views built from a DOM walk keep their own page-side node array
-// and are activated through it, rather than by matching role and name.
-const DOM_SOURCES = new Set(['html', 'source']);
-
 const HEADER_ROWS = 3;   // address line, hint line, blank line
 const FOOTER_ROWS = 2;   // blank + status line
 const ADDRESS_ROW = 1;
@@ -114,13 +108,6 @@ function viewportHeight() {
 
 function contentWidth() {
   return Math.max(20, termSize().cols - GUTTER - 1);
-}
-
-async function snapshotBlocks(page, source = 'ax', { visited = null, driver = null } = {}) {
-  const t0 = Date.now();
-  const blocks = await snapshotFrameTree(page, source, { visited, driver });
-  log('snapshot', { source, ms: Date.now() - t0, blocks: blocks.length, frames: page.frames().length });
-  return blocks;
 }
 
 // Reads the field's live text + caret straight from the DOM. Real
@@ -234,6 +221,22 @@ function clampScroll(state) {
   if (state.cursor < state.scroll) state.scroll = state.cursor;
   else if (state.cursor >= state.scroll + height) state.scroll = state.cursor - height + 1;
   state.scroll = Math.min(Math.max(state.scroll, 0), maxScroll);
+  syncCursor(state);
+}
+
+// Tell the core where the reader is, in the only currency it understands: a
+// block index. Every cursor movement in this file settles through
+// clampScroll, which makes this the one place that has to say so.
+//
+// It is deliberately one-way and unacknowledged. Across a process boundary
+// this is a single line of JSON with nothing awaiting it — around 25
+// microseconds — which is what lets arrow keys stay a local operation while
+// the policy that needs to know where the reader is stays in the core. The
+// worst a stale answer can cost is one refused text patch.
+function syncCursor(state) {
+  if (!state.core) return;
+  const line = state.lines[state.cursor];
+  state.core.at(line ? line.blockIndex : -1);
 }
 
 function relayout(state) {
@@ -585,18 +588,6 @@ function drawFind(state) {
 // Remembers where the reader is by content, not by index. Line counts differ
 // wildly between the three views, so an index would land somewhere arbitrary;
 // matching the text puts you on the same thing you were reading.
-// Identity of the element behind a block, where the view has one. The
-// DOM-derived views number the nodes they walk, which survives a re-snapshot
-// as long as the document structure has not shifted — far stronger evidence
-// than the block's text, which is routinely duplicated.
-function identityOf(block) {
-  if (!block || !block.item) return null;
-  const index = block.item.domIndex != null ? block.item.domIndex : block.item.renderIndex;
-  if (index == null) return null;
-  const frameUrl = block.item.frame ? block.item.frame.url() : '';
-  return `${frameUrl}#${index}`;
-}
-
 function anchorFor(state) {
   const block = currentBlock(state);
   return {
@@ -634,15 +625,8 @@ function restoreAnchor(state, anchor) {
 }
 
 async function refresh(state, page, { resetCursor = false, anchor = null } = {}) {
-  const started = Date.now();
-  const visited = [];
-  state.blocks = await snapshotBlocks(page, state.source, { visited, driver: state.driver });
-  state.renderedUrl = page.url();
-  // Observe what we display: a frame that contributed lines may keep
-  // changing them — an embedded player's elapsed time, for instance — and it
-  // is often cross-origin, so nothing else would arm it.
-  armRenderedFrames(visited).catch(() => {});
-  if (state.live) state.live.snapshotCostMs = Date.now() - started;
+  await state.core.rescan({ page });
+  if (state.live) state.live.snapshotCostMs = state.core.snapshotCostMs;
   if (resetCursor) { state.cursor = 0; state.scroll = 0; state.col = 0; }
   relayout(state);
   if (anchor) restoreAnchor(state, anchor);
@@ -798,20 +782,6 @@ function announce(state, { politeness, text }) {
 // document that no longer exists — every line refers to an element that is
 // gone, so activating one fails with an evaluation error against a stale
 // handle. Rebuild when the main frame lands somewhere new.
-// Whether two URLs are the same document reached at a different fragment.
-function sameDocumentFragment(before, after) {
-  try {
-    const a = new URL(before);
-    const b = new URL(after);
-    if (!b.hash) return false;
-    a.hash = '';
-    b.hash = '';
-    return a.href === b.href;
-  } catch {
-    return false;
-  }
-}
-
 async function onExternalNavigation(state, page) {
   // Every tab reports its own navigations, and only the one being read
   // should rebuild anything.
@@ -933,86 +903,33 @@ async function runLiveRefresh(state, page) {
   });
 }
 
-// Where a piece of text sits in the buffer, but only if it sits in exactly
-// one place. Ambiguity is the whole risk in patching by content: "12:04"
-// appearing twice means we cannot say which one the page rewrote.
-function soleBlockContaining(blocks, needle) {
-  let found = -1;
-  for (let i = 0; i < blocks.length; i += 1) {
-    const at = blocks[i].text.indexOf(needle);
-    if (at < 0) continue;
-    // Twice inside one line is just as ambiguous as once in two lines.
-    if (found >= 0 || blocks[i].text.indexOf(needle, at + needle.length) >= 0) return -1;
-    found = i;
-  }
-  return found;
-}
-
 // Splices replaced text straight into the buffer, skipping the snapshot.
 //
-// A clock costs a whole-page snapshot per tick today — 150ms on a plain page
-// and seconds on a heavy one — to change eight characters. When the page
-// tells us the exact text it replaced, and that text names one line and one
-// line only, we can rewrite that line for a fraction of a millisecond.
-//
-// Anything the splice cannot account for returns null and leaves the buffer
-// untouched, so the wholesale refresh still happens. In particular the line
-// count must come out the same: a patch that reflows the buffer would move
-// the reader, and moving the reader is the one thing a live update may not
-// do. Returns the indices of the blocks it changed.
+// The core does the rewriting, because which block a piece of text names and
+// whether the reader is standing on it are page questions, not terminal ones.
+// What is left here is the one test the core cannot make: the patched text
+// must still wrap to the same number of lines. A patch that reflows the
+// buffer would move the reader, and moving the reader is the one thing a
+// live update may not do — so it is undone and the wholesale refresh happens
+// instead. Returns the indices of the blocks it changed.
 function applyTextPatches(state, patches) {
-  if (!patches || !patches.length || !state.blocks.length) return null;
-
+  // Protection is only owed to a reader who is actually reading: outside the
+  // input grace period a tick on the cursor's own line is no more disruptive
+  // than one anywhere else.
+  const protect = Date.now() - state.live.lastInputMs < INPUT_GRACE_MS;
   const previousLineCount = state.lines.length;
-  const undo = [];
-  const touched = [];
-  const restore = () => {
-    for (const entry of undo.reverse()) {
-      entry.block.text = entry.text;
-      if (entry.name !== null) entry.block.item.name = entry.name;
-    }
-  };
 
-  for (const patch of patches) {
-    const { from, to } = patch || {};
-    if (!from || !to || from === to) { restore(); return null; }
-
-    // Resolved one at a time, against the buffer as the previous patch left
-    // it: two patches can land on the same line.
-    const index = soleBlockContaining(state.blocks, from);
-    if (index < 0) { restore(); return null; }
-
-    const block = state.blocks[index];
-    const item = block.item;
-    const hadName = item && typeof item.name === 'string' && item.name.includes(from);
-    undo.push({ block, text: block.text, name: hadName ? item.name : null });
-
-    block.text = block.text.replace(from, to);
-    // The name is what activation resolves against, so it cannot be left
-    // describing text that is no longer on the page.
-    if (hadName) item.name = item.name.replace(from, to);
-    if (!touched.includes(index)) touched.push(index);
-  }
+  const patched = state.core.patchText(patches, { protect });
+  if (!patched) return null;
 
   relayout(state);
   if (state.lines.length !== previousLineCount) {
-    restore();
+    patched.undo();
     relayout(state);
     return null;
   }
 
-  // The line the reader is on is theirs while they are reading it. A clock
-  // elsewhere on the page may tick — that moves nothing — but rewriting the
-  // words under the cursor mid-sentence is exactly the freeze's purpose.
-  const onCursorLine = state.lines[state.cursor];
-  if (onCursorLine && touched.includes(onCursorLine.blockIndex)
-      && Date.now() - state.live.lastInputMs < INPUT_GRACE_MS) {
-    restore();
-    relayout(state);
-    return null;
-  }
-
-  return touched;
+  return patched.touched;
 }
 
 // The rows currently on screen, which is all a splice can have changed: it
@@ -1425,29 +1342,8 @@ async function attachLive(state, page) {
 
 // Records which parts of the page changed as a result of an action, so a
 // button that updates something far from the cursor is not silent.
-function diffBlocks(previousTexts, blocks) {
-  const before = new Set(previousTexts);
-  const changed = [];
-  blocks.forEach((block, index) => {
-    if (!before.has(block.text)) changed.push(index);
-  });
-
-  // Collapse consecutive indices into regions; one edit usually replaces a
-  // run of lines and should be reported as a single place to go.
-  const regions = [];
-  for (const index of changed) {
-    const last = regions[regions.length - 1];
-    if (last && index === last.end + 1) last.end = index;
-    else regions.push({ start: index, end: index });
-  }
-  return regions;
-}
-
 function noteChanges(state, previousTexts) {
-  const regions = diffBlocks(previousTexts, state.blocks);
-  state.changes = regions;
-  state.changeIndex = -1;
-  return regions;
+  return state.core.noteChanges(previousTexts);
 }
 
 function jumpToChange(state, page, direction = 1) {
@@ -1709,28 +1605,12 @@ async function fragmentOf(state, page, item) {
   return decodeURIComponent(href.slice(1));
 }
 
-// The block holding a piece of text, searched by content in both directions:
-// the buffer's line can be longer than the snippet (prose runs together) or
-// shorter (a link renders as just its name).
-function findBlockWithText(state, needle) {
-  const trimmed = (needle || '').trim();
-  if (!trimmed) return -1;
-
-  const direct = state.blocks.findIndex((b) => b.text.includes(trimmed));
-  if (direct >= 0) return direct;
-
-  // Long enough that a common word cannot match the wrong place.
-  return state.blocks.findIndex((b) => {
-    const text = b.text.trim();
-    return text.length >= 10 && trimmed.includes(text);
-  });
-}
 
 async function jumpToFragment(state, page, hash) {
   const snippet = await page.evaluate(TEXT_AT_FRAGMENT, hash).catch(() => null);
   if (!snippet) return false;
 
-  const blockIndex = findBlockWithText(state, snippet);
+  const blockIndex = findBlockWithText(state.blocks, snippet);
   if (blockIndex < 0) return false;
 
   const line = state.lines.findIndex((l) => l.blockIndex === blockIndex && !l.continuation);
@@ -2120,16 +2000,15 @@ async function main() {
   }
 
   const sources = ALL_SOURCES.filter((s) => s !== 'ax' || driver.capabilities?.ax !== false);
+  const core = new Core({ driver, page, source: sources[0], sources });
+  await core.rescan();
   const state = {
-    driver,
+    core,
     sources,
     browserPort,
     // Nothing may follow a tab until the first page is drawn: the browser
     // reports the tab we open ourselves at startup as new, like any other.
     ready: false,
-    page,
-    source: sources[0],
-    blocks: await snapshotBlocks(page, sources[0], { driver }),
     lines: [],
     cursor: 0,
     col: 0,
@@ -2140,14 +2019,26 @@ async function main() {
     address: null,
     find: null,
     lastFind: null,
-    changes: [],
-    changeIndex: -1,
-    renderedUrl: page.url(),
     drawn: { address: null, hint: null },
     live: createLiveState(),
     statusHeldUntil: 0,
     loadingMore: false,
   };
+  // The reader still reaches these through `state`, because the four hundred
+  // places in this file that say `state.blocks` are not what the split is
+  // about — but the core is what owns them. Reading and writing through to it
+  // keeps one copy of the buffer while the rest of the reader moves across at
+  // its own pace, and every one of these names is a line of the protocol a
+  // second front end would speak.
+  for (const key of ['driver', 'page', 'source', 'blocks', 'changes', 'changeIndex', 'renderedUrl']) {
+    Object.defineProperty(state, key, {
+      get: () => core[key],
+      set: (value) => { core[key] = value; },
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
   relayout(state);
 
   setupRawInput();
@@ -2285,14 +2176,14 @@ if (require.main === module) {
 module.exports = {
   readFieldState, handleBrowseKey, handleTypeKey, handleAddressKey, handleFindKey,
   findText, runSearch,
-  render, drawList, drawAddress, drawHint, snapshotBlocks, moveSelection,
+  render, drawList, drawAddress, drawHint, moveSelection,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock,
   clickAsHuman, reportAfterAction,
-  anchorFor, restoreAnchor, capturePlace, restorePlace, diffBlocks, jumpToChange, activateCurrent, ALL_SOURCES,
+  anchorFor, restoreAnchor, capturePlace, restorePlace, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
   screenBefore, repaintList, visibleRowsNow,
-  applyTextPatches, soleBlockContaining, loadMore, atEnd, switchToTab, cycleTab, closeCurrentTab, onNewTab,
+  applyTextPatches, loadMore, atEnd, switchToTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation,
 };
