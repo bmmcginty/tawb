@@ -152,6 +152,9 @@ and edbrowse resolves every relative link and every form action against it
 hbase as the default form action). From the second page onward the buffer is
 a plain http URL and the plugin is out of the loop.
 
+Section 12 weighs this against patching edbrowse instead, which is a real
+option and a smaller patch than it sounds.
+
 One consequence to design for deliberately. After the first navigation the
 buffer's filename is our http URL, and rf re-reads that URL
 (src/buffers.c:5437-5466: rf turns into `b <same url>` with nostack). If an
@@ -471,3 +474,58 @@ edbrowse. Stopping after 4 leaves something that can log in and search.
     well, which would mean generating markup that is not what the page says.
   - Whether the media proxy is worth it, or whether handing edbrowse the raw
     media URL and accepting the occasional 403 is good enough.
+
+
+12. Transport: three shapes, and why this one
+----------------------------------------------
+
+The obvious objection to a loopback server is that it adds a layer. It does
+not, and counting the processes is the quickest way to see why.
+
+  A. loopback http     edbrowse -> tweb -> browser
+  B. plugin protocol   edbrowse -> fork a plugin per fetch -> tweb -> browser
+  C. stateless plugin  edbrowse -> fork a plugin per fetch -> browser
+
+The plugin in B is not a layer you avoid: edbrowse forks it for every fetch,
+and it has to reach something that holds the browser session, so B is A plus
+a fork per click plus an IPC of our own devising. A is the smaller topology,
+addressed with a protocol both ends already speak, and testable with curl.
+
+C is the one that genuinely removes a layer, and it is not silly. It needs
+ids that resolve without any stored state, so a short-lived process can
+attach to the running browser, resolve, click, re-render and exit. tweb
+rejoins a running browser in 35ms (Firefox) or 50ms (Chromium), and a
+snapshot is 150-500ms, so a click would cost around a second. Two things make
+it awkward rather than impossible: Firefox serves one WebDriver session at a
+time, so a per-click process fights any running reader, and there is no http
+status line, so the redirect that keeps rf idempotent has to become a <meta
+http-equiv=refresh> in the returned document (edbrowse honours those,
+src/buffers.c:9035).
+
+Patching edbrowse for B is smaller than section 3 implies. The protocol check
+in infPush is the only gate, and the form data is already there when the
+plugin is dispatched: http.c:853 runs the plugin before http.c:947 splits the
+post body off, and urlSanitize is called there with no post pointer, so %i
+carries the whole string — ?data for get, \1data for post. Allowing a
+protocol that has a plugin registered is a three-line change. It is in
+patches/edbrowse-submit-to-plugin-protocols.patch, along with
+patches/edbrowse-rf-keeps-your-place.patch, which gives rf the same treatment
+f_dot already gives ub and b. Both are worth sending upstream on their own
+merits; neither is needed by anything here.
+
+So: build A, because it needs no patched edbrowse and works for anyone with a
+stock one, and it gets the 302 and the media proxy for free. Keep the two
+patches anyway, because they are cheap and general.
+
+What actually locks us in is not the transport but the id scheme. Ids here
+are structurally derived and registry-cached: an id names a descriptor — a
+path through the document (crossing shadow roots), the tag, the accessible
+name and the position in document order — and that descriptor can be resolved
+by any process with a connection to the browser, with no shared memory and no
+handle table. The registry only remembers which descriptor got which number,
+so the same element keeps the same id across renders and a link in a stale
+buffer still means something.
+
+That choice keeps all three shapes open. Moving from A to B or C later is a
+change of transport, not a redesign: the document generator and the id scheme
+are the durable work, and they do not know how the bytes get to edbrowse.
