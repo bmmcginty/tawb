@@ -4,6 +4,7 @@
 const { FIELD_ROLES, LINK_ROLES, BUTTON_ROLES } = require('./aria');
 const { itemAtOffset } = require('./blocks');
 const { activateDomItem, domElementHandle } = require('./dom');
+const { clickThrough } = require('./click');
 const { renderElementHandle } = require('./render_html');
 const { snapshotFrameTree } = require('./frames');
 const { installLive, armFrame, armRenderedFrames, refreshDue, createLiveState, pulse, TICK_MS, INPUT_GRACE_MS } = require('./live');
@@ -1685,12 +1686,14 @@ async function activateCurrent(state, page) {
     } else {
       // Activate through the DOM's own default action rather than a
       // mouse-coordinate click: a blind user has no viewport, and legitimate
-      // targets (skip links, visually hidden controls) sit off-screen.
+      // targets (skip links, visually hidden controls) sit off-screen. The
+      // click is still aimed where a mouse would land — see click.js — since
+      // a site is free to listen below the control it labelled.
       const handle = await withTimeout(
         elementHandleFor(state, page, item), ACTION_TIMEOUT_MS, 'Locating element');
       await withTimeout(Promise.all([
         page.waitForLoadState('domcontentloaded').catch(() => {}),
-        handle.evaluate((el) => el.click()),
+        handle.evaluate(clickThrough),
       ]), ACTION_TIMEOUT_MS, 'Activating');
       state.statusMsg = `Activated: ${item.name}`;
     }
