@@ -157,6 +157,17 @@ function extractAxItems() {
     return cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse';
   };
 
+  // Three answers, not two. "Collapsed" is a promise that pressing this
+  // opens something; "no aria-expanded at all" is a plain control with
+  // nothing behind it. Collapsing those two into false would announce every
+  // button on the page as closed.
+  const expandedOf = (el) => {
+    const attr = el.getAttribute('aria-expanded');
+    if (attr === 'true') return true;
+    if (attr === 'false') return false;
+    return undefined;
+  };
+
   const roleOf = (el) => {
     const explicit = clean(el.getAttribute('role')).split(' ')[0];
     if (explicit) return explicit;
@@ -320,6 +331,11 @@ function extractAxItems() {
         }
         const checked = el.getAttribute('aria-checked');
         if (checked === 'true' || el.checked === true) item.checked = true;
+        // A menu button is an atomic role, and whether its menu is open is
+        // the only thing that distinguishes pressing it from having pressed
+        // it. Carried here as well as on fields for that reason.
+        const expanded = expandedOf(el);
+        if (expanded !== undefined) item.expanded = expanded;
         emit(item);
       }
       return; // the name already covers everything inside
@@ -330,7 +346,7 @@ function extractAxItems() {
         role,
         name: accessibleName(el),
         value: valueOf(el, role),
-        expanded: el.getAttribute('aria-expanded') === 'true' || undefined,
+        expanded: expandedOf(el),
         axIndex: register(el),
       });
       return;
