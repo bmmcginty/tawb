@@ -20,7 +20,7 @@
 // Extraction returns tokens, not html. The browser knows what is on the
 // page; how it should be written for edbrowse is a decision for the other
 // side, which is where the ids live.
-function extractForEdbrowse() {
+function extractForEdbrowse(options) {
   const SKIP = new Set(['script', 'style', 'noscript', 'template', 'head',
     'meta', 'link', 'title', 'base', 'svg', 'path', 'defs', 'symbol', 'use']);
   // Tags edbrowse renders well, kept as they are. Everything else is a
@@ -33,7 +33,26 @@ function extractForEdbrowse() {
   const INTERACTIVE_ROLES = new Set(['button', 'link', 'menuitem', 'tab',
     'checkbox', 'radio', 'switch', 'option', 'treeitem']);
 
+  // Closed shadow roots the driver found and handed in for this call. Page
+  // script cannot reach one on its own — that is what closed means — and a
+  // bot check is built out of them, so without this edbrowse is shown nothing
+  // at all where a challenge is standing. See frames.js readDocument().
+  const opts = options || {};
+  const closedRoots = new Map();
+  for (const pair of opts.pairs || []) {
+    if (pair && pair[0] && pair[1]) closedRoots.set(pair[0], pair[1]);
+  }
+  if (opts.pierce && typeof window[Symbol.for('tweb.pierce')] === 'function') {
+    try {
+      for (const pair of window[Symbol.for('tweb.pierce')]() || []) {
+        if (pair && pair[0] && pair[1]) closedRoots.set(pair[0], pair[1]);
+      }
+    } catch { /* the privileged half is not installed here */ }
+  }
+
   const flat = (node) => {
+    const closed = closedRoots.get(node);
+    if (closed) return Array.from(closed.childNodes);
     if (node.shadowRoot) return Array.from(node.shadowRoot.childNodes);
     if (typeof node.assignedNodes === 'function') {
       const assigned = node.assignedNodes({ flatten: true });

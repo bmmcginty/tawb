@@ -1144,6 +1144,15 @@ class Core {
     }
     const handle = await withTimeout(
       this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating element');
+    return this.activateHandle(handle, page);
+  }
+
+  // The acting half, once something has been resolved to an element. Split
+  // out because not every front end finds its elements the same way: the
+  // reader resolves an accessibility item, the edbrowse server resolves a
+  // descriptor it handed out in a form. What happens next is the same, and
+  // so are the bounds on how long it may take.
+  async activateHandle(handle, page = this.page) {
     await withTimeout(Promise.all([
       page.waitForLoadState('domcontentloaded').catch(() => {}),
       handle.evaluate(clickThrough),
@@ -1185,7 +1194,11 @@ class Core {
   async realClick(item, page = this.page) {
     const handle = await withTimeout(
       this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating element');
+    return this.realClickHandle(handle, page, item.frame || page);
+  }
 
+  // As activateHandle: the acting half, for whoever already has the element.
+  async realClickHandle(handle, page = this.page, scope = null) {
     const ready = await withTimeout(
       handle.evaluate(prepareRealClick), ACTION_TIMEOUT_MS, 'Bringing it on screen');
     if (!ready || !ready.ok) {
@@ -1194,7 +1207,7 @@ class Core {
 
     await withTimeout(Promise.all([
       page.waitForLoadState('domcontentloaded').catch(() => {}),
-      this.driver.realClick(item.frame || page, handle, { timeoutMs: ACTION_TIMEOUT_MS }),
+      this.driver.realClick(scope || page, handle, { timeoutMs: ACTION_TIMEOUT_MS }),
     ]), ACTION_TIMEOUT_MS, 'Clicking');
     return { ok: true };
   }
