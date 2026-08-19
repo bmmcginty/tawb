@@ -78,6 +78,15 @@ async function openChromium({
       context.on('page', handler);
     },
 
+    // Whether the browser is still there. A browser is the reader's to close,
+    // and when they close it every page object in this process becomes a
+    // handle to nothing — so whatever asks the browser for something has to
+    // be able to ask this first, rather than finding out from a protocol
+    // error that names no cause.
+    alive() {
+      try { return browser.isConnected(); } catch { return false; }
+    },
+
     async newTab() {
       return context.newPage();
     },

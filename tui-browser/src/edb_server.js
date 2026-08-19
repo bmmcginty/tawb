@@ -82,12 +82,24 @@ class Registry {
 // ---------------------------------------------------------------------------
 
 class Tabs {
-  constructor(driver) {
+  // `urls` and `startAt` are carried over when the browser is replaced: the
+  // pages are gone, but the numbers are in the reader's buffer, and a number
+  // that still remembers where it was pointing can be offered back.
+  constructor(driver, urls = new Map(), startAt = 1) {
     this.driver = driver;
     this.numbers = new Map();   // page -> number
     this.pages = new Map();     // number -> page
     this.registries = new Map();// number -> Registry
-    this.next = 1;
+    this.urls = urls;           // number -> the url it last held
+    this.next = startAt;
+  }
+
+  remember(number, url) {
+    if (url && url !== 'about:blank') this.urls.set(number, url);
+  }
+
+  lastUrl(number) {
+    return this.urls.get(number) || null;
   }
 
   live() {
@@ -340,6 +352,31 @@ function readEndpoint() {
   }
 }
 
+// The browser libraries describe failures to whoever is driving them, not to
+// whoever is reading. "Target page, context or browser has been closed" names
+// no cause and suggests no action; the reader wants the sentence a person
+// would say. Anything not recognised is passed through unchanged, because a
+// message we did not anticipate is still better than one we invented.
+const EXPLANATIONS = [
+  [/Target page, context or browser has been closed/i,
+    'the browser closed. Ask for a page again and tweb will start another.'],
+  [/Cannot navigate to invalid URL|Invalid url/i,
+    'that is not an address a browser can be sent to.'],
+  [/net::ERR_NAME_NOT_RESOLVED|NS_ERROR_UNKNOWN_HOST/i,
+    'that host does not resolve.'],
+  [/net::ERR_CONNECTION_REFUSED|NS_ERROR_CONNECTION_REFUSED/i,
+    'nothing is listening there.'],
+  [/Timeout .* exceeded|did not answer within/i,
+    'the browser did not answer in time. Type rf to try again.'],
+];
+
+function explain(message) {
+  for (const [pattern, said] of EXPLANATIONS) {
+    if (pattern.test(message)) return said;
+  }
+  return message;
+}
+
 function send(res, status, body, type = 'text/html; charset=utf-8') {
   res.writeHead(status, {
     'content-type': type,
@@ -391,22 +428,73 @@ async function settleAfter(page, before) {
   return false;
 }
 
-async function startEdbServer({ driver, port = 0, token = null } = {}) {
-  const tabs = new Tabs(driver);
+// A browser is the reader's to close, and they do — the window goes away,
+// this process keeps a Playwright context that answers every call with
+// "Target page, context or browser has been closed", and the reader gets that
+// sentence instead of a page for the rest of the session. So notice it
+// instead: ask the driver whether the browser is still there before touching
+// it, and if it is not, start one again exactly the way this session started
+// the first one. Tab numbers survive the restart pointing at nothing, which
+// is why Tabs carries the urls over: the reader is offered the page back
+// rather than told a number is meaningless.
+function browserAlive(driver) {
+  try {
+    return typeof driver.alive === 'function' ? driver.alive() : true;
+  } catch {
+    return false;
+  }
+}
+
+async function startEdbServer({
+  driver, reopen = null, port = 0, token = null,
+} = {}) {
+  let attached = driver;
+  let tabs = new Tabs(attached);
   const secret = token || crypto.randomBytes(9).toString('hex');
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
-      log('edb.error', { url: req.url, error: String(err && err.message || err).slice(0, 200) });
-      send(res, 500, `<html><body><p>tweb: ${escapeHtml(String(err && err.message || err))}</p></body></html>`);
+      const message = String(err && err.message || err);
+      log('edb.error', { url: req.url, error: message.slice(0, 200) });
+      send(res, 500, `<html><body><p>tweb: ${escapeHtml(explain(message))}</p>`
+        + `<p><a href="/t/${secret}/tabs">the tabs</a></p></body></html>`);
     });
   });
 
+  // Returns true if a new browser had to be started, so the caller can say so
+  // rather than silently answering about a page the reader never opened.
+  async function ensureBrowser() {
+    if (browserAlive(attached)) return false;
+    log('edb.browser.gone', { engine: attached.name });
+    if (!reopen) {
+      throw new Error('the browser has closed, and nothing here knows how to start another');
+    }
+    const fresh = await reopen();
+    tabs = new Tabs(fresh, tabs.urls, tabs.next);
+    attached = fresh;
+    log('edb.browser.restarted', { engine: fresh.name });
+    return true;
+  }
+
   const tabUrl = (number) => `/t/${secret}/${number}/`;
+  const openUrl = (target) => `/t/${secret}/open?url=${encodeURIComponent(target)}`;
+
+  // A tab number that names nothing: closed by the reader, or lost with the
+  // browser it lived in. Either way the useful answer is the page it held.
+  function goneTab(res, number, { restarted = false } = {}) {
+    const last = tabs.lastUrl(number);
+    const said = restarted
+      ? 'The browser closed while you were reading it, and tweb has started another.'
+      : 'That tab is not open any more.';
+    const links = [`<a href="/t/${secret}/tabs">the tabs</a>`];
+    if (last) links.unshift(`<a href="${openUrl(last)}">open ${escapeHtml(last)} again</a>`);
+    return sendPage(res, 'that tab is gone', `<p>${said}</p>\n<p>${links.join(' — ')}</p>`);
+  }
 
   async function render(res, number, base) {
     const page = tabs.page(number);
-    if (!page) return sendPage(res, 'gone', '<p>That tab has closed.</p>');
+    if (!page) return goneTab(res, number);
+    tabs.remember(number, page.url());
     const extracted = await page.evaluate(extractForEdbrowse);
     const html = tokensToHtml(extracted, tabs.registry(number), base, number);
     log('edb.render', { tab: number, tokens: extracted.tokens.length, bytes: html.length });
@@ -415,8 +503,8 @@ async function startEdbServer({ driver, port = 0, token = null } = {}) {
 
   async function renderView(res, number, view, base) {
     const page = tabs.page(number);
-    if (!page) return sendPage(res, 'gone', '<p>That tab has closed.</p>');
-    const blocks = await snapshotFrameTree(page, view, { driver });
+    if (!page) return goneTab(res, number);
+    const blocks = await snapshotFrameTree(page, view, { driver: attached });
     const heading = { ax: 'Accessibility tree', render: 'Visible text', source: 'Markup' }[view] || view;
     log('edb.view', { tab: number, view, blocks: blocks.length });
     return send(res, 200,
@@ -432,6 +520,9 @@ async function startEdbServer({ driver, port = 0, token = null } = {}) {
       return send(res, 404, '<html><body><p>tweb: no such page</p></body></html>');
     }
     const rest = parts.slice(2);
+
+    // Before anything touches the browser, make sure there is one.
+    const restarted = await ensureBrowser();
 
     if (!rest.length || rest[0] === 'tabs') {
       const list = tabs.list();
@@ -449,10 +540,11 @@ async function startEdbServer({ driver, port = 0, token = null } = {}) {
     if (rest[0] === 'open') {
       const wanted = url.searchParams.get('url');
       if (!wanted) return send(res, 400, '<html><body><p>tweb: no url</p></body></html>');
-      const opened = await driver.newTab();
+      const opened = await attached.newTab();
       await opened.goto(wanted, { waitUntil: 'domcontentloaded' });
       await settle();
       const number = tabs.numberFor(opened);
+      tabs.remember(number, wanted);
       log('edb.open', { tab: number, url: wanted.slice(0, 120) });
       return redirect(res, tabUrl(number));
     }
@@ -460,7 +552,7 @@ async function startEdbServer({ driver, port = 0, token = null } = {}) {
     const number = Number(rest[0]);
     if (!Number.isFinite(number)) return send(res, 404, '<html><body><p>tweb: no such tab</p></body></html>');
     const page = tabs.page(number);
-    if (!page) return sendPage(res, 'gone', '<p>That tab has closed.</p>');
+    if (!page) return goneTab(res, number, { restarted });
     const base = `http://${HOST}:${server.address().port}${tabUrl(number)}`;
     const what = rest[1] || '';
 
@@ -507,7 +599,7 @@ async function startEdbServer({ driver, port = 0, token = null } = {}) {
 
       let how = 'nothing';
       if (pressed) {
-        const result = await activate(page, pressed.desc, { real: true, driver });
+        const result = await activate(page, pressed.desc, { real: true, driver: attached });
         how = result.ok ? 'clicked' : 'refused';
         if (!result.ok) {
           return sendPage(res, 'cannot', `<p>${escapeHtml(result.why)}</p>`
@@ -544,7 +636,7 @@ async function startEdbServer({ driver, port = 0, token = null } = {}) {
       if (!record) return sendPage(res, 'stale', '<p>That link is from an older version of this page. Type rf.</p>');
       const real = rest[2] === 'click';
       const before = page.url();
-      const result = await activate(page, record.desc, { real, driver });
+      const result = await activate(page, record.desc, { real, driver: attached });
       if (!result.ok) return sendPage(res, 'cannot', `<p>${escapeHtml(result.why)}</p><p><a href="./">back to the page</a></p>`);
       const navigated = await settleAfter(page, before);
       log('edb.activate', { tab: number, id: what, real, how: result.how, navigated });
@@ -581,7 +673,8 @@ async function startEdbServer({ driver, port = 0, token = null } = {}) {
     token: secret,
     url: `http://${HOST}:${actual}/t/${secret}/tabs`,
     tabUrl: (n) => `http://${HOST}:${actual}${tabUrl(n)}`,
-    tabs,
+    get tabs() { return tabs; },
+    get driver() { return attached; },
     close: () => new Promise((resolve) => server.close(resolve)),
   };
 }

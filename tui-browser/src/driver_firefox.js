@@ -637,6 +637,13 @@ async function openFirefox({
       newTabHandlers.push(handler);
     },
 
+    // Whether the browser is still there. The socket is the whole of the
+    // connection here, so its closing is the browser going away, and every
+    // context id we hold names a tab that no longer exists.
+    alive() {
+      return !session.closed;
+    },
+
     async newTab() {
       return browserContext.newPage();
     },
