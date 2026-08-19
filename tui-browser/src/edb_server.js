@@ -126,6 +126,12 @@ class Tabs {
   }
 
   page(number) {
+    // Numbering happens as tabs are listed, so ask for the list first: a
+    // reader who goes straight to a tab's own address — which is the address
+    // this program prints when it starts, and the one their buffer holds
+    // after a redirect — must not be told the tab is gone merely because
+    // nothing had counted the tabs yet.
+    if (!this.pages.has(number)) this.list();
     const page = this.pages.get(number);
     if (!page) return null;
     try { if (page.isClosed()) return null; } catch { /* shim without isClosed */ }

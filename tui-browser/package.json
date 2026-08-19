@@ -5,13 +5,14 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test test/*.test.js",
     "compare": "node tools/compare.js",
     "firefox": "node src/index.js --browser firefox",
     "edb": "node src/edb.js",
     "testpage": "node tools/serve.js",
     "dump": "node tools/dump.js",
-    "probe": "node tools/probe.js"
+    "probe": "node tools/probe.js",
+    "test:browser": "node --test test/browser/*.test.js"
   },
   "keywords": [],
   "type": "commonjs",

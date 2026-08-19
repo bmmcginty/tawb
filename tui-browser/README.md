@@ -631,6 +631,40 @@ the URL responsible. It is the fastest way to find
 out why something felt slow — ad-heavy pages spawning hundreds of tracking
 iframes have been the usual culprit.
 
+## Tests
+
+```
+npm test                              # about two seconds, no browser
+npm run test:browser                  # a real browser and a real page
+xvfb-run -a npm run test:browser      # with no display of your own
+TWEB_TEST_BROWSER=firefox npm run test:browser
+```
+
+The fast suite is everything that can be decided without a browser, which is
+more than it sounds: what html the edbrowse server produces from a page's
+tokens, what its urls promise, and the rules the core keeps about a reader's
+place and about what is worth telling them.
+
+Those last ones are the reason there is a suite at all. A dozen of them encode
+decisions that took real pages to discover — the near one of two identical
+lines wins, a place that has changed four times in ten seconds is a clock and
+not news, a text patch may not touch the block the reader is standing on —
+and every one of them looks like an arbitrary choice until the page that
+forced it turns up again. They are exactly the rules a later change undoes by
+accident.
+
+The routing tests carry something else worth having: the stub page in them is
+the complete list of what the edbrowse server asks of a browser, written as
+something that has to keep working. It answers each extractor by name and
+throws on any it does not know, so a new call into the page cannot be added
+without the contract being updated to say so.
+
+The browser suite reads `tools/testpage.html` through the whole stack, and
+checks the things that only a real browser can answer: that a sixty-entry
+select arrives with sixty entries, that the collision pair is intact, that a
+field with no form around it is still submittable, and that following a
+control answers a redirect rather than a page.
+
 ## Serving the browser to edbrowse
 
 edbrowse renders html, tables, lists and forms better than a line list does,
