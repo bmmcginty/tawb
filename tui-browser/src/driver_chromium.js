@@ -2,17 +2,31 @@
 
 const { launchOwnBrowser, connectToBrowser, defaultProfileDir } = require('./browser');
 const { parseAriaSnapshot } = require('./aria');
+const { extractAxItems } = require('./ax_own');
 
 // Chromium, attached to over the DevTools protocol.
 //
 // This is the path that works and is not to be disturbed: it clears bot
 // checks because the browser is an ordinary one that happens to be observed.
-// The accessibility tree comes from Playwright, which computes it with an
-// injected script of its own — good enough that there is no reason to
-// replace it here just because another engine needs its own.
+//
+// The accessibility tree is now ours, computed in the page by ax_own.js, the
+// same as Firefox. It was Playwright's for as long as ours was unproven, and
+// the two were held against each other on real pages until they agreed. Ours
+// wins on two counts that are not matters of taste: its items carry a
+// reference to the element they came from, so activating a line no longer
+// means searching the page again for something with that role and that exact
+// name — which is a round trip, and which silently finds the wrong control
+// when a page repeats a name. And it reads aria-expanded as the three answers
+// it has, where ariaSnapshot marks an open control and has no way to say that
+// one is closed.
+//
+// Playwright's is kept reachable, as `--browser chromium-playwright`, because
+// it is the oracle ours was measured against and there is no reason to lose
+// that: `npm run compare -- --only chromium ...` against it is how a
+// disagreement gets judged.
 
 async function openChromium({
-  connect = null, profile = null, keepBrowser = false, log = () => {},
+  connect = null, profile = null, keepBrowser = false, ax = 'own', log = () => {},
 } = {}) {
   let browser;
   let context;
@@ -35,8 +49,11 @@ async function openChromium({
     rejoined = !!started.rejoined;
   }
 
+  const ownAx = ax !== 'playwright';
+
   return {
-    name: 'chromium',
+    name: ownAx ? 'chromium' : 'chromium-playwright',
+    ax: ownAx ? 'own' : 'playwright',
     browser,
     context,
     child,
@@ -57,11 +74,12 @@ async function openChromium({
       }
     },
 
-    // The accessibility tree, flattened into reading order. Playwright's own,
-    // by design: it computes the tree with an injected script, we parse its
-    // YAML, and neither half is worth replacing here just because another
-    // engine needs an implementation of its own.
+    // The accessibility tree, flattened into reading order. Ours, computed in
+    // the page, in the same item shape the Playwright path produced — so
+    // everything downstream (prose merging, separator folding, layout) is
+    // untouched by which one computed it.
     async axItems(frame) {
+      if (ownAx) return frame.evaluate(extractAxItems);
       return parseAriaSnapshot(await frame.locator('body').ariaSnapshot());
     },
 
@@ -108,9 +126,16 @@ async function openChromium({
       await handle.click({ timeout: timeoutMs });
     },
 
-    // Whoever computed the tree resolves against it. Playwright's items carry
-    // no element reference, so this goes back through role and name.
+    // Whoever computed the tree resolves against it. Ours kept a reference,
+    // so the item says which node it came from and there is nothing to
+    // search for. Playwright's items carry none, so that path goes back
+    // through role and name — and inherits the two ways that goes wrong: it
+    // costs a round trip, and on a page that repeats a name it can resolve
+    // to a different control than the one on the line.
     async axElementHandle(scope, item) {
+      if (item.axIndex != null) {
+        return scope.evaluateHandle((i) => (window.__twebAxNodes || [])[i], item.axIndex);
+      }
       return scope.getByRole(item.role, { name: item.name, exact: true }).first().elementHandle();
     },
 
