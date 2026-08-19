@@ -5,6 +5,7 @@ const { launchFirefox, defaultProfileDir, releaseStrandedSession } = require('./
 const { readEndpointRecord, writeEndpointRecord } = require('./endpoint');
 const { processAlive } = require('./proc');
 const { extractAxItems } = require('./ax_own');
+const { readDocument } = require('./frames');
 
 // Firefox, driven over WebDriver BiDi.
 //
@@ -665,28 +666,24 @@ async function openFirefox({
     // Our own tree, computed in the page. The items come back in the same
     // shape the Playwright path produces, so everything downstream — prose
     // merging, separator folding, layout — is shared.
-    async axItems(frame) {
-      const items = await frame.evaluate(extractAxItems);
-      if (items.length) return items;
-
-      // A document that renders and says nothing is content behind a closed
-      // shadow root, which page script cannot enter and privileged code can.
-      // The privileged half was installed at startup and left a function in
-      // the page for exactly this, so asking costs a script call rather than
-      // anything of Marionette's — which could not be asked anyway while the
-      // reader's session is open. Same policy as the Chromium driver: only
-      // when there was nothing to find without it.
+    // See the note on the Chromium driver's method of the same name. Here the
+    // privileged half was installed at startup and left a function in the
+    // page, so the extractor asks for the pairs itself, inside the same call
+    // that uses them.
+    async pierceAndRun(frame, pageFunction) {
       const available = await frame.evaluate(
         () => {
           const pierce = window[Symbol.for('tweb.pierce')];
           return typeof pierce === 'function' ? (pierce() || []).length : 0;
         },
       ).catch(() => 0);
-      if (!available) return items;
+      if (!available) return null;
       log('shadow.pierced', { roots: available, url: String(frame.url()).slice(0, 100) });
-      // The pairs never leave the page and are never written into it: the
-      // extractor asks for them itself, inside the same call that uses them.
-      return frame.evaluate(extractAxItems, { pierce: true });
+      return frame.evaluate(pageFunction, { pierce: true });
+    },
+
+    async axItems(frame) {
+      return readDocument(frame, extractAxItems, this, (items) => !items || !items.length);
     },
 
     // A click the browser treats as a person's.

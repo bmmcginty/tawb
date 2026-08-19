@@ -60,6 +60,26 @@ async function blocksForFrame(frame, source, driver = null) {
   return blocks;
 }
 
+// Read a document with a page-side extractor, and read it again with the
+// closed shadow roots supplied if the first answer suggests there was
+// something the page could not show us.
+//
+// The second attempt is not free — a piercing scan of the node tree measured
+// 4ms on a Turnstile widget frame but 146ms on a Wikipedia article and 329ms
+// on Reddit, neither of which contains a single closed shadow root — so it is
+// made only when the first answer came back empty. A document that renders
+// and says nothing is the signature of exactly this and of very little else.
+//
+// `isEmpty` is the caller's, because what "nothing" means depends on what was
+// being read: no accessibility items, no tokens, no lines.
+async function readDocument(frame, pageFunction, driver, isEmpty) {
+  const first = await frame.evaluate(pageFunction);
+  if (!isEmpty(first)) return first;
+  if (!driver || typeof driver.pierceAndRun !== 'function') return first;
+  const second = await driver.pierceAndRun(frame, pageFunction).catch(() => null);
+  return second || first;
+}
+
 // A key that means "the same document" across two listings of it. Playwright
 // hands back the same Frame object every time and can be compared directly;
 // the BiDi driver builds a fresh object per call, so its context id is what
@@ -237,4 +257,7 @@ async function walk(frame, source, depth, budget, seen, visited, driver) {
   return out;
 }
 
-module.exports = { snapshotFrameTree, isFrameItem, blocksForFrame, orderedChildFrames, everyChildFrame };
+module.exports = {
+  snapshotFrameTree, isFrameItem, blocksForFrame, orderedChildFrames, everyChildFrame,
+  readDocument, frameKey,
+};
