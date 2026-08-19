@@ -277,6 +277,27 @@ page can carry hundreds of kilobytes of code and none of it is markup. It
 reads the live DOM, so it shows the page after its scripts have run — the
 same page the other three views describe.
 
+### Web components are part of the page
+
+All four views descend into shadow roots, following the tree the browser
+actually renders: an element with a shadow root renders that tree instead of
+its own children, and a `<slot>` renders whatever the light DOM assigned to
+it. Stopping at `childNodes` stops dead at every web component.
+
+That is not a corner case. On the Bandcamp album page above, `<page-footer>`
+is a custom element, and inside its shadow root are the whole page footer
+*and* a cookie consent dialog — "We care about your privacy", `Accept all`,
+`Accept necessary only` — covering the page with a fixed, 72%-opaque backdrop
+on a fresh profile. None of the four views showed a word of it. The reader
+could not read the dialog, could not dismiss it, and could not see why a real
+click kept being refused.
+
+Now `## We care about your privacy` and `[*Accept all]` are in all four
+views, `Enter` dismisses the dialog, and `m` reaches the play button behind
+it. `SOURCE` marks the boundary with a `#shadow-root` line and shows the
+shadow tree there, then the light children where they are written, since that
+view answers what is *there* rather than what is rendered in whose place.
+
 `SOURCE` is not indented, deliberately. Leading spaces shift every line
 sideways, and a reader who cannot see the shape of the indentation pays the
 whole cost of it — `Home` lands on whitespace, a braille display spends

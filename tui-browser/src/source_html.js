@@ -72,8 +72,10 @@ function extractSource() {
 
   const textOf = (node) => (node.textContent || '').replace(/\s+/g, ' ').trim();
 
-  // Whether everything inside is text, so the element fits on one line.
+  // Whether everything inside is text, so the element fits on one line. A
+  // shadow host never does: it has a whole second tree to show.
   const textOnly = (el) => {
+    if (el.shadowRoot) return false;
     for (const child of el.childNodes) {
       if (child.nodeType === Node.ELEMENT_NODE) return false;
     }
@@ -108,6 +110,24 @@ function extractSource() {
     }
 
     out.push({ kind: 'element', tag, attrs, depth, index, text: open });
+
+    // A shadow root is a second tree, not the element's children, and this
+    // view shows what is there rather than a flattened impression of it. The
+    // light children still follow, where they are written; what the browser
+    // renders in their place is the shadow tree's <slot>s.
+    if (el.shadowRoot) {
+      out.push({ kind: 'text', depth: depth + 1, text: '#shadow-root' });
+      for (const child of el.shadowRoot.childNodes) {
+        if (out.length >= LIMIT) break;
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = textOf(child);
+          if (text) out.push({ kind: 'text', depth: depth + 2, text });
+        } else if (child.nodeType === Node.ELEMENT_NODE) {
+          walk(child, depth + 2);
+        }
+      }
+    }
+
     for (const child of el.childNodes) {
       if (out.length >= LIMIT) break;
       if (child.nodeType === Node.TEXT_NODE) {
