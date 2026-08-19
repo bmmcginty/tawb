@@ -640,8 +640,26 @@ cat edbrowse-plugin/tweb.rc >> ~/.ebrc               # or include the file
 Then, in edbrowse:
 
 ```
-b tweb://https://skt222.bandcamp.com/album/weird-fish
+<t skt222.bandcamp.com/album/weird-fish
 ```
+
+`<t` is one of four shortcuts the config fragment installs, and the address is
+taken the way a url bar takes one — no scheme needed, and `<ts kangaroo
+habitat` searches. `<tt` is the tab list. The long form, `b tweb://<address>`,
+is the same thing with the plumbing showing.
+
+Nothing has to be remembered, though: **line 1 of every page tweb serves is
+an address field**, so from anywhere in the buffer
+
+```
+1
+i=timeanddate.com
+i*
+```
+
+goes there. edbrowse numbers input fields within the current line, and that
+line holds exactly one field and one button, so there is no number to count
+out.
 
 From there it is an ordinary web page as far as edbrowse is concerned: `g`
 follows a link, `i=` fills a field, `i*` presses a button, `ib` gives a
@@ -650,10 +668,15 @@ back. The browser keeps your logins and clearance cookies, and the page has
 already run its javascript, so what edbrowse renders is the page as it
 actually is rather than the markup that arrived from the server.
 
-One line at the top of each page says which site you are really on and links
+The line below the address field says which site you are really on and links
 to the other three views (`ax`, `text`, `source` — the reader's own line
 lists) and to the tab list. `Shift+F4` has no meaning here; the tab list has
 a close link per tab.
+
+The browser is yours to close, and closing it does not end the session: the
+next page you ask for starts another one the same way — ordinary, attached
+to, never automation-launched — and the tab you were reading is offered back
+by name on the page that tells you what happened.
 
 **`m` has no meaning here either**, so a real click — the kind that carries
 user activation, which audio needs — is a second address: `<twebclick` on the

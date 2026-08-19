@@ -548,6 +548,10 @@ edbrowse will (npm run edb, src/edb_server.js, src/edb_page.js):
   - 302 back to the tab after every action, and no-cache on everything, so rf
     is a refresh rather than a repeat.
   - the entry-point plugin and its config fragment (edbrowse-plugin/).
+  - an address field on line 1 of every page served, the four shortcuts, and
+    addresses taken the way a url bar takes them (section 14).
+  - noticing that the browser has closed and starting another, rather than
+    answering every later request with Playwright's words for it.
 
 Not built yet, in the order they are likely to be wanted:
 
@@ -566,3 +570,82 @@ Not built yet, in the order they are likely to be wanted:
     that path has not been tried.
   - Nothing claims tabs the way the reader does, so a reader and an edbrowse
     session can both be pointed at the same tab and will fight.
+
+
+14. Getting in: what the reader has to remember
+------------------------------------------------
+
+`b tweb://https://example.com` is three things to remember — a command, a
+protocol nobody outside this project has heard of, and a scheme the reader
+was not thinking about — and forgetting any of them is an error message. The
+answers, in the order a reader meets them:
+
+  - The scheme is the server's problem. /open now takes an address the way a
+    url bar takes one: a host with a dot gets https, localhost and the
+    loopback addresses get http, and something with no host in it is not an
+    address — say so and offer a search, rather than quietly sending what was
+    typed to a search engine. This is one implementation, in the server,
+    because the plugin and the address field both arrive there.
+
+  - The command and the protocol are shortened by .ebrc functions, which take
+    arguments (~0 is the whole of what was typed after the name; the users
+    guide builds a duckduckgo shortcut this way). `<t address`, `<tt` for the
+    tab list, `<ts words` to search. Two lines each, renamable.
+
+  - Neither is needed once you are in, because line 1 of every page tweb
+    serves is an address field. This is the part that cannot be forgotten: it
+    is in the buffer, where the reader already is. It works because edbrowse
+    numbers input fields within the current line (users guide, `i=xyz : set
+    the input field on the current line`), so a line holding exactly one field
+    and one button is `i=address` then `i*` with nothing to count.
+
+    The four views and the tab list carry it too, since those are exactly the
+    pages you are on when you want to go somewhere else. They also carry a
+    <base>, because `b tweb://tabs` leaves the buffer's filename a tweb:// url
+    that no relative link would resolve against.
+
+What was considered and not done: making tweb the transport for *all* of
+edbrowse's browsing, so that plain `b example.com` goes through the browser.
+edbrowse would allow it — a plugin can match on `urlmatch`, which is a
+case-insensitive substring test against the url (isup.c:3054 findMimeByURL),
+so `urlmatch = http://|https://` matches every page. The problem is that it
+also matches the pages tweb itself serves, since those are http on loopback,
+and urlmatch has no negation: every link in a tweb page would re-enter the
+plugin, forever.
+
+There are two ways out and both are real work. The plugin could proxy: notice
+its own origin and simply fetch it, which costs a fork per click and loses the
+status line, so the 302 that keeps rf idempotent would have to become a <meta
+http-equiv=refresh> in the body (edbrowse honours those, buffers.c:9035).
+Or edbrowse could learn an exclusion — a `urlnomatch` beside `urlmatch` — which
+is a smaller patch than it sounds and would belong in patches/ with the other
+two. Neither is needed by anything above, and the first changes every fetch
+edbrowse makes, which is a decision about what edbrowse is for rather than a
+convenience.
+
+
+15. When the browser goes away
+-------------------------------
+
+The reader closes the browser. Nothing in this design survives that on its
+own: every page object in the server names a target that no longer exists,
+and Playwright answers each request with "browserContext.newPage: Target
+page, context or browser has been closed" — a sentence naming no cause and
+suggesting no action — for the rest of the session.
+
+So the server asks first. Each driver can say whether its browser is still
+there (isConnected over CDP; the socket's state over BiDi), the server checks
+before it touches one, and if the answer is no it starts one the same way the
+session started the first: ordinary, rejoined or spawned, never automated.
+That rule does not bend for convenience here either.
+
+Tab numbers are the interesting part, because they are in the reader's buffer
+and in edbrowse's stack, and they now name nothing. Tabs carries the urls
+over the restart, so a number that has lost its page is answered with the
+address it last held and a link to open it again — one `g` from where the
+reader already is — rather than with the news that a number is meaningless.
+The same page serves a tab the reader closed themselves.
+
+What is deliberately not done: watching for the browser's exit and restarting
+it eagerly. A reader who closes the browser has closed it; the right moment
+to start another is when they next ask for a page.
