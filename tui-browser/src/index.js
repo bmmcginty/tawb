@@ -13,6 +13,7 @@ const { remapIndex } = require('./remap');
 const { normaliseEndpoint } = require('./browser');
 const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
 const { claimedTargets, claimTab, releaseTab } = require('./session');
+const { capturePlace, restorePlace } = require('./place');
 
 // --connect <port|host:port|url> attaches to a browser that is already
 // running with --remote-debugging-port, rather than launching one.
@@ -1323,13 +1324,36 @@ async function handleBrowseKey(chunk, state, page) {
   }
 
   // Cycle views, keeping the reader on the same content.
+  //
+  // The place is taken before the switch and put back after it, by element
+  // rather than by line number: the same page is 135 lines of accessibility
+  // tree and 1500 lines of markup, so nothing about a line number survives
+  // the crossing. Where the element cannot be matched — Playwright's
+  // accessibility tree has no element references to match against — the
+  // reader is told their place could not be kept rather than left to work
+  // out why they are somewhere else.
   if (chunk === '\\') {
     const anchor = anchorFor(state);
+    const place = await withTimeout(
+      capturePlace(state, (item) => elementHandleFor(state, page, item)),
+      ACTION_TIMEOUT_MS, 'Marking your place',
+    ).catch(() => null);
+
     const cycle = state.sources;
     state.source = cycle[(cycle.indexOf(state.source) + 1) % cycle.length];
-    await refresh(state, page, { anchor });
+    await refresh(state, page);
+
+    const kept = await withTimeout(
+      restorePlace(state, page, place), ACTION_TIMEOUT_MS, 'Finding your place',
+    ).catch(() => null);
+    if (!kept) restoreAnchor(state, anchor);
+    clampCol(state);
+    clampScroll(state);
+
     render(state, page);
-    setStatus(state, `${SOURCE_LABELS[state.source]} view.`);
+    setStatus(state, kept === 'exact' || (!place && !kept)
+      ? `${SOURCE_LABELS[state.source]} view.`
+      : `${SOURCE_LABELS[state.source]} view — nearest place.`);
     return;
   }
 
@@ -1926,7 +1950,7 @@ module.exports = {
   render, drawList, drawAddress, drawHint, snapshotBlocks, moveSelection,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock,
-  anchorFor, restoreAnchor, diffBlocks, jumpToChange, activateCurrent, ALL_SOURCES,
+  anchorFor, restoreAnchor, capturePlace, restorePlace, diffBlocks, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
   applyTextPatches, soleBlockContaining, loadMore, atEnd, switchToTab, cycleTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
