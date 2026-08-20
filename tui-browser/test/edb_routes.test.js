@@ -158,6 +158,21 @@ test('acting on the page answers a redirect, never a page', async () => {
   });
 });
 
+test('every page offers back, and back answers a redirect to the tab', async () => {
+  // A link rather than a second submit button: edbrowse numbers fields
+  // within a line, and the address bar's i* must stay i*.
+  await withServer(SOME_TOKENS, async ({ base }) => {
+    const page = await get(base, '/t/testtoken/1/');
+    assert.match(page.body, /<a href="back">Back<\/a>/);
+    const view = await get(base, '/t/testtoken/1/ax');
+    assert.match(view.body, /<a href="back">Back<\/a>/);
+
+    const res = await get(base, '/t/testtoken/1/back');
+    assert.equal(res.status, 302);
+    assert.match(String(res.headers.get('location')), /\/t\/testtoken\/1\/$/);
+  });
+});
+
 test('a tab that is not there says so, and offers a way on', async () => {
   await withServer(SOME_TOKENS, async ({ base }) => {
     const res = await get(base, '/t/testtoken/99/');

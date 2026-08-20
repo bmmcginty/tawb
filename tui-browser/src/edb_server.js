@@ -183,10 +183,16 @@ function escapeHtml(text) {
 //
 // with no number to count out and no url to remember. `action` is relative to
 // the <base href> every page carries, which points at the tab.
-function openBar(action = '../open') {
+// `back` puts the tab's own back button beside Go. It is a link rather than
+// a second submit button on purpose: edbrowse numbers fields within a line,
+// and a second button would turn the address field's `i*` into `i2*`, which
+// is exactly the counting the one-line design exists to avoid. As a link it
+// is one `g`.
+function openBar(action = '../open', { back = false } = {}) {
+  const button = back ? ` <a href="back">Back</a>` : '';
   return `<p><form action="${action}" method="post">Open: `
     + `<input name="url" value=""> <input type="submit" name="go" value="Go">`
-    + `</form></p>`;
+    + `</form>${button}</p>`;
 }
 
 // Tokens in, html out. The only interesting decisions are which elements
@@ -330,7 +336,7 @@ function tokensToHtml(extracted, registry, base, tab, within = null) {
     + ` <a href="ax">ax</a> <a href="render">text</a> <a href="source">source</a>`
     + ` <a href="../tabs">tabs</a></p>`;
   return `<html><head><title>${title}</title><base href="${escapeHtml(base)}"></head>\n`
-    + `<body>\n${openBar()}\n${header}\n${parts.join('\n')}\n</body></html>\n`;
+    + `<body>\n${openBar('../open', { back: true })}\n${header}\n${parts.join('\n')}\n</body></html>\n`;
 }
 
 function fieldHtml(token, id, pressable = false) {
@@ -374,7 +380,8 @@ function fieldHtml(token, id, pressable = false) {
 function linesToHtml(title, base, heading, lines) {
   const body = lines.map((line) => escapeHtml(line)).join('\n');
   return `<html><head><title>${escapeHtml(title)}</title>`
-    + `<base href="${escapeHtml(base)}"></head>\n<body>\n${openBar()}\n`
+    + `<base href="${escapeHtml(base)}"></head>\n`
+    + `<body>\n${openBar('../open', { back: true })}\n`
     + `<p><a href="./">the page</a> <a href="../tabs">tabs</a></p>\n`
     + `<h1>${escapeHtml(heading)}</h1>\n`
     + `<pre>\n${body}\n</pre>\n</body></html>\n`;
@@ -518,6 +525,28 @@ function readBody(req) {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
+}
+
+// Back, in the tab the reader is reading.
+//
+// Playwright's page has its own history; the Firefox shim does not, because
+// it holds a browsing context and BiDi keeps the history there. The page's
+// own history object is the one both engines already reach through evaluate,
+// and it is the same history a back button moves through.
+async function goBack(page) {
+  if (typeof page.goBack === 'function') {
+    await page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {});
+    return;
+  }
+  await page.evaluate(() => window.history.back()).catch(() => {});
+}
+
+// The Firefox shim caches the url it was last told to visit, so a move
+// through history leaves it naming the page before. The document knows.
+async function syncUrl(page) {
+  if (typeof page.setUrl !== 'function') return;
+  const real = await page.evaluate(() => location.href).catch(() => null);
+  if (real) page.setUrl(real);
 }
 
 function settle(ms = SETTLE_MS) {
@@ -772,6 +801,20 @@ async function startEdbServer({
     if (!what) return render(res, number, base);
     if (what === 'ax' || what === 'render' || what === 'source') {
       return renderView(res, number, what, base);
+    }
+
+    // Back, for this tab. A back button at the start of a history does
+    // nothing, in every browser there is, so there is nothing to report
+    // here either: the reader is returned to the page they are on.
+    if (what === 'back') {
+      const before = page.url();
+      await goBack(page);
+      await settle();
+      await syncUrl(page);
+      const now = page.url();
+      tabs.remember(number, now);
+      log('edb.back', { tab: number, moved: now !== before, url: now.slice(0, 120) });
+      return redirect(res, tabUrl(number));
     }
 
     if (what === 'close') {
