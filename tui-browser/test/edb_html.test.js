@@ -120,6 +120,74 @@ test('fields', async (t) => {
   });
 });
 
+test('what edbrowse cannot work by filling in a form', async (t) => {
+  // A control behind a closed shadow root cannot be ticked by setting a
+  // property on it — a bot check ignores that, because it can see nobody
+  // pressed anything — and a form on a frame's own page has nowhere to send
+  // its values. Both get a plain link as well, which edbrowse can follow.
+  const checkbox = (extra = {}) => ({
+    kind: 'field', tag: 'input', type: 'checkbox', desc: desc('/input[0]', 'input'),
+    label: 'Verify you are human', value: '', ...extra,
+  });
+
+  await t.test('an ordinary checkbox is left as a checkbox', () => {
+    const html = render([checkbox()]);
+    assert.doesNotMatch(html, /press/);
+  });
+
+  await t.test('one behind a closed shadow root gets a link that presses it', () => {
+    const html = render([checkbox({ pierced: true })]);
+    assert.match(html, /<a href="e1\/click">press Verify you are human<\/a>/);
+  });
+
+  await t.test('every control on a frame page gets one', () => {
+    const registry = new Registry();
+    const html = tokensToHtml(
+      { url: 'x', title: 'x', tokens: [checkbox()] }, registry, 'BASE', 1, 7,
+    );
+    assert.match(html, /<a href="e1\/click">press/);
+  });
+
+  await t.test('a link behind a closed shadow root really presses what it names', () => {
+    // The default action is not a person pressing anything, and the thing
+    // behind a closed shadow root is usually there to tell the difference.
+    const html = render([
+      { kind: 'link', desc: desc('/div[0]', 'div'), name: 'Verify you are human', navigational: false, pierced: true },
+    ]);
+    assert.match(html, /<a href="e1\/click">Verify you are human<\/a>/);
+  });
+
+  await t.test('an ordinary link is left alone', () => {
+    const html = render([{ kind: 'link', desc: desc('/a[0]'), name: 'Next', navigational: true }]);
+    assert.match(html, /<a href="e1">Next<\/a>/);
+  });
+
+  await t.test('a form that cannot be submitted from here offers its own control', () => {
+    const html = render([
+      { kind: 'form-open', desc: desc('/form[0]', 'form'), pierced: true },
+      { kind: 'field', tag: 'input', type: 'text', desc: desc('/input[0]', 'input'), label: 'Q', value: '' },
+      { kind: 'field', tag: 'input', type: 'submit', desc: desc('/input[1]', 'input'), label: '', value: 'Go' },
+      { kind: 'form-close' },
+    ]);
+    assert.match(html, /<a href="e\d+\/click">press Go<\/a>/);
+  });
+});
+
+test('an id says which document its element is in', async (t) => {
+  await t.test('the same path in two documents is not the same element', () => {
+    const registry = new Registry();
+    const one = registry.idFor(desc('/input[0]', 'input', 'Q'), 'field', null);
+    const other = registry.idFor(desc('/input[0]', 'input', 'Q'), 'field', 7);
+    assert.notEqual(one, other);
+  });
+
+  await t.test('and the record remembers which', () => {
+    const registry = new Registry();
+    const id = registry.idFor(desc('/input[0]', 'input', 'Q'), 'field', 7);
+    assert.equal(registry.get(id).within, 7);
+  });
+});
+
 test('frames become links rather than being dropped', () => {
   const html = render([{ kind: 'frame', desc: desc('/iframe[0]', 'iframe'), name: 'challenges.cloudflare.com' }]);
   assert.match(html, /<a href="f1">\[frame: challenges\.cloudflare\.com\]<\/a>/);

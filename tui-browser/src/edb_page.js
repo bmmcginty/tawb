@@ -166,10 +166,33 @@ function extractForEdbrowse(options) {
     return token;
   };
 
+  // Whether the walk is currently inside a closed shadow root. Carried on
+  // the tokens, because what edbrowse can usefully do with a control depends
+  // on it: a form in there is not a form edbrowse can submit from the page it
+  // is reading, and a checkbox in there cannot be ticked by setting a
+  // property — the only thing a bot check accepts is a real click.
+  let insideClosed = false;
+
+  // Walking into an element's children, remembering whether what we are about
+  // to see lives behind a closed shadow root.
+  const descend = (el) => {
+    const outer = insideClosed;
+    if (closedRoots.has(el)) insideClosed = true;
+    try {
+      for (const child of flat(el)) walk(child);
+    } finally {
+      insideClosed = outer;
+    }
+  };
+  const mark = (token) => {
+    if (insideClosed) token.pierced = true;
+    return token;
+  };
+
   const walk = (node) => {
     if (node.nodeType === Node.TEXT_NODE) {
       const text = clean(node.textContent);
-      if (text) out.push({ kind: 'text', text });
+      if (text) out.push(mark({ kind: 'text', text }));
       return;
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
@@ -180,29 +203,29 @@ function extractForEdbrowse(options) {
     if (hidden(el)) return;
 
     if (tag === 'iframe' || tag === 'frame') {
-      out.push({
+      out.push(mark({
         kind: 'frame',
         desc: describe(el, tag),
         name: clean(el.getAttribute('title') || el.getAttribute('name') || el.getAttribute('src') || 'frame'),
-      });
+      }));
       return;
     }
 
     if (tag === 'img') {
       const alt = clean(el.getAttribute('alt'));
-      if (alt) out.push({ kind: 'image', text: alt });
+      if (alt) out.push(mark({ kind: 'image', text: alt }));
       return;
     }
 
     if (tag === 'form') {
-      out.push({ kind: 'form-open', desc: describe(el, tag) });
-      for (const child of flat(el)) walk(child);
-      out.push({ kind: 'form-close' });
+      out.push(mark({ kind: 'form-open', desc: describe(el, tag) }));
+      descend(el);
+      out.push(mark({ kind: 'form-close' }));
       return;
     }
 
     if (FIELDS.has(tag)) {
-      out.push(fieldToken(el, tag));
+      out.push(mark(fieldToken(el, tag)));
       return;
     }
 
@@ -212,16 +235,16 @@ function extractForEdbrowse(options) {
       const href = el.getAttribute('href');
       const navigational = tag === 'a' && !!href && href !== '#'
         && !/^javascript:/i.test(href);
-      out.push({
+      out.push(mark({
         kind: 'link', desc: describe(el, tag), name: nameOf(el) || tag, navigational,
-      });
+      }));
       return;
     }
 
     const keep = KEEP.has(tag);
-    if (keep) out.push({ kind: 'open', tag });
-    for (const child of flat(el)) walk(child);
-    if (keep) out.push({ kind: 'close', tag });
+    if (keep) out.push(mark({ kind: 'open', tag }));
+    descend(el);
+    if (keep) out.push(mark({ kind: 'close', tag }));
   };
 
   if (document.body) walk(document.body);
@@ -240,7 +263,26 @@ function extractForEdbrowse(options) {
 // underneath them. When the structure has shifted, the tag and the
 // accessible name identify it, and document order picks between duplicates —
 // the same evidence place.js uses to keep a reader's place across views.
-function resolveDescriptor(desc) {
+// `options` is { desc, pairs?, pierce? }: the element to find, and the closed
+// shadow roots the driver is lending us for this call. Being able to *see*
+// something we cannot then resolve is no use at all — which is exactly what
+// happened once the extractor could pierce and this could not, on the one
+// kind of page where it matters most.
+function resolveDescriptor(options) {
+  const desc = options && options.desc ? options.desc : options;
+  const closedRoots = new Map();
+  for (const pair of (options && options.pairs) || []) {
+    if (pair && pair[0] && pair[1]) closedRoots.set(pair[0], pair[1]);
+  }
+  if (options && options.pierce && typeof window[Symbol.for('tweb.pierce')] === 'function') {
+    try {
+      for (const pair of window[Symbol.for('tweb.pierce')]() || []) {
+        if (pair && pair[0] && pair[1]) closedRoots.set(pair[0], pair[1]);
+      }
+    } catch { /* the privileged half is not installed here */ }
+  }
+  const rootOf = (node) => closedRoots.get(node) || node.shadowRoot || null;
+
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const nameOf = (el) => {
     const text = clean(el.innerText || el.textContent);
@@ -256,7 +298,7 @@ function resolveDescriptor(desc) {
       if (!node) return null;
       if (part === '') continue;
       if (part[0] === 's') {
-        const root = node.shadowRoot;
+        const root = rootOf(node);
         node = root ? root.children[Number(part.slice(1))] : null;
       } else {
         node = node.children[Number(part)];
@@ -276,7 +318,16 @@ function resolveDescriptor(desc) {
   // The path missed. Look for the same tag and name, nearest to where it was
   // in document order — a page that inserted a banner has moved everything
   // down by the same amount, and the nearest match is the right one.
-  const all = document.getElementsByTagName('*');
+  // Everything, including what is behind the roots we were lent.
+  const all = [];
+  const gather = (root) => {
+    for (const el of root.querySelectorAll('*')) {
+      all.push(el);
+      const shadow = rootOf(el);
+      if (shadow) gather(shadow);
+    }
+  };
+  gather(document);
   let best = null;
   for (let i = 0; i < all.length; i += 1) {
     const el = all[i];
