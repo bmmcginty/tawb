@@ -10,6 +10,7 @@ const { extractForEdbrowse, resolveDescriptor, applyFieldValues } = require('./e
 const { clickThrough, prepareRealClick } = require('./click');
 const {
   snapshotFrameTree, readDocument, everyChildFrame, orderedChildFrames, frameKey,
+  MAX_DEPTH, MAX_FRAMES,
 } = require('./frames');
 const { Core, ALL_SOURCES } = require('./core');
 const { log } = require('./log');
@@ -219,7 +220,12 @@ function tokensToHtml(extracted, registry, base, tab, within = null) {
   let lastSubmitId = 0;
   let lastSubmitName = 'it';
 
-  const idOf = (desc, kind) => registry.idFor(desc, kind, within);
+  // A token spliced in from a frame says which document it came from, and
+  // its ids have to record that or acting on one would look in the wrong
+  // place. `within` stays the default, for the page that renders a single
+  // frame on its own.
+  let where = within;
+  const idOf = (desc, kind) => registry.idFor(desc, kind, where);
 
   // edbrowse can fill in a form and submit it, and that is the right way to
   // work an ordinary page. It is no way to work these two.
@@ -235,6 +241,7 @@ function tokensToHtml(extracted, registry, base, tab, within = null) {
   const needsPressing = (token) => !!token.pierced || within != null;
 
   for (const token of extracted.tokens) {
+    where = token.within === undefined ? within : token.within;
     switch (token.kind) {
       case 'text':
         parts.push(escapeHtml(token.text));
@@ -277,7 +284,11 @@ function tokensToHtml(extracted, registry, base, tab, within = null) {
       }
 
       case 'frame': {
-        const id = idOf(token.desc, 'frame');
+        // The frame's contents follow this line, spliced in where the frame
+        // sits. The link stays because the walk does not always get there --
+        // past the depth limit, or once the frame budget is spent -- and
+        // because a frame on its own page is sometimes the easier read.
+        const id = token.frameId != null ? token.frameId : idOf(token.desc, 'frame');
         parts.push(`<p><a href="f${id}">[frame: ${escapeHtml(token.name)}]</a></p>`);
         break;
       }
@@ -712,8 +723,9 @@ async function startEdbServer({
   // same assumption the reader has always made — and ones it did not are
   // named by where they sat in the browser's own list, which is the only
   // order they have.
-  async function frameFor(page, desc) {
-    const { ordered, hidden } = await unmentionedFrames(page.mainFrame(), { tokens: [] });
+  async function frameFor(scope, desc) {
+    const from = typeof scope.mainFrame === 'function' ? scope.mainFrame() : scope;
+    const { ordered, hidden } = await unmentionedFrames(from, { tokens: [] });
     if (String(desc.path).startsWith('hidden/')) {
       return hidden[Number(String(desc.path).slice('hidden/'.length)) || 0] || null;
     }
@@ -723,11 +735,85 @@ async function startEdbServer({
 
   // The document an id lives in, and the address edbrowse should be sent back
   // to once something has been done to it.
+  // The page, with the frames inside it spliced in where they sit -- the
+  // same tree the reader's own views walk, and no further, because those
+  // limits were measured on real pages and a second set beside them would
+  // drift apart.
+  //
+  // Until now a frame was one line saying [frame: …] that had to be followed
+  // to a page of its own before anything in it could be pressed. A Cloudflare
+  // checkbox, an embedded player, a comment thread: all of them are frames,
+  // and none of them are optional reading.
+  //
+  // Ids are handed out here rather than in tokensToHtml, because a frame's id
+  // is what its contents are recorded as living in, and the walk has to know
+  // it before it descends.
+  async function readTree(page, registry, { root = null, within = null } = {}) {
+    const out = { url: '', title: '', tokens: [], frames: 0 };
+    const budget = { remaining: MAX_FRAMES };
+    const from = root || (typeof page.mainFrame === 'function' ? page.mainFrame() : page);
+    await walkInto(from, registry, within, 0, budget, new Set(), out);
+    return out;
+  }
+
+  async function walkInto(frame, registry, within, depth, budget, seen, out) {
+    let read;
+    try {
+      read = await readPage(frame);
+    } catch {
+      // Navigated or detached while we were reading it. The line naming it
+      // is already in the buffer; the reader can follow that.
+      log('edb.frame.unread', { depth, url: String(frame.url() || '').slice(0, 100) });
+      return;
+    }
+    const { extracted, ordered, hidden } = read;
+    if (depth === 0) {
+      out.url = extracted.url;
+      out.title = extracted.title;
+    }
+
+    let ordinal = 0;
+    for (const token of extracted.tokens) {
+      const stamped = { ...token, within };
+      out.tokens.push(stamped);
+      if (token.kind !== 'frame') continue;
+
+      out.frames += 1;
+      stamped.frameId = registry.idFor(token.desc, 'frame', within);
+
+      // Frames the markup mentioned are matched by position; the ones it did
+      // not are named by where they sat in the browser's own list. Same two
+      // answers frameFor gives, so a spliced frame and the link beside it
+      // always mean the same frame.
+      const path = String(token.desc.path);
+      const isHidden = path.startsWith('hidden/');
+      const child = isHidden
+        ? hidden[Number(path.slice('hidden/'.length)) || 0]
+        : ordered[ordinal];
+      if (!isHidden) ordinal += 1;
+      if (!child || depth + 1 > MAX_DEPTH || budget.remaining <= 0) continue;
+
+      const url = String(child.url() || '');
+      // about:blank frames are placeholders, and a frame that reappears at
+      // the same url inside itself would recurse forever.
+      if (!url || url === 'about:blank' || seen.has(url)) continue;
+
+      budget.remaining -= 1;
+      await walkInto(child, registry, stamped.frameId, depth + 1, budget,
+        new Set([...seen, url]), out);
+    }
+  }
+
+  // A frame inside a frame is named by a chain of ids, so walk it: each
+  // record says which document it was read in, and the one at the end of the
+  // chain is the tab's own.
   async function documentOf(page, registry, within) {
     if (within == null) return page;
     const record = registry.get(Number(within));
     if (!record) return null;
-    return frameFor(page, record.desc);
+    const parent = await documentOf(page, registry, record.within);
+    if (!parent) return null;
+    return frameFor(parent, record.desc);
   }
 
   const backTo = (number, within) =>
@@ -769,10 +855,11 @@ async function startEdbServer({
     const page = tabs.page(number);
     if (!page) return goneTab(res, number);
     tabs.remember(number, page.url());
-    const { extracted, hidden } = await readPage(page.mainFrame());
-    const html = tokensToHtml(extracted, tabs.registry(number), base, number);
+    const registry = tabs.registry(number);
+    const extracted = await readTree(page, registry);
+    const html = tokensToHtml(extracted, registry, base, number);
     log('edb.render', {
-      tab: number, tokens: extracted.tokens.length, hiddenFrames: hidden.length, bytes: html.length,
+      tab: number, tokens: extracted.tokens.length, frames: extracted.frames, bytes: html.length,
     });
     return send(res, 200, html);
   }
@@ -965,11 +1052,16 @@ async function startEdbServer({
       const registry = tabs.registry(number);
       const record = registry.get(Number(what.slice(1)));
       if (!record) return ours(res, 'stale', '<p>That frame is from an older version of this page. Type rf.</p>');
-      const frame = await frameFor(page, record.desc);
+      const parent = await documentOf(page, registry, record.within);
+      const frame = parent && await frameFor(parent, record.desc);
       if (!frame) return ours(res, 'gone', '<p>That frame is not there any more.</p>');
-      const { extracted } = await readPage(frame);
       // Everything on this page belongs to that frame, and its ids have to
-      // say so or acting on one would look in the wrong document.
+      // say so or acting on one would look in the wrong document. The same
+      // walk runs here, so a frame read on its own page has its own frames
+      // spliced into it.
+      const extracted = await readTree(page, registry, {
+        root: frame, within: Number(what.slice(1)),
+      });
       return send(res, 200, tokensToHtml(extracted, registry, base, number, Number(what.slice(1))));
     }
 

@@ -62,6 +62,9 @@ function stubPage(url, tokens) {
     evaluate: frame.evaluate,
     evaluateHandle: frame.evaluateHandle,
     goto: async () => {},
+    // A form with nothing to press is submitted by typing Enter into the
+    // field, through the browser's own keyboard.
+    keyboard: { press: async () => {} },
     waitForLoadState: async () => {},
     close: async () => {},
     setDefaultTimeout: () => {},
@@ -207,6 +210,70 @@ test('an address with no tab to stay in opens one', async () => {
     assert.equal(res.status, 302);
     assert.equal(pages.length, before + 1);
   });
+});
+
+// A page holding one frame, so the walk has somewhere to go. `$$` answers
+// with a handle whose contentFrame is the child, which is how frames are
+// found in document order; childFrames is what the browser itself reports,
+// and is how a frame inside a closed shadow root would be found.
+function stubPageWithFrame(url, tokens, childUrl, childTokens) {
+  const page = stubPage(url, tokens);
+  const child = stubPage(childUrl, childTokens).mainFrame();
+  const main = page.mainFrame();
+  main.$$ = async () => [{
+    contentFrame: async () => child,
+    dispose: async () => {},
+  }];
+  main.childFrames = async () => [child];
+  child.$$ = async () => [];
+  child.childFrames = async () => [];
+  return page;
+}
+
+test("a frame's contents are read into the page, where the frame sits", async () => {
+  // Until this, a frame was a line to follow. A bot check, an embedded
+  // player and a comment thread are all frames, and none are optional.
+  const tokens = [
+    { kind: 'text', text: 'above' },
+    { kind: 'frame', desc: { tag: 'iframe', path: '/iframe[0]', name: 'challenge' }, name: 'challenge' },
+    { kind: 'text', text: 'below' },
+  ];
+  const inside = [
+    { kind: 'field', desc: { tag: 'input', path: '/input[0]', name: 'cf' },
+      tag: 'input', type: 'checkbox', label: 'Verify you are human', checked: false },
+  ];
+  const pages = [stubPageWithFrame('https://example.com/one', tokens, 'https://challenge.example/', inside)];
+  const server = await startEdbServer({ driver: stubDriver(pages), port: 0, token: 'testtoken' });
+  const base = `http://127.0.0.1:${server.port}`;
+  try {
+    const res = await get(base, '/t/testtoken/1/');
+    assert.equal(res.status, 200);
+    assert.match(res.body, /Verify you are human/);
+    // In reading order: the frame's line, then what is inside it, then the
+    // rest of the page.
+    const frameLine = res.body.indexOf('[frame: challenge]');
+    const checkbox = res.body.indexOf('Verify you are human');
+    const below = res.body.indexOf('below');
+    assert.ok(frameLine > -1 && frameLine < checkbox, 'the frame line comes first');
+    assert.ok(checkbox < below, 'the frame reads before the rest of the page');
+    // The link to the frame on its own page survives, for the frames the
+    // walk does not reach.
+    assert.match(res.body, /<a href="f\d+">\[frame: challenge\]<\/a>/);
+
+    // And the checkbox is recorded as living in the frame, not in the page
+    // around it: submitting it is accepted rather than refused as an id
+    // whose path names nothing in the tab's own document.
+    const action = /<form action="(submit\/e\d+)" method="post">/.exec(res.body);
+    assert.ok(action, 'the frame field should have a form of its own');
+    const posted = await fetch(`${base}/t/testtoken/1/${action[1]}`, {
+      method: 'POST', redirect: 'manual',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'enter=Enter',
+    });
+    assert.equal(posted.status, 302, await posted.text());
+  } finally {
+    await server.close?.();
+  }
 });
 
 test('a tab that is not there says so, and offers a way on', async () => {

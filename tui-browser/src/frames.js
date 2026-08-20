@@ -260,4 +260,8 @@ async function walk(frame, source, depth, budget, seen, visited, driver) {
 module.exports = {
   snapshotFrameTree, isFrameItem, blocksForFrame, orderedChildFrames, everyChildFrame,
   readDocument, frameKey,
+  // The reader's own views and the edbrowse page descend the same tree, so
+  // they must not disagree about how far or how wide. These numbers were
+  // measured on real pages; a second set beside them would drift.
+  MAX_DEPTH, MAX_FRAMES, FRAME_BUDGET_MS,
 };
