@@ -195,7 +195,7 @@ async function openChromium({
     //
     // Answers null when there was nothing to pierce, so the caller can keep
     // whatever it already had.
-    async pierceAndRun(frame, pageFunction) {
+    async pierceAndRun(frame, pageFunction, extra = {}) {
       const pierced = await pierceClosedShadows(frame);
       if (!pierced) return null;
 
@@ -205,7 +205,8 @@ async function openChromium({
         const answer = await pierced.session.send('Runtime.callFunctionOn', {
           objectId: pierced.basket,
           returnByValue: true,
-          functionDeclaration: `function () { const run = ${pageFunction.toString()}; return run({ pairs: this }); }`,
+          functionDeclaration: `function () { const run = ${pageFunction.toString()};`
+            + ` return run(Object.assign({ pairs: this }, ${JSON.stringify(extra)})); }`,
         });
         return answer.result.value;
       } finally {

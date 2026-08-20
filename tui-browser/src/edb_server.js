@@ -36,6 +36,13 @@ const { log } = require('./log');
 
 const HOST = '127.0.0.1';
 const SETTLE_MS = 600;          // let a click's consequences begin before rendering
+// How long a real press is given before edbrowse is sent back to look. The
+// things a real press is used on are the things that take a moment to answer
+// — a bot check runs its checks and only then rewrites the page — and
+// edbrowse has no way to notice that on its own: it fetches once, renders,
+// and sits there. So the answer is held until there is something worth
+// fetching.
+const PRESS_SETTLE_MS = 2000;
 const NAVIGATION_WATCH_MS = 1500; // how long a click gets to turn into a navigation
 const ACTION_TIMEOUT_MS = 8000;
 
@@ -61,8 +68,13 @@ class Registry {
   // `kind` is how this id will be used from the other side — a control to
   // press, a field to fill, a form, a frame — because a form submission
   // arrives as names and values with nothing to say which was which.
-  idFor(desc, kind = 'control') {
-    const key = `${desc.tag}|${desc.path}|${desc.name}`;
+  // `within` is the id of the frame this element lives in, or null for the
+  // tab's own document. A descriptor is a path through *a* document, and the
+  // same path means different elements in different ones, so it is part of
+  // the key as well as part of the record: acting on an element means knowing
+  // which document to look in.
+  idFor(desc, kind = 'control', within = null) {
+    const key = `${within || ''}|${desc.tag}|${desc.path}|${desc.name}`;
     let id = this.byKey.get(key);
     if (id == null) {
       id = this.next;
@@ -71,7 +83,7 @@ class Registry {
     }
     // Keep the freshest ordinal: it is what picks between duplicates when
     // the path has stopped matching.
-    this.byId.set(id, { desc, kind });
+    this.byId.set(id, { desc, kind, within });
     return id;
   }
 
@@ -181,13 +193,29 @@ function openBar(action = '../open') {
 // become links (all activatable ones, named by whatever names them, so an
 // icon button is not an empty {} in the buffer) and how fields that sit
 // outside any form are handled — see below.
-function tokensToHtml(extracted, registry, base, tab) {
+function tokensToHtml(extracted, registry, base, tab, within = null) {
   const parts = [];
   let formDepth = 0;
   let formId = 0;
   let sawSubmit = false;
+  let pressableForm = false;
+  let lastSubmitId = 0;
+  let lastSubmitName = 'it';
 
-  const idOf = (desc, kind) => registry.idFor(desc, kind);
+  const idOf = (desc, kind) => registry.idFor(desc, kind, within);
+
+  // edbrowse can fill in a form and submit it, and that is the right way to
+  // work an ordinary page. It is no way to work these two.
+  //
+  // A control behind a closed shadow root cannot be ticked by setting a
+  // property on it: that is what applyFieldValues does, and a bot check —
+  // which is what a closed shadow root is usually hiding — ignores it,
+  // because it can see perfectly well that nobody pressed anything. And a
+  // form on a frame's own page is not a form on the page edbrowse is
+  // reading, so submitting it from there has nowhere to send the values.
+  //
+  // So those get a plain link as well. edbrowse can always follow a link.
+  const needsPressing = (token) => !!token.pierced || within != null;
 
   for (const token of extracted.tokens) {
     switch (token.kind) {
@@ -217,9 +245,17 @@ function tokensToHtml(extracted, registry, base, tab) {
         if (formDepth > 0 && !token.navigational) {
           parts.push(`<input type="submit" name="e${id}" value="${escapeHtml(token.name)}">`);
           sawSubmit = true;
+          lastSubmitId = id;
+          lastSubmitName = token.name;
           break;
         }
-        parts.push(`<a href="e${id}">${escapeHtml(token.name)}</a>`);
+        // Following a link normally runs the element's own default action,
+        // which is right for reading and useless for a challenge: it is not a
+        // person pressing anything, and the whole job of the thing behind a
+        // closed shadow root is to tell the difference. Where that is what we
+        // are looking at, the link presses it properly and waits for the page
+        // to answer before edbrowse is sent back to look.
+        parts.push(`<a href="e${id}${needsPressing(token) ? '/click' : ''}">${escapeHtml(token.name)}</a>`);
         break;
       }
 
@@ -230,6 +266,7 @@ function tokensToHtml(extracted, registry, base, tab) {
       }
 
       case 'form-open': {
+        pressableForm = needsPressing(token);
         const id = idOf(token.desc, 'form');
         parts.push(`<form action="submit/e${id}" method="post">`);
         formDepth += 1;
@@ -249,6 +286,14 @@ function tokensToHtml(extracted, registry, base, tab) {
             parts.push(`<input type="submit" name="e${formId}" value="Submit">`);
           }
           parts.push('</form>');
+          // Submitting from here would send the values to a document that is
+          // not the one the form is in. Pressing the form's own control is
+          // the thing that works, so offer it.
+          if (pressableForm && lastSubmitId) {
+            parts.push(`<p><a href="e${lastSubmitId}/click">press ${escapeHtml(lastSubmitName)}</a></p>`);
+          }
+          pressableForm = false;
+          lastSubmitId = 0;
           formDepth -= 1;
         }
         break;
@@ -257,6 +302,7 @@ function tokensToHtml(extracted, registry, base, tab) {
         const isButton = token.type === 'submit' || token.type === 'button'
           || token.type === 'image' || token.type === 'reset';
         const id = idOf(token.desc, isButton ? 'control' : 'field');
+        if (isButton) { lastSubmitId = id; lastSubmitName = token.value || token.label || 'it'; }
         const loose = formDepth === 0;
         if (!loose && isButton) sawSubmit = true;
         // A field with no form around it is the normal case on an
@@ -265,7 +311,7 @@ function tokensToHtml(extracted, registry, base, tab) {
         // its own, whose button means "type this in and press Enter" —
         // which is what a person does to a search box.
         if (loose) parts.push(`<form action="submit/e${id}" method="post">`);
-        parts.push(fieldHtml(token, id));
+        parts.push(fieldHtml(token, id, needsPressing(token)));
         if (loose) parts.push(`<input type="submit" name="enter" value="Enter"></form>`);
         break;
       }
@@ -287,7 +333,7 @@ function tokensToHtml(extracted, registry, base, tab) {
     + `<body>\n${openBar()}\n${header}\n${parts.join('\n')}\n</body></html>\n`;
 }
 
-function fieldHtml(token, id) {
+function fieldHtml(token, id, pressable = false) {
   const name = `e${id}`;
   const label = escapeHtml(token.label);
 
@@ -310,7 +356,11 @@ function fieldHtml(token, id) {
   }
   if (type === 'checkbox' || type === 'radio') {
     const checked = token.checked ? ' checked' : '';
-    return `${label}: <input type="${type}" name="${name}"${checked}>`;
+    const box = `${label}: <input type="${type}" name="${name}"${checked}>`;
+    // Following this presses the control the way a person would, and answers
+    // only once the page has had a moment to react — so what edbrowse fetches
+    // next is the page as the press left it.
+    return pressable ? `${box} <a href="${name}/click">press ${label || 'it'}</a>` : box;
   }
   if (type === 'hidden') return '';
   const kind = type === 'password' ? 'password' : 'text';
@@ -367,15 +417,21 @@ const SEARCH_URL = 'https://duckduckgo.com/html/?q=';
 // Acting on the page
 // ---------------------------------------------------------------------------
 
-async function handleFor(page, desc) {
-  const resolved = await page.evaluate(resolveDescriptor, desc);
+async function handleFor(page, desc, core = null) {
+  let resolved = await page.evaluate(resolveDescriptor, { desc });
+  // Not found by ordinary means may mean it is behind a closed shadow root,
+  // which is where the extractor found it in the first place. Being able to
+  // see something we cannot then act on is no use at all.
+  if (!resolved && core && typeof core.driver.pierceAndRun === 'function') {
+    resolved = await core.driver.pierceAndRun(page, resolveDescriptor, { desc }).catch(() => null);
+  }
   if (!resolved) return null;
   const handle = await page.evaluateHandle(() => window[Symbol.for('tweb.resolved')]);
   return { handle, how: resolved.how };
 }
 
 async function activate(page, desc, { real = false, core = null } = {}) {
-  const found = await handleFor(page, desc);
+  const found = await handleFor(page, desc, core);
   if (!found) return { ok: false, why: 'that element is no longer on the page' };
 
   // Resolving is ours — a descriptor we handed out in a form is not something
@@ -472,8 +528,8 @@ function settle(ms = SETTLE_MS) {
 // reader will see rather than the one they left. A click that navigates is
 // the slow case and the one worth waiting for; a click that only changes the
 // page in place gets the short wait and no more.
-async function settleAfter(page, before) {
-  const deadline = Date.now() + NAVIGATION_WATCH_MS;
+async function settleAfter(page, before, watchMs = NAVIGATION_WATCH_MS) {
+  const deadline = Date.now() + watchMs;
   while (Date.now() < deadline) {
     await settle(120);
     let now = before;
@@ -608,6 +664,32 @@ async function startEdbServer({
     return { extracted, ordered, hidden };
   }
 
+  // The frame a descriptor names. Frames the markup mentioned are matched by
+  // position — the Nth frame element belongs to the Nth child context, the
+  // same assumption the reader has always made — and ones it did not are
+  // named by where they sat in the browser's own list, which is the only
+  // order they have.
+  async function frameFor(page, desc) {
+    const { ordered, hidden } = await unmentionedFrames(page.mainFrame(), { tokens: [] });
+    if (String(desc.path).startsWith('hidden/')) {
+      return hidden[Number(String(desc.path).slice('hidden/'.length)) || 0] || null;
+    }
+    const index = Number(String(desc.path).split('/').pop()) || 0;
+    return ordered[Math.min(index, Math.max(ordered.length - 1, 0))] || null;
+  }
+
+  // The document an id lives in, and the address edbrowse should be sent back
+  // to once something has been done to it.
+  async function documentOf(page, registry, within) {
+    if (within == null) return page;
+    const record = registry.get(Number(within));
+    if (!record) return null;
+    return frameFor(page, record.desc);
+  }
+
+  const backTo = (number, within) =>
+    (within == null ? tabUrl(number) : `${tabUrl(number)}f${within}`);
+
   async function render(res, number, base) {
     const page = tabs.page(number);
     if (!page) return goneTab(res, number);
@@ -723,14 +805,17 @@ async function startEdbServer({
         entries.push({ path: record.desc.path, tag: record.desc.tag, value });
       }
 
+      const where = await documentOf(page, registry, target.within);
+      if (!where) return ours(res, 'gone', '<p>That frame is not there any more.</p>');
+
       const before = page.url();
       const applied = entries.length
-        ? await page.evaluate(applyFieldValues, entries)
+        ? await where.evaluate(applyFieldValues, entries)
         : { applied: 0, missed: [] };
 
       let how = 'nothing';
       if (pressed) {
-        const result = await activate(page, pressed.desc, { real: true, core });
+        const result = await activate(where, pressed.desc, { real: true, core });
         how = result.ok ? 'clicked' : 'refused';
         if (!result.ok) {
           return ours(res, 'cannot', `<p>${escapeHtml(result.why)}</p>`
@@ -743,8 +828,8 @@ async function startEdbServer({
         const field = target.kind === 'field' ? target.desc
           : (entries.length ? { ...entries[entries.length - 1], name: '' } : null);
         if (field) {
-          await page.evaluate(resolveDescriptor, field);
-          await page.evaluate(() => {
+          await where.evaluate(resolveDescriptor, { desc: field });
+          await where.evaluate(() => {
             const el = window[Symbol.for('tweb.resolved')];
             if (el && typeof el.focus === 'function') el.focus();
           });
@@ -753,11 +838,14 @@ async function startEdbServer({
         }
       }
 
-      const navigated = await settleAfter(page, before);
+      // A submit is where sites ask whether a person is present, so it gets
+      // the same wait a real press does.
+      const navigated = await settleAfter(page, before, PRESS_SETTLE_MS);
       log('edb.submit', {
-        tab: number, fields: entries.length, applied: applied.applied, how, navigated,
+        tab: number, fields: entries.length, applied: applied.applied,
+        within: target.within || null, how, navigated,
       });
-      return redirect(res, tabUrl(number));
+      return redirect(res, navigated ? tabUrl(number) : backTo(number, target.within));
     }
 
     // e<id> and e<id>/click
@@ -765,13 +853,28 @@ async function startEdbServer({
       const registry = tabs.registry(number);
       const record = registry.get(Number(what.slice(1)));
       if (!record) return ours(res, 'stale', '<p>That link is from an older version of this page. Type rf.</p>');
+
+      // An element in a frame is resolved in that frame. A path through one
+      // document means nothing in another, so acting on the tab's own page
+      // would either miss or, worse, hit whatever happens to sit at the same
+      // path there.
+      const where = await documentOf(page, registry, record.within);
+      if (!where) return ours(res, 'gone', '<p>That frame is not there any more.</p>');
+
       const real = rest[2] === 'click';
       const before = page.url();
-      const result = await activate(page, record.desc, { real, core });
-      if (!result.ok) return ours(res, 'cannot', `<p>${escapeHtml(result.why)}</p><p><a href="${tabUrl(number)}">back to the page</a></p>`);
-      const navigated = await settleAfter(page, before);
-      log('edb.activate', { tab: number, id: what, real, how: result.how, navigated });
-      return redirect(res, tabUrl(number));
+      const result = await activate(where, record.desc, { real, core });
+      if (!result.ok) return ours(res, 'cannot', `<p>${escapeHtml(result.why)}</p><p><a href="${backTo(number, record.within)}">back to the page</a></p>`);
+      // A real click is the one used on the things that take a moment to
+      // answer — a bot check above all — so it is given one before edbrowse
+      // is sent back to look.
+      const navigated = await settleAfter(page, before, real ? PRESS_SETTLE_MS : SETTLE_MS);
+      log('edb.activate', { tab: number, id: what, real, within: record.within || null, how: result.how, navigated });
+      // Back to where it was pressed, unless pressing it took the page
+      // somewhere — a bot check that clears takes its own frame with it, and
+      // sending the reader back to a frame that no longer exists would tell
+      // them it had failed when it had just worked.
+      return redirect(res, navigated ? tabUrl(number) : backTo(number, record.within));
     }
 
     // f<id>: a frame, rendered as its own page
@@ -779,23 +882,12 @@ async function startEdbServer({
       const registry = tabs.registry(number);
       const record = registry.get(Number(what.slice(1)));
       if (!record) return ours(res, 'stale', '<p>That frame is from an older version of this page. Type rf.</p>');
-      const desc = record.desc;
-      const { ordered, hidden } = await unmentionedFrames(page.mainFrame(), { tokens: [] });
-      let frame = null;
-      if (String(desc.path).startsWith('hidden/')) {
-        // One the markup never mentioned; it is named by where it sat in the
-        // browser's own list, which is the only order it has.
-        frame = hidden[Number(desc.path.slice('hidden/'.length)) || 0] || null;
-      } else {
-        // Frames the markup did mention are matched by position, the same
-        // assumption the reader has always made: the Nth frame element
-        // belongs to the Nth child context.
-        const index = Number(desc.path.split('/').pop()) || 0;
-        frame = ordered[Math.min(index, Math.max(ordered.length - 1, 0))] || null;
-      }
+      const frame = await frameFor(page, record.desc);
       if (!frame) return ours(res, 'gone', '<p>That frame is not there any more.</p>');
       const { extracted } = await readPage(frame);
-      return send(res, 200, tokensToHtml(extracted, registry, base, number));
+      // Everything on this page belongs to that frame, and its ids have to
+      // say so or acting on one would look in the wrong document.
+      return send(res, 200, tokensToHtml(extracted, registry, base, number, Number(what.slice(1))));
     }
 
     return send(res, 404, '<html><body><p>tweb: no such page</p></body></html>');

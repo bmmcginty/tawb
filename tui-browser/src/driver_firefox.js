@@ -670,7 +670,7 @@ async function openFirefox({
     // privileged half was installed at startup and left a function in the
     // page, so the extractor asks for the pairs itself, inside the same call
     // that uses them.
-    async pierceAndRun(frame, pageFunction) {
+    async pierceAndRun(frame, pageFunction, extra = {}) {
       const available = await frame.evaluate(
         () => {
           const pierce = window[Symbol.for('tweb.pierce')];
@@ -679,7 +679,7 @@ async function openFirefox({
       ).catch(() => 0);
       if (!available) return null;
       log('shadow.pierced', { roots: available, url: String(frame.url()).slice(0, 100) });
-      return frame.evaluate(pageFunction, { pierce: true });
+      return frame.evaluate(pageFunction, { pierce: true, ...extra });
     },
 
     async axItems(frame) {
