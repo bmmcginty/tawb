@@ -173,6 +173,17 @@ test('every page offers back, and back answers a redirect to the tab', async () 
   });
 });
 
+test('the address bar holds the address of the page being read', async () => {
+  // edbrowse's own fu names the loopback address this server answers on, so
+  // this field is the only place the reader can see where they are.
+  await withServer(SOME_TOKENS, async ({ base }) => {
+    const page = await get(base, '/t/testtoken/1/');
+    assert.match(page.body, /<input name="url" value="https:\/\/example\.com\/one">/);
+    const view = await get(base, '/t/testtoken/1/render');
+    assert.match(view.body, /<input name="url" value="https:\/\/example\.com\/one">/);
+  });
+});
+
 test('a tab that is not there says so, and offers a way on', async () => {
   await withServer(SOME_TOKENS, async ({ base }) => {
     const res = await get(base, '/t/testtoken/99/');
