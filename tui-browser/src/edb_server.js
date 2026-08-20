@@ -188,10 +188,19 @@ function escapeHtml(text) {
 // and a second button would turn the address field's `i*` into `i2*`, which
 // is exactly the counting the one-line design exists to avoid. As a link it
 // is one `g`.
-function openBar(action = '../open', { back = false } = {}) {
+//
+// The field holds the address of the page being read, the way a url bar
+// does. That is worth more than a blank field: it is the only place the
+// reader can see where they actually are -- edbrowse's own fu names the
+// loopback address this server answers on -- and an address that is already
+// there can be edited into a neighbouring one, which is most of what a url
+// bar is for. edbrowse's i= replaces the field, so typing a fresh address
+// costs nothing.
+function openBar(action = '../open', { back = false, value = '' } = {}) {
   const button = back ? ` <a href="back">Back</a>` : '';
   return `<p><form action="${action}" method="post">Open: `
-    + `<input name="url" value=""> <input type="submit" name="go" value="Go">`
+    + `<input name="url" value="${escapeHtml(value)}"> `
+    + `<input type="submit" name="go" value="Go">`
     + `</form>${button}</p>`;
 }
 
@@ -336,7 +345,8 @@ function tokensToHtml(extracted, registry, base, tab, within = null) {
     + ` <a href="ax">ax</a> <a href="render">text</a> <a href="source">source</a>`
     + ` <a href="../tabs">tabs</a></p>`;
   return `<html><head><title>${title}</title><base href="${escapeHtml(base)}"></head>\n`
-    + `<body>\n${openBar('../open', { back: true })}\n${header}\n${parts.join('\n')}\n</body></html>\n`;
+    + `<body>\n${openBar('../open', { back: true, value: extracted.url })}\n`
+    + `${header}\n${parts.join('\n')}\n</body></html>\n`;
 }
 
 function fieldHtml(token, id, pressable = false) {
@@ -377,11 +387,11 @@ function fieldHtml(token, id, pressable = false) {
 // lists, preformatted so edbrowse leaves them alone. This is how the AX tree
 // stays reachable from here, which matters because it is the view that is
 // right when a page's markup is wrong.
-function linesToHtml(title, base, heading, lines) {
+function linesToHtml(title, base, heading, lines, here = '') {
   const body = lines.map((line) => escapeHtml(line)).join('\n');
   return `<html><head><title>${escapeHtml(title)}</title>`
     + `<base href="${escapeHtml(base)}"></head>\n`
-    + `<body>\n${openBar('../open', { back: true })}\n`
+    + `<body>\n${openBar('../open', { back: true, value: here })}\n`
     + `<p><a href="./">the page</a> <a href="../tabs">tabs</a></p>\n`
     + `<h1>${escapeHtml(heading)}</h1>\n`
     + `<pre>\n${body}\n</pre>\n</body></html>\n`;
@@ -737,8 +747,10 @@ async function startEdbServer({
     const blocks = await snapshotFrameTree(page, view, { driver: core.driver });
     const heading = { ax: 'Accessibility tree', render: 'Visible text', source: 'Markup' }[view] || view;
     log('edb.view', { tab: number, view, blocks: blocks.length });
-    return send(res, 200,
-      linesToHtml(`${heading} — tab ${number}`, base, heading, blocks.map((b) => b.text)));
+    return send(res, 200, linesToHtml(
+      `${heading} — tab ${number}`, base, heading,
+      blocks.map((b) => b.text), page.url(),
+    ));
   }
 
   async function handle(req, res) {
