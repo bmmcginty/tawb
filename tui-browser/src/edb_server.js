@@ -182,7 +182,9 @@ function escapeHtml(text) {
 //     i*
 //
 // with no number to count out and no url to remember. `action` is relative to
-// the <base href> every page carries, which points at the tab.
+// the <base href> every page carries, which points at the tab, so a tab's
+// own bar sends the address into that tab. The pages tweb writes itself have
+// no tab to stay in and pass an absolute one.
 // `back` puts the tab's own back button beside Go. It is a link rather than
 // a second submit button on purpose: edbrowse numbers fields within a line,
 // and a second button would turn the address field's `i*` into `i2*`, which
@@ -345,7 +347,7 @@ function tokensToHtml(extracted, registry, base, tab, within = null) {
     + ` <a href="ax">ax</a> <a href="render">text</a> <a href="source">source</a>`
     + ` <a href="../tabs">tabs</a></p>`;
   return `<html><head><title>${title}</title><base href="${escapeHtml(base)}"></head>\n`
-    + `<body>\n${openBar('../open', { back: true, value: extracted.url })}\n`
+    + `<body>\n${openBar('open', { back: true, value: extracted.url })}\n`
     + `${header}\n${parts.join('\n')}\n</body></html>\n`;
 }
 
@@ -391,7 +393,7 @@ function linesToHtml(title, base, heading, lines, here = '') {
   const body = lines.map((line) => escapeHtml(line)).join('\n');
   return `<html><head><title>${escapeHtml(title)}</title>`
     + `<base href="${escapeHtml(base)}"></head>\n`
-    + `<body>\n${openBar('../open', { back: true, value: here })}\n`
+    + `<body>\n${openBar('open', { back: true, value: here })}\n`
     + `<p><a href="./">the page</a> <a href="../tabs">tabs</a></p>\n`
     + `<h1>${escapeHtml(heading)}</h1>\n`
     + `<pre>\n${body}\n</pre>\n</body></html>\n`;
@@ -642,7 +644,9 @@ async function startEdbServer({
   }
 
   const tabUrl = (number) => `/t/${secret}/${number}/`;
-  const openUrl = (target) => `/t/${secret}/open?url=${encodeURIComponent(target)}`;
+  const openUrl = (target, number = null) => (number == null
+    ? `/t/${secret}/open?url=${encodeURIComponent(target)}`
+    : `/t/${secret}/${number}/open?url=${encodeURIComponent(target)}`);
 
   // Pages of our own — the tab list, and everything tweb has to say when it
   // cannot do what was asked — carry the address bar too, because those are
@@ -729,6 +733,38 @@ async function startEdbServer({
   const backTo = (number, within) =>
     (within == null ? tabUrl(number) : `${tabUrl(number)}f${within}`);
 
+  // What the reader typed, turned into a page. `existing` is the tab they
+  // were reading; without one, a new tab. The answers are the same either
+  // way, and so is the redirect: back to a tab's own address, so the buffer
+  // never holds the request that got there.
+  async function openTyped(res, typed, existing = null) {
+    const target = normaliseTarget(typed);
+    if (target.error) {
+      return send(res, 400, `<html><body><p>tweb: ${escapeHtml(target.error)}</p></body></html>`);
+    }
+    if (target.search) {
+      return ours(res, 'not an address',
+        `<p>${escapeHtml(target.search)} is not a url — it has no host in it.</p>\n`
+        + `<p><a href="${openUrl(SEARCH_URL + encodeURIComponent(target.search), existing && existing.number)}">`
+        + `search the web for it</a> — <a href="/t/${secret}/tabs">the tabs</a></p>`);
+    }
+    const wanted = target.url;
+    const page = existing ? existing.page : await core.driver.newTab();
+    await page.goto(wanted, { waitUntil: 'domcontentloaded' });
+    await settle();
+    await syncUrl(page);
+    const number = existing ? existing.number : tabs.numberFor(page);
+    tabs.remember(number, wanted);
+    log('edb.open', { tab: number, url: wanted.slice(0, 120), reused: !!existing });
+    return redirect(res, tabUrl(number));
+  }
+
+  async function typedAddress(req, url) {
+    return req.method === 'POST'
+      ? new URLSearchParams(await readBody(req)).get('url')
+      : url.searchParams.get('url');
+  }
+
   async function render(res, number, base) {
     const page = tabs.page(number);
     if (!page) return goneTab(res, number);
@@ -779,28 +815,11 @@ async function startEdbServer({
     // open?url=… is how the entry-point plugin hands us a url: a new tab,
     // then a redirect to it, so the buffer ends up holding the tab's own
     // address rather than the command that opened it.
+    // No tab named, so a new one: the plugin's way in (b tweb://…) and the
+    // address bar on the pages tweb writes itself, where there is no tab to
+    // stay in.
     if (rest[0] === 'open') {
-      // Either from the plugin, which puts it in the query, or from the open
-      // field at the top of every page, which posts it.
-      const typed = req.method === 'POST'
-        ? new URLSearchParams(await readBody(req)).get('url')
-        : url.searchParams.get('url');
-      const target = normaliseTarget(typed);
-      if (target.error) return send(res, 400, `<html><body><p>tweb: ${escapeHtml(target.error)}</p></body></html>`);
-      if (target.search) {
-        return ours(res, 'not an address',
-          `<p>${escapeHtml(target.search)} is not a url — it has no host in it.</p>\n`
-          + `<p><a href="${openUrl(SEARCH_URL + encodeURIComponent(target.search))}">`
-          + `search the web for it</a> — <a href="/t/${secret}/tabs">the tabs</a></p>`);
-      }
-      const wanted = target.url;
-      const opened = await core.driver.newTab();
-      await opened.goto(wanted, { waitUntil: 'domcontentloaded' });
-      await settle();
-      const number = tabs.numberFor(opened);
-      tabs.remember(number, wanted);
-      log('edb.open', { tab: number, url: wanted.slice(0, 120) });
-      return redirect(res, tabUrl(number));
+      return openTyped(res, await typedAddress(req, url));
     }
 
     const number = Number(rest[0]);
@@ -813,6 +832,15 @@ async function startEdbServer({
     if (!what) return render(res, number, base);
     if (what === 'ax' || what === 'render' || what === 'source') {
       return renderView(res, number, what, base);
+    }
+
+    // The address bar on a tab's own page goes to that tab. Opening a new
+    // one for every address is what put back out of step with submit: the
+    // reader would fill a form, be answered in the tab they were reading,
+    // then type an address and be somewhere else entirely, with a back
+    // button pointing into a history they had not walked.
+    if (what === 'open') {
+      return openTyped(res, await typedAddress(req, url), { page, number });
     }
 
     // Back, for this tab. A back button at the start of a history does

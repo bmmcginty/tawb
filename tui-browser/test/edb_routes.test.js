@@ -184,6 +184,31 @@ test('the address bar holds the address of the page being read', async () => {
   });
 });
 
+test('an address typed on a page stays in that tab', async () => {
+  // Opening a new tab for every address is what put back out of step with
+  // submit: one acted where the reader was, the other did not.
+  await withServer(SOME_TOKENS, async ({ base, pages }) => {
+    const page = await get(base, '/t/testtoken/1/');
+    assert.match(page.body, /<form action="open" method="post">/);
+
+    const before = pages.length;
+    const res = await get(base, '/t/testtoken/1/open?url=example.org');
+    assert.equal(res.status, 302);
+    assert.match(String(res.headers.get('location')), /\/t\/testtoken\/1\/$/);
+    assert.equal(pages.length, before, 'it should not have opened another tab');
+  });
+});
+
+test('an address with no tab to stay in opens one', async () => {
+  // The plugin's way in, and the pages tweb writes itself.
+  await withServer(SOME_TOKENS, async ({ base, pages }) => {
+    const before = pages.length;
+    const res = await get(base, '/t/testtoken/open?url=example.org');
+    assert.equal(res.status, 302);
+    assert.equal(pages.length, before + 1);
+  });
+});
+
 test('a tab that is not there says so, and offers a way on', async () => {
   await withServer(SOME_TOKENS, async ({ base }) => {
     const res = await get(base, '/t/testtoken/99/');
