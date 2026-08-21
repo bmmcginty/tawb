@@ -232,6 +232,27 @@ test('ax view: a name is not given the unresolved text of a counter', async () =
   assert.ok(!text.includes('counter'), 'content that is not a literal string is left out');
 });
 
+// --- names reached through a reference --------------------------------------
+
+// aria-labelledby is read out of the referenced element whether or not it is
+// on screen, and the exception covers hiddenness that element's contents
+// inherit — but not hiddenness a descendant declared for itself.
+const LABELLEDBY_PAGE = `<!doctype html><meta charset="utf-8"><title>labelledby</title>
+<button aria-labelledby="whole">unused</button>
+<span id="whole" style="display:none">alpha <span>beta</span></span>
+<button aria-labelledby="part">unused</button>
+<span id="part">gamma <span style="display:none">delta</span></span>`;
+
+test('ax view: a hidden label is read through to its nested content', async () => {
+  assert.match(await readFixture(LABELLEDBY_PAGE, 'ax'), /\[\*alpha beta\]/);
+});
+
+test('ax view: a label does not pick up what it hid on purpose', async () => {
+  const text = await readFixture(LABELLEDBY_PAGE, 'ax');
+  assert.match(text, /\[\*gamma\]/);
+  assert.ok(!text.includes('delta'), 'a descendant hidden while its parent is shown was singled out');
+});
+
 // A modal dialog is its own page, because it inerts everything else in the
 // document it is opened in — which is the whole point of the case.
 const MODAL_PAGE = `<!doctype html><meta charset="utf-8"><title>modal</title>

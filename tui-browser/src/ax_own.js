@@ -311,7 +311,20 @@ function extractAxItems(options) {
     return quoted.map((q) => q.slice(1, -1).replace(/\\(.)/g, '$1')).join('');
   };
 
-  const nameFromContent = (el, depth) => {
+  // `includeHidden` is the one exception the specification makes. A name
+  // reached through aria-labelledby is read out of the referenced element
+  // whether or not that element is on screen — labelling a control from a
+  // display:none block of text is a deliberate and common technique.
+  //
+  // The exception is about hiddenness a node inherits, not hiddenness it
+  // declares. Everything inside a display:none span is hidden, and none of it
+  // chose to be, so all of it counts; a span that sets display:none on itself
+  // while its parent is on screen was singled out, and does not. Getting that
+  // distinction wrong in either direction loses half of these names: taking
+  // the hidden root at face value yields only its first text node, and
+  // ignoring hiddenness altogether reads out the parts the page took away.
+  const nameFromContent = (el, depth, includeHidden) => {
+    const inherited = includeHidden && hidden(el);
     // Built raw and cleaned once at the end, so the whitespace the source
     // actually had decides the spacing rather than a join character.
     let raw = pseudoText(el, '::before');
@@ -320,8 +333,8 @@ function extractAxItems(options) {
         raw += child.data || '';
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         if (SKIP.has(child.tagName.toLowerCase())) continue;
-        if (hidden(child)) continue;
-        const name = accessibleName(child, depth + 1, true);
+        if (!inherited && hidden(child)) continue;
+        const name = accessibleName(child, depth + 1, true, includeHidden);
         if (!name) continue;
         raw += blockLevel(child) ? ` ${name} ` : name;
       }
@@ -339,12 +352,12 @@ function extractAxItems(options) {
       if (!id) continue;
       let target = null;
       try { target = document.getElementById(id); } catch { target = null; }
-      if (target) parts.push(accessibleName(target, depth + 1, true));
+      if (target) parts.push(accessibleName(target, depth + 1, true, true));
     }
     return clean(parts.join(' '));
   };
 
-  function accessibleName(el, depth = 0, fromReference = false) {
+  function accessibleName(el, depth = 0, fromReference = false, includeHidden = false) {
     // Deep enough for real markup, shallow enough that a pathological page
     // cannot walk forever. The DOM traversal cannot cycle; only labelledby
     // can, and it shares the budget.
@@ -397,7 +410,7 @@ function extractAxItems(options) {
 
     const role = roleOf(el);
     if (NAME_FROM_CONTENT.has(role) || fromReference) {
-      const text = nameFromContent(el, depth);
+      const text = nameFromContent(el, depth, includeHidden);
       if (text) return text;
     }
 
