@@ -14,6 +14,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const { openDriver } = require('../../src/driver');
@@ -22,11 +24,18 @@ const { start: startTestPage } = require('../../tools/serve');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
 
+// A profile of this file's own, for two reasons. A browser is one instance
+// per profile directory, so test files that share one rejoin the same browser
+// and navigate each other's tab out from under themselves. And the default
+// profile is the reader's own: running this suite while tweb was open joined
+// that browser and sent the tab they were reading to the test page.
+const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-edb-'));
+
 let shared = null;
 async function browser() {
   if (shared) return shared;
   const pageServer = await startTestPage(0);
-  const driver = await openDriver({ engine: ENGINE, log: () => {} });
+  const driver = await openDriver({ engine: ENGINE, profile, log: () => {} });
   const page = driver.context.pages()[0] || await driver.context.newPage();
   await page.goto(pageServer.url, { waitUntil: 'domcontentloaded' });
   await new Promise((r) => setTimeout(r, 1500));
@@ -42,6 +51,7 @@ test.after(async () => {
   await Promise.resolve(shared.server.close?.()).catch(() => {});
   await shared.driver.close().catch(() => {});
   shared.pageServer.server.close();
+  fs.rmSync(profile, { recursive: true, force: true });
 });
 
 const get = async (url) => {
