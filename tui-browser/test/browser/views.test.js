@@ -117,6 +117,11 @@ const CONSTRUCTS = [
   ['a list that generates no box', 'read', '<ul style="display:contents"><li>M04</li></ul>'],
   ['bare text in a display:contents wrapper', 'read', '<div style="display:contents">M05</div>'],
   ['visibility:hidden', 'skip', '<div style="visibility:hidden"><p>M06</p></div>'],
+  // visibility is inherited but a descendant may set it back, and the browser
+  // then renders that descendant alone. A walk that stops at the ancestor
+  // never finds it.
+  ['a visible child of a visibility:hidden parent', 'read',
+    '<div style="visibility:hidden"><p style="visibility:visible">M07</p></div>'],
   ['content-visibility:hidden', 'skip', '<div style="content-visibility:hidden"><p>M08</p></div>'],
   // Content the browser has merely not got to yet is the off-screen text this
   // program exists to reach, so it is read rather than skipped.
@@ -164,6 +169,7 @@ const MARKERS = {
   'a list that generates no box': ['M04'],
   'bare text in a display:contents wrapper': ['M05'],
   'visibility:hidden': ['M06'],
+  'a visible child of a visibility:hidden parent': ['M07'],
   'content-visibility:hidden': ['M08'],
   'content-visibility:auto': ['M09'],
   'the hidden attribute': ['M10'],
