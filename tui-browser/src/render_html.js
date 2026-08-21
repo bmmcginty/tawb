@@ -144,7 +144,25 @@ function extractVisible() {
       return;
     }
     if (shown && (tag === 'video' || tag === 'audio')) {
-      emit({ kind: 'media', tag, text: el.currentSrc || el.getAttribute('src') || '(no source)', index: register(), block: true });
+      // See ax_own.js: where a player has got to is asked of the element,
+      // because the page stops saying. The source used to be here instead,
+      // and on the sites where a player is worth reading it is a blob: URL
+      // that names nothing.
+      const clock = (seconds) => {
+        if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return null;
+        const whole = Math.floor(seconds);
+        const pad = (n) => String(n).padStart(2, '0');
+        return Math.floor(whole / 3600)
+          ? `${Math.floor(whole / 3600)}:${pad(Math.floor(whole / 60) % 60)}:${pad(whole % 60)}`
+          : `${Math.floor(whole / 60) % 60}:${pad(whole % 60)}`;
+      };
+      const parts = [el.paused ? 'paused' : 'playing'];
+      const at = clock(el.currentTime);
+      const of = clock(el.duration);
+      if (at && of) parts.push(`${at} of ${of}`);
+      else if (at) parts.push(`${at}, live`);
+      if (el.muted || el.volume === 0) parts.push('muted');
+      emit({ kind: 'media', tag, text: parts.join(', '), index: register(), block: true });
       return;
     }
     if (shown && (tag === 'iframe' || tag === 'frame')) {

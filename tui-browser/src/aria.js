@@ -252,6 +252,9 @@ function renderLine(item) {
   if (BUTTON_ROLES.has(role)) return `[*${name}${expansion(item)}]`;
   if (FIELD_ROLES.has(role)) return `[${value ? name + ': ' + value : name}${expansion(item)}]`;
   if (role === 'img') return `(image) ${name}`;
+  // A player says where it has got to, which is the one thing about it that
+  // is not on the page in words.
+  if (role === 'video' || role === 'audio') return `(${role}) ${name}`;
   // A frame marks where embedded content begins; the frame's own lines are
   // spliced in after it, so it needs to survive even when unnamed.
   if (role === 'iframe') return name ? `<frame: ${name}>` : '<frame>';
