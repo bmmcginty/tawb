@@ -69,6 +69,11 @@ async function readFixture(html, view) {
     fixture.set(html);
     await fixture.page.goto(fixture.url, { waitUntil: 'domcontentloaded' });
     await new Promise((r) => setTimeout(r, 250));
+    // A fixture with something to wait for says so, rather than the harness
+    // guessing at a delay: media metadata arrives when it arrives.
+    await fixture.page.waitForFunction(
+      () => window.__ready === undefined || window.__ready === true, null, { timeout: 5000 },
+    ).catch(() => {});
     fixture.showing = html;
   }
   const blocks = await snapshotFrameTree(fixture.page, view, { driver });
@@ -270,6 +275,40 @@ const TWO_LABELS_PAGE = `<!doctype html><meta charset="utf-8"><title>labels</tit
 test('ax view: a field labelled twice is named by both labels', async () => {
   assert.match(await readFixture(TWO_LABELS_PAGE, 'ax'), /\[Date of birth \(day, month, year\)\]/);
 });
+
+// --- where a player has got to ---------------------------------------------
+
+// Asked of the element, because the page stops saying: YouTube freezes its
+// own clock at whatever it read when the controls last auto-hid, and they
+// hide after a few seconds without a mouse, which for a reader is always.
+//
+// The audio is built here rather than fetched — three seconds of silence as a
+// data URI — so the case needs no network and no fixture file.
+const MEDIA_PAGE = `<!doctype html><meta charset="utf-8"><title>media</title>
+<audio id="a" controls></audio>
+<script>
+  window.__ready = false;
+  const rate = 8000, seconds = 3, samples = rate * seconds;
+  const buf = new ArrayBuffer(44 + samples);
+  const view = new DataView(buf);
+  const str = (at, text) => { for (let i = 0; i < text.length; i += 1) view.setUint8(at + i, text.charCodeAt(i)); };
+  str(0, 'RIFF'); view.setUint32(4, 36 + samples, true); str(8, 'WAVE');
+  str(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true); view.setUint32(28, rate, true); view.setUint16(32, 1, true); view.setUint16(34, 8, true);
+  str(36, 'data'); view.setUint32(40, samples, true);
+  for (let i = 0; i < samples; i += 1) view.setUint8(44 + i, 128);
+  let binary = '';
+  for (const byte of new Uint8Array(buf)) binary += String.fromCharCode(byte);
+  const el = document.getElementById('a');
+  el.addEventListener('loadedmetadata', () => { el.currentTime = 1; window.__ready = true; }, { once: true });
+  el.src = 'data:audio/wav;base64,' + btoa(binary);
+</script>`;
+
+for (const view of VIEWS) {
+  test(`${view} view: a player reports where it has got to`, async () => {
+    assert.match(await readFixture(MEDIA_PAGE, view), /\(audio\) paused, 0:01 of 0:03/);
+  });
+}
 
 // A modal dialog is its own page, because it inerts everything else in the
 // document it is opened in — which is the whole point of the case.

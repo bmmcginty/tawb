@@ -125,6 +125,8 @@ function extractAxItems(options) {
     'switch', 'checkbox', 'radio', 'option']);
   const FIELDS = new Set(['textbox', 'searchbox', 'combobox', 'listbox', 'slider',
     'spinbutton']);
+  // A player is one line, and what it says is where it has got to.
+  const MEDIA = new Set(['video', 'audio']);
   // Containers that only style a run of text, so content flows through them.
   const INLINE = new Set(['generic', 'none', 'presentation', 'emphasis', 'strong',
     'code', 'subscript', 'superscript', 'insertion', 'deletion', 'time', 'term',
@@ -428,6 +430,38 @@ function extractAxItems(options) {
     return clean(el.getAttribute('title'));
   }
 
+  // Where a player has actually got to.
+  //
+  // Asked of the element rather than read off the page, because the page
+  // stops saying. YouTube leaves its own clock frozen at whatever it read
+  // when the controls last auto-hid — the text and the progress bar's
+  // aria-valuetext both — and the controls hide after a few seconds of no
+  // mouse movement, which for a reader is always. The element knows the
+  // answer the whole time, and it is the same answer the browser is acting
+  // on.
+  const clock = (seconds) => {
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return null;
+    const whole = Math.floor(seconds);
+    const pad = (n) => String(n).padStart(2, '0');
+    const s = whole % 60;
+    const m = Math.floor(whole / 60) % 60;
+    const h = Math.floor(whole / 3600);
+    return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+  };
+
+  const mediaState = (el) => {
+    const parts = [el.paused ? 'paused' : 'playing'];
+    const at = clock(el.currentTime);
+    const of = clock(el.duration);
+    // A live stream has no end to be part of the way towards, and reports its
+    // duration as Infinity to say so.
+    if (at && of) parts.push(`${at} of ${of}`);
+    else if (at) parts.push(`${at}, live`);
+    if (el.muted || el.volume === 0) parts.push('muted');
+    const named = accessibleName(el);
+    return (named ? `${named}, ` : '') + parts.join(', ');
+  };
+
   const valueOf = (el, role) => {
     if (!FIELDS.has(role)) return undefined;
     const tag = el.tagName.toLowerCase();
@@ -511,6 +545,11 @@ function extractAxItems(options) {
     // in after it by the frame walker.
     if (shown && role === 'iframe') {
       emit({ role: 'iframe', name: accessibleName(el), axIndex: register(el) });
+      return;
+    }
+
+    if (shown && MEDIA.has(role)) {
+      emit({ role, name: mediaState(el), axIndex: register(el) });
       return;
     }
 
