@@ -303,8 +303,15 @@ function extractAxItems(options) {
   // an image unresolved, and a reader given the characters `counter(step)` is
   // worse off than one given nothing.
   const pseudoText = (el, part) => {
-    let content = '';
-    try { content = window.getComputedStyle(el, part).content; } catch { return ''; }
+    let cs = null;
+    try { cs = window.getComputedStyle(el, part); } catch { return ''; }
+    if (!cs) return '';
+    // A generated box is asked the same question a real one is. Reserving the
+    // width of the bold version of a tab by drawing it again, hidden, behind
+    // itself is a common layout trick — GitHub's repository navigation is
+    // built out of it — and reading that back gives "InsightsInsights".
+    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') return '';
+    const content = cs.content;
     if (!content || content === 'none' || content === 'normal') return '';
     const quoted = content.match(/"(?:[^"\\]|\\.)*"/g);
     if (!quoted) return '';

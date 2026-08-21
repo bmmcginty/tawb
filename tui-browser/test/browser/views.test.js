@@ -216,7 +216,9 @@ const PSEUDO_PAGE = `<!doctype html><meta charset="utf-8"><title>pseudo</title>
 </style>
 <button id="b"></button>
 <a id="l" href="/x">Docs</a>
-<button id="c">Plain</button>`;
+<button id="c">Plain</button>
+<style>#w span::before { content: attr(data-content); display: block; height: 0; visibility: hidden; }</style>
+<a id="w" href="/w"><span data-content="Insights">Insights</span></a>`;
 
 test('ax view: a control whose only text comes from a stylesheet is still named', async () => {
   assert.match(await readFixture(PSEUDO_PAGE, 'ax'), /\[\*Save\]/);
@@ -230,6 +232,13 @@ test('ax view: a name is not given the unresolved text of a counter', async () =
   const text = await readFixture(PSEUDO_PAGE, 'ax');
   assert.match(text, /\[\*Plain\]/);
   assert.ok(!text.includes('counter'), 'content that is not a literal string is left out');
+});
+
+test('ax view: a name is not doubled by a hidden pseudo element reserving width', async () => {
+  const text = await readFixture(PSEUDO_PAGE, 'ax');
+  assert.match(text, /\{Insights\}/);
+  assert.ok(!text.includes('InsightsInsights'),
+    'drawing a bolder copy of a tab behind itself is layout, not content');
 });
 
 // --- names reached through a reference --------------------------------------
