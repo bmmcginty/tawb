@@ -191,19 +191,28 @@ function extractAxItems(options) {
     try { if (dialog.matches(':modal')) modal = dialog; } catch { /* older engine */ }
   }
 
-  const hidden = (el) => {
-    if (el.getAttribute('aria-hidden') === 'true') return true;
-    if (el.hasAttribute('hidden')) return true;
+  // Three answers, because two of them are not the same question. GONE takes
+  // the subtree with it. INVISIBLE is this element alone: `visibility` is
+  // inherited, but a descendant may set it back to `visible` and is then
+  // rendered while everything around it is not, so the walk has to go in and
+  // read only the parts that came back.
+  const GONE = 'gone';
+  const INVISIBLE = 'invisible';
+  const SHOWN = 'shown';
+
+  const visibilityOf = (el) => {
+    if (el.getAttribute('aria-hidden') === 'true') return GONE;
+    if (el.hasAttribute('hidden')) return GONE;
     // Inert content is still on screen and still has a box, so nothing about
     // its style says it is gone; the specification says to hide it from
     // assistive technology all the same, and a control the browser refuses to
     // activate is worse than absent when it is the reader's only clue.
-    if (el.hasAttribute('inert')) return true;
+    if (el.hasAttribute('inert')) return GONE;
     // Everything outside the modal is inert. Its own ancestors are not — the
     // walk has to reach it through them.
-    if (modal && !modal.contains(el) && !el.contains(modal)) return true;
+    if (modal && !modal.contains(el) && !el.contains(modal)) return GONE;
     const cs = window.getComputedStyle(el);
-    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') return true;
+    if (cs.display === 'none') return GONE;
     // display:contents is an element that generates no box of its own and
     // renders its children in its place. checkVisibility() answers for a box,
     // so it says false for every one of them — rendered or not. Asking it here
@@ -212,7 +221,7 @@ function extractAxItems(options) {
     // shown the header and the footer with nothing in between. Each child is
     // asked the question on its own account, so a pass-through box that is
     // genuinely inside something hidden still loses its contents.
-    if (cs.display === 'contents') return false;
+    if (cs.display === 'contents') return SHOWN;
     // Content the browser is not rendering, whatever the mechanism. Computed
     // style is not enough on its own: the contents of a closed <details> come
     // back display:block, visibility:visible, content-visibility:visible and
@@ -224,9 +233,16 @@ function extractAxItems(options) {
     // Default options on purpose: content-visibility:auto is content the
     // browser has merely not got to yet, and skipping that would drop
     // exactly the off-screen text this program exists to reach.
-    if (typeof el.checkVisibility === 'function' && !el.checkVisibility()) return true;
-    return false;
+    if (typeof el.checkVisibility === 'function' && !el.checkVisibility()) return GONE;
+    // Deliberately after checkVisibility, which is asked with visibility left
+    // out of it for exactly this reason.
+    if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return INVISIBLE;
+    return SHOWN;
   };
+
+  // For everything that only wants to know whether to look at an element at
+  // all — naming, chiefly, where an invisible node contributes nothing.
+  const hidden = (el) => visibilityOf(el) !== SHOWN;
 
   // Three answers, not two. "Collapsed" is a promise that pressing this
   // opens something; "no aria-expanded at all" is a plain control with
@@ -439,18 +455,25 @@ function extractAxItems(options) {
   const walkInner = (el) => {
     const tag = el.tagName.toLowerCase();
     if (SKIP.has(tag)) return;
-    if (hidden(el)) return;
+    const visibility = visibilityOf(el);
+    if (visibility === GONE) return;
 
     const role = roleOf(el);
 
+    // An invisible element contributes nothing of its own — not its name, not
+    // its text, not a line of its own — but the walk still goes through it, in
+    // case something inside asked to be visible again. Taking the container
+    // path below is what does both.
+    const shown = visibility === SHOWN;
+
     // A frame marks where embedded content begins; its own lines are spliced
     // in after it by the frame walker.
-    if (role === 'iframe') {
+    if (shown && role === 'iframe') {
       emit({ role: 'iframe', name: accessibleName(el), axIndex: register(el) });
       return;
     }
 
-    if (ATOMIC.has(role)) {
+    if (shown && ATOMIC.has(role)) {
       const name = accessibleName(el);
       if (name) {
         const item = { role, name, axIndex: register(el) };
@@ -472,7 +495,7 @@ function extractAxItems(options) {
       return; // the name already covers everything inside
     }
 
-    if (FIELDS.has(role)) {
+    if (shown && FIELDS.has(role)) {
       emit({
         role,
         name: accessibleName(el),
@@ -509,6 +532,7 @@ function extractAxItems(options) {
     const before = out.length;
     for (const child of kidsOf(el)) {
       if (child.nodeType === Node.TEXT_NODE) {
+        if (!shown) continue; // this element's own text is not on screen
         const text = clean(child.data);
         if (text) emit({ role: 'text', name: text });
       } else if (child.nodeType === Node.ELEMENT_NODE) {
@@ -519,7 +543,7 @@ function extractAxItems(options) {
     // Nothing inside produced anything, so the container's own name is the
     // only place its content exists — a table cell holding a bare string.
     const produced = out.slice(before).some((i) => i.role !== '__break__');
-    if (!produced) {
+    if (shown && !produced) {
       const name = accessibleName(el);
       if (name) emit({ role: 'text', name });
     }

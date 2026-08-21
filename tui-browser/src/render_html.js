@@ -31,22 +31,33 @@ function extractVisible() {
     try { if (dialog.matches(':modal')) modal = dialog; } catch { /* older engine */ }
   }
 
-  const isHidden = (el) => {
-    if (el.hasAttribute('inert')) return true;
-    if (modal && !modal.contains(el) && !el.contains(modal)) return true;
+  // See ax_own.js for all three answers. GONE takes the subtree with it;
+  // INVISIBLE is this element alone, because `visibility` is inherited and a
+  // descendant may set it back to `visible` and be rendered on its own.
+  const GONE = 'gone';
+  const INVISIBLE = 'invisible';
+  const SHOWN = 'shown';
+
+  const visibilityOf = (el) => {
+    if (el.hasAttribute('inert')) return GONE;
+    if (modal && !modal.contains(el) && !el.contains(modal)) return GONE;
+    if (el.hasAttribute('hidden')) return GONE;
+    if (el.getAttribute('aria-hidden') === 'true') return GONE;
     const cs = window.getComputedStyle(el);
-    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') return true;
+    if (cs.display === 'none') return GONE;
+    // This is the view of what is actually on screen, so unlike the
+    // accessibility tree it takes opacity at its word: text painted at zero
+    // opacity is not being shown to anybody.
+    if (cs.opacity === '0') return GONE;
     // See ax_own.js: a closed <details> hides its contents by a route no
     // computed property reports, and this is the question that catches it —
     // but it answers for a box, and a display:contents element has none, so
     // it calls every one of them invisible and takes the children it renders
     // down with it.
     if (cs.display !== 'contents'
-      && typeof el.checkVisibility === 'function' && !el.checkVisibility()) return true;
-    if (cs.opacity === '0') return true;
-    if (el.hasAttribute('hidden')) return true;
-    if (el.getAttribute('aria-hidden') === 'true') return true;
-    return false;
+      && typeof el.checkVisibility === 'function' && !el.checkVisibility()) return GONE;
+    if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return INVISIBLE;
+    return SHOWN;
   };
 
   const nodes = [];
@@ -85,7 +96,11 @@ function extractVisible() {
   const walk = (el, inheritedBlock) => {
     const tag = el.tagName.toLowerCase();
     if (SKIP.has(tag)) return;
-    if (isHidden(el)) return;
+    const visibility = visibilityOf(el);
+    if (visibility === GONE) return;
+    // Nothing of this element's own is on screen, but the walk still goes
+    // through it: a descendant may have asked to be visible again.
+    const shown = visibility === SHOWN;
 
     const register = () => {
       nodes.push(el);
@@ -104,35 +119,35 @@ function extractVisible() {
     // Bandcamp album page every play button was missing here while the
     // accessibility view listed all twelve. And role="button" makes a button
     // whatever tag it was built from, which is how most of them are built.
-    if (tag === 'button' || explicitRole === 'button'
-      || (tag === 'input' && ['button', 'submit', 'reset'].includes(el.type))) {
+    if (shown && (tag === 'button' || explicitRole === 'button'
+      || (tag === 'input' && ['button', 'submit', 'reset'].includes(el.type)))) {
       const text = own || el.value || label;
       if (text) emit({ kind: 'button', text, index: register(), block: true });
       return;
     }
-    if ((tag === 'a' && el.getAttribute('href') != null) || explicitRole === 'link') {
+    if (shown && ((tag === 'a' && el.getAttribute('href') != null) || explicitRole === 'link')) {
       const text = own || label;
       if (text) emit({ kind: 'link', text, index: register(), block: true });
       return;
     }
-    if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+    if (shown && (tag === 'input' || tag === 'textarea' || tag === 'select')) {
       emit({ kind: 'field', text: labelFor(el), value: el.value || '', index: register(), block: true });
       return;
     }
-    if (/^h[1-6]$/.test(tag)) {
+    if (shown && /^h[1-6]$/.test(tag)) {
       if (own) emit({ kind: 'heading', level: Number(tag[1]), text: own, index: register(), block: true });
       return;
     }
-    if (tag === 'img') {
+    if (shown && tag === 'img') {
       const alt = (el.getAttribute('alt') || '').trim();
       if (alt) emit({ kind: 'image', text: alt, index: register(), block: true });
       return;
     }
-    if (tag === 'video' || tag === 'audio') {
+    if (shown && (tag === 'video' || tag === 'audio')) {
       emit({ kind: 'media', tag, text: el.currentSrc || el.getAttribute('src') || '(no source)', index: register(), block: true });
       return;
     }
-    if (tag === 'iframe' || tag === 'frame') {
+    if (shown && (tag === 'iframe' || tag === 'frame')) {
       emit({ kind: 'frame', text: el.getAttribute('title') || el.getAttribute('src') || '', index: register(), block: true });
       return;
     }
@@ -150,6 +165,7 @@ function extractVisible() {
 
     for (const child of kidsOf(el)) {
       if (child.nodeType === Node.TEXT_NODE) {
+        if (!shown) continue; // this element's own text is not on screen
         const text = (child.textContent || '').replace(/\s+/g, ' ').trim();
         if (!text) continue;
         emit({
