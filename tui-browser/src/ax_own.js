@@ -379,12 +379,16 @@ function extractAxItems(options) {
     }
     if (tag === 'input' || tag === 'select' || tag === 'textarea') {
       if (el.id) {
-        let labelled = null;
-        try { labelled = document.querySelector(`label[for="${CSS.escape(el.id)}"]`); } catch { /* bad id */ }
-        if (labelled) {
-          const text = clean(labelled.innerText || labelled.textContent);
-          if (text) return text;
-        }
+        // Every label pointing here, not the first: a field labelled twice is
+        // named by both of them in document order, and taking one of the pair
+        // reads out half a question — "Date of birth" where the page said
+        // "Date of birth" and "(day, month, year)".
+        let labels = [];
+        try { labels = document.querySelectorAll(`label[for="${CSS.escape(el.id)}"]`); } catch { /* bad id */ }
+        const text = clean(Array.from(labels)
+          .map((one) => clean(one.innerText || one.textContent))
+          .filter(Boolean).join(' '));
+        if (text) return text;
       }
       const wrapping = el.closest('label');
       if (wrapping) {
