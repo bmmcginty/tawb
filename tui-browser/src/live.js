@@ -59,15 +59,24 @@ const TICK_MS = 250;
 const INPUT_GRACE_MS = 2500;
 
 const OBSERVER_SCRIPT = (force) => {
-  // An observer only ever watches the document it was attached to. A page
-  // that replaces its document in place — `document.open()`, or swapping
-  // documentElement, which is what a bot check does the moment it is
-  // satisfied — leaves the observer bound to a document nobody is looking at
-  // any more. The window survives, so a plain "already installed" check
-  // would refuse to re-arm and the page would go silent for good. Re-arm
-  // whenever the root we are watching is no longer the live one.
+  // The document, not documentElement.
+  //
+  // This runs at document-start when it runs from addInitScript, and at
+  // document-start there is no documentElement yet — the parser has not
+  // reached the <html> tag. Observing it threw, the script died on the spot,
+  // and the observer was never installed on any page at all. What kept live
+  // updates working was the once-a-second pulse noticing nothing was
+  // observing and arming it by hand, a second late, every single navigation:
+  // long enough to miss anything a page announces while it loads.
+  //
+  // Watching the document instead is what the rest of this was reaching for
+  // anyway. A page that replaces its document in place — `document.open()`,
+  // or swapping documentElement, which is what a bot check does the moment it
+  // is satisfied — used to leave the observer bound to a tree nobody was
+  // looking at any more. The document node outlives both, so one observation
+  // covers the page it had before and the page it has after.
   if (window[Symbol.for('tweb.observer')]) {
-    if (window[Symbol.for('tweb.observerRoot')] === document.documentElement) return;
+    if (window[Symbol.for('tweb.observerRoot')] === document) return;
     try { window[Symbol.for('tweb.observer')].disconnect(); } catch { /* already dead */ }
   }
 
@@ -150,18 +159,20 @@ const OBSERVER_SCRIPT = (force) => {
     return { from, to };
   };
 
+  // Only a live region has anything to announce, and the caller drops
+  // everything else on the floor — so the question is asked in that order.
+  // Reading innerText forces layout, and this runs once per mutation record:
+  // now that the observer is armed while the page is still being parsed, that
+  // is once per element the parser inserts, on a page that is at its busiest.
   const summarise = (node) => {
     const el = node.nodeType === 1 ? node : node.parentElement;
     if (!el) return null;
     const live = el.closest('[aria-live], [role="alert"], [role="status"], output');
-    let politeness = null;
-    if (live) {
-      politeness = live.getAttribute('aria-live')
-        || (live.getAttribute('role') === 'alert' ? 'assertive' : 'polite');
-      if (politeness === 'off') politeness = null;
-    }
-    const source = live || el;
-    const text = (source.innerText || source.textContent || '')
+    if (!live) return null;
+    let politeness = live.getAttribute('aria-live')
+      || (live.getAttribute('role') === 'alert' ? 'assertive' : 'polite');
+    if (politeness === 'off') return null;
+    const text = (live.innerText || live.textContent || '')
       .replace(/\s+/g, ' ').trim().slice(0, 240);
     return { politeness, text };
   };
@@ -186,7 +197,7 @@ const OBSERVER_SCRIPT = (force) => {
     if (!notifyTimer) notifyTimer = setTimeout(flush, NOTIFY_INTERVAL_MS);
   });
 
-  observer.observe(document.documentElement, {
+  observer.observe(document, {
     subtree: true,
     childList: true,
     characterData: true,
@@ -198,7 +209,7 @@ const OBSERVER_SCRIPT = (force) => {
   });
 
   window[Symbol.for('tweb.observer')] = observer;
-  window[Symbol.for('tweb.observerRoot')] = document.documentElement;
+  window[Symbol.for('tweb.observerRoot')] = document;
 };
 
 // Asked once a second, so it has to be cheap: is the observer still watching
@@ -206,7 +217,7 @@ const OBSERVER_SCRIPT = (force) => {
 // element count, the title and the URL are enough to notice a document being
 // swapped out from under us — and cost a fraction of what a snapshot does.
 const PULSE_SCRIPT = () => ({
-  observing: !!(window[Symbol.for('tweb.observer')] && window[Symbol.for('tweb.observerRoot')] === document.documentElement),
+  observing: !!(window[Symbol.for('tweb.observer')] && window[Symbol.for('tweb.observerRoot')] === document),
   href: location.href,
   print: [
     document.getElementsByTagName('*').length,
