@@ -253,6 +253,15 @@ test('ax view: a label does not pick up what it hid on purpose', async () => {
   assert.ok(!text.includes('delta'), 'a descendant hidden while its parent is shown was singled out');
 });
 
+const TWO_LABELS_PAGE = `<!doctype html><meta charset="utf-8"><title>labels</title>
+<label for="dob">Date of birth</label>
+<label for="dob">(day, month, year)</label>
+<input id="dob">`;
+
+test('ax view: a field labelled twice is named by both labels', async () => {
+  assert.match(await readFixture(TWO_LABELS_PAGE, 'ax'), /\[Date of birth \(day, month, year\)\]/);
+});
+
 // A modal dialog is its own page, because it inerts everything else in the
 // document it is opened in — which is the whole point of the case.
 const MODAL_PAGE = `<!doctype html><meta charset="utf-8"><title>modal</title>
