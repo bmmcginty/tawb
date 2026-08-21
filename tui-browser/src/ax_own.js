@@ -183,6 +183,17 @@ function extractAxItems(options) {
   const hidden = (el) => {
     if (el.getAttribute('aria-hidden') === 'true') return true;
     if (el.hasAttribute('hidden')) return true;
+    const cs = window.getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') return true;
+    // display:contents is an element that generates no box of its own and
+    // renders its children in its place. checkVisibility() answers for a box,
+    // so it says false for every one of them — rendered or not. Asking it here
+    // deleted whole pages: GitHub's issue list wraps the sidebar and the
+    // issues themselves in one display:contents section, and the reader was
+    // shown the header and the footer with nothing in between. Each child is
+    // asked the question on its own account, so a pass-through box that is
+    // genuinely inside something hidden still loses its contents.
+    if (cs.display === 'contents') return false;
     // Content the browser is not rendering, whatever the mechanism. Computed
     // style is not enough on its own: the contents of a closed <details> come
     // back display:block, visibility:visible, content-visibility:visible and
@@ -195,8 +206,7 @@ function extractAxItems(options) {
     // browser has merely not got to yet, and skipping that would drop
     // exactly the off-screen text this program exists to reach.
     if (typeof el.checkVisibility === 'function' && !el.checkVisibility()) return true;
-    const cs = window.getComputedStyle(el);
-    return cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse';
+    return false;
   };
 
   // Three answers, not two. "Collapsed" is a promise that pressing this

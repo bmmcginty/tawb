@@ -25,11 +25,15 @@ function extractVisible() {
   const out = [];
 
   const isHidden = (el) => {
-    // See ax_own.js: a closed <details> hides its contents by a route no
-    // computed property reports, and this is the question that catches it.
-    if (typeof el.checkVisibility === 'function' && !el.checkVisibility()) return true;
     const cs = window.getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') return true;
+    // See ax_own.js: a closed <details> hides its contents by a route no
+    // computed property reports, and this is the question that catches it —
+    // but it answers for a box, and a display:contents element has none, so
+    // it calls every one of them invisible and takes the children it renders
+    // down with it.
+    if (cs.display !== 'contents'
+      && typeof el.checkVisibility === 'function' && !el.checkVisibility()) return true;
     if (cs.opacity === '0') return true;
     if (el.hasAttribute('hidden')) return true;
     if (el.getAttribute('aria-hidden') === 'true') return true;
