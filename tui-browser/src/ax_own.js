@@ -180,9 +180,28 @@ function extractAxItems(options) {
     return Array.from(node.childNodes);
   };
 
+  // A modal dialog puts itself in the top layer and makes the whole of the
+  // rest of the document inert — unfocusable, unclickable, and hidden from
+  // assistive technology. There is no attribute anywhere to say so, which is
+  // why it has to be asked of the document once and carried into the walk:
+  // without it the reader is handed the entire page behind a cookie banner or
+  // a login box, every control on it dead.
+  let modal = null;
+  for (const dialog of document.querySelectorAll('dialog[open]')) {
+    try { if (dialog.matches(':modal')) modal = dialog; } catch { /* older engine */ }
+  }
+
   const hidden = (el) => {
     if (el.getAttribute('aria-hidden') === 'true') return true;
     if (el.hasAttribute('hidden')) return true;
+    // Inert content is still on screen and still has a box, so nothing about
+    // its style says it is gone; the specification says to hide it from
+    // assistive technology all the same, and a control the browser refuses to
+    // activate is worse than absent when it is the reader's only clue.
+    if (el.hasAttribute('inert')) return true;
+    // Everything outside the modal is inert. Its own ancestors are not — the
+    // walk has to reach it through them.
+    if (modal && !modal.contains(el) && !el.contains(modal)) return true;
     const cs = window.getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') return true;
     // display:contents is an element that generates no box of its own and
