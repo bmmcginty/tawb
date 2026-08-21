@@ -24,7 +24,16 @@ function extractVisible() {
 
   const out = [];
 
+  // See ax_own.js: a modal dialog makes the rest of the document inert, and
+  // nothing in the markup or the style of those elements says so.
+  let modal = null;
+  for (const dialog of document.querySelectorAll('dialog[open]')) {
+    try { if (dialog.matches(':modal')) modal = dialog; } catch { /* older engine */ }
+  }
+
   const isHidden = (el) => {
+    if (el.hasAttribute('inert')) return true;
+    if (modal && !modal.contains(el) && !el.contains(modal)) return true;
     const cs = window.getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') return true;
     // See ax_own.js: a closed <details> hides its contents by a route no
