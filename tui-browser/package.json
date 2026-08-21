@@ -12,7 +12,8 @@
     "testpage": "node tools/serve.js",
     "dump": "node tools/dump.js",
     "probe": "node tools/probe.js",
-    "test:browser": "node --test test/browser/*.test.js"
+    "test:browser": "node --test test/browser/*.test.js",
+    "wpt": "node tools/wpt.js"
   },
   "keywords": [],
   "type": "commonjs",
