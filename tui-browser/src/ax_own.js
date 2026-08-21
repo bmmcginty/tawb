@@ -294,10 +294,27 @@ function extractAxItems(options) {
       || display === 'list-item' || display.startsWith('table');
   };
 
+  // Text a stylesheet put on the page. It is content as far as a reader is
+  // concerned — plenty of buttons are an icon and a ::before, and a link that
+  // says "(opens in a new window)" very often says it from a stylesheet — but
+  // it is in no node, so a walk over the DOM alone never sees a word of it.
+  //
+  // Only literal strings are taken. `content` reports a counter, an attr() or
+  // an image unresolved, and a reader given the characters `counter(step)` is
+  // worse off than one given nothing.
+  const pseudoText = (el, part) => {
+    let content = '';
+    try { content = window.getComputedStyle(el, part).content; } catch { return ''; }
+    if (!content || content === 'none' || content === 'normal') return '';
+    const quoted = content.match(/"(?:[^"\\]|\\.)*"/g);
+    if (!quoted) return '';
+    return quoted.map((q) => q.slice(1, -1).replace(/\\(.)/g, '$1')).join('');
+  };
+
   const nameFromContent = (el, depth) => {
     // Built raw and cleaned once at the end, so the whitespace the source
     // actually had decides the spacing rather than a join character.
-    let raw = '';
+    let raw = pseudoText(el, '::before');
     for (const child of kidsOf(el)) {
       if (child.nodeType === Node.TEXT_NODE) {
         raw += child.data || '';
@@ -309,7 +326,7 @@ function extractAxItems(options) {
         raw += blockLevel(child) ? ` ${name} ` : name;
       }
     }
-    return clean(raw);
+    return clean(raw + pseudoText(el, '::after'));
   };
 
   const contentText = (el) => clean(el.innerText || el.textContent || '');
