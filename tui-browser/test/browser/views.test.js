@@ -203,6 +203,35 @@ for (const view of VIEWS) {
   }
 }
 
+// --- names a stylesheet wrote ----------------------------------------------
+
+// Generated content is in no node, so a walk over the DOM alone never sees a
+// word of it — and a button whose only text is a ::before disappears outright
+// rather than merely losing its name.
+const PSEUDO_PAGE = `<!doctype html><meta charset="utf-8"><title>pseudo</title>
+<style>
+  #b::before { content: "Save"; }
+  #l::after { content: " (opens in a new window)"; }
+  #c::before { content: counter(nope); }
+</style>
+<button id="b"></button>
+<a id="l" href="/x">Docs</a>
+<button id="c">Plain</button>`;
+
+test('ax view: a control whose only text comes from a stylesheet is still named', async () => {
+  assert.match(await readFixture(PSEUDO_PAGE, 'ax'), /\[\*Save\]/);
+});
+
+test('ax view: generated content after a name is part of the name', async () => {
+  assert.match(await readFixture(PSEUDO_PAGE, 'ax'), /\{Docs \(opens in a new window\)\}/);
+});
+
+test('ax view: a name is not given the unresolved text of a counter', async () => {
+  const text = await readFixture(PSEUDO_PAGE, 'ax');
+  assert.match(text, /\[\*Plain\]/);
+  assert.ok(!text.includes('counter'), 'content that is not a literal string is left out');
+});
+
 // A modal dialog is its own page, because it inerts everything else in the
 // document it is opened in — which is the whole point of the case.
 const MODAL_PAGE = `<!doctype html><meta charset="utf-8"><title>modal</title>
