@@ -129,6 +129,25 @@ page talks to the network.</p>
 </section>
 
 <section>
+  <h2>10. A wrapper that generates no box</h2>
+  <p>A <code>display: contents</code> element renders its children in its own
+  place and produces no box of its own, so <code>checkVisibility()</code>
+  answers false for it whether or not anything inside is on screen. Reading
+  that as "hidden" loses the whole subtree: GitHub wraps an entire issue list
+  this way. The paragraph below must be read, and the one inside the closed
+  disclosure beside it must not.</p>
+  <div id="passthrough" style="display: contents">
+    <p>Read through a wrapper that generates no box.</p>
+  </div>
+  <details id="contents-disclosure">
+    <summary>Shipping notes</summary>
+    <div style="display: contents">
+      <p>Hidden behind a closed disclosure, through a wrapper with no box.</p>
+    </div>
+  </details>
+</section>
+
+<section>
   <h2>What the page received</h2>
   <div id="log">nothing yet</div>
 </section>
