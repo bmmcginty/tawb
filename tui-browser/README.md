@@ -411,7 +411,7 @@ npm start -- --keyboard
 
 The wizard uses a temporary terminal screen, so leaving it restores exactly
 what was underneath rather than dropping into an empty window. It lists every
-browse-mode action and its bindings. Move with the
+browse-mode and editing action with its bindings. Move with the
 arrow or page keys, press `Enter` to replace an action's binding, or `Alt+A`
 to add another. The next complete keystroke is recorded. `Esc` cancels a
 capture, and `Backspace` during replacement leaves the action unbound. A new
@@ -519,7 +519,8 @@ Text fields, the address bar and the find prompt accept the usual readline
 editing keys: `Ctrl+A`/`Ctrl+E` for the ends, `Ctrl+B`/`Ctrl+F` by character,
 `Alt+B`/`Alt+F` by word, `Ctrl+H` or Backspace and `Ctrl+D` or Delete,
 `Ctrl+W`/`Alt+D` to delete a word, and `Ctrl+U`/`Ctrl+K` to delete to the start
-or end. Arrow, Home and End keys continue to work as well.
+or end. Arrow, Home and End keys continue to work as well. All of these
+bindings appear in the keyboard wizard and can be replaced or extended there.
 
 Embedded frames are rendered inline, where they sit in the parent page —
 neither the accessibility tree nor a DOM walk descends into them on its own,
