@@ -882,6 +882,11 @@ async function historyEntryIdentity(page) {
     .catch(() => `url:${page.url()}`);
 }
 
+async function rememberCurrentHistoryPlace(state, page) {
+  const identity = await historyEntryIdentity(page);
+  return rememberHistoryPlace(state, page, identity);
+}
+
 async function traversePageHistory(page, direction, watchMs = 1500) {
   const beforeUrl = page.url();
   const beforeEntry = await page.evaluate(() =>
@@ -922,8 +927,7 @@ async function moveInHistory(state, page, direction) {
   }
   state.core.live.refreshing = true;
   try {
-    const beforeIdentity = await historyEntryIdentity(page);
-    rememberHistoryPlace(state, page, beforeIdentity);
+    await rememberCurrentHistoryPlace(state, page);
     const moved = await traversePageHistory(page, direction);
     if (!moved) {
       setStatus(state, `No page to go ${verb} to.`);
@@ -1444,7 +1448,7 @@ async function activateCurrent(state, page) {
 
   const previousTexts = state.core.blocks.map((b) => b.text);
   const previousUrl = page.url();
-  rememberHistoryPlace(state, page);
+  await rememberCurrentHistoryPlace(state, page);
   const anchor = anchorFor(state);
   const screen = screenBefore(state);
   const fragment = LINK_ROLES.has(item.role) ? await state.core.fragmentOf(item, page) : null;
@@ -1604,7 +1608,7 @@ async function clickAsHuman(state, page) {
 
   const previousTexts = state.core.blocks.map((b) => b.text);
   const previousUrl = page.url();
-  rememberHistoryPlace(state, page);
+  await rememberCurrentHistoryPlace(state, page);
   const anchor = anchorFor(state);
   const screen = screenBefore(state);
   const started = Date.now();
@@ -1794,7 +1798,7 @@ async function handleTypeKey(chunk, state, page) {
 
   if (chunk === '\r' || chunk === '\n') {
     const previousUrl = page.url();
-    rememberHistoryPlace(state, page);
+    await rememberCurrentHistoryPlace(state, page);
     const screen = screenBefore(state);
     const anchor = anchorFor(state);
     await page.keyboard.press('Enter');
@@ -1890,7 +1894,7 @@ async function handleAddressKey(chunk, state, page) {
     drawHint(state);
     if (!target) { drawAddress(state, page, { force: true }); parkCursor(state); return; }
     const url = /^[a-zA-Z][\w+.-]*:/.test(target) ? target : `https://${target}`;
-    rememberHistoryPlace(state, page);
+    await rememberCurrentHistoryPlace(state, page);
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded' });
       await refresh(state, page, { resetCursor: true });
@@ -2161,7 +2165,8 @@ module.exports = {
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
   screenBefore, repaintList, visibleRowsNow,
   applyTextPatches, loadMore, atEnd,
-  historyEntryIdentity, rememberHistoryPlace, restoreHistoryPlace, traversePageHistory, moveInHistory,
+  historyEntryIdentity, rememberHistoryPlace, rememberCurrentHistoryPlace,
+  restoreHistoryPlace, traversePageHistory, moveInHistory,
   switchToTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation,
