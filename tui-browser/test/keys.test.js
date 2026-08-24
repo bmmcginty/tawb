@@ -2,8 +2,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { PassThrough } = require('node:stream');
 
 const { Keymap, readTerminfo } = require('../src/keys');
+const { runKeyWizard, wizardRows } = require('../src/key_wizard');
 
 test('terminfo key sequences are added to the portable fallbacks', () => {
   const calls = [];
@@ -16,9 +21,63 @@ test('terminfo key sequences are added to the portable fallbacks', () => {
         : { status: 1, stdout: Buffer.alloc(0) };
     },
   });
-  const keys = new Keymap({ terminfo });
+  const keys = new Keymap({ terminfo, load: false });
   assert.ok(calls.includes('knp'));
   assert.equal(keys.actionFor('\x1b[999~'), 'next-screen');
   assert.equal(keys.actionFor('\x1b[6~'), 'next-screen');
-  assert.equal(keys.sequenceNames.get('\x1b[999~'), 'PageDown');
+  assert.equal(keys.nameForSequence('\x1b[999~'), 'PageDown');
+});
+
+test('replacing and adding bindings resolves conflicts', () => {
+  const keys = new Keymap({ terminfo: {}, load: false });
+  const replaced = keys.assign('next-screen', 'x');
+  assert.equal(replaced.binding, 'x');
+  assert.equal(keys.actionFor('x'), 'next-screen');
+  assert.equal(keys.actionFor('\x1b[6~'), null);
+
+  const displaced = keys.assign('next-line', 'x', { add: true });
+  assert.equal(displaced.displaced.id, 'next-screen');
+  assert.equal(keys.actionFor('x'), 'next-line');
+  assert.deepEqual(keys.byId.get('next-screen').bindings, []);
+});
+
+test('bindings are saved atomically and loaded over defaults', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-keys-'));
+  const file = path.join(directory, 'keys.json');
+  const keys = new Keymap({ terminfo: {}, file, load: false });
+  keys.assign('location-bar', '\x1bz');
+  keys.unbind('quit');
+  keys.save();
+
+  const loaded = new Keymap({ terminfo: {}, file });
+  assert.equal(loaded.actionFor('\x1bz'), 'location-bar');
+  assert.equal(loaded.actionFor('\x0c'), null);
+  assert.equal(loaded.actionFor('q'), null);
+  assert.equal(loaded.actionFor('j'), 'next-line', 'unspecified future/default actions still load');
+  assert.deepEqual(fs.readdirSync(directory), ['keys.json']);
+});
+
+test('the wizard exits only through its final row and ignores other save answers', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-wizard-'));
+  const file = path.join(directory, 'keys.json');
+  const keymap = new Keymap({ terminfo: {}, file, load: false });
+  const rows = wizardRows(keymap);
+  assert.equal(rows.at(-1).type, 'exit');
+
+  const input = new PassThrough();
+  const output = new PassThrough();
+  output.rows = 12;
+  output.columns = 80;
+  const queued = [
+    ...Array.from({ length: rows.length - 1 }, () => '\x1b[B'),
+    '\r', 'x', 'Y',
+  ];
+  class FakeReader {
+    next() { return Promise.resolve(queued.shift()); }
+    close() {}
+  }
+
+  await runKeyWizard({ input, output, keymap, KeyReaderClass: FakeReader });
+  assert.ok(fs.existsSync(file));
+  assert.equal(queued.length, 0, 'the unrelated answer was consumed and ignored');
 });

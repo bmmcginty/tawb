@@ -392,6 +392,26 @@ xterm-compatible sequences as fallbacks. `$TERM` therefore needs to describe
 the terminal accurately; a missing `tput` or terminfo entry does not prevent
 tweb from starting.
 
+Bindings can be changed without starting a browser:
+
+```
+npm start -- --keyboard
+```
+
+The wizard lists every browse-mode action and its bindings. Move with the
+arrow or page keys, press `Enter` to replace an action's binding, or `Alt+A`
+to add another. The next complete keystroke is recorded. `Esc` cancels a
+capture, and `Backspace` during replacement leaves the action unbound. A new
+binding is removed from any other browse action that used it, so one key never
+silently performs two actions.
+
+Choose `Exit keyboard wizard` at the bottom to leave. The wizard then accepts
+only `y` or `n` at its save prompt and ignores every other key. Saved bindings
+are written atomically to `$XDG_CONFIG_HOME/tui-browser/keys.json`, or
+`~/.config/tui-browser/keys.json` when `XDG_CONFIG_HOME` is unset. Standard
+keys such as `PageDown` are stored by name and resolved through terminfo on
+each machine; an unusual sequence recorded by the wizard is retained exactly.
+
 ### Moving
 
 | Key            | Action                                                       |

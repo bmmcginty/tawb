@@ -1,5 +1,8 @@
 'use strict';
 
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const KEY_DEFINITIONS = {
@@ -61,6 +64,11 @@ const ACTIONS = [
   ['close-popup', 'Close open popup', ['Escape']],
 ].map(([id, label, defaults]) => ({ id, label, defaults }));
 
+function configPath(env = process.env, home = os.homedir()) {
+  const base = env.XDG_CONFIG_HOME || path.join(home, '.config');
+  return path.join(base, 'tui-browser', 'keys.json');
+}
+
 function readTerminfo({ env = process.env, run = spawnSync } = {}) {
   const found = {};
   if (!env.TERM) return found;
@@ -81,14 +89,20 @@ function ctrlSequence(letter) {
   return code >= 64 && code <= 95 ? String.fromCharCode(code - 64) : null;
 }
 
+function rawSpec(sequence) {
+  return `raw:${Buffer.from(sequence, 'utf8').toString('base64')}`;
+}
+
 class Keymap {
-  constructor({ terminfo = readTerminfo() } = {}) {
+  constructor({ terminfo = readTerminfo(), file = configPath(), load = true } = {}) {
+    this.file = file;
     this.terminfo = terminfo;
     this.actions = ACTIONS.map((action) => ({ ...action, bindings: [...action.defaults] }));
     this.byId = new Map(this.actions.map((action) => [action.id, action]));
     this.namedSequences = new Map();
     this.sequenceNames = new Map();
     this.buildNames();
+    if (load) this.load();
     this.rebuild();
   }
 
@@ -117,6 +131,37 @@ class Keymap {
     return [...spec].length === 1 ? [spec] : [];
   }
 
+  nameForSequence(sequence) {
+    if (this.sequenceNames.has(sequence)) return this.sequenceNames.get(sequence);
+    if (sequence.length === 1) {
+      const code = sequence.charCodeAt(0);
+      if (code >= 1 && code <= 26) return `Ctrl+${String.fromCharCode(64 + code)}`;
+      if (code === 0) return 'Ctrl+@';
+      if (code >= 32) return sequence;
+    }
+    if (sequence.startsWith('\x1b') && [...sequence.slice(1)].length === 1) {
+      const character = sequence.slice(1);
+      if (/^[A-Z]$/.test(character)) return `Alt+Shift+${character}`;
+      return `Alt+${character.toUpperCase()}`;
+    }
+    return rawSpec(sequence);
+  }
+
+  display(spec) {
+    return spec.startsWith('raw:') ? `sequence ${JSON.stringify(this.sequencesFor(spec)[0] || '')}` : spec;
+  }
+
+  load() {
+    let parsed;
+    try { parsed = JSON.parse(fs.readFileSync(this.file, 'utf8')); } catch { return; }
+    if (!parsed || typeof parsed.actions !== 'object') return;
+    for (const [id, bindings] of Object.entries(parsed.actions)) {
+      const action = this.byId.get(id);
+      if (!action || !Array.isArray(bindings) || !bindings.every((item) => typeof item === 'string')) continue;
+      action.bindings = [...new Set(bindings.filter((item) => this.sequencesFor(item).length))];
+    }
+  }
+
   rebuild() {
     this.sequenceActions = new Map();
     for (const action of this.actions) {
@@ -128,6 +173,48 @@ class Keymap {
 
   actionFor(sequence) { return this.sequenceActions.get(sequence) || null; }
   isKey(sequence, name) { return this.sequencesFor(name).includes(sequence); }
+
+  assign(id, sequence, { add = false } = {}) {
+    const action = this.byId.get(id);
+    if (!action) return null;
+    const binding = this.nameForSequence(sequence);
+    const sequences = new Set(this.sequencesFor(binding));
+    let displaced = null;
+    for (const other of this.actions) {
+      if (other === action) continue;
+      const kept = other.bindings.filter((item) =>
+        !this.sequencesFor(item).some((candidate) => sequences.has(candidate)));
+      if (kept.length !== other.bindings.length) displaced = other;
+      other.bindings = kept;
+    }
+    action.bindings = add
+      ? [...new Set([...action.bindings, binding])]
+      : [binding];
+    this.rebuild();
+    return { binding, displaced };
+  }
+
+  unbind(id) {
+    const action = this.byId.get(id);
+    if (!action) return;
+    action.bindings = [];
+    this.rebuild();
+  }
+
+  reset() {
+    for (const action of this.actions) action.bindings = [...action.defaults];
+    this.rebuild();
+  }
+
+  save() {
+    fs.mkdirSync(path.dirname(this.file), { recursive: true });
+    const contents = `${JSON.stringify({ version: 1, actions: Object.fromEntries(
+      this.actions.map((action) => [action.id, action.bindings]),
+    ) }, null, 2)}\n`;
+    const temporary = `${this.file}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, contents, { mode: 0o600 });
+    fs.renameSync(temporary, this.file);
+  }
 }
 
-module.exports = { ACTIONS, KEY_DEFINITIONS, Keymap, readTerminfo };
+module.exports = { ACTIONS, KEY_DEFINITIONS, Keymap, configPath, readTerminfo, rawSpec };

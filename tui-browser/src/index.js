@@ -17,6 +17,7 @@ const { claimedTargets, releaseTab } = require('./session');
 const { capturePlace, restorePlace } = require('./place');
 const { Keymap } = require('./keys');
 const { KeyReader } = require('./input');
+const { runKeyWizard } = require('./key_wizard');
 
 // --connect <port|host:port|url> attaches to a browser that is already
 // running with --remote-debugging-port, rather than launching one.
@@ -24,6 +25,7 @@ const { KeyReader } = require('./input');
 function parseArgs(argv) {
   const options = {
     url: null, connect: null, profile: null, engine: DEFAULT_ENGINE, keepBrowser: false,
+    keyboard: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -32,6 +34,7 @@ function parseArgs(argv) {
     else if (arg === '--profile') { options.profile = argv[i + 1] || null; i += 1; }
     else if (arg.startsWith('--profile=')) { options.profile = arg.slice('--profile='.length); }
     else if (arg === '--keep-browser') { options.keepBrowser = true; }
+    else if (arg === '--keyboard') { options.keyboard = true; }
     else if (arg === '--browser') { options.engine = argv[i + 1] || DEFAULT_ENGINE; i += 1; }
     else if (arg.startsWith('--browser=')) { options.engine = arg.slice('--browser='.length); }
     else if (!arg.startsWith('-') && !options.url) { options.url = arg; }
@@ -1786,6 +1789,11 @@ async function handleAddressKey(chunk, state, page) {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  if (ARGS.keyboard) {
+    await runKeyWizard();
+    return;
+  }
+
   const keys = new Keymap();
   log('start', {
     url: START_URL, logPath: LOG_PATH, connect: ARGS.connect || null, engine: ARGS.engine,
