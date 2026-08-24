@@ -515,6 +515,12 @@ A line longer than the terminal wraps, and each wrapped row is navigable in
 its own right — so several rows in a row of plain prose are wrapping, while
 a lone short word between full ones is not.
 
+Text fields, the address bar and the find prompt accept the usual readline
+editing keys: `Ctrl+A`/`Ctrl+E` for the ends, `Ctrl+B`/`Ctrl+F` by character,
+`Alt+B`/`Alt+F` by word, `Ctrl+H` or Backspace and `Ctrl+D` or Delete,
+`Ctrl+W`/`Alt+D` to delete a word, and `Ctrl+U`/`Ctrl+K` to delete to the start
+or end. Arrow, Home and End keys continue to work as well.
+
 Embedded frames are rendered inline, where they sit in the parent page —
 neither the accessibility tree nor a DOM walk descends into them on its own,
 so an embedded video or comment thread would otherwise simply be missing.

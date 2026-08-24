@@ -18,6 +18,7 @@ const { capturePlace, restorePlace } = require('./place');
 const { Keymap } = require('./keys');
 const { KeyReader } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
+const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
 
 // --connect <port|host:port|url> attaches to a browser that is already
 // running with --remote-debugging-port, rather than launching one.
@@ -1816,10 +1817,10 @@ async function handleTypeKey(chunk, state, page) {
     return;
   }
 
-  if (keyIs(chunk, 'Backspace', state)) {
-    await page.keyboard.press('Backspace');
-    t.caret = Math.max(t.caret - 1, 0);
-  } else if (chunk.startsWith(ESC)) {
+  const editing = editAction(chunk, state.keys || FALLBACK_KEYMAP);
+  if (editing) {
+    await sendFieldEdit(page.keyboard, editing);
+  } else if (chunk.startsWith(ESC) || chunk < ' ') {
     return;
   } else {
     await page.keyboard.type(chunk);
@@ -1861,16 +1862,9 @@ async function handleFindKey(chunk, state, page) {
     return runSearch(state, page, needle, find.direction);
   }
 
-  if (keyIs(chunk, 'ArrowLeft', state)) find.caret = Math.max(0, find.caret - 1);
-  else if (keyIs(chunk, 'ArrowRight', state)) find.caret = Math.min(find.text.length, find.caret + 1);
-  else if (keyIs(chunk, 'Home', state)) find.caret = 0;
-  else if (keyIs(chunk, 'End', state)) find.caret = find.text.length;
-  else if (keyIs(chunk, 'Backspace', state)) {
-    if (find.caret > 0) {
-      find.text = find.text.slice(0, find.caret - 1) + find.text.slice(find.caret);
-      find.caret -= 1;
-    }
-  } else if (!chunk.startsWith(ESC)) {
+  const editing = editAction(chunk, state.keys || FALLBACK_KEYMAP);
+  if (editing) applyBufferEdit(find, editing);
+  else if (!chunk.startsWith(ESC) && chunk >= ' ') {
     find.text = find.text.slice(0, find.caret) + chunk + find.text.slice(find.caret);
     find.caret += chunk.length;
   }
@@ -1909,19 +1903,12 @@ async function handleAddressKey(chunk, state, page) {
     return;
   }
 
-  if (keyIs(chunk, 'ArrowLeft', state)) a.caret = Math.max(0, a.caret - 1);
-  else if (keyIs(chunk, 'ArrowRight', state)) a.caret = Math.min(a.text.length, a.caret + 1);
-  else if (keyIs(chunk, 'Home', state)) a.caret = 0;
-  else if (keyIs(chunk, 'End', state)) a.caret = a.text.length;
-  else if (keyIs(chunk, 'Backspace', state)) {
-    if (a.caret > 0) {
-      a.text = a.text.slice(0, a.caret - 1) + a.text.slice(a.caret);
-      a.caret -= 1;
-    }
-  } else if (keyIs(chunk, 'Ctrl+L', state)) {
+  const editing = editAction(chunk, state.keys || FALLBACK_KEYMAP);
+  if (editing) applyBufferEdit(a, editing);
+  else if (keyIs(chunk, 'Ctrl+L', state)) {
     a.text = '';
     a.caret = 0;
-  } else if (!chunk.startsWith(ESC)) {
+  } else if (!chunk.startsWith(ESC) && chunk >= ' ') {
     a.text = a.text.slice(0, a.caret) + chunk + a.text.slice(a.caret);
     a.caret += chunk.length;
   }
