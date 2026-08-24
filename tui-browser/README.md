@@ -143,7 +143,8 @@ CDP. Firefox's privileged shadow-root helper describes the same controls,
 since page script is forbidden from reading those roots directly. Only
 controls with a visible box are included. If the browser lays out two visible
 versions, both are retained rather than guessing which one a sighted user
-meant; pressing a native button acts on the browser's own control.
+meant. Native buttons and menu choices — including individual playback speeds
+— remain controls, so Enter or `m` acts on the browser's own item.
 
 ### Startup, and why it looks worse than it is
 

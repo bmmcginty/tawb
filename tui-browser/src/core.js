@@ -1200,6 +1200,13 @@ class Core {
   // user activation. Refuses rather than guesses when the element cannot be
   // brought somewhere a mouse could reach it.
   async realClick(item, page = this.page) {
+    if (item.nativeControl && typeof this.driver.activateNativeControl === 'function') {
+      const pressed = await this.driver.activateNativeControl(item.frame || page, item);
+      return {
+        ok: !!pressed,
+        reason: pressed ? null : `the browser's ${item.name} control is no longer visible`,
+      };
+    }
     const handle = await withTimeout(
       this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating element');
     return this.realClickHandle(handle, page, item.frame || page);

@@ -332,6 +332,30 @@ test('ax view: the native play control operates the player', async () => {
   await fixture.page.evaluate(() => document.querySelector('audio').pause());
 });
 
+if (ENGINE === 'chromium') {
+  test('ax view: playback-speed menu items remain clickable controls', async () => {
+    await readFixture(MEDIA_PAGE, 'ax');
+    const { driver } = await browser();
+    const core = new Core({ driver, page: fixture.page, source: 'ax', sources: ['ax'] });
+    const blocks = async () => snapshotFrameTree(fixture.page, 'ax', { driver });
+    const named = async (name) => (await blocks()).find(
+      (block) => block.item && block.item.name.toLowerCase() === name);
+
+    const more = await named('show more media controls');
+    assert.ok(more, 'the overflow button is visible');
+    await core.activate(more.item, fixture.page);
+    const speed = await named('show playback speed menu');
+    assert.ok(speed, 'the speed submenu is visible');
+    await core.activate(speed.item, fixture.page);
+
+    const rate = await named('1.5');
+    assert.ok(rate, 'the speed is an interactive line, not plain text');
+    assert.ok(['menuitemcheckbox', 'menuitemradio'].includes(rate.item.role));
+    assert.equal((await core.realClick(rate.item, fixture.page)).ok, true);
+    assert.equal(await fixture.page.evaluate(() => document.querySelector('audio').playbackRate), 1.5);
+  });
+}
+
 // A modal dialog is its own page, because it inerts everything else in the
 // document it is opened in — which is the whole point of the case.
 const MODAL_PAGE = `<!doctype html><meta charset="utf-8"><title>modal</title>
