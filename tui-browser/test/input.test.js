@@ -17,6 +17,7 @@ test('the input reader separates combined keys and joins split sequences', async
   assert.equal(await reader.next(), 'z');
   assert.equal(await reader.next(), '\x1b[6^', 'older CSI final bytes are complete keys too');
   reader.close();
+  assert.equal(stream.isPaused(), true, 'closing releases the input stream');
 });
 
 test('the input reader distinguishes Escape from Alt keys', async () => {

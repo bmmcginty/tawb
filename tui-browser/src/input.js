@@ -85,6 +85,10 @@ class KeyReader {
   close() {
     if (this.escapeTimer) clearTimeout(this.escapeTimer);
     this.stream.off('data', this.onData);
+    // The reader resumed stdin when it took ownership. Leaving it flowing
+    // after the standalone keyboard wizard has removed its listener keeps
+    // Node's event loop alive with nothing left that can consume input.
+    this.stream.pause();
   }
 }
 
