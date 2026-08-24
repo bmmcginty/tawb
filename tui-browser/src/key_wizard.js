@@ -45,30 +45,63 @@ async function runKeyWizard({
   let status = 'Enter replaces a binding; Alt+A adds one.';
   let capturing = null;
   let done = false;
+  const drawn = { heading: null, hint: null, status: null, list: [] };
 
-  const render = () => {
+  const render = ({ clear = false } = {}) => {
     const rows = wizardRows(keymap);
     const height = Math.max(1, size(output).rows - 4);
     if (selected < scroll) scroll = selected;
     if (selected >= scroll + height) scroll = selected - height + 1;
     scroll = Math.max(0, Math.min(scroll, Math.max(0, rows.length - height)));
 
-    output.write('\x1b[2J');
-    line(output, 1, 'Keyboard bindings');
-    line(output, 2, capturing
+    if (clear) {
+      output.write('\x1b[2J');
+      drawn.heading = null;
+      drawn.hint = null;
+      drawn.status = null;
+      drawn.list = [];
+    }
+
+    const heading = 'Keyboard bindings';
+    if (drawn.heading !== heading) {
+      line(output, 1, heading);
+      drawn.heading = heading;
+    }
+
+    const hint = capturing
       ? `${capturing === 'add' ? 'Adding to' : 'Replacing'} ${rows[selected].action.label}: press one key; Esc cancels.`
-      : 'Up/Down: move  Enter: replace  Alt+A: add');
+      : 'Up/Down: move  Enter: replace  Alt+A: add';
+    if (drawn.hint !== hint) {
+      line(output, 2, hint);
+      drawn.hint = hint;
+    }
+
     for (let i = 0; i < height; i += 1) {
       const index = scroll + i;
-      line(output, 3 + i, index < rows.length ? rowText(rows[index], keymap) : '');
+      const text = index < rows.length ? rowText(rows[index], keymap) : '';
+      if (drawn.list[i] === text) continue;
+      line(output, 3 + i, text);
+      drawn.list[i] = text;
     }
-    line(output, size(output).rows, status);
+    // A resize can shorten the list area. Forget rows which no longer have a
+    // physical list row, so growing it again does not mistake stale text for
+    // something still on screen.
+    drawn.list.length = height;
+
+    if (drawn.status !== status) {
+      line(output, size(output).rows, status);
+      drawn.status = status;
+    }
+
+    // The terminal cursor is the selection marker. This must be the final
+    // write even when nothing else changed, so a screen reader and braille
+    // display follow Up and Down without any row being repainted.
     move(output, 3 + selected - scroll, 1);
   };
 
-  const onResize = () => render();
+  const onResize = () => render({ clear: true });
   output.on('resize', onResize);
-  render();
+  render({ clear: true });
 
   try {
     while (!done) {

@@ -68,16 +68,34 @@ test('the wizard exits only through its final row and ignores other save answers
   const output = new PassThrough();
   output.rows = 12;
   output.columns = 80;
+  const writes = [];
+  const write = output.write.bind(output);
+  output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
   const queued = [
+    '\x1b[B', '\x1b[A',
     ...Array.from({ length: rows.length - 1 }, () => '\x1b[B'),
     '\r', 'x', 'Y',
   ];
+  let checkpoint = 0;
+  let calls = 0;
+  let afterDown = [];
+  let afterUp = [];
   class FakeReader {
-    next() { return Promise.resolve(queued.shift()); }
+    next() {
+      if (calls === 0) checkpoint = writes.length;
+      if (calls === 1) { afterDown = writes.slice(checkpoint); checkpoint = writes.length; }
+      if (calls === 2) afterUp = writes.slice(checkpoint);
+      calls += 1;
+      return Promise.resolve(queued.shift());
+    }
     close() {}
   }
 
   await runKeyWizard({ input, output, keymap, KeyReaderClass: FakeReader });
   assert.ok(fs.existsSync(file));
   assert.equal(queued.length, 0, 'the unrelated answer was consumed and ignored');
+  assert.equal(writes.filter((chunk) => chunk === '\x1b[2J').length, 1,
+    'only the initial screen is cleared');
+  assert.equal(afterDown.join('').includes('\x1b[2K'), false, 'Down only moves the cursor');
+  assert.equal(afterUp.join('').includes('\x1b[2K'), false, 'Up only moves the cursor');
 });
