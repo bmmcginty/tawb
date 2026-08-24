@@ -15,6 +15,7 @@ const { normaliseEndpoint } = require('./browser');
 const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
 const { claimedTargets, releaseTab } = require('./session');
 const { capturePlace, restorePlace } = require('./place');
+const { KeyReader } = require('./input');
 
 // --connect <port|host:port|url> attaches to a browser that is already
 // running with --remote-debugging-port, rather than launching one.
@@ -114,11 +115,6 @@ function setupRawInput() {
   stdin.setEncoding('utf8');
 }
 
-function readKey() {
-  return new Promise((resolve) => {
-    process.stdin.once('data', (chunk) => resolve(chunk));
-  });
-}
 
 // ANSI cursor positioning is 1-indexed. This is the whole point of the
 // exercise: a terminal screen reader / braille display follows the actual
@@ -1889,6 +1885,7 @@ async function main() {
   relayout(state);
 
   setupRawInput();
+  const keyReader = new KeyReader(process.stdin);
   process.stdout.write('\x1b[2J');
   render(state, page, { force: true });
 
@@ -1922,7 +1919,7 @@ async function main() {
 
   let running = true;
   while (running) {
-    const chunk = await readKey();
+    const chunk = await keyReader.next();
     markInput(state);
 
     const t0 = Date.now();
@@ -1950,6 +1947,7 @@ async function main() {
   }
 
   clearInterval(counterTimer);
+  keyReader.close();
   flushCounters({ refreshes: state.core.live.refreshes });
   log('exit', {});
   releaseTab(browserPort);
