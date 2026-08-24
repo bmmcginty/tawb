@@ -457,7 +457,7 @@ each machine; an unusual sequence recorded by the wizard is retained exactly.
 | `Ctrl+G` | Find the same text again                                        |
 | `m`      | Send a real click — trusted, carries user activation             |
 | `Ctrl+L` | Address bar (scrolls sideways for long URLs; `Esc` cancels)      |
-| `Alt+←` / `Alt+→` | Back / forward in this tab's page history              |
+| `Alt+-` / `Alt++` | Back / forward in this tab's page history              |
 | `Alt+?`  | Open the keyboard binding wizard                               |
 | `\`      | Cycle view: AX → PAGE → HTML → SOURCE                            |
 | `>` / `<`| Next / previous tab                                              |

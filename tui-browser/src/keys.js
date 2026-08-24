@@ -25,8 +25,8 @@ const KEY_DEFINITIONS = {
 const ACTIONS = [
   ['quit', 'Quit', ['Ctrl+C', 'q']],
   ['location-bar', 'Location bar', ['Ctrl+L']],
-  ['history-back', 'Back in page history', ['Alt+ArrowLeft']],
-  ['history-forward', 'Forward in page history', ['Alt+ArrowRight']],
+  ['history-back', 'Back in page history', ['Alt+-']],
+  ['history-forward', 'Forward in page history', ['Alt++']],
   ['activate', 'Activate', ['Enter']],
   ['next-line', 'Next line', ['ArrowDown', 'j']],
   ['previous-line', 'Previous line', ['ArrowUp', 'k']],
