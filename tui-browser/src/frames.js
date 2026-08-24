@@ -61,21 +61,24 @@ async function blocksForFrame(frame, source, driver = null) {
 }
 
 // Read a document with a page-side extractor, and read it again with the
-// closed shadow roots supplied if the first answer suggests there was
+// privileged shadow roots supplied if the first answer suggests there was
 // something the page could not show us.
 //
 // The second attempt is not free — a piercing scan of the node tree measured
 // 4ms on a Turnstile widget frame but 146ms on a Wikipedia article and 329ms
 // on Reddit, neither of which contains a single closed shadow root — so it is
-// made only when the first answer came back empty. A document that renders
-// and says nothing is the signature of exactly this and of very little else.
+// normally made only when the first answer came back empty. A caller can name
+// another narrow reason through `needsPiercing`; native media controls use it
+// because their host already produced a line before its user-agent root is
+// read.
 //
 // `isEmpty` is the caller's, because what "nothing" means depends on what was
 // being read: no accessibility items, no tokens, no lines.
-async function readDocument(frame, pageFunction, driver, isEmpty) {
+async function readDocument(frame, pageFunction, driver, isEmpty, needsPiercing = null) {
   const first = await frame.evaluate(pageFunction);
-  if (!isEmpty(first)) return first;
-  if (!driver || typeof driver.pierceAndRun !== 'function') return first;
+  let needed = isEmpty(first);
+  if (!needed && needsPiercing) needed = await needsPiercing(frame).catch(() => false);
+  if (!needed || !driver || typeof driver.pierceAndRun !== 'function') return first;
   const second = await driver.pierceAndRun(frame, pageFunction).catch(() => null);
   return second || first;
 }

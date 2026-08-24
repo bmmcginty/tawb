@@ -91,7 +91,7 @@ async function openChromium({
   // page's own elements — and are handed to the extractor as the receiver of
   // a single call. A mark on a page's objects is exactly what must not be
   // there in the one document where being noticed decides everything.
-  const pierceClosedShadows = async (frame) => {
+  const pierceShadowRoots = async (frame) => {
     const session = await sessionFor(frame);
     if (!session) return 0;
     // A session of the frame's own answers for that document and nothing
@@ -116,7 +116,12 @@ async function openChromium({
     const collect = (node, docUrl) => {
       const here = node.nodeName === '#document' ? (node.documentURL || docUrl) : docUrl;
       for (const shadow of node.shadowRoots || []) {
-        if (shadow.shadowRootType === 'closed' && (ownSession || here === wanted)) {
+        // Native audio/video controls live in user-agent shadow roots. They
+        // are as real and visible as a page's closed-root controls; page
+        // JavaScript simply has no route into them. CDP's pierced document
+        // lists both kinds and lets the extractor walk them identically.
+        if (['closed', 'user-agent'].includes(shadow.shadowRootType)
+          && (ownSession || here === wanted)) {
           pairs.push({ host: node.nodeId, root: shadow.nodeId });
         }
         collect(shadow, here);
@@ -196,7 +201,7 @@ async function openChromium({
     // Answers null when there was nothing to pierce, so the caller can keep
     // whatever it already had.
     async pierceAndRun(frame, pageFunction, extra = {}) {
-      const pierced = await pierceClosedShadows(frame);
+      const pierced = await pierceShadowRoots(frame);
       if (!pierced) return null;
 
       // Called with the pairs as the receiver, so they are an argument to one
@@ -216,7 +221,10 @@ async function openChromium({
 
     async axItems(frame) {
       if (!ownAx) return parseAriaSnapshot(await frame.locator('body').ariaSnapshot());
-      return readDocument(frame, extractAxItems, this, (items) => !items || !items.length);
+      return readDocument(
+        frame, extractAxItems, this, (items) => !items || !items.length,
+        (scope) => scope.evaluate(() => !!document.querySelector('video[controls],audio[controls]')),
+      );
     },
 
     // Every tab the browser has, across all its windows. Order is creation
