@@ -17,6 +17,14 @@ function line(output, row, text) {
   output.write(`\x1b[2K${text.slice(0, size(output).cols)}`);
 }
 
+// What this list can be told to do. Any other action — refresh, next tab,
+// find — has no meaning against a list of bindings.
+const WIZARD_ACTIONS = new Set([
+  'next-line', 'previous-line', 'next-screen', 'previous-screen',
+  'top', 'bottom', 'line-start', 'line-end', 'where', 'activate',
+  'quit', 'close-popup',
+]);
+
 function wizardRows(keymap) {
   return [
     ...keymap.actions.map((action) => ({ type: 'action', action })),
@@ -129,6 +137,23 @@ async function runKeyWizard({
     move(output, 3 + selected - scroll, 1);
   };
 
+  // The wizard is the one screen where the bindings themselves are half
+  // edited, so it must stay usable while they are. A key whose action means
+  // nothing to this list falls back to what the key itself does here: the
+  // arrows always move, Enter always activates and Escape always leaves,
+  // however they happen to be bound. Nothing is taken away by this — a key
+  // being captured for a binding is read raw, so the arrows and Enter can
+  // still be assigned to anything.
+  const wizardAction = (key) => {
+    const action = keymap.actionFor(key);
+    if (WIZARD_ACTIONS.has(action)) return action;
+    if (keymap.isKey(key, 'ArrowDown')) return 'next-line';
+    if (keymap.isKey(key, 'ArrowUp')) return 'previous-line';
+    if (keymap.isKey(key, 'Enter')) return 'activate';
+    if (key === ESC) return 'quit';
+    return action;
+  };
+
   // Leaving asks about saving, because the changes made here are held in
   // memory until the wizard is done with them.
   const leave = async () => {
@@ -218,7 +243,7 @@ async function runKeyWizard({
       // Everything else goes through the same bindings the page view uses, so
       // whatever moves the reader down a line, to the top, or out of the
       // browser does the same thing to this list.
-      const action = keymap.actionFor(key);
+      const action = wizardAction(key);
       const screen = Math.max(1, size(output).rows - 4);
 
       if (action === 'next-line') {
@@ -248,10 +273,9 @@ async function runKeyWizard({
         } else {
           await leave();
         }
-      // Quitting leaves the wizard rather than the browser, and Escape does
-      // too whatever it is bound to: a reader who has just unbound the keys
-      // this list is read with still needs a way out of it.
-      } else if (action === 'quit' || action === 'close-popup' || key === ESC) {
+      // Quitting leaves the wizard rather than the browser, and closing a
+      // popup is what Escape means everywhere else in the browser.
+      } else if (action === 'quit' || action === 'close-popup') {
         await leave();
       }
       if (!done) render();
