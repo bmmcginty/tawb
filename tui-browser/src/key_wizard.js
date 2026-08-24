@@ -36,16 +36,35 @@ function rowText(row, keymap) {
 
 async function runKeyWizard({
   input = process.stdin, output = process.stdout, keymap = new Keymap(), KeyReaderClass = KeyReader,
+  reader: suppliedReader = null,
 } = {}) {
+  const ownsReader = !suppliedReader;
   const wasRaw = !!input.isRaw;
-  if (input.isTTY) input.setRawMode(true);
-  const reader = new KeyReaderClass(input);
+  if (ownsReader && input.isTTY) input.setRawMode(true);
+  const reader = suppliedReader || new KeyReaderClass(input);
+  const original = new Map(keymap.actions.map((action) => [action.id, [...action.bindings]]));
   let selected = 0;
   let scroll = 0;
   let status = 'Enter replaces a binding; Alt+A adds one.';
   let capturing = null;
   let done = false;
+  let saved = false;
+  let leftScreen = false;
   const drawn = { heading: null, hint: null, status: null, list: [] };
+  const leaveScreen = () => {
+    if (leftScreen) return;
+    leftScreen = true;
+    output.write('\x1b[?1049l');
+  };
+  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+  // Run before the reader's shutdown handler, which may exit synchronously
+  // when the standalone wizard has no browser to close.
+  for (const signal of signals) process.prependListener(signal, leaveScreen);
+  // Keep the page underneath exactly as it was. Clearing the ordinary screen
+  // left a standalone wizard at an empty terminal and erased the browser UI
+  // when the wizard was opened from it.
+  output.write('\x1b[?1049h');
+  output.write('\x1b[r');
 
   const render = ({ clear = false } = {}) => {
     const rows = wizardRows(keymap);
@@ -152,10 +171,13 @@ async function runKeyWizard({
             const answer = await reader.next();
             if (answer === 'y' || answer === 'Y') {
               keymap.save();
+              saved = true;
               done = true;
               break;
             }
             if (answer === 'n' || answer === 'N') {
+              for (const action of keymap.actions) action.bindings = [...original.get(action.id)];
+              keymap.rebuild();
               done = true;
               break;
             }
@@ -166,12 +188,12 @@ async function runKeyWizard({
     }
   } finally {
     output.off('resize', onResize);
-    reader.close();
-    output.write('\x1b[r');
-    move(output, size(output).rows, 1);
-    output.write('\x1b[2K\n');
-    if (input.isTTY && !wasRaw) input.setRawMode(false);
+    for (const signal of signals) process.off(signal, leaveScreen);
+    if (ownsReader) reader.close();
+    leaveScreen();
+    if (ownsReader && input.isTTY && !wasRaw) input.setRawMode(false);
   }
+  return saved;
 }
 
 module.exports = { runKeyWizard, wizardRows, rowText };

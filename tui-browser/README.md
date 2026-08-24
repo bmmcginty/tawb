@@ -392,13 +392,16 @@ xterm-compatible sequences as fallbacks. `$TERM` therefore needs to describe
 the terminal accurately; a missing `tput` or terminfo entry does not prevent
 tweb from starting.
 
-Bindings can be changed without starting a browser:
+Press `Alt+?` to open the keyboard wizard while reading, or open it without
+starting a browser:
 
 ```
 npm start -- --keyboard
 ```
 
-The wizard lists every browse-mode action and its bindings. Move with the
+The wizard uses a temporary terminal screen, so leaving it restores exactly
+what was underneath rather than dropping into an empty window. It lists every
+browse-mode action and its bindings. Move with the
 arrow or page keys, press `Enter` to replace an action's binding, or `Alt+A`
 to add another. The next complete keystroke is recorded. `Esc` cancels a
 capture, and `Backspace` during replacement leaves the action unbound. A new
@@ -442,6 +445,7 @@ each machine; an unusual sequence recorded by the wizard is retained exactly.
 | `Ctrl+G` | Find the same text again                                        |
 | `m`      | Send a real click — trusted, carries user activation             |
 | `Ctrl+L` | Address bar (scrolls sideways for long URLs; `Esc` cancels)      |
+| `Alt+?`  | Open the keyboard binding wizard                               |
 | `\`      | Cycle view: AX → PAGE → HTML → SOURCE                            |
 | `>` / `<`| Next / previous tab                                              |
 | `Shift+F4`| Close this tab (never the last one)                              |

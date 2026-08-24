@@ -47,6 +47,7 @@ const ACTIONS = [
   ['repeat-find', 'Repeat find', ['Ctrl+G']],
   ['refresh', 'Refresh', ['r']],
   ['cycle-view', 'Cycle view', ['\\']],
+  ['keyboard-wizard', 'Keyboard wizard', ['Alt+?']],
   ['next-heading', 'Next heading', ['h']],
   ['previous-heading', 'Previous heading', ['H']],
   ['next-link', 'Next link', ['l']],
