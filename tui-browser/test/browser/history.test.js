@@ -8,7 +8,9 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { openDriver } = require('../../src/driver');
-const { traversePageHistory } = require('../../src/index');
+const {
+  historyEntryIdentity, rememberCurrentHistoryPlace, restoreHistoryPlace, traversePageHistory,
+} = require('../../src/index');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-history-'));
@@ -33,10 +35,23 @@ test('the page can move backward and forward through its own history', async () 
   const page = driver.context.pages()[0] || await driver.context.newPage();
   const base = `http://127.0.0.1:${server.address().port}`;
   await page.goto(`${base}/one`, { waitUntil: 'domcontentloaded' });
+  const state = {
+    cursor: 7, col: 3, scroll: 4, historyPlaces: new WeakMap(),
+    lines: Array.from({ length: 30 }, (_, index) => ({ text: `line ${index} long enough` })),
+  };
+  await rememberCurrentHistoryPlace(state, page);
   await page.goto(`${base}/two`, { waitUntil: 'domcontentloaded' });
 
   assert.equal(await traversePageHistory(page, -1), true);
   assert.equal(page.url(), `${base}/one`);
+  state.cursor = 0;
+  state.col = 0;
+  state.scroll = 0;
+  assert.equal(restoreHistoryPlace(state, page, await historyEntryIdentity(page)), true);
+  assert.deepEqual(
+    { cursor: state.cursor, col: state.col, scroll: state.scroll },
+    { cursor: 7, col: 3, scroll: 4 },
+  );
   assert.equal(await traversePageHistory(page, 1), true);
   assert.equal(page.url(), `${base}/two`);
   assert.equal(await traversePageHistory(page, 1, 100), false, 'the end of history is reported');
