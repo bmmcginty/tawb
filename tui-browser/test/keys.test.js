@@ -61,7 +61,7 @@ test('bindings are saved atomically and loaded over defaults', () => {
   assert.deepEqual(fs.readdirSync(directory), ['keys.json']);
 });
 
-test('the wizard exits only through its final row and ignores other save answers', async () => {
+test('the wizard asks about saving on its final row and ignores other answers', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-wizard-'));
   const file = path.join(directory, 'keys.json');
   const keymap = new Keymap({ terminfo: {}, file, load: false });
@@ -125,4 +125,51 @@ test('declining to save restores the bindings used before the wizard', async () 
   const saved = await runKeyWizard({ input, output, keymap, reader });
   assert.equal(saved, false);
   assert.deepEqual(keymap.actions.map((action) => [action.id, action.bindings]), before);
+});
+
+// A wizard that answered only to its own private keys was the one screen in
+// the browser where the reader's own bindings did not work.
+test('the wizard is driven by the browsing keys themselves', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-wizard-keys-'));
+  const file = path.join(directory, 'keys.json');
+  const keymap = new Keymap({ terminfo: {}, file, load: false });
+  const rows = wizardRows(keymap);
+
+  const output = new PassThrough();
+  output.rows = 12;
+  output.columns = 200;
+  const writes = [];
+  const write = output.write.bind(output);
+  output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
+
+  //  G bottom, = report position, Home back to the first row, = again,
+  //  then q leaves the way it leaves the browser.
+  const queued = ['G', '=', '\x1b[H', '=', 'q', 'y'];
+  const reader = { next: () => Promise.resolve(queued.shift()) };
+
+  const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
+  assert.equal(saved, true);
+  assert.equal(queued.length, 0);
+  assert.ok(fs.existsSync(file), 'q reached the same save question as the exit row');
+  const painted = writes.join('');
+  assert.ok(painted.includes(`Item ${rows.length} of ${rows.length}`), 'G reached the last row');
+  assert.ok(painted.includes(`Item 1 of ${rows.length}`), 'Home returned to the first row');
+});
+
+test('Escape leaves the wizard even where the keys to read it were unbound', async () => {
+  const keymap = new Keymap({ terminfo: {}, load: false });
+  for (const action of keymap.actions) keymap.unbind(action.id);
+  const before = keymap.actions.map((action) => [action.id, [...action.bindings]]);
+
+  const queued = ['\x1b', 'n'];
+  const reader = { next: () => Promise.resolve(queued.shift()) };
+  const output = new PassThrough();
+  output.rows = 12;
+  output.columns = 80;
+
+  const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
+  assert.equal(saved, false);
+  assert.equal(queued.length, 0);
+  assert.deepEqual(keymap.actions.map((action) => [action.id, action.bindings]), before,
+    'declining restored the bindings the wizard started with');
 });

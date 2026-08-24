@@ -4,7 +4,6 @@ const { Keymap } = require('./keys');
 const { KeyReader } = require('./input');
 
 const ESC = '\x1b';
-const ENTER = new Set(['\r', '\n']);
 const BACKSPACE = new Set(['\x7f', '\x08']);
 const ALT_A = new Set(['\x1ba', '\x1bA']);
 
@@ -66,6 +65,15 @@ async function runKeyWizard({
   output.write('\x1b[?1049h');
   output.write('\x1b[r');
 
+  // The wizard is driven by the same bindings as the rest of the browser, so
+  // its hint has to name whatever those bindings currently are — including a
+  // change the reader has just made a few rows further up this very list.
+  const keyLabel = (id, fallback) => {
+    const action = keymap.byId.get(id);
+    const binding = action && action.bindings[0];
+    return binding ? keymap.display(binding) : fallback;
+  };
+
   const render = ({ clear = false } = {}) => {
     const rows = wizardRows(keymap);
     const height = Math.max(1, size(output).rows - 4);
@@ -89,7 +97,9 @@ async function runKeyWizard({
 
     const hint = capturing
       ? `${capturing === 'add' ? 'Adding to' : 'Replacing'} ${rows[selected].action.label}: press one key; Esc cancels.`
-      : 'Up/Down: move  Enter: replace  Alt+A: add';
+      : `${keyLabel('previous-line', 'Up')}/${keyLabel('next-line', 'Down')}: move`
+        + `  ${keyLabel('activate', 'Enter')}: replace  Alt+A: add`
+        + `  ${keyLabel('quit', 'Escape')}: exit`;
     if (drawn.hint !== hint) {
       line(output, 2, hint);
       drawn.hint = hint;
@@ -116,6 +126,28 @@ async function runKeyWizard({
     // write even when nothing else changed, so a screen reader and braille
     // display follow Up and Down without any row being repainted.
     move(output, 3 + selected - scroll, 1);
+  };
+
+  // Leaving asks about saving, because the changes made here are held in
+  // memory until the wizard is done with them.
+  const leave = async () => {
+    status = 'Save keyboard changes? y/n';
+    render();
+    for (;;) {
+      const answer = await reader.next();
+      if (answer === 'y' || answer === 'Y') {
+        keymap.save();
+        saved = true;
+        done = true;
+        return;
+      }
+      if (answer === 'n' || answer === 'N') {
+        for (const action of keymap.actions) action.bindings = [...original.get(action.id)];
+        keymap.rebuild();
+        done = true;
+        return;
+      }
+    }
   };
 
   const onResize = () => render({ clear: true });
@@ -146,18 +178,39 @@ async function runKeyWizard({
         continue;
       }
 
-      if (keymap.isKey(key, 'ArrowDown') || key === 'j') {
-        selected = Math.min(selected + 1, rows.length - 1);
-      } else if (keymap.isKey(key, 'ArrowUp') || key === 'k') {
-        selected = Math.max(selected - 1, 0);
-      } else if (keymap.isKey(key, 'PageDown')) {
-        selected = Math.min(selected + Math.max(1, size(output).rows - 4), rows.length - 1);
-      } else if (keymap.isKey(key, 'PageUp')) {
-        selected = Math.max(selected - Math.max(1, size(output).rows - 4), 0);
-      } else if (ALT_A.has(key) && row.type === 'action') {
+      // Adding a binding is the wizard's own control rather than a browsing
+      // command, so it is read before the keymap gets a look at the key.
+      if (ALT_A.has(key) && row.type === 'action') {
         capturing = 'add';
         status = `Press the key to add to ${row.action.label}.`;
-      } else if (ENTER.has(key)) {
+        render();
+        continue;
+      }
+
+      // Everything else goes through the same bindings the page view uses, so
+      // whatever moves the reader down a line, to the top, or out of the
+      // browser does the same thing to this list.
+      const action = keymap.actionFor(key);
+      const screen = Math.max(1, size(output).rows - 4);
+
+      if (action === 'next-line') {
+        selected = Math.min(selected + 1, rows.length - 1);
+      } else if (action === 'previous-line') {
+        selected = Math.max(selected - 1, 0);
+      } else if (action === 'next-screen') {
+        selected = Math.min(selected + screen, rows.length - 1);
+      } else if (action === 'previous-screen') {
+        selected = Math.max(selected - screen, 0);
+      } else if (action === 'top' || action === 'line-start') {
+        // A list row is a single item with nowhere to go across it, so the
+        // start and end keys move within the list like the top and bottom
+        // keys rather than doing nothing at all.
+        selected = 0;
+      } else if (action === 'bottom' || action === 'line-end') {
+        selected = rows.length - 1;
+      } else if (action === 'where') {
+        status = `Item ${selected + 1} of ${rows.length} — ${rowText(row, keymap)}.`;
+      } else if (action === 'activate') {
         if (row.type === 'action') {
           capturing = 'replace';
           status = `Press the replacement for ${row.action.label}; Backspace unbinds it.`;
@@ -165,24 +218,13 @@ async function runKeyWizard({
           keymap.reset();
           status = 'Default bindings restored. They are not saved yet.';
         } else {
-          status = 'Save keyboard changes? y/n';
-          render();
-          for (;;) {
-            const answer = await reader.next();
-            if (answer === 'y' || answer === 'Y') {
-              keymap.save();
-              saved = true;
-              done = true;
-              break;
-            }
-            if (answer === 'n' || answer === 'N') {
-              for (const action of keymap.actions) action.bindings = [...original.get(action.id)];
-              keymap.rebuild();
-              done = true;
-              break;
-            }
-          }
+          await leave();
         }
+      // Quitting leaves the wizard rather than the browser, and Escape does
+      // too whatever it is bound to: a reader who has just unbound the keys
+      // this list is read with still needs a way out of it.
+      } else if (action === 'quit' || action === 'close-popup' || key === ESC) {
+        await leave();
       }
       if (!done) render();
     }
