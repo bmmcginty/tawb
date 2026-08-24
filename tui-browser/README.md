@@ -385,6 +385,13 @@ direction — which is how you reverse one.
 
 ## Keys
 
+The named terminal keys are not assumed to have one universal escape
+sequence. At startup tweb asks the current terminal's terminfo entry through
+`tput` for PageUp, PageDown, arrows, Home and End, and keeps the common
+xterm-compatible sequences as fallbacks. `$TERM` therefore needs to describe
+the terminal accurately; a missing `tput` or terminfo entry does not prevent
+tweb from starting.
+
 ### Moving
 
 | Key            | Action                                                       |
@@ -395,7 +402,7 @@ direction — which is how you reverse one.
 | `g` / `G`      | Top / bottom of the page                                      |
 | `Home` / `End` | Start / end of the current line                               |
 
-### Jumping (the JAWS vocabulary; uppercase goes backwards)
+### Jumping (the JAWS vocabulary; uppercase goes backwards except `L`, which toggles live updates)
 
 | Key   | Jumps to                                                          |
 | ----- | ----------------------------------------------------------------- |
