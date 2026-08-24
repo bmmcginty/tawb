@@ -884,7 +884,21 @@ async function historyEntryIdentity(page) {
 
 async function rememberCurrentHistoryPlace(state, page) {
   const identity = await historyEntryIdentity(page);
-  return rememberHistoryPlace(state, page, identity);
+  const place = rememberHistoryPlace(state, page, identity);
+  log('history.place.remember', {
+    identity, url: page.url().slice(0, 120), cursor: place.cursor, col: place.col, scroll: place.scroll,
+  });
+  return place;
+}
+
+function acknowledgeHistoryNavigation(state, page) {
+  // The history command already rebuilt the destination and restored its
+  // cursor. The live pulse still holds the URL of the page we left; if that
+  // stale baseline survives, the next tick calls this a new navigation and
+  // runLiveRefresh deliberately resets the cursor to zero. Advance that
+  // baseline here so a later content refresh reanchors instead of going top.
+  state.core.live.href = page.url();
+  state.core.live.navigated = false;
 }
 
 async function traversePageHistory(page, direction, watchMs = 1500) {
@@ -935,10 +949,14 @@ async function moveInHistory(state, page, direction) {
     }
     const destinationIdentity = await historyEntryIdentity(page);
     await refresh(state, page, { resetCursor: true });
-    restoreHistoryPlace(state, page, destinationIdentity);
+    const restored = restoreHistoryPlace(state, page, destinationIdentity);
+    acknowledgeHistoryNavigation(state, page);
     render(state, page, { force: true });
     setStatus(state, `Went ${verb} to ${page.url()}`);
-    log('history.move', { direction, url: page.url().slice(0, 120) });
+    log('history.move', {
+      direction, url: page.url().slice(0, 120), destinationIdentity,
+      restored, cursor: state.cursor, col: state.col, scroll: state.scroll,
+    });
   } catch (err) {
     setStatus(state, `Could not go ${verb}: ${err.message.split('\n')[0]}`);
     log('history.failed', { direction, error: String(err.message || err).slice(0, 160) });
@@ -2166,7 +2184,7 @@ module.exports = {
   screenBefore, repaintList, visibleRowsNow,
   applyTextPatches, loadMore, atEnd,
   historyEntryIdentity, rememberHistoryPlace, rememberCurrentHistoryPlace,
-  restoreHistoryPlace, traversePageHistory, moveInHistory,
+  restoreHistoryPlace, acknowledgeHistoryNavigation, traversePageHistory, moveInHistory,
   switchToTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation,

@@ -681,8 +681,9 @@ neither log overwrites the other:
 
 It records startup phases, every page snapshot with its cost, live refresh
 broken down by stage, text splices that avoided a snapshot (`live.patch`),
-keypresses that took longer than 20ms, and any frame slower than 100ms with
-the URL responsible. It is the fastest way to find
+keypresses that took longer than 20ms, saved and restored page-history
+positions, and any frame slower than 100ms with the URL responsible. It is
+the fastest way to find
 out why something felt slow — ad-heavy pages spawning hundreds of tracking
 iframes have been the usual culprit.
 
