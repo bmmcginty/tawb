@@ -107,6 +107,34 @@ test('the wizard asks about saving on its final row and ignores other answers', 
   assert.equal(afterUp.join('').includes('\x1b[2K'), false, 'Up only moves the cursor');
 });
 
+test('the cursor follows every prompt that consumes the next key', async () => {
+  const keymap = new Keymap({ terminfo: {}, load: false });
+  const output = new PassThrough();
+  output.rows = 12;
+  output.columns = 200;
+  const writes = [];
+  const write = output.write.bind(output);
+  output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
+
+  const queued = ['\r', 'j', 'n', 'q', 'n'];
+  const beforeKey = [];
+  const reader = {
+    next: () => {
+      beforeKey.push(writes.at(-1));
+      return Promise.resolve(queued.shift());
+    },
+  };
+
+  await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
+
+  const replacement = 'Press the replacement for Quit; Backspace unbinds it.';
+  const conflict = 'j is assigned to Next line; rebind to Quit? y/n';
+  const save = 'Save keyboard changes? y/n';
+  assert.equal(beforeKey[1], `\x1b[12;${replacement.length + 1}H`);
+  assert.equal(beforeKey[2], `\x1b[12;${conflict.length + 1}H`);
+  assert.equal(beforeKey[4], `\x1b[12;${save.length + 1}H`);
+});
+
 test('declining to save restores the bindings used before the wizard', async () => {
   const keymap = new Keymap({ terminfo: {}, load: false });
   const before = keymap.actions.map((action) => [action.id, [...action.bindings]]);

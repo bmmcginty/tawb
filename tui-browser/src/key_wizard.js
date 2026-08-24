@@ -55,6 +55,7 @@ async function runKeyWizard({
   let status = 'Enter replaces a binding; Alt+A adds one.';
   let capturing = null;
   let pending = null;
+  let saving = false;
   let done = false;
   let saved = false;
   let leftScreen = false;
@@ -131,10 +132,16 @@ async function runKeyWizard({
       drawn.status = status;
     }
 
-    // The terminal cursor is the selection marker. This must be the final
-    // write even when nothing else changed, so a screen reader and braille
-    // display follow Up and Down without any row being repainted.
-    move(output, 3 + selected - scroll, 1);
+    // The cursor marks the place the next key will affect. Ordinarily that is
+    // the selected row. While a question is waiting for one key or a y/n
+    // answer, it is the answer position at the end of that prompt instead —
+    // otherwise a screen reader keeps reporting the list item while input is
+    // being consumed somewhere else entirely. This must be the final write.
+    if (capturing || pending || saving) {
+      move(output, size(output).rows, Math.min(status.length + 1, size(output).cols));
+    } else {
+      move(output, 3 + selected - scroll, 1);
+    }
   };
 
   // The wizard is the one screen where the bindings themselves are half
@@ -157,6 +164,7 @@ async function runKeyWizard({
   // Leaving asks about saving, because the changes made here are held in
   // memory until the wizard is done with them.
   const leave = async () => {
+    saving = true;
     status = 'Save keyboard changes? y/n';
     render();
     for (;;) {
