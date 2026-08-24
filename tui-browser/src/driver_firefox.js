@@ -220,6 +220,10 @@ const WEBDRIVER_KEYS = {
   Tab: '\uE004',
   Escape: '\uE00C',
   Delete: '\uE017',
+  Shift: '\uE008',
+  Control: '\uE009',
+  Alt: '\uE00A',
+  Meta: '\uE03D',
   Home: '\uE011',
   End: '\uE010',
   PageUp: '\uE00E',
@@ -244,16 +248,20 @@ class FirefoxKeyboard {
     this.page = page;
   }
 
+  async #perform(actions) {
+    await this.session.send('input.performActions', {
+      context: this.page.contextId,
+      actions: [{ type: 'key', id: 'tweb-keyboard', actions }],
+    });
+  }
+
   async #send(values) {
     const actions = [];
     for (const value of values) {
       actions.push({ type: 'keyDown', value });
       actions.push({ type: 'keyUp', value });
     }
-    await this.session.send('input.performActions', {
-      context: this.page.contextId,
-      actions: [{ type: 'key', id: 'tweb-keyboard', actions }],
-    });
+    await this.#perform(actions);
   }
 
   // Spread rather than split: a character outside the basic plane is two code
@@ -263,11 +271,22 @@ class FirefoxKeyboard {
   }
 
   async press(key) {
-    const value = WEBDRIVER_KEYS[key];
-    if (!value && String(key).length !== 1) {
+    const parts = String(key).split('+');
+    const values = parts.map((part) => WEBDRIVER_KEYS[part] || part);
+    if (values.some((value, index) => !WEBDRIVER_KEYS[parts[index]] && [...value].length !== 1)) {
       throw new Error(`the Firefox driver has no key named "${key}"`);
     }
-    await this.#send([value || key]);
+    if (values.length === 1) {
+      await this.#send(values);
+      return;
+    }
+
+    const actions = values.map((value) => ({ type: 'keyDown', value }));
+    actions.push({ type: 'keyUp', value: values.at(-1) });
+    for (let i = values.length - 2; i >= 0; i -= 1) {
+      actions.push({ type: 'keyUp', value: values[i] });
+    }
+    await this.#perform(actions);
   }
 }
 

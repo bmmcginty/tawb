@@ -9,6 +9,7 @@ const KEY_DEFINITIONS = {
   Escape: { sequences: ['\x1b'] },
   Enter: { sequences: ['\r', '\n'] },
   Backspace: { sequences: ['\x7f', '\x08'] },
+  Delete: { cap: 'kdch1', sequences: ['\x1b[3~'] },
   ArrowUp: { cap: 'kcuu1', sequences: ['\x1b[A', '\x1bOA'] },
   ArrowDown: { cap: 'kcud1', sequences: ['\x1b[B', '\x1bOB'] },
   ArrowLeft: { cap: 'kcub1', sequences: ['\x1b[D', '\x1bOD'] },
