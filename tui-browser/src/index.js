@@ -1404,7 +1404,7 @@ async function activateCurrent(state, page) {
 
   try {
     setStatus(state, `Activating "${item.name}"...`);
-    if (FIELD_ROLES.has(item.role)) {
+    if (FIELD_ROLES.has(item.role) && !item.nativeControl) {
       // A native select is a list of choices, not a field to type into. It
       // came through here as a combobox and landed the reader in typing mode
       // over a control that has no text in it — the only thing typing could

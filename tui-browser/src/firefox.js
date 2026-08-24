@@ -212,6 +212,32 @@ const PIERCE_CHILD_SCRIPT = `
     globalThis.__twebShadowInstalled = true;
     Services.obs.addObserver(function (win) {
       try {
+        const candidates = (root) => Array.from(root.querySelectorAll(
+          'button,input,[role="button"],[role="slider"],[role="menuitem"]'));
+        const visible = (el) => {
+          try {
+            const style = win.getComputedStyle(el);
+            const box = el.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden'
+              && Number(style.opacity) !== 0 && box.width > 0 && box.height > 0;
+          } catch (e) { return false; }
+        };
+        const mediaControls = (host, shadow) => {
+          if (!['audio', 'video'].includes(String(host.localName || '').toLowerCase())) return [];
+          const media = Array.from(win.document.querySelectorAll('video,audio')).indexOf(host);
+          return candidates(shadow).map((control, index) => {
+            if (!visible(control)) return null;
+            const type = String(control.getAttribute('type') || control.type || '').toLowerCase();
+            const explicit = String(control.getAttribute('role') || '').toLowerCase();
+            const role = explicit || (type === 'range' ? 'slider' : 'button');
+            const name = String(control.getAttribute('aria-label')
+              || control.getAttribute('title') || control.textContent || '').trim();
+            if (!name || !['button', 'slider', 'menuitem'].includes(role)) return null;
+            const value = role === 'slider'
+              ? String(control.getAttribute('aria-valuetext') || control.value || '') : '';
+            return { role, name, value, index, media };
+          }).filter(Boolean);
+        };
         const pierce = function () {
           const found = [];
           const walk = (root) => {
@@ -220,13 +246,27 @@ const PIERCE_CHILD_SCRIPT = `
               try { shadow = el.openOrClosedShadowRoot; } catch (e) { shadow = null; }
               if (!shadow) continue;
               try {
-                found.push([el.wrappedJSObject || el, shadow.wrappedJSObject || shadow]);
+                found.push([
+                  el.wrappedJSObject || el,
+                  shadow.wrappedJSObject || shadow,
+                  mediaControls(el, shadow),
+                ]);
               } catch (e) { /* not a node we can hand over */ }
               walk(shadow);
             }
           };
           walk(win.document);
           return Cu.cloneInto(found, win.wrappedJSObject, { wrapReflectors: true });
+        };
+        const pressNative = function (media, index) {
+          const host = win.document.querySelectorAll('video,audio')[media];
+          if (!host) return false;
+          let shadow = null;
+          try { shadow = host.openOrClosedShadowRoot; } catch (e) { return false; }
+          const control = shadow && candidates(shadow)[index];
+          if (!control || !visible(control)) return false;
+          control.click();
+          return true;
         };
         // Under a symbol rather than a name, like everything else this
         // program leaves on a page: a string property is listed by
@@ -235,6 +275,8 @@ const PIERCE_CHILD_SCRIPT = `
         // exactly this.
         win.wrappedJSObject[Symbol.for('tweb.pierce')] =
           Cu.exportFunction(pierce, win.wrappedJSObject);
+        win.wrappedJSObject[Symbol.for('tweb.nativeControl')] =
+          Cu.exportFunction(pressNative, win.wrappedJSObject);
       } catch (e) { /* a window we cannot reach; the rest still get it */ }
     }, 'content-document-global-created');
   }

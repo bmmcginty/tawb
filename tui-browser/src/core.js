@@ -1128,6 +1128,14 @@ class Core {
   // control it labelled.
   async activate(item, page = this.page) {
     if (item.pressFrame) return this.pressFrame(item);
+    if (item.nativeControl && typeof this.driver.activateNativeControl === 'function') {
+      const scope = item.frame || page;
+      const pressed = await this.driver.activateNativeControl(scope, item);
+      return {
+        how: 'native-control',
+        status: pressed ? null : `The browser's ${item.name} control is no longer visible.`,
+      };
+    }
     if (DOM_SOURCES.has(this.source)) {
       return { how: 'dom', status: await activateDomItem(page, item) };
     }

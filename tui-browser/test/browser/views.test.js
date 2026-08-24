@@ -19,6 +19,7 @@ const path = require('node:path');
 
 const { openDriver } = require('../../src/driver');
 const { snapshotFrameTree } = require('../../src/frames');
+const { Core } = require('../../src/core');
 const { start: startTestPage } = require('../../tools/serve');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
@@ -309,6 +310,27 @@ for (const view of VIEWS) {
     assert.match(await readFixture(MEDIA_PAGE, view), /\(audio\) paused, 0:01 of 0:03/);
   });
 }
+
+test('ax view: visible native player controls are rendered', async () => {
+  const text = await readFixture(MEDIA_PAGE, 'ax');
+  assert.match(text, /\[\*play\]/i);
+  assert.match(text, /\[\*mute\]/i);
+  assert.match(text, /\[(?:audio time scrubber|position):/i);
+});
+
+test('ax view: the native play control operates the player', async () => {
+  await readFixture(MEDIA_PAGE, 'ax');
+  const { driver } = await browser();
+  const blocks = await snapshotFrameTree(fixture.page, 'ax', { driver });
+  const play = blocks.find((block) => block.item
+    && block.item.role === 'button' && block.item.name.toLowerCase() === 'play');
+  assert.ok(play, 'the visible Play control is in the buffer');
+
+  const core = new Core({ driver, page: fixture.page, source: 'ax', sources: ['ax'] });
+  await core.activate(play.item, fixture.page);
+  assert.equal(await fixture.page.evaluate(() => document.querySelector('audio').paused), false);
+  await fixture.page.evaluate(() => document.querySelector('audio').pause());
+});
 
 // A modal dialog is its own page, because it inerts everything else in the
 // document it is opened in — which is the whole point of the case.

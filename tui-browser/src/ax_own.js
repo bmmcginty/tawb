@@ -153,15 +153,25 @@ function extractAxItems(options) {
   // tree descends into them on Chromium, so ours has to as well or the two
   // engines describe different pages.
   const opts = options || {};
-  const closedRoots = new Map();
+  const privilegedRoots = new Map();
+  const nativeControls = new Map();
+  const rememberNative = (controls) => {
+    for (const control of controls ? Array.from(controls) : []) {
+      if (!control || control.media == null) continue;
+      if (!nativeControls.has(control.media)) nativeControls.set(control.media, []);
+      nativeControls.get(control.media).push(control);
+    }
+  };
   for (const pair of opts.pairs || []) {
-    if (pair && pair[0] && pair[1]) closedRoots.set(pair[0], pair[1]);
+    if (pair && pair[0] && pair[1]) privilegedRoots.set(pair[0], pair[1]);
+    if (pair) rememberNative(pair[2]);
   }
   const privileged = window[Symbol.for('tweb.pierce')];
   if (opts.pierce && typeof privileged === 'function') {
     try {
       for (const pair of privileged() || []) {
-        if (pair && pair[0] && pair[1]) closedRoots.set(pair[0], pair[1]);
+        if (pair && pair[0] && pair[1]) privilegedRoots.set(pair[0], pair[1]);
+        if (pair) rememberNative(pair[2]);
       }
     } catch { /* the privileged half is not installed here */ }
   }
@@ -172,8 +182,8 @@ function extractAxItems(options) {
     // one — Chromium over the DevTools protocol, Firefox through a privileged
     // process script — and hand the pairs to this call, so the walk goes on
     // from here as if the root had been open.
-    const closed = closedRoots.get(node);
-    if (closed) return Array.from(closed.childNodes);
+    const privileged = privilegedRoots.get(node);
+    if (privileged) return Array.from(privileged.childNodes);
     if (node.shadowRoot) return Array.from(node.shadowRoot.childNodes);
     if (typeof node.assignedNodes === 'function') {
       const assigned = node.assignedNodes({ flatten: true });
@@ -550,6 +560,28 @@ function extractAxItems(options) {
 
     if (shown && MEDIA.has(role)) {
       emit({ role, name: mediaState(el), axIndex: register(el) });
+
+      // Native controls are rendered in a user-agent shadow root. Chromium
+      // can lend that root to this walk, so its actual visible buttons and
+      // sliders go through the ordinary role/name machinery. Firefox can see
+      // the privileged root but cannot hand its nodes to page script; its
+      // startup helper supplies the same visible controls as descriptors.
+      const mediaIndex = Array.from(document.querySelectorAll('video,audio')).indexOf(el);
+      const described = nativeControls.get(mediaIndex) || [];
+      for (const control of described) {
+        emit({
+          role: control.role,
+          name: control.name,
+          value: control.value || undefined,
+          nativeControl: { media: control.media, index: control.index },
+          pierced: true,
+        });
+      }
+      if (privilegedRoots.has(el) && !described.length) {
+        for (const child of kidsOf(el)) {
+          if (child.nodeType === Node.ELEMENT_NODE) walk(child);
+        }
+      }
       return;
     }
 
@@ -638,7 +670,7 @@ function extractAxItems(options) {
     const outerPopup = insidePopup;
     const outerClosed = insideClosed;
     if (ownedPopups.has(el)) insidePopup = ownedPopups.get(el);
-    if (closedRoots.has(el)) insideClosed = true;
+    if (privilegedRoots.has(el)) insideClosed = true;
     try {
       walkInner(el);
     } finally {

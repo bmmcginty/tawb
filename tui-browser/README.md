@@ -135,6 +135,16 @@ These are profile preferences, not page tampering, and they are written to
 is already running is rejoined as it is, so a change here takes effect the
 next time one is started.
 
+A native `<video controls>` or `<audio controls>` also exposes the controls the
+browser actually laid out beneath the player's status line in AX view: Play,
+Mute, the position and volume sliders, fullscreen, and whichever overflow
+controls fit. Chromium supplies them from its user-agent shadow roots over
+CDP. Firefox's privileged shadow-root helper describes the same controls,
+since page script is forbidden from reading those roots directly. Only
+controls with a visible box are included. If the browser lays out two visible
+versions, both are retained rather than guessing which one a sighted user
+meant; pressing a native button acts on the browser's own control.
+
 ### Startup, and why it looks worse than it is
 
 A cold start is 3.7s for Chromium and 5.3s for Firefox, the difference being

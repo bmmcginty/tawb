@@ -683,7 +683,18 @@ async function openFirefox({
     },
 
     async axItems(frame) {
-      return readDocument(frame, extractAxItems, this, (items) => !items || !items.length);
+      return readDocument(
+        frame, extractAxItems, this, (items) => !items || !items.length,
+        (scope) => scope.evaluate(() => !!document.querySelector('video[controls],audio[controls]')),
+      );
+    },
+
+    async activateNativeControl(scope, item) {
+      const target = scope && scope.contextId ? scope : page;
+      return target.evaluate((token) => {
+        const press = window[Symbol.for('tweb.nativeControl')];
+        return typeof press === 'function' && press(token.media, token.index);
+      }, item.nativeControl);
     },
 
     // A click the browser treats as a person's.
