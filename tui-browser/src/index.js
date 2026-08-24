@@ -661,6 +661,9 @@ async function onExternalNavigation(state, page) {
     return;
   }
 
+  // The buffer and cursor still describe the document being left. Remember
+  // them under that address before renderedUrl advances to the destination.
+  rememberHistoryPlace(state, page, null, state.core.renderedUrl);
   state.core.renderedUrl = url;
   log('navigation.external', { url: url.slice(0, 120) });
   try {
@@ -835,10 +838,48 @@ function onLiveEvent(state, page, payload) {
 // ---------------------------------------------------------------------------
 // Page history
 //
-// History belongs to a tab, unlike the reader's own tab list. Hold live
-// refreshes while moving through it so the navigation event cannot race this
+// History belongs to a tab, unlike the reader's own tab list. Each history
+// entry also keeps the terminal position it was left at, so Back and Forward
+// return to the line being read rather than treating a restored page as new.
+// Hold live refreshes while moving so the navigation event cannot race this
 // deliberate rebuild and leave the old document in the buffer.
 // ---------------------------------------------------------------------------
+
+function placesForPage(state, page) {
+  if (!state.historyPlaces) state.historyPlaces = new WeakMap();
+  let places = state.historyPlaces.get(page);
+  if (!places) {
+    places = new Map();
+    state.historyPlaces.set(page, places);
+  }
+  return places;
+}
+
+function rememberHistoryPlace(state, page, identity = null, url = page.url()) {
+  const place = { cursor: state.cursor, col: state.col, scroll: state.scroll };
+  const places = placesForPage(state, page);
+  if (identity) places.set(identity, place);
+  if (url) places.set(`url:${url}`, place);
+  return place;
+}
+
+function restoreHistoryPlace(state, page, identity = null, url = page.url()) {
+  const places = placesForPage(state, page);
+  const place = (identity && places.get(identity)) || (url && places.get(`url:${url}`));
+  if (!place) return false;
+  state.cursor = Math.min(Math.max(place.cursor, 0), Math.max(state.lines.length - 1, 0));
+  state.col = place.col;
+  state.scroll = place.scroll;
+  clampCol(state);
+  clampScroll(state);
+  return true;
+}
+
+async function historyEntryIdentity(page) {
+  return page.evaluate(() => globalThis.navigation?.currentEntry?.key
+    ? `entry:${globalThis.navigation.currentEntry.key}` : `url:${location.href}`)
+    .catch(() => `url:${page.url()}`);
+}
 
 async function traversePageHistory(page, direction, watchMs = 1500) {
   const beforeUrl = page.url();
@@ -880,12 +921,16 @@ async function moveInHistory(state, page, direction) {
   }
   state.core.live.refreshing = true;
   try {
+    const beforeIdentity = await historyEntryIdentity(page);
+    rememberHistoryPlace(state, page, beforeIdentity);
     const moved = await traversePageHistory(page, direction);
     if (!moved) {
       setStatus(state, `No page to go ${verb} to.`);
       return;
     }
+    const destinationIdentity = await historyEntryIdentity(page);
     await refresh(state, page, { resetCursor: true });
+    restoreHistoryPlace(state, page, destinationIdentity);
     render(state, page, { force: true });
     setStatus(state, `Went ${verb} to ${page.url()}`);
     log('history.move', { direction, url: page.url().slice(0, 120) });
@@ -1398,6 +1443,7 @@ async function activateCurrent(state, page) {
 
   const previousTexts = state.core.blocks.map((b) => b.text);
   const previousUrl = page.url();
+  rememberHistoryPlace(state, page);
   const anchor = anchorFor(state);
   const screen = screenBefore(state);
   const fragment = LINK_ROLES.has(item.role) ? await state.core.fragmentOf(item, page) : null;
@@ -1557,6 +1603,7 @@ async function clickAsHuman(state, page) {
 
   const previousTexts = state.core.blocks.map((b) => b.text);
   const previousUrl = page.url();
+  rememberHistoryPlace(state, page);
   const anchor = anchorFor(state);
   const screen = screenBefore(state);
   const started = Date.now();
@@ -1746,6 +1793,7 @@ async function handleTypeKey(chunk, state, page) {
 
   if (chunk === '\r' || chunk === '\n') {
     const previousUrl = page.url();
+    rememberHistoryPlace(state, page);
     const screen = screenBefore(state);
     const anchor = anchorFor(state);
     await page.keyboard.press('Enter');
@@ -1848,6 +1896,7 @@ async function handleAddressKey(chunk, state, page) {
     drawHint(state);
     if (!target) { drawAddress(state, page, { force: true }); parkCursor(state); return; }
     const url = /^[a-zA-Z][\w+.-]*:/.test(target) ? target : `https://${target}`;
+    rememberHistoryPlace(state, page);
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded' });
       await refresh(state, page, { resetCursor: true });
@@ -1973,6 +2022,7 @@ async function main() {
     drawn: { address: null, hint: null },
     statusHeldUntil: 0,
     loadingMore: false,
+    historyPlaces: new WeakMap(),
   };
   relayout(state);
 
@@ -2123,7 +2173,8 @@ module.exports = {
   anchorFor, restoreAnchor, capturePlace, restorePlace, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
   screenBefore, repaintList, visibleRowsNow,
-  applyTextPatches, loadMore, atEnd, traversePageHistory, moveInHistory,
+  applyTextPatches, loadMore, atEnd,
+  historyEntryIdentity, rememberHistoryPlace, restoreHistoryPlace, traversePageHistory, moveInHistory,
   switchToTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation,
