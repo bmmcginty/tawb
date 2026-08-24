@@ -15,6 +15,7 @@ const { normaliseEndpoint } = require('./browser');
 const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
 const { claimedTargets, releaseTab } = require('./session');
 const { capturePlace, restorePlace } = require('./place');
+const { Keymap } = require('./keys');
 const { KeyReader } = require('./input');
 
 // --connect <port|host:port|url> attaches to a browser that is already
@@ -46,41 +47,24 @@ const START_URL = ARGS.url || 'https://www.google.com';
 let setCurrentDriver = () => {};
 
 const ESC = '\x1b';
-const CTRL_C = '\x03';
-const CTRL_L = '\x0c';
-const CTRL_G = '\x07';
-const BACKSPACE = '\x7f';
-const BACKSPACE_ALT = '\x08';
-const ARROW_UP = '\x1b[A';
-const ARROW_DOWN = '\x1b[B';
-const ARROW_LEFT = '\x1b[D';
-const ARROW_RIGHT = '\x1b[C';
-const PAGE_UP = '\x1b[5~';
-const PAGE_DOWN = '\x1b[6~';
-const HOME_KEY = '\x1b[H';
-const END_KEY = '\x1b[F';
-// Shift+F4 closes the tab, as the terminals in use actually send it. Function
-// keys are the least standardised part of terminal input: xterm and its
-// descendants add a modifier parameter, while rxvt and the Linux console send
-// a shifted function key as a higher-numbered one — shift+F4 arrives as F14.
-// Anything unrecognised is logged with its bytes, so a terminal that speaks
-// some fifth dialect can be added by reading tweb.log.
-const CLOSE_TAB_KEYS = new Set([
-  '\x1b[1;2S',   // xterm, VTE, kitty, alacritty, tmux, screen
-  '\x1bO2S',     // xterm keeping SS3 with a modifier
-  '\x1b[14;2~',  // terminals that number F4 as 14
-  '\x1b[26~',    // Linux console and rxvt: shift+F4 is F14
-]);
+const FALLBACK_KEYMAP = new Keymap({ terminfo: {}, load: false });
 
 // Quick navigation follows the JAWS vocabulary: h headings, f form fields,
-// b buttons, n non-link text, p paragraphs. Uppercase goes backwards. JAWS
-// puts links on k, which is taken by line movement here, so links are on l.
-const QUICK_NAV = {
-  h: { label: 'heading', match: (item) => item.role === 'heading' },
-  l: { label: 'link', match: (item) => LINK_ROLES.has(item.role) },
-  f: { label: 'form field', match: (item) => FIELD_ROLES.has(item.role) },
-  b: { label: 'button', match: (item) => BUTTON_ROLES.has(item.role) },
-  n: { label: 'non-link text', match: (item) => item.role === 'text' },
+// b buttons, n non-link text, p paragraphs. Uppercase goes backwards except
+// for links, whose L is the live-update switch. JAWS puts links on k, which is
+// taken by line movement here, so forward links are on l and backward starts
+// unbound in the configurable registry.
+const QUICK_ACTIONS = {
+  'next-heading': { label: 'heading', direction: 1, match: (item) => item.role === 'heading' },
+  'previous-heading': { label: 'heading', direction: -1, match: (item) => item.role === 'heading' },
+  'next-link': { label: 'link', direction: 1, match: (item) => LINK_ROLES.has(item.role) },
+  'previous-link': { label: 'link', direction: -1, match: (item) => LINK_ROLES.has(item.role) },
+  'next-field': { label: 'form field', direction: 1, match: (item) => FIELD_ROLES.has(item.role) },
+  'previous-field': { label: 'form field', direction: -1, match: (item) => FIELD_ROLES.has(item.role) },
+  'next-button': { label: 'button', direction: 1, match: (item) => BUTTON_ROLES.has(item.role) },
+  'previous-button': { label: 'button', direction: -1, match: (item) => BUTTON_ROLES.has(item.role) },
+  'next-text': { label: 'non-link text', direction: 1, match: (item) => item.role === 'text' },
+  'previous-text': { label: 'non-link text', direction: -1, match: (item) => item.role === 'text' },
 };
 
 const HEADER_ROWS = 3;   // address line, hint line, blank line
@@ -115,6 +99,9 @@ function setupRawInput() {
   stdin.setEncoding('utf8');
 }
 
+function keyIs(chunk, name, state) {
+  return (state.keys || FALLBACK_KEYMAP).isKey(chunk, name);
+}
 
 // ANSI cursor positioning is 1-indexed. This is the whole point of the
 // exercise: a terminal screen reader / braille display follows the actual
@@ -1134,13 +1121,14 @@ function jumpToChange(state, page, direction = 1) {
 
 async function handleBrowseKey(chunk, state, page) {
   markInput(state);
-  if (chunk === CTRL_C || chunk === 'q') return 'quit';
+  const action = (state.keys || FALLBACK_KEYMAP).actionFor(chunk);
+  if (action === 'quit') return 'quit';
 
   // A reader inside a menu must always have a way out that also shuts it,
   // rather than one that leaves it open and them somewhere else.
-  if (chunk === ESC && state.core.popup) return closePopup(state, page);
+  if (action === 'close-popup' && state.core.popup) return closePopup(state, page);
 
-  if (chunk === CTRL_L) {
+  if (action === 'location-bar') {
     state.mode = 'address';
     state.address = { text: page.url(), caret: page.url().length, scroll: 0 };
     drawHint(state);
@@ -1148,7 +1136,7 @@ async function handleBrowseKey(chunk, state, page) {
     return;
   }
 
-  if (chunk === 'r') {
+  if (action === 'refresh') {
     const previous = state.core.blocks.map((b) => b.text);
     const anchor = anchorFor(state);
     const screen = screenBefore(state);
@@ -1168,7 +1156,7 @@ async function handleBrowseKey(chunk, state, page) {
   // accessibility tree has no element references to match against — the
   // reader is told their place could not be kept rather than left to work
   // out why they are somewhere else.
-  if (chunk === '\\') {
+  if (action === 'cycle-view') {
     const anchor = anchorFor(state);
     const place = await withTimeout(
       capturePlace(state, (item) => state.core.handleFor(item, page)),
@@ -1194,34 +1182,34 @@ async function handleBrowseKey(chunk, state, page) {
   }
 
   // Moving past the last line is how the reader asks a feed for more.
-  if (chunk === ARROW_DOWN || chunk === 'j') {
+  if (action === 'next-line') {
     if (atEnd(state)) return loadMore(state, page);
     return moveSelection(state, state.cursor + 1, page);
   }
-  if (chunk === ARROW_UP || chunk === 'k') return moveSelection(state, state.cursor - 1, page);
-  if (chunk === ARROW_RIGHT) return moveCaretRight(state, page);
-  if (chunk === ARROW_LEFT) return moveCaretLeft(state, page);
-  if (chunk === PAGE_DOWN) {
+  if (action === 'previous-line') return moveSelection(state, state.cursor - 1, page);
+  if (action === 'next-character') return moveCaretRight(state, page);
+  if (action === 'previous-character') return moveCaretLeft(state, page);
+  if (action === 'next-screen') {
     if (atEnd(state)) return loadMore(state, page);
     return moveSelection(state, state.cursor + viewportHeight(), page);
   }
-  if (chunk === PAGE_UP) return moveSelection(state, state.cursor - viewportHeight(), page);
-  if (chunk === 'g') return moveSelection(state, 0, page);
-  if (chunk === 'G') return moveSelection(state, state.lines.length - 1, page);
-  if (chunk === HOME_KEY) return moveSelection(state, state.cursor, page, 0);
-  if (chunk === END_KEY) {
+  if (action === 'previous-screen') return moveSelection(state, state.cursor - viewportHeight(), page);
+  if (action === 'top') return moveSelection(state, 0, page);
+  if (action === 'bottom') return moveSelection(state, state.lines.length - 1, page);
+  if (action === 'line-start') return moveSelection(state, state.cursor, page, 0);
+  if (action === 'line-end') {
     const line = currentLine(state);
     return moveSelection(state, state.cursor, page, line ? line.text.length - 1 : 0);
   }
 
-  if (chunk === '>') return cycleTab(state, 1);
-  if (chunk === '<') return cycleTab(state, -1);
-  if (CLOSE_TAB_KEYS.has(chunk)) return closeCurrentTab(state);
+  if (action === 'next-tab') return cycleTab(state, 1);
+  if (action === 'previous-tab') return cycleTab(state, -1);
+  if (action === 'close-tab') return closeCurrentTab(state);
 
-  if (chunk === 'c') return jumpToChange(state, page, 1);
-  if (chunk === 'C') return jumpToChange(state, page, -1);
+  if (action === 'next-change') return jumpToChange(state, page, 1);
+  if (action === 'previous-change') return jumpToChange(state, page, -1);
 
-  if (chunk === '=') {
+  if (action === 'where') {
     const block = currentBlock(state);
     const total = state.lines.length;
     const role = block && block.item ? block.item.role : 'nothing';
@@ -1231,7 +1219,7 @@ async function handleBrowseKey(chunk, state, page) {
 
   // A page that updates itself is not always welcome: a clock or a ticker
   // would keep marking changes while you are trying to read something else.
-  if (chunk === 'L') {
+  if (action === 'toggle-live') {
     state.core.live.enabled = !state.core.live.enabled;
     setStatus(state, state.core.live.enabled
       ? 'Live updates on.'
@@ -1239,17 +1227,17 @@ async function handleBrowseKey(chunk, state, page) {
     return;
   }
 
-  if (chunk === 'm') return clickAsHuman(state, page);
+  if (action === 'real-click') return clickAsHuman(state, page);
 
-  if (chunk === '/' || chunk === '?') {
+  if (action === 'find-forward' || action === 'find-backward') {
     state.mode = 'find';
-    state.find = { text: '', caret: 0, direction: chunk === '/' ? 1 : -1 };
+    state.find = { text: '', caret: 0, direction: action === 'find-forward' ? 1 : -1 };
     drawHint(state);
     drawFind(state);
     return;
   }
 
-  if (chunk === CTRL_G) {
+  if (action === 'repeat-find') {
     if (!state.lastFind) {
       setStatus(state, 'Nothing searched for yet — press / to search.');
       return;
@@ -1257,18 +1245,17 @@ async function handleBrowseKey(chunk, state, page) {
     return runSearch(state, page, state.lastFind.text, state.lastFind.direction);
   }
 
-  if (chunk === 'p' || chunk === 'P') {
-    const direction = chunk === 'p' ? 1 : -1;
+  if (action === 'next-paragraph' || action === 'previous-paragraph') {
+    const direction = action === 'next-paragraph' ? 1 : -1;
     return jumpTo(state, page, findParagraph(state, direction), 'paragraph', direction);
   }
 
-  if (chunk.length === 1 && QUICK_NAV[chunk.toLowerCase()]) {
-    const spec = QUICK_NAV[chunk.toLowerCase()];
-    const direction = chunk === chunk.toLowerCase() ? 1 : -1;
-    return jumpTo(state, page, findQuickNav(state, spec.match, direction), spec.label, direction);
+  if (QUICK_ACTIONS[action]) {
+    const spec = QUICK_ACTIONS[action];
+    return jumpTo(state, page, findQuickNav(state, spec.match, spec.direction), spec.label, spec.direction);
   }
 
-  if (chunk === '\r' || chunk === '\n') return activateCurrent(state, page);
+  if (action === 'activate') return activateCurrent(state, page);
 
   // An escape sequence nobody claimed is almost always a key this reader
   // could support and does not recognise from this terminal. Silence gives a
@@ -1564,7 +1551,7 @@ async function handleChooseKey(chunk, state, page) {
   const chooser = state.core.chooser;
   if (!chooser) { state.mode = 'browse'; return; }
 
-  if (chunk === ESC) {
+  if (keyIs(chunk, 'Escape', state)) {
     closeChooser(state, page, { note: `Left "${state.chooser.item.name}" as it was.` });
     return;
   }
@@ -1601,24 +1588,24 @@ async function handleChooseKey(chunk, state, page) {
   }
 
   const range = chooserLines(state);
-  if (chunk === ARROW_DOWN || chunk === 'DOWN') {
+  if (keyIs(chunk, 'ArrowDown', state)) {
     if (range) moveSelection(state, Math.min(state.cursor + 1, range.last), page);
     return;
   }
-  if (chunk === ARROW_UP) {
+  if (keyIs(chunk, 'ArrowUp', state)) {
     if (range) moveSelection(state, Math.max(state.cursor - 1, range.first), page);
     return;
   }
-  if (chunk === PAGE_DOWN) {
+  if (keyIs(chunk, 'PageDown', state)) {
     if (range) moveSelection(state, Math.min(state.cursor + viewportHeight(), range.last), page);
     return;
   }
-  if (chunk === PAGE_UP) {
+  if (keyIs(chunk, 'PageUp', state)) {
     if (range) moveSelection(state, Math.max(state.cursor - viewportHeight(), range.first), page);
     return;
   }
 
-  if (chunk === BACKSPACE || chunk === BACKSPACE_ALT) {
+  if (keyIs(chunk, 'Backspace', state)) {
     refilter(state, page, chooser.filter.slice(0, -1));
     return;
   }
@@ -1647,7 +1634,7 @@ async function handleTypeKey(chunk, state, page) {
   const t = state.typing;
   if (!t) { state.mode = 'browse'; return; }
 
-  if (chunk === ESC) {
+  if (keyIs(chunk, 'Escape', state)) {
     // Captured while the field is still drawn as it is on screen, so the one
     // row that changes — the field, back to its ordinary form — is the one
     // row repainted.
@@ -1684,7 +1671,7 @@ async function handleTypeKey(chunk, state, page) {
     return;
   }
 
-  if (chunk === BACKSPACE || chunk === BACKSPACE_ALT) {
+  if (keyIs(chunk, 'Backspace', state)) {
     await page.keyboard.press('Backspace');
     t.caret = Math.max(t.caret - 1, 0);
   } else if (chunk.startsWith(ESC)) {
@@ -1707,7 +1694,7 @@ async function handleFindKey(chunk, state, page) {
   markInput(state);
   const find = state.find;
 
-  if (chunk === ESC || chunk === CTRL_C) {
+  if (keyIs(chunk, 'Escape', state) || keyIs(chunk, 'Ctrl+C', state)) {
     state.mode = 'browse';
     drawHint(state);
     setStatus(state, 'Search cancelled.');
@@ -1729,11 +1716,11 @@ async function handleFindKey(chunk, state, page) {
     return runSearch(state, page, needle, find.direction);
   }
 
-  if (chunk === ARROW_LEFT) find.caret = Math.max(0, find.caret - 1);
-  else if (chunk === ARROW_RIGHT) find.caret = Math.min(find.text.length, find.caret + 1);
-  else if (chunk === HOME_KEY) find.caret = 0;
-  else if (chunk === END_KEY) find.caret = find.text.length;
-  else if (chunk === BACKSPACE || chunk === BACKSPACE_ALT) {
+  if (keyIs(chunk, 'ArrowLeft', state)) find.caret = Math.max(0, find.caret - 1);
+  else if (keyIs(chunk, 'ArrowRight', state)) find.caret = Math.min(find.text.length, find.caret + 1);
+  else if (keyIs(chunk, 'Home', state)) find.caret = 0;
+  else if (keyIs(chunk, 'End', state)) find.caret = find.text.length;
+  else if (keyIs(chunk, 'Backspace', state)) {
     if (find.caret > 0) {
       find.text = find.text.slice(0, find.caret - 1) + find.text.slice(find.caret);
       find.caret -= 1;
@@ -1750,7 +1737,7 @@ async function handleAddressKey(chunk, state, page) {
   markInput(state);
   const a = state.address;
 
-  if (chunk === ESC) {
+  if (keyIs(chunk, 'Escape', state)) {
     state.mode = 'browse';
     drawHint(state);
     drawAddress(state, page, { force: true });
@@ -1776,16 +1763,16 @@ async function handleAddressKey(chunk, state, page) {
     return;
   }
 
-  if (chunk === ARROW_LEFT) a.caret = Math.max(0, a.caret - 1);
-  else if (chunk === ARROW_RIGHT) a.caret = Math.min(a.text.length, a.caret + 1);
-  else if (chunk === HOME_KEY) a.caret = 0;
-  else if (chunk === END_KEY) a.caret = a.text.length;
-  else if (chunk === BACKSPACE || chunk === BACKSPACE_ALT) {
+  if (keyIs(chunk, 'ArrowLeft', state)) a.caret = Math.max(0, a.caret - 1);
+  else if (keyIs(chunk, 'ArrowRight', state)) a.caret = Math.min(a.text.length, a.caret + 1);
+  else if (keyIs(chunk, 'Home', state)) a.caret = 0;
+  else if (keyIs(chunk, 'End', state)) a.caret = a.text.length;
+  else if (keyIs(chunk, 'Backspace', state)) {
     if (a.caret > 0) {
       a.text = a.text.slice(0, a.caret - 1) + a.text.slice(a.caret);
       a.caret -= 1;
     }
-  } else if (chunk === CTRL_L) {
+  } else if (keyIs(chunk, 'Ctrl+L', state)) {
     a.text = '';
     a.caret = 0;
   } else if (!chunk.startsWith(ESC)) {
@@ -1799,6 +1786,7 @@ async function handleAddressKey(chunk, state, page) {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  const keys = new Keymap();
   log('start', {
     url: START_URL, logPath: LOG_PATH, connect: ARGS.connect || null, engine: ARGS.engine,
   });
@@ -1862,6 +1850,7 @@ async function main() {
   await core.rescan();
   const state = {
     core,
+    keys,
     sources,
     browserPort,
     // Nothing may follow a tab until the first page is drawn: the browser
