@@ -221,3 +221,32 @@ test('a key nothing else holds is bound without a question', async () => {
   assert.equal(queued.length, 0, 'no answer was consumed by a question that should not be asked');
   assert.ok(writes.join('').includes('z assigned to Quit.'));
 });
+
+// The wizard is where bindings get broken, so it has to survive the broken
+// ones: a reader must never be able to strand themselves in this list.
+test('the arrows, Enter and Escape work in the wizard whatever they are bound to', async () => {
+  const keymap = new Keymap({ terminfo: {}, load: false });
+  keymap.assign('refresh', '\x1b[B');   // Down now means something this list cannot do
+  keymap.unbind('activate');
+  keymap.unbind('quit');
+  keymap.unbind('close-popup');
+
+  const output = new PassThrough();
+  output.rows = 12;
+  output.columns = 200;
+  const writes = [];
+  const write = output.write.bind(output);
+  output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
+
+  //  Down = to move and report, Enter Alt+Z to rebind there, Escape n to leave.
+  const queued = ['\x1b[B', '=', '\r', '\x1bz', '\x1b', 'n'];
+  const reader = { next: () => Promise.resolve(queued.shift()) };
+
+  const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
+  assert.equal(saved, false, 'Escape reached the save question and n declined it');
+  assert.equal(queued.length, 0);
+
+  const painted = writes.join('');
+  assert.ok(painted.includes('Item 2 of'), 'Down still moved the selection');
+  assert.ok(painted.includes('Alt+Z assigned to Location bar.'), 'Enter still activated the row');
+});
