@@ -179,6 +179,18 @@ class Keymap {
   actionFor(sequence) { return this.sequenceActions.get(sequence) || null; }
   isKey(sequence, name) { return this.sequencesFor(name).includes(sequence); }
 
+  // Which other actions would lose a binding if this one took the key. The
+  // wizard asks before taking a key away from something the reader is still
+  // using, so it has to know what it would be taking it from.
+  conflicts(id, spec) {
+    const owners = new Set();
+    for (const sequence of this.sequencesFor(spec)) {
+      const owner = this.sequenceActions.get(sequence);
+      if (owner && owner !== id) owners.add(owner);
+    }
+    return [...owners].map((owner) => this.byId.get(owner));
+  }
+
   assign(id, sequence, { add = false } = {}) {
     const action = this.byId.get(id);
     if (!action) return null;

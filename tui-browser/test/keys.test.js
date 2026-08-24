@@ -173,3 +173,51 @@ test('Escape leaves the wizard even where the keys to read it were unbound', asy
   assert.deepEqual(keymap.actions.map((action) => [action.id, action.bindings]), before,
     'declining restored the bindings the wizard started with');
 });
+
+// Silently taking a key away from something the reader still uses is the one
+// edit in here they cannot see coming.
+test('rebinding a key another action holds is confirmed first', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-wizard-clash-'));
+  const file = path.join(directory, 'keys.json');
+  const keymap = new Keymap({ terminfo: {}, file, load: false });
+  assert.equal(wizardRows(keymap)[0].action.id, 'quit');
+
+  const output = new PassThrough();
+  output.rows = 12;
+  output.columns = 200;
+  const writes = [];
+  const write = output.write.bind(output);
+  output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
+
+  //  Enter j n  refuses the swap, Enter j y  accepts it, Escape y  saves.
+  const queued = ['\r', 'j', 'n', '\r', 'j', 'y', '\x1b', 'y'];
+  const reader = { next: () => Promise.resolve(queued.shift()) };
+
+  const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
+  assert.equal(saved, true);
+  assert.equal(queued.length, 0);
+
+  const painted = writes.join('');
+  assert.ok(painted.includes('j is assigned to Next line; rebind to Quit? y/n'),
+    'the question names the key, what holds it, and what would take it');
+  assert.ok(painted.includes('Binding unchanged.'), 'refusing left the key where it was');
+  assert.equal(keymap.actionFor('j'), 'quit', 'accepting moved the key');
+  assert.deepEqual(keymap.byId.get('next-line').bindings, ['ArrowDown']);
+});
+
+test('a key nothing else holds is bound without a question', async () => {
+  const keymap = new Keymap({ terminfo: {}, load: false });
+  const output = new PassThrough();
+  output.rows = 12;
+  output.columns = 200;
+  const writes = [];
+  const write = output.write.bind(output);
+  output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
+
+  const queued = ['\r', 'z', '\x1b', 'n'];
+  const reader = { next: () => Promise.resolve(queued.shift()) };
+
+  await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
+  assert.equal(queued.length, 0, 'no answer was consumed by a question that should not be asked');
+  assert.ok(writes.join('').includes('z assigned to Quit.'));
+});
