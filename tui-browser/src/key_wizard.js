@@ -46,6 +46,7 @@ async function runKeyWizard({
   let scroll = 0;
   let status = 'Enter replaces a binding; Alt+A adds one.';
   let capturing = null;
+  let pending = null;
   let done = false;
   let saved = false;
   let leftScreen = false;
@@ -169,11 +170,38 @@ async function runKeyWizard({
           capturing = null;
           status = `${row.action.label} is unbound.`;
         } else {
-          const result = keymap.assign(row.action.id, key, { add: capturing === 'add' });
+          const add = capturing === 'add';
+          const binding = keymap.nameForSequence(key);
+          const clashes = keymap.conflicts(row.action.id, binding);
           capturing = null;
-          status = `${result.binding} assigned to ${row.action.label}.`
-            + (result.displaced ? ` Removed from ${result.displaced.label}.` : '');
+          if (clashes.length) {
+            // Taking a key from something else is the one edit here the
+            // reader cannot see coming, so it is named and asked about
+            // rather than reported once it has already happened.
+            pending = { id: row.action.id, label: row.action.label, key, add };
+            status = `${keymap.display(binding)} is assigned to `
+              + `${clashes.map((action) => action.label).join(' and ')}; `
+              + `rebind to ${row.action.label}? y/n`;
+          } else {
+            status = `${keymap.assign(row.action.id, key, { add }).binding} `
+              + `assigned to ${row.action.label}.`;
+          }
         }
+        render();
+        continue;
+      }
+
+      if (pending) {
+        if (key === 'y' || key === 'Y') {
+          const result = keymap.assign(pending.id, pending.key, { add: pending.add });
+          status = `${result.binding} assigned to ${pending.label}.`
+            + (result.displaced ? ` Removed from ${result.displaced.label}.` : '');
+        } else if (key === 'n' || key === 'N' || key === ESC) {
+          status = 'Binding unchanged.';
+        } else {
+          continue;
+        }
+        pending = null;
         render();
         continue;
       }
