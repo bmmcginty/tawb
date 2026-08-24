@@ -1139,6 +1139,32 @@ async function handleBrowseKey(chunk, state, page) {
     return;
   }
 
+  if (action === 'keyboard-wizard') {
+    // The live ticker must not paint into the wizard's alternate screen. Let
+    // an in-flight refresh finish before switching screens, then hold later
+    // snapshots and text patches until the ordinary browser screen returns.
+    const beforeSize = termSize();
+    state.mode = 'keyboard';
+    while (state.core.live.refreshing) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    state.core.live.refreshing = true;
+    let saved;
+    try {
+      saved = await runKeyWizard({ keymap: state.keys, reader: state.keyReader });
+    } finally {
+      state.core.live.refreshing = false;
+      state.mode = 'browse';
+    }
+    const afterSize = termSize();
+    if (afterSize.rows !== beforeSize.rows || afterSize.cols !== beforeSize.cols) {
+      relayout(state);
+      render(state, page, { force: true });
+    }
+    setStatus(state, saved ? 'Keyboard bindings saved.' : 'Keyboard bindings unchanged.');
+    return;
+  }
+
   if (action === 'refresh') {
     const previous = state.core.blocks.map((b) => b.text);
     const anchor = anchorFor(state);
@@ -1859,6 +1885,7 @@ async function main() {
   const state = {
     core,
     keys,
+    keyReader: null,
     sources,
     browserPort,
     // Nothing may follow a tab until the first page is drawn: the browser
@@ -1869,7 +1896,7 @@ async function main() {
     col: 0,
     scroll: 0,
     statusMsg: '',
-    mode: 'browse', // 'browse' | 'choose' | 'type' | 'address' | 'find'
+    mode: 'browse', // 'browse' | 'choose' | 'type' | 'address' | 'find' | 'keyboard'
     typing: null,
     chooser: null,
     address: null,
@@ -1883,6 +1910,7 @@ async function main() {
 
   setupRawInput();
   const keyReader = new KeyReader(process.stdin);
+  state.keyReader = keyReader;
   process.stdout.write('\x1b[2J');
   render(state, page, { force: true });
 
@@ -1902,6 +1930,7 @@ async function main() {
   });
 
   process.stdout.on('resize', () => {
+    if (state.mode === 'keyboard') return; // the wizard owns its alternate screen
     relayout(state);
     process.stdout.write('\x1b[2J');
     render(state, state.core.page, { force: true });

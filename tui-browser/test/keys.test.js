@@ -25,6 +25,7 @@ test('terminfo key sequences are added to the portable fallbacks', () => {
   assert.ok(calls.includes('knp'));
   assert.equal(keys.actionFor('\x1b[999~'), 'next-screen');
   assert.equal(keys.actionFor('\x1b[6~'), 'next-screen');
+  assert.equal(keys.actionFor('\x1b?'), 'keyboard-wizard');
   assert.equal(keys.nameForSequence('\x1b[999~'), 'PageDown');
 });
 
@@ -91,11 +92,34 @@ test('the wizard exits only through its final row and ignores other save answers
     close() {}
   }
 
-  await runKeyWizard({ input, output, keymap, KeyReaderClass: FakeReader });
+  const saved = await runKeyWizard({ input, output, keymap, KeyReaderClass: FakeReader });
+  assert.equal(saved, true);
   assert.ok(fs.existsSync(file));
   assert.equal(queued.length, 0, 'the unrelated answer was consumed and ignored');
   assert.equal(writes.filter((chunk) => chunk === '\x1b[2J').length, 1,
     'only the initial screen is cleared');
+  assert.equal(writes[0], '\x1b[?1049h', 'the wizard preserves the screen underneath');
+  assert.ok(writes.includes('\x1b[?1049l'), 'the previous screen is restored on exit');
   assert.equal(afterDown.join('').includes('\x1b[2K'), false, 'Down only moves the cursor');
   assert.equal(afterUp.join('').includes('\x1b[2K'), false, 'Up only moves the cursor');
+});
+
+test('declining to save restores the bindings used before the wizard', async () => {
+  const keymap = new Keymap({ terminfo: {}, load: false });
+  const before = keymap.actions.map((action) => [action.id, [...action.bindings]]);
+  const rows = wizardRows(keymap);
+  const queued = [
+    '\r', 'x',
+    ...Array.from({ length: rows.length - 1 }, () => '\x1b[B'),
+    '\r', 'n',
+  ];
+  const reader = { next: () => Promise.resolve(queued.shift()) };
+  const input = new PassThrough();
+  const output = new PassThrough();
+  output.rows = 12;
+  output.columns = 80;
+
+  const saved = await runKeyWizard({ input, output, keymap, reader });
+  assert.equal(saved, false);
+  assert.deepEqual(keymap.actions.map((action) => [action.id, action.bindings]), before);
 });
