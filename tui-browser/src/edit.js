@@ -1,29 +1,26 @@
 'use strict';
 
-const ACTION_KEYS = [
-  ['line-start', 'Ctrl+A'],
-  ['line-end', 'Ctrl+E'],
-  ['character-backward', 'Ctrl+B'],
-  ['character-forward', 'Ctrl+F'],
-  ['backspace', 'Ctrl+H'],
-  ['delete-forward', 'Ctrl+D'],
-  ['delete-word-backward', 'Ctrl+W'],
-  ['delete-line-backward', 'Ctrl+U'],
-  ['delete-line-forward', 'Ctrl+K'],
-  ['word-backward', 'Alt+B'],
-  ['word-forward', 'Alt+F'],
-  ['delete-word-forward', 'Alt+D'],
-  ['character-backward', 'ArrowLeft'],
-  ['character-forward', 'ArrowRight'],
-  ['line-start', 'Home'],
-  ['line-end', 'End'],
-  ['backspace', 'Backspace'],
-  ['delete-forward', 'Delete'],
-];
+const EDIT_ACTIONS = {
+  'line-start': 'line-start',
+  'line-end': 'line-end',
+  'previous-character': 'character-backward',
+  'next-character': 'character-forward',
+  'edit-line-start': 'line-start',
+  'edit-line-end': 'line-end',
+  'edit-previous-character': 'character-backward',
+  'edit-next-character': 'character-forward',
+  'edit-backspace': 'backspace',
+  'edit-delete': 'delete-forward',
+  'edit-previous-word': 'word-backward',
+  'edit-next-word': 'word-forward',
+  'edit-backspace-word': 'delete-word-backward',
+  'edit-delete-word': 'delete-word-forward',
+  'edit-kill-start': 'delete-line-backward',
+  'edit-kill-end': 'delete-line-forward',
+};
 
 function editAction(key, keymap) {
-  const found = ACTION_KEYS.find(([, spec]) => keymap.isKey(key, spec));
-  return found ? found[0] : null;
+  return EDIT_ACTIONS[keymap.actionFor(key)] || null;
 }
 
 function wordStart(text, caret) {
@@ -86,4 +83,4 @@ async function sendFieldEdit(keyboard, action) {
   return true;
 }
 
-module.exports = { ACTION_KEYS, editAction, applyBufferEdit, sendFieldEdit, wordStart, wordEnd };
+module.exports = { EDIT_ACTIONS, editAction, applyBufferEdit, sendFieldEdit, wordStart, wordEnd };

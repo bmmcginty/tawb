@@ -8,6 +8,21 @@ const { editAction, applyBufferEdit } = require('../src/edit');
 
 const keys = new Keymap({ terminfo: {}, load: false });
 
+test('every editing operation is exposed as a configurable keymap action', () => {
+  const configurable = new Keymap({ terminfo: {}, load: false });
+  const ids = configurable.actions.map((action) => action.id);
+  for (const id of [
+    'line-start', 'line-end', 'previous-character', 'next-character',
+    'edit-line-start', 'edit-line-end', 'edit-previous-character', 'edit-next-character',
+    'edit-backspace', 'edit-delete', 'edit-previous-word', 'edit-next-word',
+    'edit-backspace-word', 'edit-delete-word', 'edit-kill-start', 'edit-kill-end',
+  ]) assert.ok(ids.includes(id), `${id} is absent from the keyboard wizard`);
+
+  configurable.assign('edit-next-word', 'x');
+  assert.equal(editAction('x', configurable), 'word-forward');
+  assert.equal(editAction('\x1bf', configurable), null, 'the replaced default no longer edits');
+});
+
 function press(buffer, sequence) {
   const action = editAction(sequence, keys);
   assert.ok(action, `no editing action for ${JSON.stringify(sequence)}`);
