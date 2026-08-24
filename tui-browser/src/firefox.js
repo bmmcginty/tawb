@@ -213,7 +213,8 @@ const PIERCE_CHILD_SCRIPT = `
     Services.obs.addObserver(function (win) {
       try {
         const candidates = (root) => Array.from(root.querySelectorAll(
-          'button,input,[role="button"],[role="slider"],[role="menuitem"]'));
+          'button,input,[role="button"],[role="slider"],[role="menuitem"],'
+          + '[role="menuitemcheckbox"],[role="menuitemradio"]'));
         const visible = (el) => {
           try {
             const style = win.getComputedStyle(el);
@@ -232,7 +233,9 @@ const PIERCE_CHILD_SCRIPT = `
             const role = explicit || (type === 'range' ? 'slider' : 'button');
             const name = String(control.getAttribute('aria-label')
               || control.getAttribute('title') || control.textContent || '').trim();
-            if (!name || !['button', 'slider', 'menuitem'].includes(role)) return null;
+            if (!name || ![
+              'button', 'slider', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
+            ].includes(role)) return null;
             const value = role === 'slider'
               ? String(control.getAttribute('aria-valuetext') || control.value || '') : '';
             return { role, name, value, index, media };

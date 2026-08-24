@@ -193,6 +193,18 @@ test('a dropdown becomes lines under its control', async (t) => {
   });
 });
 
+test('a privileged native media control can receive the real-click command', async () => {
+  let received = null;
+  const page = {};
+  const driver = {
+    activateNativeControl: async (scope, item) => { received = { scope, item }; return true; },
+  };
+  const core = new Core({ driver, page, source: 'ax', sources: ['ax'] });
+  const item = { role: 'menuitemradio', name: '1.5', nativeControl: { media: 0, index: 7 } };
+  assert.deepEqual(await core.realClick(item), { ok: true, reason: null });
+  assert.deepEqual(received, { scope: page, item });
+});
+
 test('a popup rendered at the end of the document is brought to its control', () => {
   // Frameworks render a menu into the end of <body> so nothing can clip it,
   // which in a line list puts it nowhere near the button that opened it.

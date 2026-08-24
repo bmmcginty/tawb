@@ -27,7 +27,10 @@ const LINE_RE = /^([a-zA-Z][\w-]*)(?:\s+"((?:[^"\\]|\\.)*)")?((?:\s+\[[^\]]*\])*
 // Roles we render as {Name} — things you "go to"
 const LINK_ROLES = new Set(['link']);
 // Roles we render as [*Name] — things you "activate"
-const BUTTON_ROLES = new Set(['button', 'menuitem', 'tab', 'switch', 'checkbox', 'radio', 'option']);
+const BUTTON_ROLES = new Set([
+  'button', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
+  'tab', 'switch', 'checkbox', 'radio', 'option',
+]);
 // Roles we render as [Name] / [Name: value] — things that hold a value or take typing
 const FIELD_ROLES = new Set(['textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton']);
 

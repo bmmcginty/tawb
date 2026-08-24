@@ -121,8 +121,8 @@ function extractAxItems(options) {
     color: 'textbox', file: 'button', hidden: null,
   };
   // Roles that are their own line and whose name covers everything inside.
-  const ATOMIC = new Set(['link', 'button', 'heading', 'img', 'menuitem', 'tab',
-    'switch', 'checkbox', 'radio', 'option']);
+  const ATOMIC = new Set(['link', 'button', 'heading', 'img', 'menuitem',
+    'menuitemcheckbox', 'menuitemradio', 'tab', 'switch', 'checkbox', 'radio', 'option']);
   const FIELDS = new Set(['textbox', 'searchbox', 'combobox', 'listbox', 'slider',
     'spinbutton']);
   // A player is one line, and what it says is where it has got to.
