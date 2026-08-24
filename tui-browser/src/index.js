@@ -814,7 +814,7 @@ function onLiveEvent(state, page, payload) {
   // Try the cheap path first. Splicing text in is the reader's to attempt
   // because only the reader can see the one thing that would forbid it: new
   // text that wraps to a different number of lines.
-  if (patches && state.mode === 'browse') {
+  if (patches && state.mode === 'browse' && !state.core.live.refreshing) {
     const before = visibleRowsNow(state);
     const touched = applyTextPatches(state, patches);
     if (touched) {
@@ -830,6 +830,71 @@ function onLiveEvent(state, page, payload) {
 
   state.core.live.mutations += (mutations || 0);
   state.core.live.dirty = true;
+}
+
+// ---------------------------------------------------------------------------
+// Page history
+//
+// History belongs to a tab, unlike the reader's own tab list. Hold live
+// refreshes while moving through it so the navigation event cannot race this
+// deliberate rebuild and leave the old document in the buffer.
+// ---------------------------------------------------------------------------
+
+async function traversePageHistory(page, direction, watchMs = 1500) {
+  const beforeUrl = page.url();
+  const beforeEntry = await page.evaluate(() =>
+    (globalThis.navigation?.currentEntry ? globalThis.navigation.currentEntry.key : null));
+  await page.evaluate((delta) => window.history.go(delta), direction);
+
+  const deadline = Date.now() + watchMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const entry = await page.evaluate(() =>
+      (globalThis.navigation?.currentEntry ? globalThis.navigation.currentEntry.key : null))
+      .catch(() => beforeEntry);
+    if (page.url() !== beforeUrl || (entry && entry !== beforeEntry)) {
+      // Attached Chromium can report the new document and then leave
+      // waitForLoadState waiting until its full timeout. Ask the document
+      // directly instead; this is the same readiness goto(domcontentloaded)
+      // waits for and works through both drivers.
+      const loadDeadline = Date.now() + 15000;
+      while (Date.now() < loadDeadline) {
+        const ready = await page.evaluate(() => document.readyState).catch(() => '');
+        if (ready === 'interactive' || ready === 'complete') break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const url = await page.evaluate(() => location.href).catch(() => null);
+      if (url && typeof page.setUrl === 'function') page.setUrl(url);
+      return true;
+    }
+  }
+  return false;
+}
+
+async function moveInHistory(state, page, direction) {
+  const backwards = direction < 0;
+  const verb = backwards ? 'back' : 'forward';
+
+  while (state.core.live.refreshing) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  state.core.live.refreshing = true;
+  try {
+    const moved = await traversePageHistory(page, direction);
+    if (!moved) {
+      setStatus(state, `No page to go ${verb} to.`);
+      return;
+    }
+    await refresh(state, page, { resetCursor: true });
+    render(state, page, { force: true });
+    setStatus(state, `Went ${verb} to ${page.url()}`);
+    log('history.move', { direction, url: page.url().slice(0, 120) });
+  } catch (err) {
+    setStatus(state, `Could not go ${verb}: ${err.message.split('\n')[0]}`);
+    log('history.failed', { direction, error: String(err.message || err).slice(0, 160) });
+  } finally {
+    state.core.live.refreshing = false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1230,6 +1295,9 @@ async function handleBrowseKey(chunk, state, page) {
     const line = currentLine(state);
     return moveSelection(state, state.cursor, page, line ? line.text.length - 1 : 0);
   }
+
+  if (action === 'history-back') return moveInHistory(state, page, -1);
+  if (action === 'history-forward') return moveInHistory(state, page, 1);
 
   if (action === 'next-tab') return cycleTab(state, 1);
   if (action === 'previous-tab') return cycleTab(state, -1);
@@ -2055,7 +2123,8 @@ module.exports = {
   anchorFor, restoreAnchor, capturePlace, restorePlace, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
   screenBefore, repaintList, visibleRowsNow,
-  applyTextPatches, loadMore, atEnd, switchToTab, cycleTab, closeCurrentTab, onNewTab,
+  applyTextPatches, loadMore, atEnd, traversePageHistory, moveInHistory,
+  switchToTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation,
 };

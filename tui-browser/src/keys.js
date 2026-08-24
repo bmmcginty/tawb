@@ -13,6 +13,8 @@ const KEY_DEFINITIONS = {
   ArrowDown: { cap: 'kcud1', sequences: ['\x1b[B', '\x1bOB'] },
   ArrowLeft: { cap: 'kcub1', sequences: ['\x1b[D', '\x1bOD'] },
   ArrowRight: { cap: 'kcuf1', sequences: ['\x1b[C', '\x1bOC'] },
+  'Alt+ArrowLeft': { cap: 'kLFT3', sequences: ['\x1b[1;3D', '\x1b[3D'] },
+  'Alt+ArrowRight': { cap: 'kRIT3', sequences: ['\x1b[1;3C', '\x1b[3C'] },
   PageUp: { cap: 'kpp', sequences: ['\x1b[5~'] },
   PageDown: { cap: 'knp', sequences: ['\x1b[6~'] },
   Home: { cap: 'khome', sequences: ['\x1b[H', '\x1bOH', '\x1b[1~'] },
@@ -23,6 +25,8 @@ const KEY_DEFINITIONS = {
 const ACTIONS = [
   ['quit', 'Quit', ['Ctrl+C', 'q']],
   ['location-bar', 'Location bar', ['Ctrl+L']],
+  ['history-back', 'Back in page history', ['Alt+ArrowLeft']],
+  ['history-forward', 'Forward in page history', ['Alt+ArrowRight']],
   ['activate', 'Activate', ['Enter']],
   ['next-line', 'Next line', ['ArrowDown', 'j']],
   ['previous-line', 'Previous line', ['ArrowUp', 'k']],

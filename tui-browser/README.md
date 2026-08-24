@@ -387,10 +387,10 @@ direction — which is how you reverse one.
 
 The named terminal keys are not assumed to have one universal escape
 sequence. At startup tweb asks the current terminal's terminfo entry through
-`tput` for PageUp, PageDown, arrows, Home and End, and keeps the common
-xterm-compatible sequences as fallbacks. `$TERM` therefore needs to describe
-the terminal accurately; a missing `tput` or terminfo entry does not prevent
-tweb from starting.
+`tput` for PageUp, PageDown, arrows, Alt+Left, Alt+Right, Home and End, and
+keeps the common xterm-compatible sequences as fallbacks. `$TERM` therefore
+needs to describe the terminal accurately; a missing `tput` or terminfo entry
+does not prevent tweb from starting.
 
 Press `Alt+?` to open the keyboard wizard while reading, or open it without
 starting a browser:
@@ -445,6 +445,7 @@ each machine; an unusual sequence recorded by the wizard is retained exactly.
 | `Ctrl+G` | Find the same text again                                        |
 | `m`      | Send a real click — trusted, carries user activation             |
 | `Ctrl+L` | Address bar (scrolls sideways for long URLs; `Esc` cancels)      |
+| `Alt+←` / `Alt+→` | Back / forward in this tab's page history              |
 | `Alt+?`  | Open the keyboard binding wizard                               |
 | `\`      | Cycle view: AX → PAGE → HTML → SOURCE                            |
 | `>` / `<`| Next / previous tab                                              |

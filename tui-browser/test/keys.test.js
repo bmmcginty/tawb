@@ -25,8 +25,11 @@ test('terminfo key sequences are added to the portable fallbacks', () => {
   assert.ok(calls.includes('knp'));
   assert.equal(keys.actionFor('\x1b[999~'), 'next-screen');
   assert.equal(keys.actionFor('\x1b[6~'), 'next-screen');
+  assert.equal(keys.actionFor('\x1b[1;3D'), 'history-back');
+  assert.equal(keys.actionFor('\x1b[3C'), 'history-forward');
   assert.equal(keys.actionFor('\x1b?'), 'keyboard-wizard');
   assert.equal(keys.nameForSequence('\x1b[999~'), 'PageDown');
+  assert.equal(keys.nameForSequence('\x1b[1;3D'), 'Alt+ArrowLeft');
 });
 
 test('replacing and adding bindings resolves conflicts', () => {
