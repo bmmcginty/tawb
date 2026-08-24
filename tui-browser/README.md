@@ -540,6 +540,10 @@ you had a moment ago.
 
 ## Tabs and windows
 
+Page history remembers the line, column and scroll position where each entry
+was left. Returning with Back or Forward resumes there instead of starting at
+the top of the restored page.
+
 A link with `target="_blank"` opens a tab and the browser moves to it. **So do
 we** — the browser has already gone there and you should be where the browser
 is. The status line says so: *"Followed a new tab — tab 3 of 3: Page B"*.
