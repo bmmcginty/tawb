@@ -29,3 +29,40 @@ test('the input reader distinguishes Escape from Alt keys', async () => {
   assert.equal(await reader.next(), '\x1ba');
   reader.close();
 });
+
+test('a claim takes the keyboard from the reading loop and gives it back', async () => {
+  const stream = new PassThrough();
+  const reader = new KeyReader(stream, { escapeMs: 5 });
+
+  // The loop is waiting for a key, as it always is between keystrokes.
+  let loopSaw = null;
+  const loop = reader.next().then((key) => { loopSaw = key; });
+
+  stream.write('j');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(loopSaw, 'j');
+
+  const waiting = reader.next();
+  const token = reader.claim();
+  stream.write('bob\r');
+  const typed = [];
+  for (let i = 0; i < 4; i += 1) typed.push(await reader.next(token));
+  assert.deepEqual(typed, ['b', 'o', 'b', '\r']);
+
+  reader.release(token);
+  stream.write('k');
+  assert.equal(await waiting, 'k', 'the loop resumes with the next key after the prompt');
+  await loop;
+  reader.close();
+});
+
+test('a claim drops what was typed before the prompt appeared', async () => {
+  const stream = new PassThrough();
+  const reader = new KeyReader(stream, { escapeMs: 5 });
+  stream.write('gg');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const token = reader.claim();
+  stream.write('x');
+  assert.equal(await reader.next(token), 'x');
+  reader.close();
+});
