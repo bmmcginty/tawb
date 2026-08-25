@@ -141,6 +141,29 @@ test('one reader leaving does not end the session the others are sharing', async
   }
 });
 
+test('a reader arriving after the last one left gets a session, not a stale yes', async () => {
+  const browser = await fakeBrowser();
+  const { broker, url } = await brokerOn(browser);
+  const one = await reader(url);
+  try {
+    one.send(1, 'session.new');
+    await one.until((m) => m.id === 1);
+    one.send(2, 'session.end');
+    await new Promise((r) => setTimeout(r, 100));
+    one.close();
+    await new Promise((r) => setTimeout(r, 50));
+
+    const two = await reader(url);
+    two.send(1, 'session.new');
+    await two.until((m) => m.id === 1);
+    const asked = browser.commands.filter((c) => c.method === 'session.new');
+    assert.equal(asked.length, 2, 'the new reader was handed the session that had just ended');
+  } finally {
+    await broker.close({ endSession: false });
+    browser.close();
+  }
+});
+
 test('an event reaches the readers that asked for it, and no others', async () => {
   const browser = await fakeBrowser();
   const { broker, url } = await brokerOn(browser);

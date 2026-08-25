@@ -286,9 +286,17 @@ function startBroker({
     }
     // One reader leaving is not the browser closing: session.end from any
     // connection deletes the session for everybody sharing it.
-    if (method === 'session.end' && clients.size > 1) {
-      client.peer.send(JSON.stringify({ type: 'success', id, result: {} }));
-      return;
+    if (method === 'session.end') {
+      if (clients.size > 1) {
+        client.peer.send(JSON.stringify({ type: 'success', id, result: {} }));
+        return;
+      }
+      // The last reader out really does end it, so the yes we have been
+      // replaying stops being true. A reader arriving in the seconds before we
+      // give up must be given a new session, not the id of the one that has
+      // just gone — which the browser would answer with "invalid session id"
+      // for everything it was asked afterwards.
+      sessionResult = null;
     }
     if (method === 'session.subscribe') {
       for (const event of (params && params.events) || []) client.subscribed.add(event);
