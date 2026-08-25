@@ -3,14 +3,14 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+
+const { tempDir } = require('../tmpdir');
 
 const { openDriver } = require('../../src/driver');
 const { sendFieldEdit } = require('../../src/edit');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-edit-'));
+const profile = tempDir('tweb-edit-');
 let driver;
 
 test.after(async () => {

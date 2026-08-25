@@ -11,19 +11,20 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
+
+const { tempDir } = require('../tmpdir');
 
 // Claims live under the user's data directory. A test must not write to the
 // real one, so this is set before session.js is asked for anything.
-const state = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-tabs-state-'));
+const state = tempDir('tweb-tabs-state-');
 process.env.XDG_DATA_HOME = state;
 
 const { openDriver } = require('../../src/driver');
 const { claimedTargets, claimsPath } = require('../../src/session');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-tabs-'));
+const profile = tempDir('tweb-tabs-');
 
 let driver;
 
