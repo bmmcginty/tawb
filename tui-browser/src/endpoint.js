@@ -64,7 +64,19 @@ async function runningEndpoint(profileDir) {
   return record.port;
 }
 
+// The port names the browser instance, which is what per-browser state — tab
+// claims — is keyed by. Both engines have it in the endpoint they connected
+// to: a DevTools http url on one, a BiDi WebSocket url on the other.
+function portOfEndpoint(endpoint) {
+  try {
+    const port = Number(new URL(endpoint).port);
+    return Number.isFinite(port) && port > 0 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   ENDPOINT_FILE, endpointRecordPath, readEndpointRecord, writeEndpointRecord,
-  endpointReady, waitForEndpoint, runningEndpoint,
+  endpointReady, waitForEndpoint, runningEndpoint, portOfEndpoint,
 };

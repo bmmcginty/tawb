@@ -2,7 +2,7 @@
 
 const bidi = require('./bidi');
 const { launchFirefox, defaultProfileDir, releaseStrandedSession } = require('./firefox');
-const { readEndpointRecord, writeEndpointRecord } = require('./endpoint');
+const { readEndpointRecord, writeEndpointRecord, portOfEndpoint } = require('./endpoint');
 const { processAlive } = require('./proc');
 const { extractAxItems } = require('./ax_own');
 const { readDocument } = require('./frames');
@@ -512,6 +512,12 @@ async function openFirefox({
     marionettePort = (readEndpointRecord(profile || defaultProfileDir()) || {}).marionettePort;
   }
 
+  // The port the remote agent is serving on, which is how per-browser state
+  // — tab claims — is keyed. Chromium's driver takes it from the debugging
+  // port; here it is in the endpoint we connected to, whether we started this
+  // Firefox or joined one that was already running.
+  const port = portOfEndpoint(endpoint);
+
   const session = await bidi.connect(endpoint);
   await startSession(session, {
     profileDir: profile || defaultProfileDir(), marionettePort, log,
@@ -667,7 +673,7 @@ async function openFirefox({
     context: browserContext,
     child,
     owned: !!child,
-    port: null,
+    port,
     rejoined: !child,
     session,
 
@@ -695,10 +701,13 @@ async function openFirefox({
       return browserContext.newPage();
     },
 
-    async targetIdFor() {
-      // BiDi context ids are already stable per tab; one tab for now, so tab
-      // claiming has nothing to disambiguate.
-      return top.context;
+    // A tab's identity as the browser knows it. A BiDi browsing-context id is
+    // already stable for the life of the tab and unique across the browser,
+    // so it is its own answer — the same thing a CDP target id is on the other
+    // engine, and it means the same thing in another session's process, which
+    // is what tab claims are keyed by.
+    async targetIdFor(page) {
+      return (page && page.contextId) || top.context;
     },
 
     // Answering Firefox's password prompt ourselves.
