@@ -18,34 +18,71 @@ const { otherReadersOn } = require('./session');
 // but only that profile's; nothing enumerates them, so nothing could ever
 // clean up after a crash.
 //
-// So every browser we start is written down here, in one file beside the tab
-// claims, and every launch sweeps the list first. An entry is only a hint, in
-// the same way a tab claim is: it is believed as far as a live process group
-// whose command line still names the profile it was recorded against.
+// So every browser we start is written down here, beside the tab claims, and
+// every launch sweeps the list first. An entry is only a hint, in the same way
+// a tab claim is: it is believed as far as a live process group whose command
+// line still names the profile it was recorded against.
+//
+// One file per browser, named by its port, rather than one file listing them
+// all. Sessions start browsers concurrently — a test run starts several at
+// once — and a shared list means read, modify, write, which is a lost update
+// whenever two of them overlap. A lost entry here is a browser that can never
+// be swept, which is the one thing this is for. Separate files never collide.
 
 function stateDir() {
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
   return path.join(base, 'tui-browser');
 }
 
-function registryPath() {
-  return path.join(stateDir(), 'browsers.json');
+function registryDir() {
+  return path.join(stateDir(), 'browsers');
 }
 
-function readRegistry() {
+function entryPath(port) {
+  return path.join(registryDir(), `${port}.json`);
+}
+
+function readEntry(port) {
   try {
-    const raw = JSON.parse(fs.readFileSync(registryPath(), 'utf8'));
-    return Array.isArray(raw) ? raw.filter((e) => e && e.pid && e.port) : [];
+    const entry = JSON.parse(fs.readFileSync(entryPath(port), 'utf8'));
+    return entry && entry.pid && entry.port ? entry : null;
   } catch {
-    return [];
+    return null;
   }
 }
 
-function writeRegistry(entries) {
+function writeEntry(entry) {
   try {
-    fs.mkdirSync(stateDir(), { recursive: true });
-    fs.writeFileSync(registryPath(), JSON.stringify(entries));
+    fs.mkdirSync(registryDir(), { recursive: true });
+    fs.writeFileSync(entryPath(entry.port), JSON.stringify(entry));
   } catch { /* a lost entry costs a sweep, not a crash */ }
+}
+
+function dropEntry(port) {
+  try {
+    fs.rmSync(entryPath(port), { force: true });
+  } catch { /* nothing to drop */ }
+}
+
+function readRegistry() {
+  let names;
+  try {
+    names = fs.readdirSync(registryDir());
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => readEntry(path.basename(name, '.json')))
+    .filter(Boolean);
+}
+
+// Replaces the whole set. Nothing in a session needs this — a session only
+// ever writes its own browser's entry — but a test setting up a situation
+// does.
+function writeRegistry(entries) {
+  for (const entry of readRegistry()) dropEntry(entry.port);
+  for (const entry of entries) writeEntry(entry);
 }
 
 // Whether this process id is still the browser we recorded, rather than
@@ -70,23 +107,22 @@ function stillOurBrowser(pid, profileDir) {
 
 function recordBrowser({ pid, port, profileDir, engine }) {
   if (!pid || !port) return;
-  const others = readRegistry().filter((e) => e.port !== port);
-  others.push({
+  writeEntry({
     pid, port, profileDir, engine, owner: process.pid, keep: false, at: Date.now(),
   });
-  writeRegistry(others);
 }
 
 // A browser we have taken down, or one that was never ours to take down.
 function forgetBrowser(port) {
   if (!port) return;
-  writeRegistry(readRegistry().filter((e) => e.port !== port));
+  dropEntry(port);
 }
 
 // --keep-browser: left running on purpose, so never swept.
 function markKept(port) {
   if (!port) return;
-  writeRegistry(readRegistry().map((e) => (e.port === port ? { ...e, keep: true } : e)));
+  const entry = readEntry(port);
+  if (entry) writeEntry({ ...entry, keep: true });
 }
 
 // Take down browsers left behind by sessions that are no longer running.
@@ -100,28 +136,24 @@ function sweepStrandedBrowsers({ log = () => {} } = {}) {
   const entries = readRegistry();
   if (!entries.length) return 0;
 
-  const kept = [];
   let swept = 0;
   for (const entry of entries) {
     if (!processAlive(entry.pid) || !stillOurBrowser(entry.pid, entry.profileDir)) {
-      continue; // gone already, or the pid belongs to somebody else now
-    }
-    if (entry.keep || processAlive(entry.owner) || otherReadersOn(entry.port)) {
-      kept.push(entry);
+      dropEntry(entry.port); // gone already, or the pid belongs to somebody else now
       continue;
     }
+    if (entry.keep || processAlive(entry.owner) || otherReadersOn(entry.port)) continue;
     log('browser.stranded', {
       pid: entry.pid, port: entry.port, engine: entry.engine, profileDir: entry.profileDir,
     });
     killProcessGroup(entry.pid);
+    dropEntry(entry.port);
     swept += 1;
   }
-
-  if (swept || kept.length !== entries.length) writeRegistry(kept);
   return swept;
 }
 
 module.exports = {
-  registryPath, readRegistry, writeRegistry, recordBrowser, forgetBrowser, markKept,
-  sweepStrandedBrowsers, stillOurBrowser,
+  registryDir, entryPath, readRegistry, writeRegistry, recordBrowser, forgetBrowser,
+  markKept, sweepStrandedBrowsers, stillOurBrowser,
 };

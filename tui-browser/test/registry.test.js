@@ -131,6 +131,30 @@ test('an entry for a process that has already gone is simply dropped', async () 
   assert.equal(readRegistry().length, 0, 'a dead entry was kept');
 });
 
+test('browsers recorded at the same moment do not overwrite each other', async () => {
+  // Sessions start browsers concurrently — a test run starts several at once.
+  // A single shared list would mean read, modify, write, and the entry lost in
+  // the overlap is a browser that could never be swept.
+  const recorders = [];
+  for (let i = 0; i < 12; i += 1) {
+    const port = 9100 + i;
+    recorders.push(new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['-e', `
+        process.env.XDG_DATA_HOME = ${JSON.stringify(state)};
+        require(${JSON.stringify(require.resolve('../src/registry'))})
+          .recordBrowser({ pid: process.pid, port: ${port}, profileDir: 'p', engine: 'chromium' });
+      `], { stdio: 'ignore' });
+      child.on('error', reject);
+      child.on('exit', resolve);
+    }));
+  }
+  await Promise.all(recorders);
+
+  const ports = readRegistry().map((e) => e.port).sort((a, b) => a - b);
+  assert.equal(ports.length, 12, `entries were lost: kept ${ports.length} of 12`);
+  writeRegistry([]);
+});
+
 test('recording, forgetting and a sweep of nothing', () => {
   assert.equal(sweepStrandedBrowsers(), 0, 'an empty registry swept something');
   recordBrowser({ pid: process.pid, port: 9007, profileDir: state, engine: 'firefox' });
