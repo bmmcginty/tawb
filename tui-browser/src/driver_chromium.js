@@ -1,7 +1,6 @@
 'use strict';
 
 const { launchOwnBrowser, connectToBrowser, defaultProfileDir } = require('./browser');
-const { parseAriaSnapshot } = require('./aria');
 const { extractAxItems } = require('./ax_own');
 const { readDocument } = require('./frames');
 const { otherReadersOn } = require('./session');
@@ -14,9 +13,15 @@ const { log } = require('./log');
 // This is the path that works and is not to be disturbed: it clears bot
 // checks because the browser is an ordinary one that happens to be observed.
 //
-// The accessibility tree is now ours, computed in the page by ax_own.js, the
-// same as Firefox. It was Playwright's for as long as ours was unproven, and
-// the two were held against each other on real pages until they agreed. Ours
+// The protocol is spoken directly — see cdp.js for the client and
+// cdp_page.js for the page, frame and handle objects built on it. Playwright
+// used to carry those, and by the end its contribution was the transport plus
+// two conveniences that had both been replaced: its accessibility tree, and
+// its role-and-name locators.
+//
+// The accessibility tree is ours, computed in the page by ax_own.js, the same
+// as Firefox. It was Playwright's for as long as ours was unproven, and the
+// two were held against each other on real pages until they agreed. Ours
 // wins on two counts that are not matters of taste: its items carry a
 // reference to the element they came from, so activating a line no longer
 // means searching the page again for something with that role and that exact
@@ -24,14 +29,9 @@ const { log } = require('./log');
 // when a page repeats a name. And it reads aria-expanded as the three answers
 // it has, where ariaSnapshot marks an open control and has no way to say that
 // one is closed.
-//
-// Playwright's is kept reachable, as `--browser chromium-playwright`, because
-// it is the oracle ours was measured against and there is no reason to lose
-// that: `npm run compare -- --only chromium ...` against it is how a
-// disagreement gets judged.
 
 async function openChromium({
-  connect = null, profile = null, keepBrowser = false, ax = 'own', log = () => {},
+  connect = null, profile = null, keepBrowser = false, log = () => {},
 } = {}) {
   let browser;
   let context;
@@ -54,30 +54,11 @@ async function openChromium({
     rejoined = !!started.rejoined;
   }
 
-  const ownAx = ax !== 'playwright';
-
-  // One DevTools session per frame, kept because opening one is a round trip
-  // and this is asked for on every snapshot of a page that needs it.
-  const sessions = new Map();
-  const sessionOwners = new Map();
-  const sessionFor = async (frame) => {
-    if (sessions.has(frame)) return sessions.get(frame);
-    let session = null;
-    let owner = null;
-    try {
-      // A cross-origin frame is its own target and answers for its own
-      // document; anything else is answered by the page's session.
-      session = await context.newCDPSession(frame);
-      owner = frame;
-    } catch {
-      try {
-        session = await context.newCDPSession(frame.page ? frame.page() : frame);
-      } catch { session = null; }
-    }
-    sessions.set(frame, session);
-    if (session) sessionOwners.set(session, owner);
-    return session;
-  };
+  // The session that answers for a document. A cross-origin frame is its own
+  // target and has one of its own; anything else is answered by the tab's.
+  // The frame itself knows which, because the attachment that created the
+  // session recorded it there.
+  const sessionFor = (frame) => frame.session();
 
   // Find the closed shadow roots in a frame and hand each one to the page,
   // paired with the element hosting it.
@@ -95,14 +76,14 @@ async function openChromium({
   // a single call. A mark on a page's objects is exactly what must not be
   // there in the one document where being noticed decides everything.
   const pierceShadowRoots = async (frame) => {
-    const session = await sessionFor(frame);
+    const session = sessionFor(frame);
     if (!session) return 0;
     // A session of the frame's own answers for that document and nothing
-    // else, so there is nothing to filter. Only the fallback — the page's
-    // session, which answers for every document in the process — needs to be
-    // told which document we meant, and comparing urls there is a guess that
-    // can go wrong on a url carrying a query string.
-    const ownSession = sessionOwners.get(session) === frame;
+    // else, so there is nothing to filter. Only the shared case — the tab's
+    // session, which answers for every same-process document in it — needs to
+    // be told which document we meant, and comparing urls there is a guess
+    // that can go wrong on a url carrying a query string.
+    const ownSession = typeof frame.ownTarget === 'function' && frame.ownTarget();
 
     let document;
     try {
@@ -111,7 +92,7 @@ async function openChromium({
       return 0;
     }
 
-    // Only this frame's own roots. A session on the page answers for every
+    // Only this frame's own roots. A session on the tab answers for every
     // document in the process, and registering another frame's root into this
     // frame's map would be meaningless at best.
     const wanted = frame.url();
@@ -135,10 +116,11 @@ async function openChromium({
     collect(document, document.documentURL);
     if (!pairs.length) return 0;
 
-    // An array belonging to nothing the page can name.
+    // An array belonging to nothing the page can name, made in the frame's
+    // own world so the nodes about to go into it are from the same one.
     let basket;
     try {
-      basket = (await session.send('Runtime.evaluate', { expression: '[]' })).result.objectId;
+      basket = await frame.evaluateHandle(() => []);
     } catch {
       return null;
     }
@@ -149,7 +131,7 @@ async function openChromium({
         const host = await session.send('DOM.resolveNode', { nodeId: pair.host });
         const shadow = await session.send('DOM.resolveNode', { nodeId: pair.root });
         await session.send('Runtime.callFunctionOn', {
-          objectId: basket,
+          objectId: basket.objectId,
           functionDeclaration: 'function (host, root) { this.push([host, root]); }',
           arguments: [{ objectId: host.object.objectId }, { objectId: shadow.object.objectId }],
         });
@@ -159,7 +141,7 @@ async function openChromium({
       }
     }
     if (!registered) {
-      await session.send('Runtime.releaseObject', { objectId: basket }).catch(() => {});
+      await basket.dispose();
       return null;
     }
     log('shadow.pierced', { roots: registered, url: String(wanted).slice(0, 100) });
@@ -282,8 +264,8 @@ async function openChromium({
   };
 
   return {
-    name: ownAx ? 'chromium' : 'chromium-playwright',
-    ax: ownAx ? 'own' : 'playwright',
+    name: 'chromium',
+    ax: 'own',
     browser,
     context,
     child,
@@ -292,16 +274,10 @@ async function openChromium({
     rejoined,
 
     // A tab's identity as the browser knows it — the only name for a tab that
-    // means the same thing in another session's process.
+    // means the same thing in another session's process. It is the target id
+    // the tab was attached by, so this costs nothing to answer.
     async targetIdFor(page) {
-      try {
-        const session = await context.newCDPSession(page);
-        const { targetInfo } = await session.send('Target.getTargetInfo');
-        await session.detach().catch(() => {});
-        return (targetInfo && targetInfo.targetId) || null;
-      } catch {
-        return null;
-      }
+      return (page && page.targetId) || null;
     },
 
     // Answer this browser's password prompts with `handler`, which is given a
@@ -325,10 +301,6 @@ async function openChromium({
       return armAuth(page).catch(() => false);
     },
 
-    // The accessibility tree, flattened into reading order. Ours, computed in
-    // the page, in the same item shape the Playwright path produced — so
-    // everything downstream (prose merging, separator folding, layout) is
-    // untouched by which one computed it.
     // Run a page-side extractor again, with the closed shadow roots supplied.
     //
     // Any walk of a document hits the same wall, not just the accessibility
@@ -347,19 +319,22 @@ async function openChromium({
       // call rather than a property of anything the page owns.
       try {
         const answer = await pierced.session.send('Runtime.callFunctionOn', {
-          objectId: pierced.basket,
+          objectId: pierced.basket.objectId,
           returnByValue: true,
           functionDeclaration: `function () { const run = ${pageFunction.toString()};`
             + ` return run(Object.assign({ pairs: this }, ${JSON.stringify(extra)})); }`,
         });
         return answer.result.value;
       } finally {
-        await pierced.session.send('Runtime.releaseObject', { objectId: pierced.basket }).catch(() => {});
+        await pierced.basket.dispose();
       }
     },
 
+    // The accessibility tree, flattened into reading order. Ours, computed in
+    // the page, in the same item shape everything downstream expects — prose
+    // merging, separator folding and layout are untouched by which engine
+    // produced it.
     async axItems(frame) {
-      if (!ownAx) return parseAriaSnapshot(await frame.locator('body').ariaSnapshot());
       return readDocument(
         frame, extractAxItems, this, (items) => !items || !items.length,
         (scope) => scope.evaluate(() => !!document.querySelector('video[controls],audio[controls]')),
@@ -400,47 +375,37 @@ async function openChromium({
     // browser knows nobody touched anything — so a page that gates on a real
     // gesture (audio, fullscreen, the clipboard, a popup) refuses.
     //
-    // Playwright's click is real input over the DevTools protocol, dispatched
-    // above content, so the events are trusted and carry activation. It also
-    // brings the element into view and refuses to click one that something
-    // else is covering, which is exactly the honesty wanted here: a click
-    // that lands on a modal instead of the button is worse than no click.
-    async realClick(scope, handle, { timeoutMs = 5000 } = {}) {
-      await handle.click({ timeout: timeoutMs });
+    // So this is real input dispatched above content, at the element's own
+    // centre: the events are trusted and carry activation. Where that centre
+    // is comes from the protocol rather than from page script, and it is
+    // already in the top-level viewport's coordinates whichever session
+    // answered — which is what lets a control inside a cross-origin iframe be
+    // clicked without any offset arithmetic.
+    //
+    // Whether the point is actually reachable was settled before we got here,
+    // by prepareRealClick in the page: a click that lands on a cookie banner
+    // instead of the button is worse than no click, and the reader cannot see
+    // that the banner is there.
+    async realClick(scope, handle) {
+      await handle.click();
     },
 
     // A real click at a point inside a frame's own viewport, for a document
     // whose contents could not be read even after piercing. Dispatched on
     // that frame's own session, so the coordinates are its own.
     async clickInFrame(frame, x, y) {
-      const session = await sessionFor(frame);
+      const session = sessionFor(frame);
       if (!session) throw new Error('no session for that frame');
-      const at = { x: Math.round(x), y: Math.round(y) };
-      // Moved to, then pressed, then released, with the button state each
-      // event should carry. A bare press and release with no movement before
-      // it and no buttons on the release is not what a mouse produces, and
-      // the one place this is used — a challenge widget — is precisely where
-      // something is watching how the click was made.
-      await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at, buttons: 0 });
-      await session.send('Input.dispatchMouseEvent', {
-        type: 'mousePressed', ...at, button: 'left', buttons: 1, clickCount: 1,
-      });
-      await session.send('Input.dispatchMouseEvent', {
-        type: 'mouseReleased', ...at, button: 'left', buttons: 0, clickCount: 1,
-      });
+      await frame.page().clickAt(x, y, session);
     },
 
-    // Whoever computed the tree resolves against it. Ours kept a reference,
-    // so the item says which node it came from and there is nothing to
-    // search for. Playwright's items carry none, so that path goes back
-    // through role and name — and inherits the two ways that goes wrong: it
-    // costs a round trip, and on a page that repeats a name it can resolve
-    // to a different control than the one on the line.
+    // Ours kept a reference, so the item says which node it came from and
+    // there is nothing to search for.
     async axElementHandle(scope, item) {
-      if (item.axIndex != null) {
-        return scope.evaluateHandle((i) => (window[Symbol.for('tweb.ax')] || [])[i], item.axIndex);
+      if (item.axIndex == null) {
+        throw new Error('that line carries no element reference');
       }
-      return scope.getByRole(item.role, { name: item.name, exact: true }).first().elementHandle();
+      return scope.evaluateHandle((i) => (window[Symbol.for('tweb.ax')] || [])[i], item.axIndex);
     },
 
     async close() {
@@ -449,11 +414,6 @@ async function openChromium({
       await cancelPendingAuth();
       // Detach what we attached. A session left open is an attachment the
       // browser goes on maintaining for a client that has gone.
-      for (const session of sessions.values()) {
-        if (session) await session.detach().catch(() => {});
-      }
-      sessions.clear();
-      sessionOwners.clear();
       for (const session of authSessions.values()) {
         await session.detach().catch(() => {});
       }

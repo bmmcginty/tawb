@@ -135,11 +135,6 @@ async function main() {
 
   const driver = await openDriver({ engine: options.engine, log: () => {} });
   const page = driver.context.pages()[0] || await driver.context.newPage();
-  if (driver.ax === 'playwright') {
-    throw new Error('This judges ax_own.js, which only the engines using it have. '
-      + 'Use --browser chromium or --browser firefox.');
-  }
-
   const totals = { label: [0, 0], role: [0, 0], unreached: 0, files: 0, empty: 0 };
   // What our tree said nothing at all about, by the shape of the element, so
   // that "no item" is a lead rather than a number.
