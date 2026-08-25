@@ -630,6 +630,10 @@ async function openFirefox({
     pages.delete(params.context);
   });
 
+  // Set by attachAuth, and the only thing that decides whether a challenge is
+  // answered here or left to the browser's own prompt.
+  let answerAuth = null;
+
   const webdriverFlag = await readWebdriverFlag(page);
   log('firefox.ready', { cleared, webdriver: webdriverFlag });
   if (webdriverFlag !== false) {
@@ -680,6 +684,60 @@ async function openFirefox({
       // BiDi context ids are already stable per tab; one tab for now, so tab
       // claiming has nothing to disambiguate.
       return top.context;
+    },
+
+    // Answering Firefox's password prompt ourselves.
+    //
+    // A 401 raises a prompt drawn by browser chrome, which the reader cannot
+    // see and page script cannot reach. BiDi hands it over: an intercept on
+    // the authRequired phase turns the challenge into an event, and
+    // continueWithAuth answers it with a username and password rather than
+    // an Authorization header — the engine performs the scheme, which is why
+    // digest costs nothing here.
+    //
+    // Unlike Chromium's, this intercept is auth-only: no ordinary request is
+    // paused, so nothing is paid on a page that is not asking for a password.
+    // And unlike Chromium's it is one intercept for the browser, because
+    // Firefox serves one BiDi session at a time and that session is this
+    // reader's — there is no second reader to answer for.
+    async attachAuth(handler) {
+      if (answerAuth) { answerAuth = handler; return true; }
+      answerAuth = handler;
+      await session.send('session.subscribe', { events: ['network.authRequired'] }).catch(() => {});
+      await session.send('network.addIntercept', { phases: ['authRequired'] });
+
+      session.on('network.authRequired', async (params) => {
+        const request = params.request || {};
+        const challenge = ((params.response || {}).authChallenges || [])[0] || {};
+        let given = null;
+        try {
+          given = await answerAuth({
+            // BiDi does not name the source; a proxy says so with its status.
+            source: (params.response || {}).status === 407 ? 'proxy' : 'server',
+            realm: challenge.realm,
+            scheme: challenge.scheme,
+            url: request.url || '',
+          }, request.request);
+        } catch {
+          given = null;
+        }
+        await session.send('network.continueWithAuth', given
+          ? {
+            request: request.request,
+            action: 'provideCredentials',
+            credentials: { type: 'password', username: given.username, password: given.password || '' },
+          }
+          // Cancelling is not failing: the 401's own body then loads, which
+          // is often a page saying what the realm is.
+          : { request: request.request, action: 'cancel' }).catch(() => {});
+      });
+      return true;
+    },
+
+    // Nothing to arm: the intercept above is the browser's, and every tab in
+    // it is already covered.
+    async armAuth() {
+      return !!answerAuth;
     },
 
     // Our own tree, computed in the page. The items come back in the same
