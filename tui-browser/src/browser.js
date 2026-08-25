@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 const { chromium } = require('playwright');
 const {
-  readEndpointRecord, writeEndpointRecord, endpointReady, runningEndpoint,
+  readEndpointRecord, writeEndpointRecord, endpointReady, runningEndpoint, portOfEndpoint,
 } = require('./endpoint');
 
 // Getting hold of a browser to read.
@@ -188,17 +188,6 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   if (!context) throw new Error('Browser started but exposed no context');
 
   return { browser, context, child, owned: true, port, executable: found.executable };
-}
-
-// The debugging port names the browser instance, which is what per-browser
-// state (tab claims) is keyed by. It is in the endpoint we were handed.
-function portOfEndpoint(endpoint) {
-  try {
-    const port = Number(new URL(endpoint).port);
-    return Number.isFinite(port) && port > 0 ? port : null;
-  } catch {
-    return null;
-  }
 }
 
 async function connectToBrowser(endpoint) {
