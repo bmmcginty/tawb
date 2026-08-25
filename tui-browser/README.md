@@ -161,6 +161,38 @@ left one running:
 `--keep-browser` leaves the browser running when you quit, so the next session
 rejoins it instead of paying the cold start again.
 
+### Browsers that outlive their session
+
+A browser is a process group, not a process. Chromium is a main process, a
+zygote, a GPU process and a renderer per site; and with no display neither
+engine is even started directly — `xvfb-run` wraps it, starting an X server
+and running the browser as its own foreground child. A shell waiting on a
+foreground command does not pass a signal on to it, so signalling the process
+we spawned used to kill the wrapper and leave the browser, its X server and
+every renderer running with no parent. Every session that quit left about
+thirteen processes behind. Browsers are now started detached, leading a group
+of their own, and taken down as a group.
+
+That covers every session that gets to finish. One that does not — `SIGKILL`,
+or an out-of-memory kill — never runs its cleanup, so every browser tweb
+starts is also recorded under `browsers/` in the state directory, and every
+launch sweeps that list first. A browser is taken down when the session that
+started it has gone, no other reader has claimed a tab in it, and it was not
+left running on purpose; anything else is somebody's and is left alone. The
+recorded process is only signalled while its command line still names the
+profile it was started with, so a reused process id is forgotten rather than
+killed.
+
+This matters more than it sounds. One Chromium on an idle profile holds about
+1.3GB, so on a machine without swap a few left behind is an out-of-memory
+kill — which is how all of this came up.
+
+```
+npm run browsers            # what is running, its memory, and whose it is
+npm run browsers -- --sweep # take down the ones nobody is using
+npm run browsers -- --all   # take down every browser tweb started
+```
+
 ### One reader at a time, and what happens when one dies
 
 Firefox serves **one WebDriver session at a time**, so unlike Chromium a second
@@ -784,7 +816,7 @@ iframes have been the usual culprit.
 
 ```
 npm test                              # about two seconds, no browser
-npm run test:browser                  # a real browser and a real page
+npm run test:browser                  # a real browser and a real page (two at a time)
 xvfb-run -a npm run test:browser      # with no display of your own
 TWEB_TEST_BROWSER=firefox npm run test:browser
 ```
