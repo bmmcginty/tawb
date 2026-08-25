@@ -210,7 +210,7 @@ async function openChromium({
           url: (event.request && event.request.url) || '',
         // The interception id is a counter within this target, so it names
         // the request only alongside the target it belongs to.
-        }, `${event.frameId || 'page'}:${event.requestId}`);
+        }, `${event.frameId || 'page'}:${event.requestId}`, page);
       } catch {
         given = null;
       }
@@ -266,8 +266,8 @@ async function openChromium({
     },
 
     // Answer this browser's password prompts with `handler`, which is given a
-    // challenge and the request it belongs to and returns credentials, or
-    // null to cancel. Nothing is armed by this: a rejoined browser holds
+    // challenge, the request it belongs to and the tab it was raised in, and
+    // returns credentials, or null to cancel. Nothing is armed by this: a rejoined browser holds
     // tabs another reader is reading, and their passwords are not ours to
     // ask for. Tabs are armed as they are taken — see armAuth.
     //

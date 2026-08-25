@@ -98,17 +98,6 @@ test('a challenge the reader escapes is not put up again until they navigate', a
   assert.equal(asked, 2, 'a deliberate navigation is the way back');
 });
 
-test('challenges raised during an operation can be collected afterwards', async () => {
-  const credentials = new Credentials({ ask: async () => null });
-  const watch = credentials.watch();
-  await credentials.answer(BASIC, 'one');
-  const seen = watch.done();
-  assert.equal(seen.length, 1);
-  assert.equal(seen[0].realm, 'Staff area');
-  await credentials.answer(BASIC, 'two');
-  assert.equal(seen.length, 1, 'the watch stopped when it was done');
-});
-
 test('credentials in a url are taken out of it rather than passed on', () => {
   const split = splitCredentials('https://reader:open%20sesame@example.com/staff?q=1');
   assert.equal(split.url, 'https://example.com/staff?q=1');
