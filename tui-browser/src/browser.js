@@ -4,7 +4,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { chromium } = require('playwright');
+const cdpBrowser = require('./cdp_browser');
 const {
   readEndpointRecord, writeEndpointRecord, endpointReady, runningEndpoint, portOfEndpoint, freePort,
 } = require('./endpoint');
@@ -59,18 +59,15 @@ function which(command) {
   return null;
 }
 
-// A real system browser is preferred — it is the one with the user's own
-// profile ecosystem. Playwright's bundled Chromium is a genuine browser too,
-// and works fine when started ourselves, so it serves as the last resort.
+// A real system browser, which is the one with the user's own profile
+// ecosystem — their logins, their extensions, their history. There is no
+// fallback to a browser downloaded for automation: such a build is nobody's
+// everyday browser, and the whole point here is to be using one.
 function findBrowserExecutable() {
   for (const name of CANDIDATE_BROWSERS) {
     const found = which(name);
     if (found) return { executable: found, name };
   }
-  try {
-    const bundled = chromium.executablePath();
-    if (bundled && fs.existsSync(bundled)) return { executable: bundled, name: 'playwright-chromium' };
-  } catch { /* no bundled build */ }
   return null;
 }
 
@@ -128,7 +125,7 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   const running = await findRunningBrowser(profileDir);
   if (running) {
     log('browser.rejoin', { port: running, profileDir });
-    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${running}`);
+    const browser = await cdpBrowser.connect(`http://127.0.0.1:${running}`);
     const context = browser.contexts()[0];
     if (context) {
       // Not ours to shut down: another session may still be reading it.
@@ -182,7 +179,7 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   writeEndpointRecord(profileDir, { port, pid: child.pid, startedAt: Date.now() });
   recordBrowser({ pid: child.pid, port, profileDir, engine: 'chromium' });
 
-  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+  const browser = await cdpBrowser.connect(`http://127.0.0.1:${port}`);
   const context = browser.contexts()[0];
   if (!context) throw new Error('Browser started but exposed no context');
 
@@ -190,7 +187,7 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
 }
 
 async function connectToBrowser(endpoint) {
-  const browser = await chromium.connectOverCDP(endpoint);
+  const browser = await cdpBrowser.connect(endpoint);
   const contexts = browser.contexts();
   if (contexts.length === 0) throw new Error(`No browser context available at ${endpoint}`);
   return { browser, context: contexts[0], child: null, owned: false, port: portOfEndpoint(endpoint) };

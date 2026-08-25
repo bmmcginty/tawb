@@ -18,8 +18,5 @@
     "wpt": "node tools/wpt.js"
   },
   "keywords": [],
-  "type": "commonjs",
-  "dependencies": {
-    "playwright": "^1.62.1"
-  }
+  "type": "commonjs"
 }
