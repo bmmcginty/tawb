@@ -18,6 +18,11 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 
+const { tempDir } = require('./tmpdir');
+
+const state = tempDir('tweb-edb-routes-state-');
+process.env.XDG_DATA_HOME = state;
+
 const { startEdbServer } = require('../src/edb_server');
 
 // --- what a page has to be able to do -------------------------------------
