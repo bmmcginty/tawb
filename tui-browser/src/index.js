@@ -994,6 +994,12 @@ async function historyEntryIdentity(page) {
 }
 
 async function rememberCurrentHistoryPlace(state, page) {
+  // Every deliberate move — an address, a link, a step through history —
+  // passes here, which makes it the place to say that a reader who escaped a
+  // password prompt would like to be asked again. Escaping one has to stop a
+  // page of thirty protected images asking thirty times; it must not mean the
+  // realm can never be signed in to again.
+  if (state.credentials) state.credentials.reconsider();
   const identity = await historyEntryIdentity(page);
   const place = rememberHistoryPlace(state, page, identity);
   log('history.place.remember', {
@@ -2031,9 +2037,6 @@ async function handleAddressKey(chunk, state, page) {
     if (username && state.credentials) {
       state.credentials.remember({ url }, { username, password: password || '' });
     }
-    // Going somewhere deliberately is also how a reader who escaped a prompt
-    // says they would like to be asked again.
-    if (state.credentials) state.credentials.reconsider();
     await rememberCurrentHistoryPlace(state, page);
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded' });
