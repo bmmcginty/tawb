@@ -4,6 +4,7 @@ const { launchOwnBrowser, connectToBrowser, defaultProfileDir } = require('./bro
 const { parseAriaSnapshot } = require('./aria');
 const { extractAxItems } = require('./ax_own');
 const { readDocument } = require('./frames');
+const { otherReadersOn } = require('./session');
 const { log } = require('./log');
 
 // Chromium, attached to over the DevTools protocol.
