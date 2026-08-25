@@ -659,6 +659,56 @@ naming the target by shared reference so the browser computes the element's
 centre rather than trusting coordinates we worked out — the same road its
 keyboard already takes.
 
+## Signing in
+
+A site that answers 401 with a `WWW-Authenticate` header is not sending a
+page. It is asking the browser to put up a dialog — drawn by browser chrome,
+outside the document, and so outside everything a reader of the accessibility
+tree can see. Before this existed, such an address simply never arrived.
+
+Both engines let a client take that dialog over, and both are answered the
+same way: with a username and a password, never with an `Authorization`
+header. That distinction is the whole design. Basic would be a base64 of the
+pair, but digest is a nonce, a client nonce, a request counter and two rounds
+of hashing per request, with a stale nonce starting it again — RFC 7616 in
+full. Handing the pair to the network stack means the engine performs the
+scheme, so digest costs nothing here, and NTLM and Negotiate work wherever the
+platform can do them at all.
+
+The prompt is on the status line: who is asking on the hint line above it,
+then a username, then a password, which is not echoed — a terminal keeps
+scrollback. `Esc` cancels, and cancelling is not failing: the 401's own body
+then loads, which is frequently a page saying what the realm is and how to get
+an account.
+
+Who is asking is the origin that raised the challenge, never the page being
+read. A challenge can come from an image or a frame belonging to somewhere
+else entirely, and being told to sign in to the site you can see while the
+password goes elsewhere is the shape of every credential trick there is.
+
+What you type answers this session and goes no further; nothing is written to
+disk. A realm is remembered once, so a page with thirty protected images asks
+once rather than thirty times. `https://user:password@host` typed into the
+address bar is taken apart and used to answer the challenge instead of being
+passed on — Chrome strips that form from subresources and Firefox interrupts
+it with a confirmation of its own — which also keeps the password out of the
+address the session then goes on holding.
+
+Wrong passwords are counted here, because nothing stops the browser retrying
+on its own: given one the server refuses, Chromium goes round about thirty
+times before `ERR_TOO_MANY_RETRIES` and Firefox goes round for ever. Three
+tries, and the challenge is cancelled.
+
+The engines pay very different prices for this. Firefox's intercept is
+auth-only: no ordinary request is paused, so a page that is not asking for a
+password pays nothing. Chromium has no such mode — asking for the events
+pauses every matching request, and a pattern list that matches nothing gets
+neither the events nor the dialog, only a load that fails with
+`ERR_INVALID_AUTH_CREDENTIALS`. So everything is intercepted and continued
+immediately, measured at 300ms against 250ms over a page of 101 requests. It
+is armed per tab, as tabs are taken, because a browser can be shared with
+another reader and their passwords are not ours to ask for.
+
 ## If an action cannot complete
 
 Activation is bounded at six seconds. Some controls genuinely cannot be
@@ -715,6 +765,13 @@ the complete list of what the edbrowse server asks of a browser, written as
 something that has to keep working. It answers each extractor by name and
 throws on any it does not know, so a new call into the page cannot be added
 without the contract being updated to say so.
+
+`tools/authserve.js` is the other server the browser suite uses: it asks for
+a password, in basic and in digest, and verifies the digest response
+properly — nonce, client nonce, request counter and all — so an answer the
+engine computed wrongly is refused exactly as a real server refuses it. It
+also serves a public page whose image is protected, which is how a challenge
+arrives for an origin that is not the one being read.
 
 The browser suite reads `tools/testpage.html` through the whole stack, and
 checks the things that only a real browser can answer: that a sixty-entry
@@ -784,6 +841,11 @@ terminal.
 - A change that adds or removes anything still costs a whole-page snapshot,
   so a page that appends to a list every second stays as expensive as it
   ever was. Only replaced text takes the cheap path.
+- A password challenge raised inside a cross-origin iframe on Chromium is
+  not answered here: site isolation makes that frame its own target, and the
+  interception is on the tab's. It behaves as it did before any of this
+  existed — a dialog nobody can see. The same goes for a challenge in a tab
+  this session has not taken.
 - Some sites gate particular endpoints behind bot checks. These now pass,
   because the browser is a real one, but a challenge that demands
   interaction may still need a sighted pass in the same profile — the
