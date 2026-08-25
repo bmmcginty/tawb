@@ -21,6 +21,11 @@ const KEY_DEFINITIONS = {
   Home: { cap: 'khome', sequences: ['\x1b[H', '\x1bOH', '\x1b[1~'] },
   End: { cap: 'kend', sequences: ['\x1b[F', '\x1bOF', '\x1b[4~'] },
   'Shift+F4': { cap: 'kf16', sequences: ['\x1b[1;2S', '\x1bO2S', '\x1b[14;2~', '\x1b[26~'] },
+  // Tab is a control character rather than an escape sequence, so it is named
+  // here only to be displayed as Tab instead of Ctrl+I. Shift+Tab has no such
+  // luck: terminals disagree, so terminfo's back-tab is asked for first.
+  Tab: { sequences: ['\t'] },
+  'Shift+Tab': { cap: 'kcbt', sequences: ['\x1b[Z'] },
 };
 
 const ACTIONS = [
@@ -75,6 +80,12 @@ const ACTIONS = [
   ['previous-field', 'Previous form field', ['F']],
   ['next-button', 'Next button', ['b']],
   ['previous-button', 'Previous button', ['B']],
+  // Tab and Shift+Tab, doing here what they do in a graphical browser: move
+  // to the next thing you can interact with, whichever of the three kinds it
+  // is. The single-letter jumps above stay, because knowing you are on the
+  // next *button* is worth a key of its own.
+  ['next-focusable', 'Next link, button or form field', ['Tab']],
+  ['previous-focusable', 'Previous link, button or form field', ['Shift+Tab']],
   ['next-text', 'Next non-link text', ['n']],
   ['previous-text', 'Previous non-link text', ['N']],
   ['next-paragraph', 'Next paragraph', ['p']],

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-const { FIELD_ROLES, LINK_ROLES, BUTTON_ROLES } = require('./aria');
+const { FIELD_ROLES, LINK_ROLES, BUTTON_ROLES, FOCUSABLE_ROLES } = require('./aria');
 const { itemAtOffset } = require('./blocks');
 const {
   Core, ALL_SOURCES, SOURCE_LABELS, DOM_SOURCES,
@@ -70,6 +70,10 @@ const QUICK_ACTIONS = {
   'previous-button': { label: 'button', direction: -1, match: (item) => BUTTON_ROLES.has(item.role) },
   'next-text': { label: 'non-link text', direction: 1, match: (item) => item.role === 'text' },
   'previous-text': { label: 'non-link text', direction: -1, match: (item) => item.role === 'text' },
+  // Tab and Shift+Tab: the three sets above at once, in document order, which
+  // is what Tab does in a graphical browser.
+  'next-focusable': { label: 'control', direction: 1, match: (item) => FOCUSABLE_ROLES.has(item.role) },
+  'previous-focusable': { label: 'control', direction: -1, match: (item) => FOCUSABLE_ROLES.has(item.role) },
 };
 
 const HEADER_ROWS = 3;   // address line, hint line, blank line
@@ -2331,7 +2335,7 @@ module.exports = {
   findText, runSearch,
   render, drawList, drawAddress, drawHint, moveSelection,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
-  itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock,
+  itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,
   clickAsHuman, reportAfterAction,
   anchorFor, restoreAnchor, capturePlace, restorePlace, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
