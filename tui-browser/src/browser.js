@@ -2,12 +2,11 @@
 
 const { spawn } = require('child_process');
 const fs = require('fs');
-const net = require('net');
 const os = require('os');
 const path = require('path');
 const { chromium } = require('playwright');
 const {
-  readEndpointRecord, writeEndpointRecord, endpointReady, runningEndpoint, portOfEndpoint,
+  readEndpointRecord, writeEndpointRecord, endpointReady, runningEndpoint, portOfEndpoint, freePort,
 } = require('./endpoint');
 
 // Getting hold of a browser to read.
@@ -71,18 +70,6 @@ function findBrowserExecutable() {
     if (bundled && fs.existsSync(bundled)) return { executable: bundled, name: 'playwright-chromium' };
   } catch { /* no bundled build */ }
   return null;
-}
-
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
 }
 
 // The virtual screen is given a desktop's dimensions. xvfb-run defaults to
