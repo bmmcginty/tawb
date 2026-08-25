@@ -62,6 +62,13 @@ function challengeKey(challenge) {
   return `${challenge.source}|${challenge.origin}|${challenge.realm}`;
 }
 
+// The same, for a credential given for a whole origin rather than for a realm
+// the reader was told about — which is what a url with a password in it is,
+// since that form has no way to name a realm.
+function originKey(challenge) {
+  return `${challenge.source}|${challenge.origin}|`;
+}
+
 // Who is asking, in the words the reader needs.
 //
 // The origin, not the page: a challenge can come from an image or a frame
@@ -192,6 +199,7 @@ class Credentials {
     if (refused) {
       // What we last gave for this realm is what the server just rejected.
       this.known.delete(key);
+      this.known.delete(originKey(challenge));
       if (attempt > MAX_ATTEMPTS) {
         this.log('auth.giveup', { key, attempts: attempt - 1 });
         this.denied.add(key);
@@ -200,7 +208,7 @@ class Credentials {
     }
 
     if (!refused) {
-      const known = this.known.get(key);
+      const known = this.known.get(key) || this.known.get(originKey(challenge));
       if (known) return known;
       if (this.denied.has(key)) return null;
     }
@@ -230,5 +238,6 @@ class Credentials {
 }
 
 module.exports = {
-  Credentials, normaliseChallenge, challengeKey, describeChallenge, splitCredentials, MAX_ATTEMPTS,
+  Credentials, normaliseChallenge, challengeKey, originKey, describeChallenge, splitCredentials,
+  MAX_ATTEMPTS,
 };

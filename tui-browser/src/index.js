@@ -19,6 +19,7 @@ const { Keymap } = require('./keys');
 const { KeyReader } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
+const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 
 // --connect <port|host:port|url> attaches to a browser that is already
 // running with --remote-debugging-port, rather than launching one.
@@ -263,6 +264,11 @@ function hintText(state) {
   if (state.mode === 'type') return 'Typing — Esc: stop  Enter: submit';
   if (state.mode === 'find') return 'Find — Enter: search  Esc: cancel';
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
+  if (state.mode === 'auth') {
+    const { challenge, refused } = state.auth;
+    return `${refused ? 'Password refused. ' : ''}Sign in to ${describeChallenge(challenge)}`
+      + ' — Enter: next  Esc: cancel';
+  }
   return 'j/k line  h/l/f/b/n/p nav  / find  m click  \\ view  ^L address  c changes  q quit';
 }
 
@@ -317,6 +323,10 @@ function setStatus(state, msg) {
 
 // Puts the terminal cursor back where the reader is.
 function parkCursor(state) {
+  if (state.mode === 'auth') {
+    drawAuthPrompt(state);
+    return;
+  }
   if (state.mode === 'address') {
     drawAddress(state, state.core.page, { force: true });
     return;
@@ -533,6 +543,102 @@ function runSearch(state, page, needle, direction) {
 // address bar is at the top because that is where an address belongs, but a
 // search is about the list below and putting the prompt there would mean
 // jumping the cursor over the whole page to type.
+// ---------------------------------------------------------------------------
+// Signing in
+// ---------------------------------------------------------------------------
+
+// The password prompt, on the status line, with the origin that is asking on
+// the hint line above it. The origin and not the page: a challenge can come
+// from an image or a frame belonging to somewhere else entirely, and telling
+// somebody they are signing in to the site they can see when the password is
+// going elsewhere is the shape of every credential trick there is.
+function authPromptText(state) {
+  const { stage, user, password } = state.auth;
+  const label = stage === 'user' ? 'user: ' : 'password: ';
+  const buffer = stage === 'user' ? user : password;
+  // A password is not echoed. The reader may be on a shared terminal, and a
+  // terminal keeps scrollback.
+  const shown = stage === 'user' ? buffer.text : '*'.repeat(buffer.text.length);
+  return { text: label + shown, caretCol: label.length + buffer.caret + 1 };
+}
+
+function drawAuthPrompt(state) {
+  const cols = termSize().cols;
+  const { text, caretCol } = authPromptText(state);
+  writeLine(statusRow(), text.slice(0, cols));
+  moveCursor(statusRow(), Math.min(caretCol, cols));
+}
+
+// Returns credentials, null to go on to the next key, or undefined for
+// "nothing decided yet".
+function handleAuthKey(chunk, state) {
+  const a = state.auth;
+  if (keyIs(chunk, 'Escape', state)) return null;
+
+  if (chunk === '\r' || chunk === '\n') {
+    if (a.stage === 'password') return { username: a.user.text, password: a.password.text };
+    // An empty username is the other way out, for a reader who has pressed
+    // Enter at a prompt they did not want.
+    if (!a.user.text) return null;
+    a.stage = 'password';
+    return undefined;
+  }
+
+  const buffer = a.stage === 'user' ? a.user : a.password;
+  const editing = editAction(chunk, state.keys || FALLBACK_KEYMAP);
+  if (editing) applyBufferEdit(buffer, editing);
+  else if (keyIs(chunk, 'Ctrl+L', state)) {
+    buffer.text = '';
+    buffer.caret = 0;
+  } else if (!chunk.startsWith(ESC) && chunk >= ' ') {
+    buffer.text = buffer.text.slice(0, buffer.caret) + chunk + buffer.text.slice(buffer.caret);
+    buffer.caret += chunk.length;
+  }
+  return undefined;
+}
+
+// Asks, and does not return until it has an answer.
+//
+// This runs while the reading loop is stopped: the challenge was raised
+// inside a navigation the loop is awaiting, and that navigation cannot finish
+// until the browser is told what to do about the password. So the prompt
+// takes the keyboard for itself and hands it back afterwards.
+async function askForPassword(state, challenge, { refused = false } = {}) {
+  if (!state.keyReader) return null;
+  const previousMode = state.mode;
+  const previousStatus = state.statusMsg;
+  state.mode = 'auth';
+  state.auth = {
+    challenge,
+    refused,
+    stage: 'user',
+    user: { text: '', caret: 0 },
+    password: { text: '', caret: 0 },
+  };
+  log('auth.prompt', { origin: challenge.origin, realm: challenge.realm, scheme: challenge.scheme, refused });
+
+  const token = state.keyReader.claim();
+  drawHint(state, { force: true });
+  drawAuthPrompt(state);
+  try {
+    for (;;) {
+      const chunk = await state.keyReader.next(token);
+      markInput(state);
+      const answer = handleAuthKey(chunk, state);
+      if (answer !== undefined) return answer;
+      drawAuthPrompt(state);
+    }
+  } finally {
+    const asked = state.auth.challenge;
+    state.keyReader.release(token);
+    state.mode = previousMode;
+    state.auth = null;
+    state.statusMsg = previousStatus;
+    drawHint(state, { force: true });
+    writeLine(statusRow(), `Signing in to ${describeChallenge(asked)}…`.slice(0, termSize().cols));
+  }
+}
+
 function findPrompt(state) {
   return (state.find.direction > 0 ? '/' : '?') + state.find.text;
 }
@@ -704,6 +810,11 @@ function restoreCursorAfterRebuild(state, previousTexts, anchor) {
 async function runLiveRefresh(state, page) {
   const live = state.core.live;
   if (!refreshDue(live)) return;
+  // A password prompt is answered while the reading loop is stopped inside
+  // the navigation that raised it. The ticker is not stopped, and a repaint
+  // over a half-typed password would take the prompt off the screen with the
+  // reader still typing into it.
+  if (state.mode === 'auth') return;
 
   const cycle = Date.now();
   const wasNavigation = live.navigated;
@@ -1911,7 +2022,18 @@ async function handleAddressKey(chunk, state, page) {
     state.mode = 'browse';
     drawHint(state);
     if (!target) { drawAddress(state, page, { force: true }); parkCursor(state); return; }
-    const url = /^[a-zA-Z][\w+.-]*:/.test(target) ? target : `https://${target}`;
+    const typed = /^[a-zA-Z][\w+.-]*:/.test(target) ? target : `https://${target}`;
+    // https://user:password@host is deprecated for subresources in Chrome and
+    // interrupted by a confirmation of its own in Firefox, so the pair is
+    // taken out here and used to answer the challenge instead. It also keeps
+    // the password out of the address this session then goes on holding.
+    const { url, username, password } = splitCredentials(typed);
+    if (username && state.credentials) {
+      state.credentials.remember({ url }, { username, password: password || '' });
+    }
+    // Going somewhere deliberately is also how a reader who escaped a prompt
+    // says they would like to be asked again.
+    if (state.credentials) state.credentials.reconsider();
     await rememberCurrentHistoryPlace(state, page);
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded' });
@@ -1999,19 +2121,11 @@ async function main() {
 
   const sources = ALL_SOURCES.filter((s) => s !== 'ax' || driver.capabilities?.ax !== false);
   const core = new Core({ driver, page, source: sources[0], sources, browserPort });
-  // Claim whichever tab we ended up on, including one we just opened and one
-  // in a browser we started: the session that joins later is the one that
-  // needs to know to leave it alone.
-  await core.adoptTab(page);
-  if (!adopted) {
-    await timed('goto', { url: START_URL }, () =>
-      page.goto(START_URL, { waitUntil: 'domcontentloaded' }));
-  }
-  await core.rescan();
   const state = {
     core,
     keys,
     keyReader: null,
+    credentials: null,
     sources,
     browserPort,
     // Nothing may follow a tab until the first page is drawn: the browser
@@ -2022,12 +2136,14 @@ async function main() {
     col: 0,
     scroll: 0,
     statusMsg: '',
-    mode: 'browse', // 'browse' | 'choose' | 'type' | 'address' | 'find' | 'keyboard'
+    // 'browse' | 'choose' | 'type' | 'address' | 'find' | 'auth' | 'keyboard'
+    mode: 'browse',
     typing: null,
     chooser: null,
     address: null,
     find: null,
     lastFind: null,
+    auth: null,
     drawn: { address: null, hint: null },
     statusHeldUntil: 0,
     loadingMore: false,
@@ -2035,10 +2151,35 @@ async function main() {
   };
   relayout(state);
 
+  // The terminal is taken before the first navigation rather than after it,
+  // because the address the reader started with may be the protected one, and
+  // a password prompt with no keyboard to answer it on is a page that never
+  // loads.
   setupRawInput();
   const keyReader = new KeyReader(process.stdin);
   state.keyReader = keyReader;
   process.stdout.write('\x1b[2J');
+
+  // Passwords are asked for here rather than in a browser dialog the reader
+  // cannot see. Nothing is written down: what the reader types answers this
+  // session's challenges and goes no further.
+  const credentials = new Credentials({
+    ask: (challenge, info) => askForPassword(state, challenge, info),
+    log,
+  });
+  state.credentials = credentials;
+  await driver.attachAuth((challenge, id) => credentials.answer(challenge, id)).catch(() => {});
+
+  // Claim whichever tab we ended up on, including one we just opened and one
+  // in a browser we started: the session that joins later is the one that
+  // needs to know to leave it alone.
+  await core.adoptTab(page);
+  if (!adopted) {
+    await timed('goto', { url: START_URL }, () =>
+      page.goto(START_URL, { waitUntil: 'domcontentloaded' }));
+  }
+  await core.rescan();
+  relayout(state);
   render(state, page, { force: true });
 
   await attachLive(state, page);
@@ -2188,4 +2329,5 @@ module.exports = {
   switchToTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation,
+  handleAuthKey, authPromptText, askForPassword,
 };
