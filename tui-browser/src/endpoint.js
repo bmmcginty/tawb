@@ -38,6 +38,22 @@ function writeEndpointRecord(profileDir, record) {
   } catch { /* the browser still works without it */ }
 }
 
+// A port nothing is listening on, for a server we are about to start. There
+// is a race in principle — the port is free when it is asked for and taken
+// when it is used — and none in practice on a loopback interface where the
+// only competition is us.
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+  });
+}
+
 function endpointReady(port) {
   return new Promise((resolve) => {
     const request = net.connect(port, '127.0.0.1');
@@ -78,5 +94,5 @@ function portOfEndpoint(endpoint) {
 
 module.exports = {
   ENDPOINT_FILE, endpointRecordPath, readEndpointRecord, writeEndpointRecord,
-  endpointReady, waitForEndpoint, runningEndpoint, portOfEndpoint,
+  endpointReady, waitForEndpoint, runningEndpoint, portOfEndpoint, freePort,
 };

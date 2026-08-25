@@ -6,7 +6,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const {
-  writeEndpointRecord, readEndpointRecord, runningEndpoint, waitForEndpoint,
+  writeEndpointRecord, readEndpointRecord, runningEndpoint, waitForEndpoint, freePort,
 } = require('./endpoint');
 
 // Getting hold of a Firefox that is not pretending to be a robot.
@@ -131,18 +131,6 @@ function findFirefox() {
     if (found) return { executable: found, name };
   }
   return null;
-}
-
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
 }
 
 function portOpen(port) {
