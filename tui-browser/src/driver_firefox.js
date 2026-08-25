@@ -4,7 +4,7 @@ const bidi = require('./bidi');
 const { launchFirefox, defaultProfileDir, releaseStrandedSession } = require('./firefox');
 const { readEndpointRecord, writeEndpointRecord, portOfEndpoint } = require('./endpoint');
 const { ensureBroker, clearBrokerRecord } = require('./broker');
-const { processAlive } = require('./proc');
+const { processAlive, killProcessGroup } = require('./proc');
 const { otherReadersOn } = require('./session');
 const { extractAxItems } = require('./ax_own');
 const { readDocument } = require('./frames');
@@ -716,7 +716,7 @@ async function openFirefox({
   log('firefox.ready', { cleared, webdriver: webdriverFlag });
   if (webdriverFlag !== false) {
     session.close();
-    if (child) { try { child.kill(); } catch { /* already gone */ } }
+    if (child) killProcessGroup(child.pid);
     throw new Error(
       'Firefox is still announcing itself as automated (navigator.webdriver is '
       + `${webdriverFlag}). Refusing to read the web with a browser that will fail bot `
@@ -976,7 +976,7 @@ async function openFirefox({
       // Ours to close only while nobody else is reading it — starting the
       // browser makes this reader its first user, not its owner.
       if (child && !keepBrowser && !otherReadersOn(port)) {
-        try { child.kill(); } catch { /* already gone */ }
+        killProcessGroup(child.pid);
       }
     },
   };

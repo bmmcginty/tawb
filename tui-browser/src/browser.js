@@ -8,6 +8,7 @@ const { chromium } = require('playwright');
 const {
   readEndpointRecord, writeEndpointRecord, endpointReady, runningEndpoint, portOfEndpoint, freePort,
 } = require('./endpoint');
+const { killProcessGroup } = require('./proc');
 
 // Getting hold of a browser to read.
 //
@@ -143,7 +144,11 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   const { command, args } = buildCommand(found.executable, browserArgs);
   log('browser.spawn', { executable: found.executable, name: found.name, port, profileDir });
 
-  const child = spawn(command, args, { stdio: 'ignore', detached: false });
+  // Detached, so the browser leads a process group of its own. That is the
+  // only handle that reaches all of it: with no display the command above is
+  // xvfb-run, and the browser is that shell's child rather than ours.
+  const child = spawn(command, args, { stdio: 'ignore', detached: true });
+  child.unref();
   child.on('error', () => { /* surfaced by the readiness check below */ });
 
   // A browser that hands off to another instance exits straight away. Notice
@@ -161,7 +166,7 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   }
 
   if (!ready) {
-    try { child.kill(); } catch { /* already gone */ }
+    killProcessGroup(child.pid);
     throw new Error(exitedEarly
       ? `${found.name} exited immediately: another browser is already using ${profileDir}. `
         + 'Close it, or use --connect to attach to it.'
