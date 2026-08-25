@@ -31,6 +31,17 @@
 //                     resolves against it — directly, for an implementation
 //                     that kept a reference to the node, and by role and name
 //                     for Playwright's, whose items carry none.
+//   attachAuth()      answering the password prompt a 401 raises, which is
+//                     drawn by browser chrome and so cannot be read or
+//                     reached from the page. Chromium hands it over through
+//                     Fetch and pauses every request to do it; Firefox has an
+//                     auth-only intercept and pauses nothing. Both are
+//                     answered with a username and password rather than a
+//                     header, so the engine performs basic, digest and
+//                     whatever else it knows.
+//   armAuth()         one tab covered by the above. Chromium needs it per
+//                     tab, since a browser can be shared with another reader;
+//                     on Firefox it is already true and answers so.
 //   realClick()       a click the browser treats as a person's, which only
 //                     the protocol can produce: real input dispatched above
 //                     content, so the events are trusted and carry user
