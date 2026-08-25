@@ -126,3 +126,19 @@ test('credentials the reader supplied elsewhere answer a waiting challenge', asy
   credentials.remember(BASIC, { username: 'reader', password: 'opensesame' });
   assert.deepEqual(await credentials.answer(BASIC, 'req'), { username: 'reader', password: 'opensesame' });
 });
+
+test('a password typed into an address answers whatever realm that origin asks for', async () => {
+  let asked = 0;
+  const credentials = new Credentials({ ask: async () => { asked += 1; return null; } });
+  // A url carries no realm, so the credentials in one belong to the origin.
+  credentials.remember({ url: 'http://example.com/staff' }, { username: 'reader', password: 'opensesame' });
+  assert.deepEqual(await credentials.answer(BASIC, 'req'), { username: 'reader', password: 'opensesame' });
+  assert.deepEqual(
+    await credentials.answer({ ...BASIC, realm: 'Another area' }, 'other'),
+    { username: 'reader', password: 'opensesame' },
+  );
+  assert.equal(asked, 0);
+  // And they are dropped when the server refuses them, rather than being
+  // handed back for every realm on the site for ever.
+  assert.equal(await credentials.answer(BASIC, 'req'), null);
+});

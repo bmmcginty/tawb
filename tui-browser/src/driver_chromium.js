@@ -267,20 +267,21 @@ async function openChromium({
 
     // Answer this browser's password prompts with `handler`, which is given a
     // challenge and the request it belongs to and returns credentials, or
-    // null to cancel. Every tab already open is armed, and so is every tab
-    // opened afterwards.
+    // null to cancel. Nothing is armed by this: a rejoined browser holds
+    // tabs another reader is reading, and their passwords are not ours to
+    // ask for. Tabs are armed as they are taken — see armAuth.
     //
-    // A challenge from a cross-origin iframe is not covered: site isolation
-    // makes that frame its own target with its own network, and this is armed
-    // on the tab's. Such a challenge behaves as it did before any of this
-    // existed — the browser puts up a dialog nobody can see.
+    // A challenge from a cross-origin iframe is not covered either: site
+    // isolation makes that frame its own target with its own network, and
+    // this is armed on the tab's. Such a challenge behaves as it did before
+    // any of this existed — the browser puts up a dialog nobody can see.
     async attachAuth(handler) {
       answerAuth = handler;
-      context.on('page', (opened) => { armAuth(opened).catch(() => {}); });
-      for (const open of context.pages()) await armAuth(open).catch(() => {});
       return true;
     },
 
+    // One tab, armed because it is now this reader's. Called from adoptTab,
+    // which is the one place that decides a tab belongs to this session.
     async armAuth(page) {
       return armAuth(page).catch(() => false);
     },

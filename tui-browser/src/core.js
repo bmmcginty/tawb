@@ -746,6 +746,10 @@ class Core {
   async adoptTab(page) {
     const targetId = await this.driver.targetIdFor(page).catch(() => null);
     if (targetId && this.browserPort != null) claimTab(this.browserPort, targetId);
+    // A tab that is ours is one whose password prompts we answer. A tab that
+    // is not stays with the browser's own dialog, because a challenge raised
+    // in somebody else's tab is not ours to put in front of this reader.
+    if (this.driver.armAuth) await this.driver.armAuth(page).catch(() => {});
     page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     this.page = page;
