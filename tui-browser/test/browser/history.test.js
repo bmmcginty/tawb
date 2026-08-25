@@ -4,8 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const http = require('node:http');
-const os = require('node:os');
-const path = require('node:path');
+
+const { tempDir } = require('../tmpdir');
 
 const { openDriver } = require('../../src/driver');
 const {
@@ -13,7 +13,7 @@ const {
 } = require('../../src/index');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-history-'));
+const profile = tempDir('tweb-history-');
 
 let server;
 let driver;

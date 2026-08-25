@@ -15,8 +15,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+
+const { tempDir } = require('../tmpdir');
 
 const { openDriver } = require('../../src/driver');
 const { startEdbServer } = require('../../src/edb_server');
@@ -29,7 +29,7 @@ const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
 // and navigate each other's tab out from under themselves. And the default
 // profile is the reader's own: running this suite while tweb was open joined
 // that browser and sent the tab they were reading to the test page.
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-edb-'));
+const profile = tempDir('tweb-edb-');
 
 let shared = null;
 async function browser() {

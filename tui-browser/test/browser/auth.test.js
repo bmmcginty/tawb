@@ -16,10 +16,10 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 
 const { PassThrough } = require('node:stream');
+
+const { tempDir } = require('../tmpdir');
 
 const { openDriver } = require('../../src/driver');
 const { killProcessGroup } = require('../../src/proc');
@@ -29,7 +29,7 @@ const { askForPassword } = require('../../src/index');
 const { start } = require('../../tools/authserve');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-auth-'));
+const profile = tempDir('tweb-auth-');
 
 let shared = null;
 async function browser() {
@@ -184,7 +184,7 @@ test('a challenge nobody has answered is cancelled when the browser is let go', 
   // goes on using would hold that tab mid-request for ever, waiting on a
   // dialog that became ours the moment we armed the interception — and we
   // are gone, so nobody will ever answer it.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-auth-left-'));
+  const dir = tempDir('tweb-auth-left-');
   const site = await start();
   const leaving = await openDriver({ engine: ENGINE, profile: dir, keepBrowser: true, log: () => {} });
   try {

@@ -5,10 +5,10 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 
-const state = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-session-state-'));
+const { tempDir } = require('./tmpdir');
+
+const state = tempDir('tweb-session-state-');
 process.env.XDG_DATA_HOME = state;
 
 const { claimTab, claimedTargets, releaseTab, otherReadersOn, claimsPath } = require('../src/session');

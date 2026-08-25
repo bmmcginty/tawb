@@ -14,8 +14,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const http = require('node:http');
-const os = require('node:os');
-const path = require('node:path');
+
+const { tempDir } = require('../tmpdir');
 
 const { openDriver } = require('../../src/driver');
 const { installLive, collect } = require('../../src/live');
@@ -24,7 +24,7 @@ const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
 
 // Its own profile, for the same reason views.test.js has one: a browser is one
 // instance per profile directory, and test files run in parallel.
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-live-'));
+const profile = tempDir('tweb-live-');
 
 // A page with enough in it that parsing produces mutations to catch, and one
 // live region that announces while it loads.

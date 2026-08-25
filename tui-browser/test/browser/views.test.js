@@ -14,8 +14,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const http = require('node:http');
-const os = require('node:os');
-const path = require('node:path');
+
+const { tempDir } = require('../tmpdir');
 
 const { openDriver } = require('../../src/driver');
 const { snapshotFrameTree } = require('../../src/frames');
@@ -29,7 +29,7 @@ const VIEWS = ['ax', 'render'];
 // one instance per profile directory, so two test files that took it would
 // rejoin the same browser, navigate the same tab out from under each other
 // and close it while the other was still reading.
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-views-'));
+const profile = tempDir('tweb-views-');
 
 let shared = null;
 async function browser() {

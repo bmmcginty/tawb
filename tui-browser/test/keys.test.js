@@ -3,9 +3,10 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { PassThrough } = require('node:stream');
+
+const { tempDir } = require('./tmpdir');
 
 const { Keymap, readTerminfo } = require('../src/keys');
 const { runKeyWizard, wizardRows } = require('../src/key_wizard');
@@ -47,7 +48,7 @@ test('replacing and adding bindings resolves conflicts', () => {
 });
 
 test('bindings are saved atomically and loaded over defaults', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-keys-'));
+  const directory = tempDir('tweb-keys-');
   const file = path.join(directory, 'keys.json');
   const keys = new Keymap({ terminfo: {}, file, load: false });
   keys.assign('location-bar', '\x1bz');
@@ -63,7 +64,7 @@ test('bindings are saved atomically and loaded over defaults', () => {
 });
 
 test('the wizard asks about saving on its final row and ignores other answers', async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-wizard-'));
+  const directory = tempDir('tweb-wizard-');
   const file = path.join(directory, 'keys.json');
   const keymap = new Keymap({ terminfo: {}, file, load: false });
   const rows = wizardRows(keymap);
@@ -159,7 +160,7 @@ test('declining to save restores the bindings used before the wizard', async () 
 // A wizard that answered only to its own private keys was the one screen in
 // the browser where the reader's own bindings did not work.
 test('the wizard is driven by the browsing keys themselves', async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-wizard-keys-'));
+  const directory = tempDir('tweb-wizard-keys-');
   const file = path.join(directory, 'keys.json');
   const keymap = new Keymap({ terminfo: {}, file, load: false });
   const rows = wizardRows(keymap);
@@ -206,7 +207,7 @@ test('Escape leaves the wizard even where the keys to read it were unbound', asy
 // Silently taking a key away from something the reader still uses is the one
 // edit in here they cannot see coming.
 test('rebinding a key another action holds is confirmed first', async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-wizard-clash-'));
+  const directory = tempDir('tweb-wizard-clash-');
   const file = path.join(directory, 'keys.json');
   const keymap = new Keymap({ terminfo: {}, file, load: false });
   assert.equal(wizardRows(keymap)[0].action.id, 'quit');
