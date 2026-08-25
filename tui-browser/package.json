@@ -10,6 +10,7 @@
     "firefox": "node src/index.js --browser firefox",
     "edb": "node src/edb.js",
     "testpage": "node tools/serve.js",
+    "authpage": "node tools/authserve.js",
     "dump": "node tools/dump.js",
     "probe": "node tools/probe.js",
     "test:browser": "node --test test/browser/*.test.js",
