@@ -52,6 +52,18 @@ function claimedTargets(port) {
   return new Set(readClaims(port).filter((c) => c.pid !== mine).map((c) => c.targetId));
 }
 
+// Whether another live session is reading this browser.
+//
+// A browser this process started is not therefore this process's to shut
+// down: the reader who launched it is its first user, not its owner, and by
+// the time they quit there may be readers in it who never had a browser of
+// their own to lose. The claims say who is still there, and they are believed
+// exactly as far as the processes that wrote them.
+function otherReadersOn(port) {
+  if (!port) return false;
+  return readClaims(port).some((claim) => claim.pid !== process.pid);
+}
+
 function claimTab(port, targetId) {
   if (!port || !targetId) return;
   const others = readClaims(port).filter((c) => c.pid !== process.pid);
@@ -64,4 +76,6 @@ function releaseTab(port) {
   writeClaims(port, readClaims(port).filter((c) => c.pid !== process.pid));
 }
 
-module.exports = { claimedTargets, claimTab, releaseTab, readClaims, claimsPath };
+module.exports = {
+  claimedTargets, claimTab, releaseTab, readClaims, claimsPath, otherReadersOn,
+};
