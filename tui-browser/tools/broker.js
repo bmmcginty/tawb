@@ -24,11 +24,6 @@
 //
 // What it does not do yet, and what the design still has to answer:
 //
-//   * Intercepts are the session's, not the connection's. An auth intercept
-//     added by one reader raises challenges for every reader's tabs, so
-//     network.authRequired has to be routed by browsing context to the reader
-//     that claimed that tab — and something has to answer for a tab nobody
-//     has claimed, or the request stays paused for ever.
 //   * Nothing owns the broker's lifetime. It should start with the browser and
 //     go when the last reader does, recorded in the endpoint record beside the
 //     port and the Marionette port.
@@ -131,6 +126,41 @@ class Peer {
 // --- the multiplexer ---------------------------------------------------------
 
 const clients = new Set();
+
+// A challenge goes to whoever was doing something most recently.
+//
+// Intercepts belong to the session rather than to a connection, so a password
+// challenge raised anywhere in the browser is one every reader could be told
+// about. Sending it to all of them would put the same prompt on several
+// terminals and have them race to answer it. Sending it to whoever owns the
+// tab sounds better and is not: a challenge can come from a subresource in a
+// tab nobody has claimed, and then nobody would answer it at all — a request
+// left paused for ever, which is the one outcome that must not happen.
+//
+// The reader who typed something most recently is the one at the keyboard, so
+// that is the one asked. If nobody is subscribed to hear it, the broker
+// cancels the challenge itself rather than leave it hanging: cancelling loads
+// the 401's own body, and a page is always better than a tab that never
+// finishes.
+const AUTH_EVENT = 'network.authRequired';
+
+function mostRecentlyActive(event) {
+  let best = null;
+  for (const client of clients) {
+    if (!client.subscribed.has(event) && !client.subscribed.has(event.split('.')[0])) continue;
+    if (!best || client.activeAt > best.activeAt) best = client;
+  }
+  return best;
+}
+
+function cancelChallenge(text) {
+  const found = /"request"\s*:\s*"([^"]+)"/.exec(text);
+  if (!found || !upstream) return;
+  const id = nextUpstreamId++;
+  upstream.send(JSON.stringify({
+    id, method: 'network.continueWithAuth', params: { request: found[1], action: 'cancel' },
+  }));
+}
 let upstream = null;
 let upstreamReady = null;
 let nextUpstreamId = 1000000; // clear of anything a client might use
@@ -165,6 +195,14 @@ function fromUpstream(text) {
   const found = /"method"\s*:\s*"([^"]+)"/.exec(text.slice(0, 200));
   if (found) [, method] = found;
   const module = method ? method.split('.')[0] : null;
+
+  // Except a password challenge, which goes to one reader only — see above.
+  if (method === AUTH_EVENT) {
+    const asking = mostRecentlyActive(AUTH_EVENT);
+    if (asking) asking.peer.send(text);
+    else cancelChallenge(text);
+    return;
+  }
   for (const client of clients) {
     if (!method || client.subscribed.has(method) || client.subscribed.has(module)) {
       client.peer.send(text);
@@ -188,6 +226,8 @@ async function connectUpstream() {
 
 async function fromClient(client, text) {
   stats.commands += 1;
+  // Anything a reader sends is that reader being at the keyboard.
+  client.activeAt = Date.now();
   let message;
   try { message = JSON.parse(text); } catch { return; }
   const { id, method, params } = message;
@@ -241,7 +281,7 @@ server.on('upgrade', (req, socket) => {
     + 'Upgrade: websocket\r\nConnection: Upgrade\r\n'
     + `Sec-WebSocket-Accept: ${accept}\r\n\r\n`);
   socket.setNoDelay(true);
-  const client = { subscribed: new Set(), peer: null };
+  const client = { subscribed: new Set(), peer: null, activeAt: Date.now() };
   client.peer = new Peer(socket, (text) => fromClient(client, text), () => {
     clients.delete(client);
     for (const [ours, route] of routes) if (route.client === client) routes.delete(ours);
