@@ -32,7 +32,12 @@ const { CdpError } = require('./cdp');
 // How long to wait for a document's execution context to appear. A context is
 // announced rather than asked for, so the first evaluate after a navigation
 // can arrive a few milliseconds before the announcement does.
-const CONTEXT_WAIT_MS = 5000;
+//
+// This must stay well under frames.js's FRAME_BUDGET_MS. A frame that never
+// answers is given that budget and no more, so a wait longer than the budget
+// means every such frame costs the whole of it — which is how one page with
+// six dead tracking iframes produced a twenty-second snapshot.
+const CONTEXT_WAIT_MS = 2000;
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 30000;
 
 // Playwright takes a function or a string; CDP takes a function declaration.
@@ -176,6 +181,15 @@ class CdpFrame {
   // Ours is a live tree, so this must stay a method.
   page() {
     return this.pageObject;
+  }
+
+  // Whether this document had a process of its own and that process has gone.
+  //
+  // Final, and worth asking before waiting for anything: a target that has
+  // detached will never announce another execution context, so waiting for
+  // one is waiting for something that cannot happen.
+  ownTargetGone() {
+    return !!(this._ownSession && this._ownSession.detached);
   }
 
   // The session that answers for this document.
@@ -438,11 +452,30 @@ class CdpPage {
   }
 
   removeFrame(frameId) {
+    this.dropChildrenOf(frameId);
+    this.frames_.delete(frameId);
+    this.contexts.delete(frameId);
+  }
+
+  // Everything below this document belonged to the document it just
+  // replaced. Without this a page keeps every frame it has ever had: after
+  // one navigation on a school district's site the map held eleven frames
+  // from the page before, each in a process that had gone, and each cost a
+  // snapshot the full frame budget before giving up.
+  dropChildrenOf(frameId) {
     for (const frame of [...this.frames_.values()]) {
       if (frame.parentId === frameId) this.removeFrame(frame.frameId);
     }
-    this.frames_.delete(frameId);
-    this.contexts.delete(frameId);
+  }
+
+  // A target of ours has gone. Whatever it was answering for goes with it,
+  // rather than lingering as a document nothing can ever run in.
+  dropSession(session) {
+    this.sessions.delete(session);
+    this.forgetContextsOf(session);
+    for (const frame of [...this.frames_.values()]) {
+      if (frame._ownSession === session) this.removeFrame(frame.frameId);
+    }
   }
 
   mainFrame() {
@@ -503,7 +536,17 @@ class CdpPage {
     for (;;) {
       const known = this.contexts.get(frameId);
       if (known && !known.session.detached) return known;
+      // Recorded against a session that has gone. It will not answer, and
+      // keeping it would hide a replacement if one arrives.
+      if (known) this.contexts.delete(frameId);
+
+      // The three ways this can never succeed, asked before waiting rather
+      // than discovered by waiting.
       if (this._closed) throw new CdpError('that tab has closed');
+      const frame = this.frames_.get(frameId);
+      if (!frame) throw new CdpError('that document is no longer in the page');
+      if (frame.ownTargetGone()) throw new CdpError('that document\'s process has gone');
+
       if (Date.now() >= deadline) {
         throw new CdpError('that document never announced a context to run in');
       }
