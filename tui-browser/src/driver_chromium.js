@@ -459,8 +459,10 @@ async function openChromium({
       // Only tear down a browser we started; one the user was already running
       // is theirs to keep. --keep-browser leaves even ours running, so the
       // next session rejoins it in 50ms instead of cold-starting in four
-      // seconds.
-      if (child && !keepBrowser) {
+      // seconds. Nor is it ours to close while another reader is still in it,
+      // however it got there — starting the browser makes us its first user,
+      // not its owner.
+      if (child && !keepBrowser && !otherReadersOn(port)) {
         try { child.kill(); } catch { /* already gone */ }
       }
     },
