@@ -1,8 +1,12 @@
 # The seam
 
-What in this program is tied to JavaScript, what is tied to Playwright, and
-what is tied to owning a terminal — written down before any of it is moved,
-because the answers are not what the file layout suggests.
+What in this program is tied to JavaScript, what is tied to a browser
+protocol, and what is tied to owning a terminal — written down before any of
+it is moved, because the answers are not what the file layout suggests.
+
+Two of the stages at the end have since been done, in JavaScript, which is
+where they were cheapest: Chromium's accessibility tree is ours, and the CDP
+client is written. There is no dependency left in this program at all.
 
 Two questions prompted it: whether to rewrite the reader in Crystal, and
 whether it should instead become something edbrowse drives. They are
@@ -18,8 +22,14 @@ that drops them keeps the code and loses the reasons.
 | Layer | Lines | Ported by |
 | --- | --- | --- |
 | Runs **inside the browser** (JavaScript, always) | ~970 | Copying it |
-| Talks to the **browser protocol** (CDP, BiDi, Marionette) | ~1,800 | Rewriting against the same wire format |
+| Talks to the **browser protocol** (CDP, BiDi, Marionette) | ~3,700 | Rewriting against the same wire format |
 | The **reader**: buffer, policy, terminal | ~4,050 | Rewriting, or discarding entirely |
+
+The protocol layer grew from ~1,800 lines to ~3,700 when Playwright was
+dropped. That is not a regression: those 1,900 lines were always going to
+have to exist in a port, and writing them in JavaScript first meant writing
+them against a working reference rather than against a wire format and hope.
+The program now installs nothing.
 
 ### Layer 1: the code that cannot be ported
 
@@ -45,7 +55,9 @@ as today.
 These are also the *hardest* lines in the program. `extractAxItems` alone
 implements accessible-name computation, implicit roles, hidden-subtree rules
 and prose merging — three bugs in it were found by holding it against
-Playwright's tree on real pages, which is what `tools/compare.js` exists for.
+Playwright's tree on real pages, back when there was one to hold it against.
+`tools/compare.js` is what did that, and now holds the two engines against
+each other instead.
 
 Keeping them is therefore the single largest reason a port is feasible at
 all: the part that took the longest to get right is the part that does not
@@ -64,7 +76,10 @@ requirement rather than a convention.
 
 Two engines, two protocols, and they are in very different states.
 
-**Firefox is already portable.** `driver_firefox.js` (733 lines) speaks
+**Both engines are now portable.** Neither has a dependency left to replace;
+what follows is what each speaks and how much of it there is.
+
+**Firefox.** `driver_firefox.js` (994 lines) speaks
 WebDriver BiDi over a WebSocket with no Playwright at all: `session.new`,
 `browsingContext.*`, `script.callFunction`, `script.disown`,
 `input.performActions`, `input.releaseActions`, plus a handful of events.
@@ -73,12 +88,20 @@ writes profile preferences, clears the automation flag through Marionette and
 recovers stranded sessions — Marionette being a raw TCP socket carrying
 length-prefixed JSON, which any language can speak in fifty lines.
 
-This is the proof that the protocol layer ports. It also means Firefox is the
-sensible first target for any rewrite: there is no dependency to replace,
-only a translation to make.
+This was the proof that the protocol layer ports. It is still the sensible
+first target for a rewrite, because it is the smaller of the two and its
+client — `bidi.js`, 136 lines — is trivial.
 
-**Chromium is where the work is.** `driver_chromium.js` is 121 lines because
-Playwright does the rest. The whole dependency surface:
+**Chromium.** `cdp.js` (293 lines) is the protocol client: JSON over one
+WebSocket, with a `sessionId` on every message because the socket carries the
+browser's conversation, one per tab and one per out-of-process iframe at the
+same time. `cdp_page.js` (693) and `cdp_browser.js` (309) build the page,
+frame and handle objects on top of it, and `driver_chromium.js` (440) is what
+is left of the driver.
+
+This was Playwright's job until it was written out. The table below is what
+that dependency actually amounted to, and stands as the specification a port
+should work from:
 
 | Playwright call | CDP underneath |
 | --- | --- |
@@ -98,20 +121,36 @@ Playwright does the rest. The whole dependency surface:
 | `getByRole(...).elementHandle()` | **nothing** — unnecessary once the tree carries `axIndex`, as the Firefox path already proves |
 | `chromium.executablePath()` | drop it; it is only a last-resort way to find a browser binary |
 
-The last three rows matter: two of Playwright's five real contributions
-disappear the moment Chromium uses `ax_own.js` for its accessibility tree,
-which is a change that can be made *today*, in JavaScript, and validated with
-`compare` before any port begins. Doing that first turns "replace Playwright"
-into "write a CDP client", which is a bounded, well-documented job of roughly
-the size `driver_firefox.js` already is.
+The last three rows are why this was doable at all: two of Playwright's five
+real contributions disappeared the moment Chromium used `ax_own.js` for its
+accessibility tree, which turned "replace Playwright" into "write a CDP
+client" — a bounded job of roughly the size `driver_firefox.js` already was.
 
-**The one genuinely hard piece is out-of-process iframes.** In Chrome a
-cross-origin iframe is a separate target with its own session; Playwright
-hides that. A port needs `Target.setAutoAttach` with `flatten` and a session
-per frame target, and must route evaluations to the right one.
-`frames.js` (166 lines) is written against the "frames are frames" model, and
+**The one genuinely hard piece was out-of-process iframes**, and it is worth
+being precise about how it was settled, because a port meets it again. In
+Chrome a cross-origin iframe is a separate target with its own session.
+`Target.setAutoAttach` with `flatten` is set on the browser (which is how
+tabs arrive) and again on every tab (which is how those iframes arrive), so
+every conversation lands on the one socket. Each frame then records the
+session that answers for it and inherits its parent's answer when it has none
+of its own.
+
+Two consequences a port should not have to rediscover:
+
+- **A tab must not be handed out before its frame tree and execution contexts
+  have been asked for.** The browser announces a target well before any of
+  that is known, and a page in that moment answers wrongly about its own main
+  frame — which shows up as a navigation to a frame id that does not exist.
+- **`DOM.getContentQuads` reports in main-frame coordinates whichever session
+  is asked.** So a click on an element inside an out-of-process iframe is
+  dispatched on the *tab's* session, at the coordinates that came back, with
+  no offset arithmetic. Getting this wrong would silently click the wrong
+  place on exactly the pages that matter.
+
+`frames.js` (270 lines) is written against the "frames are frames" model, and
 its ordering assumption — the Nth frame element belongs to the Nth child
-context — is exactly what BiDi forced on us already, so the shape survives.
+context — is what BiDi forced on us; Chrome answers `DOM.describeNode` with
+the frame id directly and needs no such guess.
 
 ### Layer 3: the reader
 
@@ -310,47 +349,56 @@ renumbers — which is precisely the problem `place.js` and `reanchorQuietly()`
 already solve, and would have to solve again on edbrowse's side unless the ids
 travel with the lines. Hand it ids, not just text.
 
-## A staged order, if it happens
+## A staged order
 
-1. **Drop Playwright's accessibility tree on Chromium first, in JavaScript.**
-   Switch `driver_chromium.js` to `ax_own.js` and use `compare` to hold the
-   two against each other on real pages until they agree. This removes two of
-   the five things Playwright does for us, in the language where it is cheap
-   to iterate, and it is worth doing even if no port ever happens.
-2. **Build a fixture set.** Saved pages served locally, so two
+1. ~~**Drop Playwright's accessibility tree on Chromium first, in
+   JavaScript.**~~ **Done.** Both engines compute it with `ax_own.js`, and
+   the two trees were held against each other on real pages until they agreed
+   — three bugs in ours were found that way.
+2. ~~**Write the CDP client.**~~ **Done**, in JavaScript, for the same reason:
+   it is a bounded job and doing it here meant doing it against a working
+   reference rather than against a wire format and hope. `cdp.js`,
+   `cdp_page.js` and `cdp_browser.js` are the result, and the table above is
+   the specification they were written from. A port rewrites these; it does
+   not have to design them.
+3. **Build a fixture set.** Saved pages served locally, so two
    implementations can be run over identical bytes. `tools/compare.js` already
    diffs two line lists; point it at implementation-versus-implementation
    rather than engine-versus-engine, and the JavaScript version becomes the
    oracle the port is measured against.
-3. **Port the Firefox driver.** No dependency to replace, a wire format
-   already spoken here, and a working reference implementation next to it.
-   Crystal needs nothing beyond its standard library for this: `HTTP::WebSocket`
-   for BiDi, `JSON` for the messages, a plain `TCPSocket` for Marionette, and
-   `Process` for launching the browser. No C bindings, no curses yet.
-4. **Write the CDP client.** The table above is the specification. Budget for
-   out-of-process iframes; everything else is mechanical.
-5. **Then, and only then, choose the front end** — own terminal or edbrowse
+4. **Port the Firefox driver.** The smaller of the two protocols, a wire
+   format already spoken here, and a working reference implementation next to
+   it. Crystal needs nothing beyond its standard library for this:
+   `HTTP::WebSocket` for BiDi, `JSON` for the messages, a plain `TCPSocket`
+   for Marionette, and `Process` for launching the browser. No C bindings, no
+   curses yet.
+5. **Port the CDP client.** Budget for out-of-process iframes and for the two
+   consequences named above; everything else is mechanical.
+6. **Then, and only then, choose the front end** — own terminal or edbrowse
    backend. Both consume the same core, and by this point the core is proven
    against the oracle.
 
-Stopping after stage 3 leaves a working Firefox-only reader in the new
+Stopping after stage 4 leaves a working Firefox-only reader in the new
 language, which is a real thing to have and a reasonable place to pause.
 
-## What would be lost with Playwright
+## What was lost with Playwright
 
-Named honestly, since it is the dependency a rewrite removes:
+Named honestly, since a rewrite inherits the same bill:
 
-- **Auto-waiting and actionability.** Its `click()` waits for an element to be
-  stable, visible and unobscured. We already replaced the parts we needed with
-  `prepareRealClick()`, which is stricter about what it reports and does not
-  wait.
-- **The accessibility tree.** Replaced by `ax_own.js`, which is already the
-  Firefox path and is validated against Playwright's by `compare`.
-- **Out-of-process iframe plumbing.** Not replaced. This is the real cost.
-- **Protocol churn absorption.** Chrome changes CDP; Playwright tracks it. A
-  hand-written client inherits that maintenance — though the domains used here
-  (`Runtime`, `Page`, `DOM`, `Input`, `Target`) are the oldest and most stable
-  in the protocol.
+- **Auto-waiting and actionability.** Its `click()` waited for an element to
+  be stable, visible and unobscured. `prepareRealClick()` had already replaced
+  the parts we needed, and is stricter about what it reports — it refuses and
+  says what is covering the element, rather than waiting and then failing.
+- **The accessibility tree.** Replaced by `ax_own.js` on both engines, after
+  being validated against Playwright's by `compare`. The oracle is gone with
+  the dependency; `compare` now holds the two engines against each other,
+  which is a weaker check and the reason stage 3 above exists.
+- **Out-of-process iframe plumbing.** Replaced, and it was the real cost — see
+  the two consequences above.
+- **Protocol churn absorption.** Chrome changes CDP; Playwright tracked it.
+  We now inherit that maintenance — though the domains used here (`Runtime`,
+  `Page`, `DOM`, `Input`, `Target`) are the oldest and most stable in the
+  protocol, and nothing here reaches for anything recent.
 
 ## The rule underneath all of it
 
@@ -362,6 +410,6 @@ that fails bot checks is not a degraded reader, it is a broken one.
 Every layer above bends to that. It is why there is no headless mode, why
 Firefox's automation flag is cleared through Marionette and Marionette is left
 listening, why the profile persists, why the virtual screen is a desktop's
-size. **A port that quietly reintroduces a Playwright-launched or headless
+size. **A port that quietly reintroduces a harness-launched or headless
 browser to make its own life easier has failed no matter how clean the code
 is**, and it will fail in a way that only shows up on the sites that matter.
