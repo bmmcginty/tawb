@@ -34,6 +34,13 @@ const BUTTON_ROLES = new Set([
 // Roles we render as [Name] / [Name: value] — things that hold a value or take typing
 const FIELD_ROLES = new Set(['textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton']);
 
+// Everything a graphical browser's Tab key stops on: the three sets above,
+// which between them are every control this reader knows how to activate or
+// type into. Tab is the one key a sighted user's muscle memory already has
+// for "the next thing I can interact with", and it does not care which of
+// the three kinds the next one turns out to be.
+const FOCUSABLE_ROLES = new Set([...LINK_ROLES, ...BUTTON_ROLES, ...FIELD_ROLES]);
+
 // Atomic roles: their accessible name already contains everything inside
 // them (a link wrapping two images is still just one link), so we emit the
 // node and never descend into it.
@@ -270,5 +277,5 @@ function describe(item) {
 
 module.exports = {
   parseAriaSnapshot, parseTree, renderLine, describe,
-  LINK_ROLES, BUTTON_ROLES, FIELD_ROLES, ATOMIC_ROLES, CONTAINER_ROLES,
+  LINK_ROLES, BUTTON_ROLES, FIELD_ROLES, FOCUSABLE_ROLES, ATOMIC_ROLES, CONTAINER_ROLES,
 };

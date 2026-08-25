@@ -514,6 +514,16 @@ each machine; an unusual sequence recorded by the wizard is retained exactly.
 | `n`   | Non-link text                                                     |
 | `p`   | Paragraph                                                         |
 
+`Tab` and `Shift+Tab` move between all three kinds of control at once — the
+next link, button or form field, whichever comes first — which is what they do
+in a graphical browser. The single-letter jumps stay, because knowing that the
+next thing is a *button* is worth a key of its own; `Tab` is for when it does
+not matter which it is.
+
+`Tab` is the same byte as `Ctrl+I`, and is bound and displayed as `Tab`.
+`Shift+Tab` has no single sequence every terminal agrees on, so terminfo's
+back-tab (`kcbt`) is asked for first and `\e[Z` is the fallback.
+
 ### Everything else
 
 | Key      | Action                                                          |
