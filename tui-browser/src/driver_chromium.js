@@ -163,6 +163,85 @@ async function openChromium({
     return { session, basket };
   };
 
+  // Answering the browser's password prompt ourselves.
+  //
+  // A 401 raises a dialog drawn by browser chrome, which the reader cannot
+  // see and page script cannot reach. Fetch hands it over instead: the
+  // challenge arrives as an event, and continueWithAuth answers it with a
+  // username and a password — not with an Authorization header. The engine
+  // performs the scheme, which is why digest costs nothing here.
+  //
+  // Chromium has no auth-only interception. Asking for authRequired events
+  // pauses matching requests too, and a pattern list that matches nothing
+  // gets neither the events nor the dialog — the load fails with
+  // ERR_INVALID_AUTH_CREDENTIALS instead, which is the worst of both. So the
+  // pattern is everything and every paused request is continued straight
+  // away. Measured on a page of 101 requests: 250ms bare, 300ms armed.
+  //
+  // Per tab rather than per browser, because a browser may be shared with
+  // another reader, and a password prompt belongs to whoever is reading the
+  // tab that raised it.
+  const authSessions = new Map();
+  let answerAuth = null;
+
+  const armAuth = async (page) => {
+    if (!answerAuth || authSessions.has(page)) return false;
+    let session;
+    try {
+      session = await context.newCDPSession(page);
+    } catch {
+      return false;
+    }
+    authSessions.set(page, session);
+
+    session.on('Fetch.requestPaused', (event) => {
+      session.send('Fetch.continueRequest', { requestId: event.requestId }).catch(() => {});
+    });
+
+    session.on('Fetch.authRequired', async (event) => {
+      const challenge = event.authChallenge || {};
+      let given = null;
+      try {
+        given = await answerAuth({
+          source: challenge.source,
+          origin: challenge.origin,
+          realm: challenge.realm,
+          scheme: challenge.scheme,
+          url: (event.request && event.request.url) || '',
+        // The interception id is a counter within this target, so it names
+        // the request only alongside the target it belongs to.
+        }, `${event.frameId || 'page'}:${event.requestId}`);
+      } catch {
+        given = null;
+      }
+      await session.send('Fetch.continueWithAuth', {
+        requestId: event.requestId,
+        authChallengeResponse: given
+          ? { response: 'ProvideCredentials', username: given.username, password: given.password || '' }
+          // Cancelling is not failing: the 401's own body then loads, which
+          // is often a page saying what the realm is.
+          : { response: 'CancelAuth' },
+      }).catch(() => {});
+    });
+
+    try {
+      await session.send('Fetch.enable', {
+        handleAuthRequests: true,
+        patterns: [{ urlPattern: '*', requestStage: 'Request' }],
+      });
+    } catch {
+      authSessions.delete(page);
+      return false;
+    }
+
+    page.once('close', () => {
+      authSessions.delete(page);
+      session.detach().catch(() => {});
+    });
+    log('auth.armed', { url: String(page.url()).slice(0, 80) });
+    return true;
+  };
+
   return {
     name: ownAx ? 'chromium' : 'chromium-playwright',
     ax: ownAx ? 'own' : 'playwright',
@@ -184,6 +263,26 @@ async function openChromium({
       } catch {
         return null;
       }
+    },
+
+    // Answer this browser's password prompts with `handler`, which is given a
+    // challenge and the request it belongs to and returns credentials, or
+    // null to cancel. Every tab already open is armed, and so is every tab
+    // opened afterwards.
+    //
+    // A challenge from a cross-origin iframe is not covered: site isolation
+    // makes that frame its own target with its own network, and this is armed
+    // on the tab's. Such a challenge behaves as it did before any of this
+    // existed — the browser puts up a dialog nobody can see.
+    async attachAuth(handler) {
+      answerAuth = handler;
+      context.on('page', (opened) => { armAuth(opened).catch(() => {}); });
+      for (const open of context.pages()) await armAuth(open).catch(() => {});
+      return true;
+    },
+
+    async armAuth(page) {
+      return armAuth(page).catch(() => false);
     },
 
     // The accessibility tree, flattened into reading order. Ours, computed in
@@ -312,6 +411,10 @@ async function openChromium({
       }
       sessions.clear();
       sessionOwners.clear();
+      for (const session of authSessions.values()) {
+        await session.detach().catch(() => {});
+      }
+      authSessions.clear();
       await browser.close().catch(() => {});
       // Only tear down a browser we started; one the user was already running
       // is theirs to keep. --keep-browser leaves even ours running, so the
