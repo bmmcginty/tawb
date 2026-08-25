@@ -699,6 +699,15 @@ on its own: given one the server refuses, Chromium goes round about thirty
 times before `ERR_TOO_MANY_RETRIES` and Firefox goes round for ever. Three
 tries, and the challenge is cancelled.
 
+Whatever is still unanswered when the session ends is cancelled on the way
+out. The prompt belongs to us from the moment the interception is armed — the
+browser stops drawing its own dialog and holds the request instead — so a
+challenge left paused in a browser that outlives the reader is a tab loading
+for ever with no dialog anybody could answer. It also costs the reader their
+terminal back: detaching from a connection with requests paused on it is
+itself a wait, measured at over twenty seconds. The same is true of a prompt
+whose keyboard disappears, which declines for the same reason.
+
 The engines pay very different prices for this. Firefox's intercept is
 auth-only: no ordinary request is paused, so a page that is not asking for a
 password pays nothing. Chromium has no such mode — asking for the events
