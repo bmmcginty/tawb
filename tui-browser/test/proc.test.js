@@ -12,7 +12,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { spawn } = require('node:child_process');
 
-const { processAlive, killProcessGroup } = require('../src/proc');
+const { processAlive, killProcessGroup, processesUsing, anyProcessUsing } = require('../src/proc');
 
 // A shell holding a long-running child, in a process group of its own. Resolves
 // once the grandchild has announced its pid, so both are known to be running.
@@ -76,4 +76,38 @@ test('a process group that has already gone is not an error', () => {
       resolve();
     });
   });
+});
+
+
+// Whether a directory is still being used is the question that decides if it
+// can be deleted, and a browser answers it by naming its profile in its own
+// arguments — which is the only trace of the association that survives the
+// process that set it up.
+
+test('a path a running process names is seen as in use', async () => {
+  const marker = `/tmp/tweb-inuse-check-${process.pid}-${Date.now()}`;
+  assert.equal(anyProcessUsing(marker), false, 'a path nothing mentions looked busy');
+
+  const holder = spawn('sh', ['-c', 'while :; do sleep 1; done', 'sh', `--user-data-dir=${marker}`],
+    { stdio: 'ignore', detached: true });
+  holder.unref();
+  try {
+    await new Promise((r) => setTimeout(r, 300));
+    assert.deepEqual(processesUsing(marker), [holder.pid], 'the holder was not found');
+    assert.equal(anyProcessUsing(marker), true);
+
+    killProcessGroup(holder.pid, 'SIGKILL');
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && processAlive(holder.pid)) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.equal(anyProcessUsing(marker), false, 'a path stayed busy after its holder went');
+  } finally {
+    killProcessGroup(holder.pid, 'SIGKILL');
+  }
+});
+
+test('asking about nothing is not asking about everything', () => {
+  assert.deepEqual(processesUsing(''), [], 'an empty path matched processes');
+  assert.equal(anyProcessUsing(null), false);
 });

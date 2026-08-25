@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+
 // Whether a process id recorded earlier still belongs to a running process.
 //
 // Signal 0 performs the permission and existence checks without delivering
@@ -52,4 +54,43 @@ function killProcessGroup(pid, signal = 'SIGTERM') {
   }
 }
 
-module.exports = { processAlive, killProcessGroup };
+// Which running processes still refer to this path on their command line.
+//
+// The safety net for deleting a directory nobody should still be in. A
+// browser names its profile directory in its arguments and so does the
+// xvfb-run wrapping it, so a profile still being read by a browser that
+// outlived the process which made it is visible here — which is the one case
+// where a directory whose owner has gone is still not free.
+//
+// Best effort by construction: /proc entries come and go while it is read,
+// and a process belonging to another user cannot be read at all. Every such
+// failure is treated as "not using it", because the caller's other checks
+// have to stand on their own anyway.
+function processesUsing(target) {
+  if (!target) return [];
+  let entries;
+  try {
+    entries = fs.readdirSync('/proc');
+  } catch {
+    return []; // no /proc: nothing can be proved either way
+  }
+  const found = [];
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    if (entry === String(process.pid)) continue;
+    let cmdline;
+    try {
+      cmdline = fs.readFileSync(`/proc/${entry}/cmdline`, 'utf8');
+    } catch {
+      continue; // exited between the listing and the read, or not ours
+    }
+    if (cmdline.includes(target)) found.push(Number(entry));
+  }
+  return found;
+}
+
+function anyProcessUsing(target) {
+  return processesUsing(target).length > 0;
+}
+
+module.exports = { processAlive, killProcessGroup, processesUsing, anyProcessUsing };
