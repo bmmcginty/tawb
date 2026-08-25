@@ -52,6 +52,11 @@ async function wireSession(browserContext, page, session, { root }) {
   session.on('Page.frameNavigated', ({ frame }) => {
     const known = page.ensureFrame(frame.id, frame.parentId || null);
     known._url = frame.url || 'about:blank';
+    // A new document has committed here, so every frame that hung below this
+    // one belonged to the document being replaced. Chrome announces the new
+    // document's children afterwards; it never announces that the old ones
+    // have gone.
+    page.dropChildrenOf(frame.id);
     page.emit('framenavigated', known);
   });
   session.on('Page.navigatedWithinDocument', ({ frameId, url }) => {
@@ -59,7 +64,14 @@ async function wireSession(browserContext, page, session, { root }) {
     if (url) known._url = url;
     page.emit('framenavigated', known);
   });
-  session.on('Page.frameDetached', ({ frameId }) => page.removeFrame(frameId));
+  session.on('Page.frameDetached', ({ frameId, reason }) => {
+    // A frame going cross-process is detached from the session it was on and
+    // reattached to a target of its own. That is a change of address, not a
+    // document going away, and forgetting it here would lose the frame in
+    // the gap before the new target attaches.
+    if (reason === 'swap') return;
+    page.removeFrame(frameId);
+  });
 
   if (root) {
     session.on('Page.lifecycleEvent', ({ frameId, name }) => {
@@ -77,6 +89,19 @@ async function wireSession(browserContext, page, session, { root }) {
     const child = session.connection.sessionFor(params.sessionId, info.targetId);
     wireSession(browserContext, page, child, { root: false })
       .catch(() => { /* the frame went away while we were attaching to it */ });
+  });
+
+  // In flat mode a sub-target's detachment is announced to its parent. This
+  // is the only word we get that a cross-origin iframe's process has gone,
+  // and without it the document it was answering for stays in the frame list
+  // for ever, unreadable.
+  session.on('Target.detachedFromTarget', ({ sessionId }) => {
+    for (const wired of page.sessions) {
+      if (wired.sessionId === sessionId) {
+        page.dropSession(wired);
+        return;
+      }
+    }
   });
 
   await enableSession(session);
