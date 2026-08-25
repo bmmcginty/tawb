@@ -331,6 +331,24 @@ A full repaint is still the right answer when a row-by-row comparison cannot
 mean anything, and those cases fall back to one deliberately: a navigation, a
 view switch, a scroll (every row moved), and a terminal resize.
 
+## What is on the screen
+
+| Row        | What it holds                                                   |
+| ---------- | --------------------------------------------------------------- |
+| 1          | The page's title                                                 |
+| 2          | The current view and the address — `[AX] https://example.com/`   |
+| 3          | The hint line: the keys worth knowing, or what a prompt wants    |
+| 4          | Blank                                                            |
+| 5 … *n-2*  | The page                                                         |
+| *n-1*      | Blank                                                            |
+| *n*        | The status line                                                  |
+
+The title is what the page calls itself, and is read when the buffer is
+rebuilt rather than on every keystroke — the banner is meant to stay
+untouched while reading, because a repainted row is re-read by a screen
+reader whether or not it now says anything different. A page with no title
+of its own leaves the row empty rather than repeating the address below it.
+
 ## Four views of a page
 
 Backslash (`\`) cycles between them. The current one is shown at the start
