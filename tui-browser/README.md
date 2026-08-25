@@ -204,6 +204,39 @@ opens its own otherwise, and each gets its own timing log.
 A session started with a URL always opens its own tab. Only a session
 started without one adopts what is already on screen.
 
+None of that is free on Firefox, which serves exactly one WebDriver session
+per browser and publishes no way to join the one it has — a second connection
+is told "Session already started", a second session is refused as "Maximum
+number of active sessions", and the session's own websocket path is
+registered only for sessions made through the http flow a BiDi client does
+not use. So a broker holds that single session and speaks BiDi to as many
+readers as ask for one, rewriting command ids so replies find their way home
+(`src/broker.js`). A reader runs the ordinary driver pointed at the broker and
+nothing above the driver knows the difference; joining a browser this way
+takes about 400ms against five seconds for a cold start.
+
+The broker starts with the first reader, is recorded beside the browser in the
+profile directory so later readers find the same one, and ends five seconds
+after the last reader leaves. It reads as little as it can of what it carries:
+a snapshot comes back as a 97KB accessibility tree, and parsing every message
+to find its id costs about 7ms of a snapshot that takes 83ms, so it reads the
+id out of the head of the frame and forwards the rest untouched, which costs
+nothing measurable. `node tools/brokerbench.js` is that measurement.
+`--connect` bypasses it: an endpoint you named yourself is connected to
+directly.
+
+One thing must be decided centrally rather than left to the readers. An
+intercept belongs to the session and not to the connection, so a password
+challenge raised anywhere in the browser could be told to all of them. It goes
+to the reader who did something most recently — the one with their hands on
+the keyboard — and if no reader is listening for it at all, the broker cancels
+it, which loads the 401's own body rather than leaving a tab that never
+finishes.
+
+Whoever launched the browser is its first user, not its owner: quitting leaves
+it running while another reader is still in it, and the last one out closes
+it.
+
 ## Reading holds still while you move — this is deliberate
 
 **The page stops updating while you are navigating, and resumes about 2.5
