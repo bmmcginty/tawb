@@ -13,6 +13,7 @@ const {
   MAX_DEPTH, MAX_FRAMES,
 } = require('./frames');
 const { Core, ALL_SOURCES } = require('./core');
+const { Credentials, describeChallenge, normaliseChallenge } = require('./auth');
 const { log } = require('./log');
 
 // Serving the live browser to edbrowse, over http on the loopback address.
@@ -621,6 +622,40 @@ async function startEdbServer({
   let tabs = new Tabs(core);
   const secret = token || crypto.randomBytes(9).toString('hex');
 
+  // Passwords, and the challenges nobody has answered yet.
+  //
+  // The reader is in edbrowse, waiting on the response to the very request
+  // that raised the challenge, so there is nobody to ask while it is up:
+  // asking would mean holding that response open until an answer arrived
+  // through a request the reader cannot make until it does. So a challenge
+  // with no known password is cancelled — which loads the 401's own body
+  // rather than hanging — and remembered against the tab, and the tab's next
+  // page is a form asking for it. Not what a browser does, and it is what
+  // works in a line browser.
+  const credentials = new Credentials({ log });
+  const waiting = new Map();
+
+  const attachAuth = async (activeDriver) => {
+    if (!activeDriver.attachAuth) return;
+    await activeDriver.attachAuth(async (raw, id, page) => {
+      const answer = await credentials.answer(raw, id);
+      if (!answer) {
+        const challenge = normaliseChallenge(raw);
+        const number = page ? tabs.numberFor(page) : null;
+        if (number != null) waiting.set(number, challenge);
+        log('edb.auth.asked', { tab: number, origin: challenge.origin, realm: challenge.realm });
+      }
+      return answer;
+    }).catch(() => {});
+  };
+
+  // A tab is armed as it is handed out, because arming is per tab on Chromium
+  // and does nothing the second time.
+  const arm = async (page) => {
+    if (page && core.driver.armAuth) await core.driver.armAuth(page).catch(() => {});
+    return page;
+  };
+
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
       const message = String(err && err.message || err);
@@ -647,6 +682,8 @@ async function startEdbServer({
       const fresh = await starting;
       core = new Core({ driver: fresh, page: null, source: 'ax', sources: ALL_SOURCES });
       tabs = new Tabs(core, tabs.urls, tabs.next);
+      waiting.clear();
+      await attachAuth(fresh);
       log('edb.browser.restarted', { engine: fresh.name });
     } finally {
       starting = null;
@@ -835,7 +872,10 @@ async function startEdbServer({
         + `search the web for it</a> — <a href="/t/${secret}/tabs">the tabs</a></p>`);
     }
     const wanted = target.url;
-    const page = existing ? existing.page : await core.driver.newTab();
+    const page = await arm(existing ? existing.page : await core.driver.newTab());
+    // A deliberate address is also how a reader who left a challenge
+    // unanswered says they would like to be asked again.
+    credentials.reconsider();
     await page.goto(wanted, { waitUntil: 'domcontentloaded' });
     await settle();
     await syncUrl(page);
@@ -851,9 +891,32 @@ async function startEdbServer({
       : url.searchParams.get('url');
   }
 
-  async function render(res, number, base) {
+  // The form. Plain enough for edbrowse to fill in with i= and submit, and a
+  // POST because a password in a query string would be written into the
+  // buffer's own filename and into this server's request handling.
+  function signIn(res, number, challenge) {
+    const asked = describeChallenge(challenge);
+    return ours(res, 'a password is wanted',
+      `<p>${escapeHtml(asked)} wants a password.</p>\n`
+      + `<form method="post" action="${number}/auth">\n`
+      + '<p>User <input type="text" name="user"></p>\n'
+      + '<p>Password <input type="password" name="password"></p>\n'
+      + '<p><input type="submit" value="sign in"></p>\n'
+      + '</form>\n'
+      + `<p><a href="${number}/?show=1">show the page the server sent instead</a>`
+      + ` — <a href="/t/${secret}/tabs">the tabs</a></p>`);
+  }
+
+  async function render(res, number, base, { show = false } = {}) {
     const page = tabs.page(number);
     if (!page) return goneTab(res, number);
+    // A challenge nobody has answered stands in front of the page it belongs
+    // to, until the reader answers it or asks to see what the server sent.
+    if (waiting.has(number)) {
+      if (!show) return signIn(res, number, waiting.get(number));
+      waiting.delete(number);
+    }
+    await arm(page);
     tabs.remember(number, page.url());
     const registry = tabs.registry(number);
     const extracted = await readTree(page, registry);
@@ -916,7 +979,29 @@ async function startEdbServer({
     const base = `http://${HOST}:${server.address().port}${tabUrl(number)}`;
     const what = rest[1] || '';
 
-    if (!what) return render(res, number, base);
+    if (!what) return render(res, number, base, { show: url.searchParams.has('show') });
+
+    // The answer to the form above: remember the password for that realm and
+    // go back for the page, which now loads without anybody being asked
+    // anything.
+    if (what === 'auth') {
+      const challenge = waiting.get(number);
+      if (!challenge) return redirect(res, tabUrl(number));
+      const fields = new URLSearchParams(await readBody(req));
+      const user = fields.get('user') || '';
+      waiting.delete(number);
+      if (!user) return redirect(res, `${tabUrl(number)}?show=1`);
+      credentials.remember(challenge, { username: user, password: fields.get('password') || '' });
+      // The cancelled challenge was recorded as declined; the reader has just
+      // said otherwise.
+      credentials.reconsider();
+      const again = tabs.lastUrl(number) || page.url();
+      log('edb.auth.answered', { tab: number, origin: challenge.origin, realm: challenge.realm });
+      await page.goto(again, { waitUntil: 'domcontentloaded' }).catch(() => {});
+      await settle();
+      await syncUrl(page);
+      return redirect(res, tabUrl(number));
+    }
     if (what === 'ax' || what === 'render' || what === 'source') {
       return renderView(res, number, what, base);
     }
@@ -1067,6 +1152,8 @@ async function startEdbServer({
 
     return send(res, 404, '<html><body><p>tweb: no such page</p></body></html>');
   }
+
+  await attachAuth(core.driver);
 
   await new Promise((resolve) => server.listen(port, HOST, resolve));
   const actual = server.address().port;

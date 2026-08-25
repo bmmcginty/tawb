@@ -55,13 +55,14 @@ function stubPage(url, tokens) {
   frame.page = () => page;
   const page = {
     url: () => url,
+    gotos: [],
     title: async () => 'stub page',
     isClosed: () => false,
     mainFrame: () => frame,
     frames: () => [frame],
     evaluate: frame.evaluate,
     evaluateHandle: frame.evaluateHandle,
-    goto: async () => {},
+    goto: async (to) => { page.gotos.push(to); },
     // A form with nothing to press is submitted by typing Enter into the
     // field, through the browser's own keyboard.
     keyboard: { press: async () => {} },
@@ -74,7 +75,7 @@ function stubPage(url, tokens) {
   return page;
 }
 
-function stubDriver(pages) {
+function stubDriver(pages, auth = {}) {
   return {
     name: 'stub',
     alive: () => true,
@@ -83,6 +84,10 @@ function stubDriver(pages) {
     targetIdFor: async () => null,
     realClick: async () => {},
     close: async () => {},
+    // The browser hands its password prompts over; the server decides what
+    // becomes of them.
+    attachAuth: async (handler) => { auth.answer = handler; return true; },
+    armAuth: async (page) => { (auth.armed = auth.armed || []).push(page); return true; },
   };
 }
 
@@ -91,12 +96,25 @@ async function get(base, path) {
   return { status: res.status, headers: res.headers, body: await res.text() };
 }
 
+async function post(base, path, fields) {
+  const res = await fetch(base + path, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(fields).toString(),
+  });
+  return { status: res.status, headers: res.headers, body: await res.text() };
+}
+
 async function withServer(tokens, run) {
   const pages = [stubPage('https://example.com/one', tokens)];
-  const server = await startEdbServer({ driver: stubDriver(pages), port: 0, token: 'testtoken' });
+  const auth = {};
+  const server = await startEdbServer({ driver: stubDriver(pages, auth), port: 0, token: 'testtoken' });
   const base = `http://127.0.0.1:${server.port}`;
   try {
-    await run({ base, pages, server });
+    await run({
+      base, pages, server, auth,
+    });
   } finally {
     await server.close?.();
   }
@@ -290,5 +308,63 @@ test('an id from an older render is refused rather than guessed at', async () =>
     await get(base, '/t/testtoken/1/');
     const res = await get(base, '/t/testtoken/1/e9999');
     assert.match(res.body, /older version|stale|rf/i);
+  });
+});
+
+// --- passwords -------------------------------------------------------------
+
+const CHALLENGE = {
+  source: 'Server', origin: 'https://example.com', realm: 'Staff area', scheme: 'basic',
+  url: 'https://example.com/one',
+};
+
+test('a challenge nobody can answer becomes a form in the tab that raised it', async () => {
+  await withServer(SOME_TOKENS, async ({ base, pages, auth }) => {
+    // The reader is waiting on the response to the request that raised this,
+    // so it is cancelled rather than held open — which loads the server's own
+    // 401 body — and the tab remembers what was asked.
+    assert.equal(await auth.answer(CHALLENGE, 'req-1', pages[0]), null);
+
+    const form = await get(base, '/t/testtoken/1/');
+    assert.equal(form.status, 200);
+    assert.match(form.body, /example\.com/);
+    assert.match(form.body, /Staff area/);
+    assert.match(form.body, /<form method="post" action="1\/auth">/);
+    assert.match(form.body, /<input type="password" name="password">/);
+    assert.doesNotMatch(form.body, /hello/, 'the page stood behind the question');
+
+    // The password reaches the server in a body, never in an address: the
+    // buffer's own filename would otherwise hold it.
+    const answered = await post(base, '/t/testtoken/1/auth', { user: 'reader', password: 'opensesame' });
+    assert.equal(answered.status, 302);
+    assert.equal(answered.headers.get('location'), '/t/testtoken/1/');
+    assert.deepEqual(pages[0].gotos, ['https://example.com/one'], 'the page was fetched again');
+
+    // And the next challenge for that realm is answered without anybody
+    // being asked anything.
+    assert.deepEqual(
+      await auth.answer(CHALLENGE, 'req-2', pages[0]),
+      { username: 'reader', password: 'opensesame' },
+    );
+    const page = await get(base, '/t/testtoken/1/');
+    assert.match(page.body, /hello/);
+  });
+});
+
+test('the page the server sent instead can be read without answering', async () => {
+  await withServer(SOME_TOKENS, async ({ base, pages, auth }) => {
+    await auth.answer(CHALLENGE, 'req-1', pages[0]);
+    const shown = await get(base, '/t/testtoken/1/?show=1');
+    assert.match(shown.body, /hello/);
+    // Asked once, and then out of the way.
+    const again = await get(base, '/t/testtoken/1/');
+    assert.match(again.body, /hello/);
+  });
+});
+
+test('a tab is armed for passwords as it is served', async () => {
+  await withServer(SOME_TOKENS, async ({ base, pages, auth }) => {
+    await get(base, '/t/testtoken/1/');
+    assert.ok((auth.armed || []).includes(pages[0]));
   });
 });

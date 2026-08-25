@@ -119,7 +119,6 @@ class Credentials {
     this.known = new Map();
     this.denied = new Set();
     this.tries = new Map();
-    this.watchers = new Set();
     // Prompts are asked one at a time. A page with several protected images
     // produces several challenges at once, and three prompts fighting over
     // one status line is not a thing a reader can answer.
@@ -142,20 +141,6 @@ class Credentials {
   // way back for someone who escaped a prompt and then thought better of it.
   reconsider() {
     this.denied.clear();
-  }
-
-  // Collects the challenges raised while something runs, so a front end that
-  // cannot answer one on the spot — the edbrowse server, whose reader is
-  // waiting on the response to the very request that raised it — can see what
-  // happened and put up a page about it afterwards.
-  watch() {
-    const seen = [];
-    const watcher = (challenge) => seen.push(challenge);
-    this.watchers.add(watcher);
-    return {
-      seen,
-      done: () => { this.watchers.delete(watcher); return seen; },
-    };
   }
 
   #countTry(id) {
@@ -190,7 +175,6 @@ class Credentials {
   async answer(raw, id = null) {
     const challenge = normaliseChallenge(raw);
     const key = challengeKey(challenge);
-    for (const watcher of this.watchers) watcher(challenge);
 
     const attempt = id == null ? 1 : this.#countTry(id);
     this.#prune();

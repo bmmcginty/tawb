@@ -717,7 +717,10 @@ async function openFirefox({
             realm: challenge.realm,
             scheme: challenge.scheme,
             url: request.url || '',
-          }, request.request);
+            // Which tab asked. A front end that cannot answer on the spot has
+            // to put its question somewhere, and the tab that raised the
+            // challenge is where the reader is.
+          }, request.request, pages.get(params.context) || null);
         } catch {
           given = null;
         }
