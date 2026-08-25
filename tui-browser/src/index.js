@@ -76,10 +76,11 @@ const QUICK_ACTIONS = {
   'previous-focusable': { label: 'control', direction: -1, match: (item) => FOCUSABLE_ROLES.has(item.role) },
 };
 
-const HEADER_ROWS = 3;   // address line, hint line, blank line
+const HEADER_ROWS = 4;   // title line, address line, hint line, blank line
 const FOOTER_ROWS = 2;   // blank + status line
-const ADDRESS_ROW = 1;
-const HINT_ROW = 2;
+const TITLE_ROW = 1;
+const ADDRESS_ROW = 2;
+const HINT_ROW = 3;
 
 // No selection marker: the terminal cursor already marks the focused line,
 // and a screen reader / braille display tracks it there. A printed marker
@@ -227,6 +228,33 @@ function lineText(state, lineIndex) {
 // the display re-read content that did not change.
 // ---------------------------------------------------------------------------
 
+// The page's title, on the first row of the window.
+//
+// It is what a page calls itself, and until now the only way to hear it was
+// to open the tab list. It costs a row of the viewport, which is why it is
+// the title alone: the address is on the row below it, and repeating the URL
+// here when a page has no title would spend that row saying nothing new.
+//
+// Read when the buffer is rebuilt rather than on every keystroke. It is a
+// round trip, and the banner is meant to stay untouched while reading — a
+// repainted row is re-read by a screen reader and re-flashed by a braille
+// display whether or not it now says anything different.
+async function readTitle(page) {
+  try {
+    const title = await page.title();
+    return String(title || '').replace(/\s+/g, ' ').trim();
+  } catch {
+    return ''; // closed, navigating, or an engine that will not say
+  }
+}
+
+function drawTitle(state, { force = false } = {}) {
+  const rendered = (state.title || '').slice(0, termSize().cols);
+  if (!force && rendered === state.drawn.title) return;
+  state.drawn.title = rendered;
+  writeLine(TITLE_ROW, rendered);
+}
+
 function addressText(state, page) {
   if (state.mode === 'address') return state.address.text;
   return page.url();
@@ -349,6 +377,7 @@ function parkCursor(state) {
 
 function render(state, page, { force = false } = {}) {
   clampScroll(state);
+  drawTitle(state, { force });
   drawAddress(state, page, { force });
   drawHint(state, { force });
   drawList(state);
@@ -376,6 +405,7 @@ function screenBefore(state) {
 // mean anything: the view scrolled, so every row moved; the terminal was
 // resized under us; or there is no record of what was on screen before.
 function repaintList(state, page, before) {
+  drawTitle(state);
   drawAddress(state, page);
   drawHint(state);
 
@@ -687,6 +717,7 @@ function restoreAnchor(state, anchor) {
 
 async function refresh(state, page, { resetCursor = false, anchor = null } = {}) {
   await state.core.rescan({ page });
+  state.title = await readTitle(page);
   if (state.core.live) state.core.live.snapshotCostMs = state.core.snapshotCostMs;
   if (resetCursor) { state.cursor = 0; state.scroll = 0; state.col = 0; }
   relayout(state);
@@ -2157,7 +2188,8 @@ async function main() {
     find: null,
     lastFind: null,
     auth: null,
-    drawn: { address: null, hint: null },
+    title: '',
+    drawn: { title: null, address: null, hint: null },
     statusHeldUntil: 0,
     loadingMore: false,
     historyPlaces: new WeakMap(),
@@ -2192,6 +2224,7 @@ async function main() {
       page.goto(START_URL, { waitUntil: 'domcontentloaded' }));
   }
   await core.rescan();
+  state.title = await readTitle(page);
   relayout(state);
   render(state, page, { force: true });
 
@@ -2345,6 +2378,6 @@ module.exports = {
   restoreHistoryPlace, acknowledgeHistoryNavigation, traversePageHistory, moveInHistory,
   switchToTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
-  renderRow, parseArgs, onExternalNavigation,
+  renderRow, parseArgs, onExternalNavigation, readTitle, drawTitle,
   handleAuthKey, authPromptText, askForPassword,
 };
