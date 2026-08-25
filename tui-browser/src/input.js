@@ -11,6 +11,9 @@ class KeyReader {
     this.buffer = '';
     this.keys = [];
     this.waiters = [];
+    // Who the keystrokes belong to. Normally nobody, and the reading loop
+    // takes them. See claim().
+    this.owner = null;
     this.escapeTimer = null;
     this.onData = (chunk) => this.push(chunk);
     stream.setEncoding('utf8');
@@ -24,9 +27,33 @@ class KeyReader {
   }
 
   emit(key) {
-    const waiter = this.waiters.shift();
-    if (waiter) waiter(key);
-    else this.keys.push(key);
+    const at = this.waiters.findIndex((waiter) => waiter.owner === this.owner);
+    if (at < 0) { this.keys.push(key); return; }
+    const [waiter] = this.waiters.splice(at, 1);
+    waiter.resolve(key);
+  }
+
+  // Take the keyboard, so a prompt that has to be answered while the reading
+  // loop is blocked can be answered at all.
+  //
+  // The loop is one key at a time and everything it calls is awaited, so a
+  // password prompt raised from inside a navigation is raised while the loop
+  // is sitting in the middle of that navigation, unable to reach its next
+  // keystroke — and the navigation cannot finish until the prompt is
+  // answered. Whoever holds the claim is served instead, and the loop's own
+  // waiting call stays parked until the claim is given back.
+  //
+  // Anything typed before the claim is dropped. Those keys were pressed at a
+  // page, by a reader who had not yet been told a password was wanted, and
+  // the least welcome place for them is a username field.
+  claim() {
+    this.keys.length = 0;
+    this.owner = {};
+    return this.owner;
+  }
+
+  release(token) {
+    if (this.owner === token) this.owner = null;
   }
 
   parse(expireEscape) {
@@ -77,9 +104,9 @@ class KeyReader {
     }
   }
 
-  next() {
-    if (this.keys.length) return Promise.resolve(this.keys.shift());
-    return new Promise((resolve) => this.waiters.push(resolve));
+  next(owner = null) {
+    if (owner === this.owner && this.keys.length) return Promise.resolve(this.keys.shift());
+    return new Promise((resolve) => this.waiters.push({ owner, resolve }));
   }
 
   close() {
