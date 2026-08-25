@@ -193,6 +193,30 @@ npm run browsers -- --sweep # take down the ones nobody is using
 npm run browsers -- --all   # take down every browser tweb started
 ```
 
+### Throwaway profiles clean themselves
+
+Every browser test file makes a profile of its own, and several make a state
+or config directory too. They are removed when the run finishes — but the
+system temporary directory here is a tmpfs, so a profile left by a run that
+*did not* finish is not clutter on a disk, it is resident memory. Interrupted
+runs had built up 3.4GB of them.
+
+Nothing can be done from inside the process being killed, so each directory
+carries the pid that made it in its own name and the next run sweeps the ones
+whose owner has gone. The name is also what makes it safe: a directory tweb
+did not create has no pid in its name and is never touched, which matters
+because `--profile /tmp/something` of your own is a perfectly ordinary thing
+to pass. The directory itself is handed back empty and stays that way.
+
+Browsers are swept before directories, because a profile is not free while a
+browser is still reading it. A browser found holding an abandoned profile is
+taken down with it — that one is not reachable any other way, since a test
+file that points `XDG_DATA_HOME` at a directory of its own records the browser
+it starts in a registry that goes when that directory goes.
+
+Measured: a run stopped with `SIGKILL` mid-flight strands 13 browser processes
+and two profiles; the next run starts by clearing all of it.
+
 ### One reader at a time, and what happens when one dies
 
 Firefox serves **one WebDriver session at a time**, so unlike Chromium a second

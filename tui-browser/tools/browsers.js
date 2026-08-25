@@ -6,6 +6,11 @@
 //   npm run browsers -- --sweep # take down the ones nobody is using
 //   npm run browsers -- --all   # take down every browser tweb started
 //
+// It also accounts for the throwaway profile directories a test run makes. On
+// this machine the system temporary directory is a tmpfs, so a profile left by
+// a run that was killed is held in memory until something removes it — which
+// --sweep does, for the ones whose owner has gone.
+//
 // A browser outlives the session that started it on purpose: the next session
 // rejoins it in 50ms instead of cold-starting in four seconds, and a second
 // reader may be in it. The cost of that is a browser can be left behind — by a
@@ -24,7 +29,7 @@ const { execFileSync } = require('child_process');
 
 const R = path.join(__dirname, '..', 'src');
 const {
-  readRegistry, forgetBrowser, sweepStrandedBrowsers,
+  readRegistry, forgetBrowser, sweepStrandedBrowsers, sweepStaleProfiles, tempProfiles,
 } = require(path.join(R, 'registry.js'));
 const { processAlive, killProcessGroup } = require(path.join(R, 'proc.js'));
 const { readClaims } = require(path.join(R, 'session.js'));
@@ -81,6 +86,18 @@ function list() {
   return browsers;
 }
 
+// Throwaway directories, which are memory here rather than disk.
+function listProfiles() {
+  const dirs = tempProfiles();
+  const abandoned = dirs.filter((d) => !d.alive);
+  if (!dirs.length) return abandoned;
+  console.log(`\n${dirs.length} throwaway director${dirs.length === 1 ? 'y' : 'ies'}`
+    + `, ${abandoned.length} abandoned:`);
+  for (const d of abandoned) console.log(`  ${d.dir}  (owner ${d.owner} has gone)`);
+  if (abandoned.length) console.log('Run with --sweep to remove them.');
+  return abandoned;
+}
+
 function main() {
   const args = process.argv.slice(2);
   if (args.includes('--all')) {
@@ -98,14 +115,18 @@ function main() {
     return;
   }
   if (args.includes('--sweep')) {
-    const swept = sweepStrandedBrowsers({
-      log: (event, data) => console.log(`${event} ${JSON.stringify(data)}`),
-    });
+    const say = (event, data) => console.log(`${event} ${JSON.stringify(data)}`);
+    const swept = sweepStrandedBrowsers({ log: say });
     console.log(`${swept} stranded browser${swept === 1 ? '' : 's'} taken down.`);
+    // Browsers first: a profile is not free while one is still reading it.
+    const removed = sweepStaleProfiles({ log: say });
+    console.log(`${removed} abandoned director${removed === 1 ? 'y' : 'ies'} removed.`);
     list();
+    listProfiles();
     return;
   }
   list();
+  listProfiles();
 }
 
 main();
