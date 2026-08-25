@@ -255,6 +255,80 @@ function drawTitle(state, { force = false } = {}) {
   writeLine(TITLE_ROW, rendered);
 }
 
+// ---------------------------------------------------------------------------
+// Navigating somewhere the browser will not simply load
+//
+// A failed navigation is not an empty result. Both engines answer a bad
+// certificate — and a refused connection, and a name that does not resolve —
+// by rendering a page of their own: Chromium's "Your connection is not
+// private", Firefox's "Be careful. Something doesn't look right." That page
+// is the whole of what a sighted person gets, and it carries the only way
+// past it, which is Advanced and then Proceed.
+//
+// Both engines report it by throwing out of page.goto, so taking the throw at
+// face value threw away the one thing the reader needed. It killed the
+// session outright at startup, and from the address bar it left them on the
+// page they came from with a stack-trace fragment on the status line, no
+// warning to read and no way to go on.
+//
+// So the throw is noted and the tab is read regardless. The reader lands on
+// the browser's own warning, in the same four views as any other page, and
+// the controls on it work because they are ordinary page controls.
+// ---------------------------------------------------------------------------
+
+// The engine's own name for what went wrong, out of a message written for a
+// developer's console. Chromium says
+//   page.goto: net::ERR_CERT_AUTHORITY_INVALID at https://example.com/
+// and Firefox
+//   unknown error: Error: NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_SECURITY,
+//   MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT)
+// and the code in the middle is the part worth repeating to a reader.
+function navigationFault(message) {
+  const text = String(message || '').split('\n')[0];
+  const codes = [...text.matchAll(/\b(?:net::)?((?:ERR|NS_ERROR|MOZILLA_PKIX_ERROR|SEC_ERROR)_[A-Z0-9_]+)\b/g)]
+    .map((m) => m[1]);
+  // Firefox wraps the diagnosis in a generic failure and a module name —
+  // NS_ERROR_GENERATE_FAILURE(NS_ERROR_MODULE_SECURITY, MOZILLA_PKIX_ERROR_
+  // SELF_SIGNED_CERT) — so the code that actually says what is wrong with the
+  // certificate is preferred over whatever came first.
+  const specific = codes.find((code) => /^(ERR_CERT|MOZILLA_PKIX_ERROR|SEC_ERROR)/.test(code));
+  if (specific || codes.length) return specific || codes[0];
+  return text.replace(/^page\.goto:\s*/, '').replace(/^unknown error:\s*(Error:\s*)?/, '').slice(0, 120);
+}
+
+// Go somewhere, and say what happened rather than throwing. The caller reads
+// the tab either way, because either way there is something in it.
+//
+// The error page arrives a moment after the navigation that failed: the throw
+// comes from the network layer, and the page that replaces the document is
+// rendered after it. Measured from the throw, the accessibility tree is still
+// empty at 74ms on Chromium and carries the warning at 379ms; Firefox is much
+// the same at 348ms. Reading once, at whatever moment the throw happened to
+// land, gave an empty buffer — a reader told their page was refused, with
+// nothing on screen and nothing to press. So the buffer is read again until
+// it holds something, bounded, and the bound is not an error in itself: a
+// page that genuinely renders nothing is a page with nothing to say.
+async function settleAfterFault(state, page, { timeout = 4000 } = {}) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    await refresh(state, page, { resetCursor: true });
+    if (state.lines.length) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+}
+
+async function navigate(page, url) {
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    return { ok: true, fault: null };
+  } catch (err) {
+    const fault = navigationFault(err && err.message);
+    log('navigate.failed', { url: String(url).slice(0, 120), fault });
+    return { ok: false, fault };
+  }
+}
+
 function addressText(state, page) {
   if (state.mode === 'address') return state.address.text;
   return page.url();
@@ -2079,15 +2153,16 @@ async function handleAddressKey(chunk, state, page) {
       state.credentials.remember({ url }, { username, password: password || '' });
     }
     await rememberCurrentHistoryPlace(state, page);
-    try {
-      await page.goto(url, { waitUntil: 'domcontentloaded' });
-      await refresh(state, page, { resetCursor: true });
-      render(state, page, { force: true });
-      setStatus(state, `Loaded ${page.url()}`);
-    } catch (err) {
-      drawAddress(state, page, { force: true });
-      setStatus(state, `Could not load ${url}: ${err.message.split('\n')[0]}`);
-    }
+    const went = await navigate(page, url);
+    // Read the tab whether or not the navigation succeeded: a refusal leaves
+    // the browser's own warning page in it, and that page is where the reader
+    // finds out why and how to go on anyway.
+    if (went.ok) await refresh(state, page, { resetCursor: true });
+    else await settleAfterFault(state, page);
+    render(state, page, { force: true });
+    setStatus(state, went.ok
+      ? `Loaded ${page.url()}`
+      : `${url} was refused — ${went.fault}. The browser's own warning is on screen.`);
     return;
   }
 
@@ -2219,14 +2294,19 @@ async function main() {
   // in a browser we started: the session that joins later is the one that
   // needs to know to leave it alone.
   await core.adoptTab(page);
+  let opening = { ok: true, fault: null };
   if (!adopted) {
-    await timed('goto', { url: START_URL }, () =>
-      page.goto(START_URL, { waitUntil: 'domcontentloaded' }));
+    opening = await timed('goto', { url: START_URL }, () => navigate(page, START_URL));
   }
   await core.rescan();
+  if (!opening.ok && !core.blocks.length) await settleAfterFault(state, page);
   state.title = await readTitle(page);
   relayout(state);
   render(state, page, { force: true });
+  if (!opening.ok) {
+    setStatus(state, `${START_URL} was refused — ${opening.fault}. `
+      + "The browser's own warning is on screen.");
+  }
 
   await attachLive(state, page);
   attachedPages.add(page);
@@ -2379,5 +2459,6 @@ module.exports = {
   switchToTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation, readTitle, drawTitle,
+  navigate, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
 };

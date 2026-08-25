@@ -811,6 +811,51 @@ immediately, measured at 300ms against 250ms over a page of 101 requests. It
 is armed per tab, as tabs are taken, because a browser can be shared with
 another reader and their passwords are not ours to ask for.
 
+## When a site's certificate is refused
+
+A bad certificate — self-signed, expired, issued for another name — is not a
+page that fails to arrive. Both engines answer it by rendering a warning of
+their own, and that warning is the whole of what a sighted person gets,
+including the way past it. So it is read like any other page:
+
+```
+Privacy error
+[AX] chrome-error://chromewebdata/
+
+# Your connection is not private
+Attackers might be trying to steal your information from 127.0.0.1 ...
+{Learn more about this warning}
+[*net::ERR_CERT_AUTHORITY_INVALID, collapsed]
+[*Back to safety]
+[*Advanced, collapsed]
+
+https://127.0.0.1:8443/ was refused — ERR_CERT_AUTHORITY_INVALID. ...
+```
+
+`Tab` to `[*Advanced]` and press `Enter`: it expands to the explanation and a
+`{Proceed to … (unsafe)}` link, and activating that loads the site. Firefox
+words it differently — *"Be careful. Something doesn't look right"*, then
+`[*Proceed to … (Risky)]` — and behaves the same. Nothing here bypasses
+anything on the reader's behalf; the browser's own controls do it, because
+they are ordinary page controls.
+
+The status line names the engine's own code for the fault —
+`ERR_CERT_AUTHORITY_INVALID`, `MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT` — since
+the page itself does not always spell out which of the several possible
+problems it hit.
+
+Firefox's page also carries `{View the site's certificate}`, which is its own
+certificate viewer and is read like any other page. Chromium's warning has no
+equivalent: there, a certificate is inspected through the padlock in browser
+chrome, which is not part of the page and is not reachable from here.
+
+This applies to every navigation that the engine refuses outright, not only
+to certificates: a refused connection and a name that does not resolve land
+on the same kind of page. Before this, such a navigation threw — it killed
+the session outright when it was the address tweb started with, and from the
+address bar it left the reader on the previous page with a fragment of a
+stack trace on the status line and no way to go on.
+
 ## If an action cannot complete
 
 Activation is bounded at six seconds. Some controls genuinely cannot be
