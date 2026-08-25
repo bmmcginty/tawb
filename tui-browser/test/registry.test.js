@@ -1,25 +1,31 @@
 'use strict';
 
-// Sweeping up browsers left behind by sessions that are no longer running.
+// Sweeping up what a session that is no longer running left behind: the
+// browser it started, and the throwaway directory it was using.
 //
-// The sweep signals a whole process group by a pid remembered in a file, which
-// is a large thing to be wrong about. Most of what is tested here is therefore
-// what it refuses to touch: a live session's browser, a browser another reader
-// is in, one left running on purpose, and a pid that has since been reused.
+// One sweep signals a whole process group by a pid out of a file and the other
+// deletes a directory, both of which are large things to be wrong about. Most
+// of what is tested here is therefore what they refuse to touch: a live
+// session's browser, a browser another reader is in, one left running on
+// purpose, a pid that has since been reused, a profile a browser is still
+// reading, and a directory tweb never created.
 
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+
+const { tempDir } = require('./tmpdir');
 const { spawn } = require('node:child_process');
 
-const state = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-registry-state-'));
+const state = tempDir('tweb-registry-state-');
 process.env.XDG_DATA_HOME = state;
 
 const {
   readRegistry, writeRegistry, recordBrowser, forgetBrowser, markKept,
   sweepStrandedBrowsers, stillOurBrowser,
+  tempName, ownerOfTempDir, sweepStaleProfiles, tempProfiles,
 } = require('../src/registry');
 const { claimsPath } = require('../src/session');
 const { processAlive, killProcessGroup } = require('../src/proc');
@@ -163,4 +169,106 @@ test('recording, forgetting and a sweep of nothing', () => {
   assert.equal(readRegistry().length, 1, 'the same port was recorded twice');
   forgetBrowser(9007);
   assert.equal(readRegistry().length, 0, 'the browser was not forgotten');
+});
+
+
+// ---------------------------------------------------------------------------
+// Throwaway directories
+//
+// A browser profile made for one test run is a few hundred megabytes in a
+// tmpfs, which is to say in memory. A run killed outright leaves it there, so
+// the next run sweeps it — and the whole safety of that rests on never
+// deleting a directory whose owner might still be running.
+
+const sweepRoot = fs.mkdtempSync(path.join(os.tmpdir(), tempName('tweb-sweeproot-')));
+test.after(() => fs.rmSync(sweepRoot, { recursive: true, force: true }));
+
+// A directory named the way tempDir names one, but owned by whoever we say.
+function dirOwnedBy(pid, label = 'tweb-fake-') {
+  const dir = path.join(sweepRoot, `${label}${pid}-abcDEF`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'something-big'), 'x'.repeat(1024));
+  return dir;
+}
+
+const DEAD = 0x7ffffffe;
+
+test('a directory carries its owner in its name, and hands back nothing else', () => {
+  assert.equal(tempName('tweb-views-'), `tweb-views-${process.pid}-`);
+  assert.equal(ownerOfTempDir(`tweb-views-${process.pid}-abcDEF`), process.pid);
+  assert.equal(ownerOfTempDir('tweb-tabs-state-99-xyz123'), 99);
+});
+
+test('a directory that is not one of ours is never swept', () => {
+  // No pid in the name: somebody else's, however much it looks like ours.
+  for (const name of ['tweb-foo', 'tweb-views-abc-abcDEF', 'notours-123-abcDEF', 'tmp']) {
+    assert.equal(ownerOfTempDir(name), null, `${name} was claimed as ours`);
+  }
+  const theirs = path.join(sweepRoot, 'tweb-someones-own-profile');
+  fs.mkdirSync(theirs, { recursive: true });
+  sweepStaleProfiles({ dir: sweepRoot });
+  assert.ok(fs.existsSync(theirs), "a directory tweb did not create was deleted");
+  fs.rmSync(theirs, { recursive: true, force: true });
+});
+
+test('a directory whose owner has gone is swept', () => {
+  const stale = dirOwnedBy(DEAD);
+  assert.equal(sweepStaleProfiles({ dir: sweepRoot }), 1, 'the stale directory was left behind');
+  assert.equal(fs.existsSync(stale), false, 'the stale directory is still there');
+});
+
+test('a directory whose owner is still running is left alone', () => {
+  const live = dirOwnedBy(process.pid);
+  assert.equal(sweepStaleProfiles({ dir: sweepRoot }), 0, 'a running test lost its directory');
+  assert.ok(fs.existsSync(live), 'a running test lost its directory');
+  fs.rmSync(live, { recursive: true, force: true });
+});
+
+test('a browser still holding an abandoned profile is taken down with it', async () => {
+  // The case that would otherwise never be cleared. A test file that points
+  // XDG_DATA_HOME at a directory of its own records the browser it starts in a
+  // registry inside that directory, so when the run is killed and the
+  // directory goes, the browser cannot be found through the registry at all.
+  // It is reachable only through the profile it is still holding.
+  const abandoned = dirOwnedBy(DEAD, 'tweb-held-');
+  const browser = spawn('sh', ['-c', 'while :; do sleep 1; done', 'sh', `--user-data-dir=${abandoned}`],
+    { stdio: 'ignore', detached: true });
+  browser.unref();
+  strays.push(browser.pid);
+  // Give it a moment to exist with that command line.
+  await new Promise((r) => setTimeout(r, 300));
+
+  assert.equal(sweepStaleProfiles({ dir: sweepRoot }), 1, 'the abandoned profile was left behind');
+  assert.equal(fs.existsSync(abandoned), false, 'the abandoned profile is still there');
+  assert.ok(await goneWithin(browser.pid), 'the browser holding it was left running');
+});
+
+test('a profile whose owner is alive is left alone even while a browser holds it', async () => {
+  // The same shape, but the run that made it is still going: this is every
+  // browser test file while it is running, and nothing about it is reclaimable.
+  const busy = dirOwnedBy(process.pid, 'tweb-busy-');
+  const browser = spawn('sh', ['-c', 'while :; do sleep 1; done', 'sh', `--user-data-dir=${busy}`],
+    { stdio: 'ignore', detached: true });
+  browser.unref();
+  strays.push(browser.pid);
+  await new Promise((r) => setTimeout(r, 300));
+
+  assert.equal(sweepStaleProfiles({ dir: sweepRoot }), 0, 'a running test lost its profile');
+  assert.ok(fs.existsSync(busy), 'a running test lost its profile');
+  assert.ok(processAlive(browser.pid), 'a running test lost its browser');
+
+  killProcessGroup(browser.pid, 'SIGKILL');
+  await goneWithin(browser.pid);
+  fs.rmSync(busy, { recursive: true, force: true });
+});
+
+test('what is on disk can be listed without deleting any of it', () => {
+  const stale = dirOwnedBy(DEAD);
+  const live = dirOwnedBy(process.pid);
+  const listed = tempProfiles({ dir: sweepRoot });
+  assert.equal(listed.length, 2, 'the listing missed a directory');
+  assert.equal(listed.filter((e) => e.alive).length, 1, 'the listing got the owners wrong');
+  assert.ok(fs.existsSync(stale) && fs.existsSync(live), 'listing deleted something');
+  sweepStaleProfiles({ dir: sweepRoot });
+  fs.rmSync(live, { recursive: true, force: true });
 });
