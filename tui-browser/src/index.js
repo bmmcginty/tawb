@@ -16,7 +16,7 @@ const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
 const { claimedTargets, releaseTab } = require('./session');
 const { capturePlace, restorePlace } = require('./place');
 const { Keymap } = require('./keys');
-const { KeyReader } = require('./input');
+const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
 const { Credentials, describeChallenge, splitCredentials } = require('./auth');
@@ -623,6 +623,12 @@ async function askForPassword(state, challenge, { refused = false } = {}) {
   try {
     for (;;) {
       const chunk = await state.keyReader.next(token);
+      // The keyboard has gone while the prompt was up. Declining is the only
+      // honest answer, and it is the safe one: the challenge is cancelled
+      // rather than left holding a request the browser has paused, so the
+      // 401's own body loads and the navigation the reading loop is awaiting
+      // finishes. The loop is given the same news a moment later.
+      if (chunk === EOF) return null;
       markInput(state);
       const answer = handleAuthKey(chunk, state);
       if (answer !== undefined) return answer;
@@ -2217,6 +2223,10 @@ async function main() {
   let running = true;
   while (running) {
     const chunk = await keyReader.next();
+    // Nothing can be read for somebody who has no keyboard. Leaving by the
+    // same door as `q` is what makes the browser be told, the tab claim be
+    // given back and the terminal be put right.
+    if (chunk === EOF) { log('input.eof', {}); running = false; break; }
     markInput(state);
 
     const t0 = Date.now();

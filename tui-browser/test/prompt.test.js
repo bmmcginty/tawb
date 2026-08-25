@@ -7,7 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { PassThrough } = require('node:stream');
 
-const { KeyReader } = require('../src/input');
+const { KeyReader, EOF } = require('../src/input');
 const { handleAuthKey, authPromptText, askForPassword } = require('../src/index');
 const { normaliseChallenge } = require('../src/auth');
 
@@ -95,5 +95,27 @@ test('the prompt answers while the reading loop is stopped, then gives the keybo
 
   stream.write('j');
   assert.equal(await loop, 'j', 'the reading loop was left where it was');
+  reader.close();
+});
+
+test('a prompt whose keyboard goes away declines rather than waiting for ever', async () => {
+  const stream = new PassThrough();
+  const reader = new KeyReader(stream, { escapeMs: 5 });
+  const state = {
+    ...promptState(), mode: 'browse', auth: null, keyReader: reader, keys: null,
+  };
+  const loop = reader.next();
+
+  const asked = askForPassword(state, CHALLENGE);
+  // The terminal is gone: a pty closed without a hangup, a pipe at its end.
+  // The challenge must be answered anyway, because the browser has paused a
+  // request waiting for this and the navigation cannot finish until it is
+  // told what to do.
+  stream.end();
+
+  assert.equal(await asked, null, 'declining cancels the challenge');
+  assert.equal(state.mode, 'browse', 'the mode the reader was in came back');
+  assert.equal(state.auth, null);
+  assert.equal(await loop, EOF, 'and the reading loop is told to leave');
   reader.close();
 });

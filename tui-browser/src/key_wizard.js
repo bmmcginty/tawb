@@ -1,7 +1,7 @@
 'use strict';
 
 const { Keymap } = require('./keys');
-const { KeyReader } = require('./input');
+const { KeyReader, EOF } = require('./input');
 
 const ESC = '\x1b';
 const BACKSPACE = new Set(['\x7f', '\x08']);
@@ -161,6 +161,14 @@ async function runKeyWizard({
     return action;
   };
 
+  // Leaving without saving: the wizard's changes live in memory until it is
+  // done with them, so putting the originals back is all there is to it.
+  const restore = () => {
+    for (const action of keymap.actions) action.bindings = [...original.get(action.id)];
+    keymap.rebuild();
+    done = true;
+  };
+
   // Leaving asks about saving, because the changes made here are held in
   // memory until the wizard is done with them.
   const leave = async () => {
@@ -169,6 +177,11 @@ async function runKeyWizard({
     render();
     for (;;) {
       const answer = await reader.next();
+      // A question asked of a keyboard that is no longer there is not
+      // answered "yes". Bindings are held in memory until this point, so
+      // putting the originals back is what leaving without saving means —
+      // and without this the loop would spin on an answer that never comes.
+      if (answer === EOF) { restore(); return; }
       if (answer === 'y' || answer === 'Y') {
         keymap.save();
         saved = true;
@@ -176,9 +189,7 @@ async function runKeyWizard({
         return;
       }
       if (answer === 'n' || answer === 'N') {
-        for (const action of keymap.actions) action.bindings = [...original.get(action.id)];
-        keymap.rebuild();
-        done = true;
+        restore();
         return;
       }
     }
@@ -191,6 +202,9 @@ async function runKeyWizard({
   try {
     while (!done) {
       const key = await reader.next();
+      // The keyboard has gone. Nothing typed here has been written yet, so
+      // the wizard leaves the keymap as it found it.
+      if (key === EOF) { restore(); break; }
       const rows = wizardRows(keymap);
       const row = rows[selected];
 
