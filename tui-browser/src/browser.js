@@ -9,6 +9,7 @@ const {
   readEndpointRecord, writeEndpointRecord, endpointReady, runningEndpoint, portOfEndpoint, freePort,
 } = require('./endpoint');
 const { killProcessGroup } = require('./proc');
+const { recordBrowser, sweepStrandedBrowsers } = require('./registry');
 
 // Getting hold of a browser to read.
 //
@@ -119,6 +120,11 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
 
   fs.mkdirSync(profileDir, { recursive: true });
 
+  // Before starting another one, take down any left behind by sessions that
+  // are no longer running. This is where a browser orphaned by a crash — or
+  // by the out-of-memory kill that a pile of them causes — is finally reaped.
+  sweepStrandedBrowsers({ log });
+
   const running = await findRunningBrowser(profileDir);
   if (running) {
     log('browser.rejoin', { port: running, profileDir });
@@ -174,6 +180,7 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   }
 
   writeEndpointRecord(profileDir, { port, pid: child.pid, startedAt: Date.now() });
+  recordBrowser({ pid: child.pid, port, profileDir, engine: 'chromium' });
 
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   const context = browser.contexts()[0];
