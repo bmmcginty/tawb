@@ -28,6 +28,11 @@ const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-tabs-'));
 let driver;
 
 test.after(async () => {
+  // The claims these tests fabricate name a live process, and a browser with
+  // another live reader in it is deliberately left running. Ours is nobody
+  // else's, so the pretence is dropped before the driver is closed — without
+  // this, every run of this file leaks a browser.
+  if (driver) fs.rmSync(claimsPath(driver.port), { force: true });
   if (driver) await driver.close().catch(() => {});
   fs.rmSync(profile, { recursive: true, force: true });
   fs.rmSync(state, { recursive: true, force: true });
