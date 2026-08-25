@@ -8,6 +8,7 @@ const path = require('path');
 const {
   writeEndpointRecord, readEndpointRecord, runningEndpoint, waitForEndpoint, freePort,
 } = require('./endpoint');
+const { killProcessGroup } = require('./proc');
 
 // Getting hold of a Firefox that is not pretending to be a robot.
 //
@@ -477,7 +478,7 @@ async function launchFirefox({
   }
   const portMs = Date.now() - spawnedAt;
   if (!ready) {
-    try { child.kill(); } catch { /* already gone */ }
+    killProcessGroup(child.pid);
     throw new Error(exitedEarly
       ? `${found.name} exited immediately: another Firefox may be using ${profileDir}.`
       : `${found.name} did not open a debugging port within ${STARTUP_TIMEOUT_MS / 1000}s`);

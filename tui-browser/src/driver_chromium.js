@@ -5,6 +5,7 @@ const { parseAriaSnapshot } = require('./aria');
 const { extractAxItems } = require('./ax_own');
 const { readDocument } = require('./frames');
 const { otherReadersOn } = require('./session');
+const { killProcessGroup } = require('./proc');
 const { log } = require('./log');
 
 // Chromium, attached to over the DevTools protocol.
@@ -464,7 +465,7 @@ async function openChromium({
       // however it got there — starting the browser makes us its first user,
       // not its owner.
       if (child && !keepBrowser && !otherReadersOn(port)) {
-        try { child.kill(); } catch { /* already gone */ }
+        killProcessGroup(child.pid);
       }
     },
   };
