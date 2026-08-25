@@ -11,22 +11,25 @@ tracks it without this program needing to speak.
 
 ```
 cd tui-browser
-npm install
 npm start -- https://en.wikipedia.org/wiki/Braille
 ```
 
+There is nothing to install. This has no dependencies: it speaks the
+DevTools protocol and WebDriver BiDi to the browsers directly, over a
+WebSocket, and everything else it needs is in Node.
+
 ## It drives a real browser, not an automated one
 
-This starts an ordinary Chrome, Chromium or Firefox and watches it. It does not let
-Playwright launch the browser, because a Playwright-launched browser
+This starts an ordinary Chrome, Chromium or Firefox and watches it. It never
+lets an automation harness launch one, because a browser launched that way
 advertises itself as automated — `navigator.webdriver` is true — and sites
 that react to that leave you parked on pages which never load. Measured
 against the Cloudflare check pastebin.com puts in front of `/login`:
 
 | How the browser is started | Result |
 | -------------------------- | ------ |
-| Playwright, headless        | never clears |
-| Playwright, headed          | never clears |
+| Launched by Playwright, headless | never clears |
+| Launched by Playwright, headed   | never clears |
 | Started normally, attached to | clears in ~4s |
 
 There is no fallback to an automated browser. A browser that cannot load
@@ -93,19 +96,19 @@ announcing something about itself. Startup then asks a real page what it sees
 and **refuses to run** if the answer is not `false`, so a browser that would
 fail bot checks cannot slip through unnoticed.
 
-All four views work. Three of them are injected JavaScript and care nothing
-for the engine; the accessibility tree is computed by `ax_own.js`, used only
-where Playwright is not there to do it. **Chromium keeps using Playwright's**,
-so the path that works is not put at risk by a second implementation of the
-hardest thing here — and having both means `compare` can hold them against
-each other on real pages, which is how three bugs in ours were found.
+All four views work, and none of them cares which engine is underneath.
+Three are injected JavaScript; the accessibility tree is computed by
+`ax_own.js`, in the page, on both browsers.
 
-On Wikipedia's Braille article the two trees are 1632 blocks each and agree
-line for line for the first 58. Where they differ, ours is sometimes the
-better: it folds a sentence's trailing full stop onto the link it follows,
-which Playwright does inconsistently with itself two lines later, and it names
-a frame from its `title` where Playwright emits a bare `<frame>`. Neither is
-authoritative — `compare` surfaces the difference so you can judge it.
+It was Playwright's on Chromium for as long as ours was unproven, and the two
+were held against each other on real pages until they agreed — which is how
+three bugs in ours were found. On Wikipedia's Braille article the two trees
+were 1632 blocks each and agreed line for line for the first 58. Where they
+differed ours was sometimes the better: it folds a sentence's trailing full
+stop onto the link it follows, which Playwright did inconsistently with
+itself two lines later, and it names a frame from its `title` where
+Playwright emitted a bare `<frame>`. `compare` now holds the two engines
+against each other instead.
 
 Child frames work by position, because BiDi offers no element-to-context link:
 the Nth frame element in a document belongs to the Nth child context of it.
@@ -472,13 +475,11 @@ else:
   number elements. The nearest element above you is the anchor, and your own
   line is then found again by its text, searched *down from where that
   element landed* — so repeated text does not throw you across the page.
-- **Playwright's accessibility tree carries no element references**, so on
-  Chromium the `AX` view can be left by resolving a line's role and name to
-  an element, but not entered that way. Entering it matches the element's own
-  label — the `aria-label` that gave the AX line its name — and where several
-  lines could match, the one nearest that element's position in the document.
-  Firefox has no such gap: we compute that tree ourselves and keep the
-  references, so all four views match exactly.
+- **The `AX` view keeps a reference to every element it read**, on both
+  engines, because we compute that tree ourselves. So all four views match
+  exactly: a line knows which node it came from, and moving between views is
+  a question about elements rather than a search for text that looks
+  similar.
 
 An element that simply is not in the view you are entering — `PAGE` lists
 only what is visible — puts you on the nearest line above where it would
@@ -611,10 +612,10 @@ between "press this to see the menu" and "the menu is already here, further
 down" — which, with no screen to glance at, is otherwise invisible.
 
 Only the accessibility view knows this. `PAGE`, `HTML` and `SOURCE` are DOM
-walks with no notion of a control's state, and Playwright's own accessibility
-snapshot marks a control that is open but says nothing about one that is
-closed, so a Chromium session still on that snapshot reports `expanded` and
-never `collapsed`.
+walks with no notion of a control's state. It is also one of the two reasons
+we compute that tree ourselves rather than asking Playwright for it:
+`ariaSnapshot` marks a control that is open and has no way to say that one is
+closed, so it can report `expanded` and never `collapsed`.
 
 Separator punctuation (`|`, `,`) is folded onto the end of the preceding
 link rather than taking a line of its own, since a lone `|` says nothing.
@@ -770,11 +771,11 @@ Hit testing descends through shadow roots, because `elementFromPoint`
 retargets to the shadow host — a custom element several hundred pixels away
 would otherwise be reported as the thing in the way.
 
-Chromium gets this from Playwright's own click, which is real input over the
-DevTools protocol. Firefox performs the pointer actions itself over BiDi,
-naming the target by shared reference so the browser computes the element's
-centre rather than trusting coordinates we worked out — the same road its
-keyboard already takes.
+Both engines then perform the pointer actions themselves, over the same road
+their keyboards take. Chromium asks the protocol where the element's box is
+and dispatches a move, a press and a release there; Firefox names the target
+by shared reference and lets the browser work the centre out. Either way the
+events are the browser's own, so they are trusted and carry activation.
 
 ## Signing in
 
@@ -1019,11 +1020,10 @@ whole story.
 ## If this is ever rewritten or embedded elsewhere
 
 [`PORTING.md`](PORTING.md) is the seam: which ~970 lines must stay JavaScript
-because they run inside the page, what the Playwright dependency actually
-amounts to call by call, which parts are policy that took real pages to
-discover and should be copied rather than re-derived, and what changes if this
-becomes a backend something else drives instead of a program that owns a
-terminal.
+because they run inside the page, what the two protocol clients amount to
+call by call, which parts are policy that took real pages to discover and
+should be copied rather than re-derived, and what changes if this becomes a
+backend something else drives instead of a program that owns a terminal.
 
 ## Known rough edges
 
