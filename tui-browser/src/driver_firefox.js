@@ -3,7 +3,7 @@
 const bidi = require('./bidi');
 const { launchFirefox, defaultProfileDir, releaseStrandedSession } = require('./firefox');
 const { readEndpointRecord, writeEndpointRecord, portOfEndpoint } = require('./endpoint');
-const { ensureBroker } = require('./broker');
+const { ensureBroker, clearBrokerRecord } = require('./broker');
 const { processAlive } = require('./proc');
 const { otherReadersOn } = require('./session');
 const { extractAxItems } = require('./ax_own');
@@ -554,10 +554,31 @@ async function openFirefox({
   // taken at its word and connected to directly.
   const profileDir = profile || defaultProfileDir();
   const brokered = broker && !connect;
-  if (brokered) endpoint = await ensureBroker({ profileDir, endpoint, log });
+  const browserEndpoint = endpoint;
 
-  const session = await bidi.connect(endpoint);
-  await startSession(session, { profileDir, marionettePort, log, brokered });
+  // A broker can go at any moment — it gives up shortly after its last reader
+  // leaves, and the reader arriving in that moment finds a socket that closes
+  // under it. That is not a failure to report to anybody; it is a reason to
+  // start one of our own and try again.
+  let session = null;
+  for (let attempt = 0; ; attempt += 1) {
+    endpoint = brokered
+      ? await ensureBroker({ profileDir, endpoint: browserEndpoint, log })
+      : browserEndpoint;
+    try {
+      session = await bidi.connect(endpoint);
+      await startSession(session, { profileDir, marionettePort, log, brokered });
+      break;
+    } catch (err) {
+      const vanished = brokered && attempt < 2
+        && /connection closed|could not reach|no BiDi endpoint/i.test(String(err.message || ''));
+      if (!vanished) throw err;
+      log('firefox.broker.vanished', { attempt: attempt + 1 });
+      try { if (session) session.close(); } catch { /* already gone */ }
+      session = null;
+      clearBrokerRecord(profileDir);
+    }
+  }
 
   const tree = await session.send('browsingContext.getTree', {});
   const top = tree.contexts[0];
