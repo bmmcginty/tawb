@@ -22,6 +22,7 @@ const path = require('node:path');
 const { PassThrough } = require('node:stream');
 
 const { openDriver } = require('../../src/driver');
+const { killProcessGroup } = require('../../src/proc');
 const { Credentials } = require('../../src/auth');
 const { KeyReader } = require('../../src/input');
 const { askForPassword } = require('../../src/index');
@@ -210,7 +211,9 @@ test('a challenge nobody has answered is cancelled when the browser is let go', 
       await rejoined.close().catch(() => {});
     }
   } finally {
-    try { leaving.child.kill(); } catch { /* already gone */ }
+    // The whole group: with no display the process we spawned is xvfb-run,
+    // and signalling it leaves the browser it is holding running.
+    killProcessGroup(leaving.child.pid);
     site.server.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -17,6 +17,7 @@ const { spawn } = require('child_process');
 const R = require('path').join(__dirname, '..', 'src');
 const { launchFirefox } = require(`${R}/firefox`);
 const { openDriver } = require(`${R}/driver`);
+const { killProcessGroup } = require(`${R}/proc`);
 
 const say = (m, v) => console.log(m + (v === undefined ? '' : ' ' + JSON.stringify(v)));
 const stat = (xs) => {
@@ -139,7 +140,9 @@ function startBroker(upstream, peek) {
       say(r.label.padEnd(30), { callMs: r.call, snapshotMs: r.snapshot, items: r.items, treeKb: r.kb });
     }
     server.close();
-    try { started.child.kill(); } catch {}
+    // The whole group: signalling the process we spawned leaves the browser
+    // running behind the xvfb-run holding it.
+    killProcessGroup(started.child.pid);
     setTimeout(() => process.exit(0), 500);
   }
 })();
