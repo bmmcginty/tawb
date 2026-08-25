@@ -4,6 +4,20 @@
 // may hold several keys, and one escape sequence may be split across chunks.
 // This reader turns that stream back into complete keystrokes. Escape alone
 // needs a short wait because it is also the prefix of every special key.
+
+// The keyboard is gone and is not coming back.
+//
+// Every way a terminal dies that arrives as a signal is handled where the
+// program shuts down. This is the one that does not: stdin ending under a
+// process that goes on running — a pty closed without a hangup, input from a
+// pipe that reached its end, a stream destroyed under us. A waiter that can
+// never be answered is worse than one answered with nothing, because a
+// password prompt is holding a request the browser has paused, and neither
+// the prompt nor the page can move again. So the end of the stream is
+// delivered as a keystroke of its own, and whoever is waiting decides what it
+// means: a prompt declines, and the reading loop leaves.
+const EOF = Symbol('input.eof');
+
 class KeyReader {
   constructor(stream, { escapeMs = 35 } = {}) {
     this.stream = stream;
@@ -14,10 +28,17 @@ class KeyReader {
     // Who the keystrokes belong to. Normally nobody, and the reading loop
     // takes them. See claim().
     this.owner = null;
+    this.ended = false;
     this.escapeTimer = null;
     this.onData = (chunk) => this.push(chunk);
+    this.onEnd = () => this.end();
     stream.setEncoding('utf8');
     stream.on('data', this.onData);
+    // A stream can finish quietly, or be destroyed, or fail. All three mean
+    // the same thing to a reader waiting for a key.
+    stream.on('end', this.onEnd);
+    stream.on('close', this.onEnd);
+    stream.on('error', this.onEnd);
     stream.resume();
   }
 
@@ -54,6 +75,19 @@ class KeyReader {
 
   release(token) {
     if (this.owner === token) this.owner = null;
+  }
+
+  // Everybody hears it: whoever holds the claim, and the reading loop parked
+  // behind them. Both have to — the prompt so it can decline the challenge it
+  // is holding open, the loop so it can shut the session down.
+  end() {
+    if (this.ended) return;
+    this.ended = true;
+    // A lone Escape is held back for the few milliseconds that tell it from
+    // an Alt key. This is the last chance to decide it was one, and it is a
+    // keystroke the reader typed: it goes out before the end does.
+    if (this.buffer) this.parse(true);
+    for (const waiter of this.waiters.splice(0)) waiter.resolve(EOF);
   }
 
   parse(expireEscape) {
@@ -106,12 +140,19 @@ class KeyReader {
 
   next(owner = null) {
     if (owner === this.owner && this.keys.length) return Promise.resolve(this.keys.shift());
+    if (this.ended) return Promise.resolve(EOF);
     return new Promise((resolve) => this.waiters.push({ owner, resolve }));
   }
 
   close() {
     if (this.escapeTimer) clearTimeout(this.escapeTimer);
+    // Deliberate teardown ends the stream as far as this reader is concerned,
+    // so a call for a key made after it answers rather than hanging.
+    this.ended = true;
     this.stream.off('data', this.onData);
+    this.stream.off('end', this.onEnd);
+    this.stream.off('close', this.onEnd);
+    this.stream.off('error', this.onEnd);
     // The reader resumed stdin when it took ownership. Leaving it flowing
     // after the standalone keyboard wizard has removed its listener keeps
     // Node's event loop alive with nothing left that can consume input.
@@ -119,4 +160,4 @@ class KeyReader {
   }
 }
 
-module.exports = { KeyReader };
+module.exports = { KeyReader, EOF };

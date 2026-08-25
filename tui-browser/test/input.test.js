@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { PassThrough } = require('node:stream');
 
-const { KeyReader } = require('../src/input');
+const { KeyReader, EOF } = require('../src/input');
 
 test('the input reader separates combined keys and joins split sequences', async () => {
   const stream = new PassThrough();
@@ -65,4 +65,32 @@ test('a claim drops what was typed before the prompt appeared', async () => {
   stream.write('x');
   assert.equal(await reader.next(token), 'x');
   reader.close();
+});
+
+test('the end of the stream answers everyone still waiting for a key', async () => {
+  const stream = new PassThrough();
+  const reader = new KeyReader(stream, { escapeMs: 5 });
+
+  // A prompt holds the keyboard; the reading loop is parked behind it. Both
+  // are waiting on a keyboard that is about to stop existing.
+  const loop = reader.next();
+  const token = reader.claim();
+  const prompt = reader.next(token);
+
+  // A last real keystroke, then the stream ends under both of them.
+  stream.write('\x1b');
+  stream.end();
+
+  assert.equal(await prompt, '\x1b', 'the Escape held back for the Alt test was still delivered');
+  assert.equal(await reader.next(token), EOF, 'and then the keyboard is gone');
+  assert.equal(await loop, EOF, 'including for the loop parked behind the claim');
+  assert.equal(await reader.next(), EOF, 'asking again says the same thing rather than hanging');
+  reader.close();
+});
+
+test('a reader that has been closed answers rather than hanging', async () => {
+  const stream = new PassThrough();
+  const reader = new KeyReader(stream, { escapeMs: 5 });
+  reader.close();
+  assert.equal(await reader.next(), EOF);
 });
