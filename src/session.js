@@ -21,7 +21,7 @@ const { processAlive } = require('./proc');
 
 function stateDir() {
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
-  return path.join(base, 'tui-browser');
+  return path.join(base, 'tawb');
 }
 
 function claimsPath(port) {

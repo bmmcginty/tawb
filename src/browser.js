@@ -44,7 +44,7 @@ const STARTUP_TIMEOUT_MS = 25000;
 
 function defaultProfileDir() {
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
-  return path.join(base, 'tui-browser', 'profile');
+  return path.join(base, 'tawb', 'profile');
 }
 
 function which(command) {

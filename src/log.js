@@ -56,7 +56,7 @@ function open() {
   if (stream) return stream;
   try {
     stream = fs.createWriteStream(LOG_PATH, { flags: 'w' });
-    stream.write(`# tui-browser log ${new Date().toISOString()} pid ${process.pid}\n`);
+    stream.write(`# tawb log ${new Date().toISOString()} pid ${process.pid}\n`);
   } catch {
     stream = null;
   }

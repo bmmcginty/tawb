@@ -1,4 +1,4 @@
-# tui-browser
+# tawb
 
 A terminal browser for reading the web from the command line, built for a
 blind user. It drives an ordinary Chrome, Chromium or Firefox and
@@ -10,7 +10,7 @@ your terminal (a screen reader, a braille display, Speakup on the console)
 tracks it without this program needing to speak.
 
 ```
-cd tui-browser
+cd tawb
 npm start -- https://en.wikipedia.org/wiki/Braille
 ```
 
@@ -52,7 +52,7 @@ open at 1050x917 and 1152x836 without being told to.
 Your profile persists between runs, so logins and cookies survive:
 
 ```
-npm start -- --profile ~/.local/share/tui-browser/profile https://example.com
+npm start -- --profile ~/.local/share/tawb/profile https://example.com
 npm start -- --connect 9222 https://example.com   # attach to a browser you started
 ```
 
@@ -531,8 +531,8 @@ where the next key will take effect.
 
 Choose `Exit keyboard wizard` at the bottom to leave. The wizard then accepts
 only `y` or `n` at its save prompt and ignores every other key. Saved bindings
-are written atomically to `$XDG_CONFIG_HOME/tui-browser/keys.json`, or
-`~/.config/tui-browser/keys.json` when `XDG_CONFIG_HOME` is unset. Standard
+are written atomically to `$XDG_CONFIG_HOME/tawb/keys.json`, or
+`~/.config/tawb/keys.json` when `XDG_CONFIG_HOME` is unset. Standard
 keys such as `PageDown` are stored by name and resolved through terminfo on
 each machine; an unusual sequence recorded by the wizard is retained exactly.
 
@@ -984,7 +984,7 @@ http:
 npm run edb                       # or: npm run edb -- --browser firefox
 ```
 
-It prints a tab list address and writes `~/.local/share/tui-browser/edb.json`
+It prints a tab list address and writes `~/.local/share/tawb/edb.json`
 so the entry-point plugin can find it. **The edbrowse side of this — the
 plugin, the `.ebrc` shortcuts, two patches to edbrowse itself, and the
 long-form study `edb.txt` — is its own repository, at
