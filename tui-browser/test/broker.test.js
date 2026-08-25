@@ -32,6 +32,13 @@ async function fakeBrowser() {
     commands,
     // An event, which carries no id and belongs to whoever subscribed.
     emit(event) { peer.send(JSON.stringify(event)); },
+    // The browser going away under the broker, which is not the same as
+    // closing the listener: an accepted connection outlives that.
+    drop() {
+      try { peer.socket.end(); } catch { /* already gone */ }
+      try { peer.socket.destroy(); } catch { /* already gone */ }
+      server.close();
+    },
     close() { server.close(); },
   };
 }
@@ -244,5 +251,53 @@ test('the broker gives up when the last reader has gone', async () => {
   } finally {
     await broker.close({ endSession: false });
     browser.close();
+  }
+});
+
+test('why the broker is giving up is part of what it reports', async () => {
+  const browser = await fakeBrowser();
+  const reasons = [];
+  const { broker, url } = await brokerOn(browser, {
+    idleMs: 50, onIdle: ({ reason } = {}) => { reasons.push(reason); },
+  });
+  const one = await reader(url);
+  try {
+    one.send(1, 'browsingContext.getTree');
+    await one.until((m) => m.id === 1);
+    one.close();
+    await new Promise((r) => setTimeout(r, 300));
+    assert.deepEqual(reasons, ['idle'], 'the last reader leaving is not an idle broker');
+  } finally {
+    await broker.close({ endSession: false });
+    browser.close();
+  }
+});
+
+test('a browser that goes takes the broker with it, readers or no readers', async () => {
+  // The distinction matters because the broker is given a reprieve when it is
+  // only idle: a reader arriving in that moment cancels the departure. A
+  // broker with no browser must not take that reprieve. It can serve nobody,
+  // and staying to be found again hands the next reader a broker that answers
+  // nothing — which is a session.new waiting out its whole timeout against a
+  // socket that is never coming back.
+  const browser = await fakeBrowser();
+  const reasons = [];
+  const { broker, url } = await brokerOn(browser, {
+    idleMs: 50000, onIdle: ({ reason } = {}) => { reasons.push(reason); },
+  });
+  const one = await reader(url);
+  try {
+    one.send(1, 'browsingContext.getTree');
+    await one.until((m) => m.id === 1);
+    assert.deepEqual(reasons, [], 'it gave up while the browser was still there');
+
+    // The browser goes while a reader is still connected.
+    browser.drop();
+    await new Promise((r) => setTimeout(r, 500));
+
+    assert.deepEqual(reasons, ['browser-gone'],
+      'losing the browser was reported as an ordinary idle broker');
+  } finally {
+    await broker.close({ endSession: false });
   }
 });

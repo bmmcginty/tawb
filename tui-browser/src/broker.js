@@ -183,13 +183,16 @@ function startBroker({
   let idleTimer = null;
   let closed = false;
 
+  // Why the broker is being given up decides whether it may change its mind.
+  // Nobody reading is a reason that a reader arriving undoes; the browser
+  // having gone is not.
   const idle = () => {
     if (closed || !onIdle) return;
     if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => { if (!clients.size) onIdle(); }, idleMs);
+    idleTimer = setTimeout(() => { if (!clients.size) onIdle({ reason: 'idle' }); }, idleMs);
   };
   const graceTimer = onIdle ? setTimeout(() => {
-    if (!everHadClient && !clients.size) onIdle();
+    if (!everHadClient && !clients.size) onIdle({ reason: 'idle' });
   }, graceMs) : null;
   if (graceTimer && graceTimer.unref) graceTimer.unref();
 
@@ -260,7 +263,7 @@ function startBroker({
         // The browser has gone. Nothing here can be served without it.
         log('broker.browser.gone', {});
         for (const client of clients) { try { client.peer.socket.end(); } catch { /* gone */ } }
-        if (onIdle) onIdle();
+        if (onIdle) onIdle({ reason: 'browser-gone' });
       });
     });
     return upstreamReady;
@@ -456,7 +459,7 @@ if (require.main === module) {
   const broker = startBroker({
     upstream,
     port: Number(port || 0),
-    onIdle: async () => {
+    onIdle: async ({ reason = 'idle' } = {}) => {
       // The record goes first. A reader that arrives from here on starts a
       // broker of its own rather than joining one that is leaving — and the
       // gap between deciding to go and having gone is exactly when a reader
@@ -465,18 +468,29 @@ if (require.main === module) {
         const record = readBrokerRecord(profileDir);
         if (record && record.port === Number(port)) clearBrokerRecord(profileDir);
       }
-      await new Promise((r) => setTimeout(r, 250));
-      if (broker.clients > 0) {
-        // Somebody came in through that gap. Stay, and be findable again.
-        if (profileDir) {
-          writeBrokerRecordFor(profileDir, {
-            pid: process.pid, port: Number(port), upstream, at: Date.now(),
-          });
+
+      // The reprieve below is for having no readers, which a reader arriving
+      // undoes. It is not for having no browser: a broker whose browser has
+      // gone can serve nobody, and staying to be found again would hand the
+      // next reader a broker that answers nothing — their session.new would
+      // wait out its whole timeout against a socket that is never coming
+      // back. That one leaves at once and lets the next reader start a
+      // broker with a browser behind it.
+      if (reason === 'idle') {
+        await new Promise((r) => setTimeout(r, 250));
+        if (broker.clients > 0) {
+          // Somebody came in through that gap. Stay, and be findable again.
+          if (profileDir) {
+            writeBrokerRecordFor(profileDir, {
+              pid: process.pid, port: Number(port), upstream, at: Date.now(),
+            });
+          }
+          log('broker.idle.cancelled', { readers: broker.clients });
+          return;
         }
-        log('broker.idle.cancelled', { readers: broker.clients });
-        return;
       }
-      log('broker.idle', {});
+
+      log('broker.idle', { reason });
       await broker.close();
       process.exit(0);
     },
