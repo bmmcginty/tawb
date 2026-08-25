@@ -484,7 +484,7 @@ async function activate(page, desc, { real = false, core = null } = {}) {
 
 function endpointPath() {
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
-  return path.join(base, 'tui-browser', 'edb.json');
+  return path.join(base, 'tawb', 'edb.json');
 }
 
 function writeEndpoint(record) {

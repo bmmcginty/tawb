@@ -18,7 +18,7 @@ const path = require('path');
 // The record is only a hint. It is believed exactly as far as a live port on
 // the other end, because a browser that was killed leaves its record behind.
 
-const ENDPOINT_FILE = 'tui-browser-endpoint.json';
+const ENDPOINT_FILE = 'tawb-endpoint.json';
 
 function endpointRecordPath(profileDir) {
   return path.join(profileDir, ENDPOINT_FILE);

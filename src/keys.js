@@ -95,7 +95,7 @@ const ACTIONS = [
 
 function configPath(env = process.env, home = os.homedir()) {
   const base = env.XDG_CONFIG_HOME || path.join(home, '.config');
-  return path.join(base, 'tui-browser', 'keys.json');
+  return path.join(base, 'tawb', 'keys.json');
 }
 
 function readTerminfo({ env = process.env, run = spawnSync } = {}) {

@@ -31,7 +31,7 @@ const { otherReadersOn } = require('./session');
 
 function stateDir() {
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
-  return path.join(base, 'tui-browser');
+  return path.join(base, 'tawb');
 }
 
 function registryDir() {

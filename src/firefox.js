@@ -113,7 +113,7 @@ function writeProfilePrefs(profileDir, prefs) {
 
 function defaultProfileDir() {
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
-  return path.join(base, 'tui-browser', 'firefox-profile');
+  return path.join(base, 'tawb', 'firefox-profile');
 }
 
 function which(command) {

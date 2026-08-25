@@ -17,7 +17,7 @@ const { log, timed, LOG_PATH } = require('./log');
 //     npm run edb
 //     npm run edb -- --browser firefox
 //
-// It prints the addresses to use, writes them to ~/.local/share/tui-browser/
+// It prints the addresses to use, writes them to ~/.local/share/tawb/
 // edb.json for the entry-point plugin to find, and then stays out of the way
 // until you stop it.
 

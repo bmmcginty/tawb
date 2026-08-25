@@ -35,7 +35,7 @@ const { log } = require('./log');
 // tools/brokerbench.js is that measurement.
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
-const BROKER_FILE = 'tui-browser-broker.json';
+const BROKER_FILE = 'tawb-broker.json';
 
 // How long the browser is held after the last reader leaves. Long enough to
 // cover a reader restarting, short enough that a forgotten browser is not
