@@ -6,6 +6,7 @@ const { readEndpointRecord, writeEndpointRecord, portOfEndpoint } = require('./e
 const { ensureBroker, clearBrokerRecord } = require('./broker');
 const { processAlive, killProcessGroup } = require('./proc');
 const { otherReadersOn } = require('./session');
+const { forgetBrowser, markKept } = require('./registry');
 const { extractAxItems } = require('./ax_own');
 const { readDocument } = require('./frames');
 
@@ -977,6 +978,11 @@ async function openFirefox({
       // browser makes this reader its first user, not its owner.
       if (child && !keepBrowser && !otherReadersOn(port)) {
         killProcessGroup(child.pid);
+        forgetBrowser(port);
+      } else if (child && keepBrowser) {
+        // Left running on purpose, so not something a later sweep should
+        // mistake for a browser somebody crashed out of.
+        markKept(port);
       }
     },
   };

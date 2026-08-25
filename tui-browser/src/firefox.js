@@ -9,6 +9,7 @@ const {
   writeEndpointRecord, readEndpointRecord, runningEndpoint, waitForEndpoint, freePort,
 } = require('./endpoint');
 const { killProcessGroup } = require('./proc');
+const { recordBrowser, sweepStrandedBrowsers } = require('./registry');
 
 // Getting hold of a Firefox that is not pretending to be a robot.
 //
@@ -419,6 +420,11 @@ async function launchFirefox({
 
   fs.mkdirSync(profileDir, { recursive: true });
 
+  // Before starting another one, take down any left behind by sessions that
+  // are no longer running. This is where a browser orphaned by a crash — or
+  // by the out-of-memory kill that a pile of them causes — is finally reaped.
+  sweepStrandedBrowsers({ log });
+
   // A Firefox already serving this profile is one to join. Firefox allows one
   // instance per profile and refuses the second outright, so this is a
   // correctness fix as much as a speed one — and it is the whole of the
@@ -487,6 +493,7 @@ async function launchFirefox({
   writeEndpointRecord(profileDir, {
     port, marionettePort, pid: child.pid, startedAt: Date.now(),
   });
+  recordBrowser({ pid: child.pid, port, profileDir, engine: 'firefox' });
 
   let cleared = null;
   const clearStarted = Date.now();
