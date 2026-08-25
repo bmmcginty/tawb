@@ -4,12 +4,12 @@
 //
 //   node tools/brokerbench.js
 //
-// Runs the same page and the same snapshot three ways — straight at Firefox,
-// through the broker parsing every message, and through the broker peeking at
-// the id — and then puts two readers on one Firefox at once and takes one of
-// them away. Measured here: a snapshot of 2401 items over a 97KB tree at 83ms
-// direct, 90ms through a parsing broker, and 82ms through a peeking one,
-// which is the whole reason the broker peeks.
+// Runs the same page and the same snapshot straight at Firefox and again
+// through the broker, then puts two readers on one Firefox at once and takes
+// one of them away. Measured while the broker was being written: a snapshot of
+// 2401 items over a 97KB tree at 83ms direct and 82ms through the broker,
+// against 90ms for a broker that parsed every message to find its id — which
+// is why it reads only the head of a frame.
 
 const fs = require('fs'); const os = require('os'); const path = require('path');
 const http = require('http');
@@ -66,8 +66,7 @@ async function measure(label, driver, page, url) {
 
 function startBroker(upstream, peek) {
   return new Promise((resolve, reject) => {
-    const args = [`${__dirname}/broker.js`, upstream, '0'];
-    if (!peek) args.push('--parse-all');
+    const args = [require('path').join(__dirname, '..', 'src', 'broker.js'), upstream, '0'];
     const child = spawn('node', args, { stdio: ['ignore', 'pipe', 'inherit'] });
     let out = '';
     child.stdout.on('data', (chunk) => {
@@ -98,14 +97,14 @@ function startBroker(upstream, peek) {
       results.push(await measure('direct', driver, page, url));
       await driver.close();
     }
-    // Through the broker, both routing strategies.
-    for (const peek of [false, true]) {
-      const broker = await startBroker(started.endpoint, peek);
+    // And through the broker.
+    {
+      const broker = await startBroker(started.endpoint, true);
       const driver = await openDriver({
         engine: 'firefox', connect: `ws://127.0.0.1:${broker.port}/session`, profile: dir, log: () => {},
       });
       const page = driver.context.pages()[0] || await driver.context.newPage();
-      results.push(await measure(peek ? 'broker (peek at id)' : 'broker (parse every message)', driver, page, url));
+      results.push(await measure('through the broker', driver, page, url));
       await driver.close();
       broker.child.kill('SIGTERM');
       await new Promise((r) => setTimeout(r, 300));
