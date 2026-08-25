@@ -844,10 +844,31 @@ The status line names the engine's own code for the fault —
 the page itself does not always spell out which of the several possible
 problems it hit.
 
-Firefox's page also carries `{View the site's certificate}`, which is its own
-certificate viewer and is read like any other page. Chromium's warning has no
-equivalent: there, a certificate is inspected through the padlock in browser
-chrome, which is not part of the page and is not reachable from here.
+Firefox's page also carries `{View the site's certificate}`. Open it with `m`,
+the real click, rather than `Enter`: it opens Firefox's own certificate viewer
+in a new tab, and Firefox honours that only for a click carrying user
+activation — `Enter` reports *"no visible change"* and nothing opens. The
+viewer is then read like any other page, and says everything a graphical
+browser shows:
+
+```
+Followed a new tab — tab 3 of 3: Certificate for localhost
+
+## Validity
+Not Before Tue, 25 Aug 2026 07:36:02 GMT Not After Wed, 25 Aug 2027 ...
+## Subject Alt Names
+DNS Name localhost IP Address 127.0.0.1
+## Public Key Info
+Algorithm RSA Key Size 2048 Exponent 65537 Modulus ...
+```
+
+Chromium's warning has no equivalent. There a certificate is inspected through
+the padlock in browser chrome, which is not part of the page and is not
+reachable from here — so on Chromium the warning's own explanation of what is
+wrong with the certificate is as far as it goes.
+
+An accepted certificate is remembered by the browser profile, so a site let
+through once loads directly next time rather than asking again.
 
 This applies to every navigation that the engine refuses outright, not only
 to certificates: a refused connection and a name that does not resolve land
