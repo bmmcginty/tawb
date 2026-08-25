@@ -15,4 +15,41 @@ function processAlive(pid) {
   }
 }
 
-module.exports = { processAlive };
+// Take down a browser and everything it brought with it.
+//
+// A browser is not one process. Chromium is a main process, a zygote, a GPU
+// process and a renderer per site; Firefox is much the same. And on a machine
+// with no display neither is what we actually spawn — buildCommand wraps them
+// in xvfb-run, a shell script that starts an X server beside the browser and
+// then runs the browser as an ordinary foreground child.
+//
+// That wrapper is why signalling the process we spawned is not enough. A shell
+// waiting on a foreground command does not pass a signal on to it, so the
+// SIGTERM meant for the browser kills the script instead: the browser and its
+// X server carry on with no parent, the next session cannot find them because
+// their port was never recorded as free, and it starts another pair beside
+// them. Repeated often enough on a machine with no swap, that is an
+// out-of-memory kill.
+//
+// Spawning detached puts the whole lot — wrapper, X server, browser, renderers
+// — in one process group led by the child we hold, and a negative pid signals
+// the group. It is the only handle that reaches every part of a browser.
+function killProcessGroup(pid, signal = 'SIGTERM') {
+  if (!pid) return false;
+  try {
+    process.kill(-pid, signal);
+    return true;
+  } catch (err) {
+    if (err.code === 'ESRCH') return false;
+    // Not a group leader after all — spawned without detached, or already
+    // reaped. The process itself is still worth the signal.
+    try {
+      process.kill(pid, signal);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+module.exports = { processAlive, killProcessGroup };
