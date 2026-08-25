@@ -42,7 +42,7 @@ async function wireSession(browserContext, page, session, { root }) {
 
   session.on('Runtime.executionContextCreated', ({ context }) => page.noteContext(session, context));
   session.on('Runtime.executionContextDestroyed', ({ executionContextId }) => {
-    page.forgetContextById(executionContextId);
+    page.forgetContextById(session, executionContextId);
   });
   session.on('Runtime.executionContextsCleared', () => page.forgetContextsOf(session));
 

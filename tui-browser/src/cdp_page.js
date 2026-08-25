@@ -479,9 +479,16 @@ class CdpPage {
     if (known && known.id === contextId) this.contexts.delete(frameId);
   }
 
-  forgetContextById(contextId) {
+  // An execution context id is a counter within one session, not a name that
+  // means anything on its own. Two sessions on the same tab — the tab's and a
+  // cross-origin iframe's — hand out the same small numbers, so a destroyed
+  // context must be matched on the session that destroyed it as well as on
+  // the number. Matching on the number alone quietly deleted the main
+  // document's context whenever an ad iframe's process happened to be using
+  // the same one, and everything in that tab then waited out its timeout.
+  forgetContextById(session, contextId) {
     for (const [frameId, known] of this.contexts) {
-      if (known.id === contextId) this.contexts.delete(frameId);
+      if (known.session === session && known.id === contextId) this.contexts.delete(frameId);
     }
   }
 
