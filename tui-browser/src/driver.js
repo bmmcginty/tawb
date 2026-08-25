@@ -40,7 +40,11 @@
 //                     header, so the engine performs basic, digest and
 //                     whatever else it knows. The handler is told the
 //                     challenge, the request it belongs to and the tab it was
-//                     raised in.
+//                     raised in. A challenge still unanswered when the driver
+//                     closes is cancelled, because the prompt became ours the
+//                     moment the interception was armed: a browser that
+//                     outlives the session would otherwise hold that tab
+//                     mid-request with no dialog anyone could answer.
 //   armAuth()         one tab covered by the above. Chromium needs it per
 //                     tab, since a browser can be shared with another reader;
 //                     on Firefox it is already true and answers so.

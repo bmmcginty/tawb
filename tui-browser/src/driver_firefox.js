@@ -633,6 +633,21 @@ async function openFirefox({
   // Set by attachAuth, and the only thing that decides whether a challenge is
   // answered here or left to the browser's own prompt.
   let answerAuth = null;
+  // Challenges the browser is holding open while we decide. See
+  // cancelPendingAuth: a question we leave unanswered is one nobody can
+  // answer afterwards, because the prompt became ours when the intercept was
+  // added.
+  const pendingAuth = new Set();
+
+  const cancelPendingAuth = async () => {
+    const pending = [...pendingAuth];
+    pendingAuth.clear();
+    if (!pending.length) return;
+    log('auth.cancelled', { requests: pending.length });
+    await Promise.all(pending.map((request) => session.send('network.continueWithAuth', {
+      request, action: 'cancel',
+    }).catch(() => {})));
+  };
 
   const webdriverFlag = await readWebdriverFlag(page);
   log('firefox.ready', { cleared, webdriver: webdriverFlag });
@@ -709,6 +724,7 @@ async function openFirefox({
       session.on('network.authRequired', async (params) => {
         const request = params.request || {};
         const challenge = ((params.response || {}).authChallenges || [])[0] || {};
+        pendingAuth.add(request.request);
         let given = null;
         try {
           given = await answerAuth({
@@ -724,6 +740,9 @@ async function openFirefox({
         } catch {
           given = null;
         }
+        // Gone from the set means it was cancelled on our way out, and the
+        // request is no longer ours to answer.
+        if (!pendingAuth.delete(request.request)) return;
         await session.send('network.continueWithAuth', given
           ? {
             request: request.request,
@@ -868,6 +887,12 @@ async function openFirefox({
     },
 
     async close() {
+      // Answer what the browser is still holding for us first: the prompt has
+      // been ours since the intercept was added, so a challenge left paused
+      // is a tab loading for ever in a browser that outlives us, with no
+      // dialog to answer because we took it away. Cancelling loads the 401's
+      // own body, exactly as escaping the prompt does.
+      await cancelPendingAuth();
       // End the session but leave the browser: Firefox serves one BiDi session
       // at a time and does not release it just because the socket went away,
       // so a session left hanging locks out the next reader entirely.

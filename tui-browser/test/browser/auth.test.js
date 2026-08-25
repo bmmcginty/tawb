@@ -158,3 +158,60 @@ test('the reader types the password into the prompt and the page arrives', async
     await driver.attachAuth((challenge, id) => shared.credentials.answer(challenge, id)).catch(() => {});
   }
 });
+
+// Waits for the tab to have finished with something on it. Bounded at both
+// ends: a tab whose document request is still paused has no document to ask,
+// and the ask itself waits for one — for ever, which is the very thing being
+// tested here.
+async function textOf(page, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const text = await Promise.race([
+      page.evaluate(
+        () => (document.body ? document.body.innerText.replace(/\s+/g, ' ').trim() : ''),
+      ).catch(() => ''),
+      new Promise((resolve) => setTimeout(() => resolve(''), 1000)),
+    ]);
+    if (text || Date.now() > deadline) return text;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
+test('a challenge nobody has answered is cancelled when the browser is let go', async () => {
+  // The case only exists for a browser that outlives the reader. One we
+  // started and shut down takes its paused request with it; one the reader
+  // goes on using would hold that tab mid-request for ever, waiting on a
+  // dialog that became ours the moment we armed the interception — and we
+  // are gone, so nobody will ever answer it.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tweb-auth-left-'));
+  const site = await start();
+  const leaving = await openDriver({ engine: ENGINE, profile: dir, keepBrowser: true, log: () => {} });
+  try {
+    let raised;
+    const asked = new Promise((resolve) => { raised = resolve; });
+    // A prompt that is never answered: the reader is at it when the terminal
+    // goes, or a signal takes the session away while it is on screen.
+    await leaving.attachAuth((challenge) => { raised(challenge); return new Promise(() => {}); });
+    const page = leaving.context.pages()[0] || await leaving.context.newPage();
+    await leaving.armAuth(page);
+    const navigating = page.goto(`${site.url}basic`, { waitUntil: 'load', timeout: 20000 })
+      .catch(() => {});
+    await asked;
+    await leaving.close();
+    await navigating;
+
+    const rejoined = await openDriver({ engine: ENGINE, profile: dir, log: () => {} });
+    try {
+      const tabs = rejoined.listTabs();
+      const tab = tabs.find((open) => String(open.url()).startsWith(site.url)) || tabs[0];
+      assert.match(await textOf(tab), /This is the body the server sends with its challenge/,
+        'the tab was left holding a request nobody can answer');
+    } finally {
+      await rejoined.close().catch(() => {});
+    }
+  } finally {
+    try { leaving.child.kill(); } catch { /* already gone */ }
+    site.server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

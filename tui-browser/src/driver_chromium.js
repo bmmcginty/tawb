@@ -182,7 +182,36 @@ async function openChromium({
   // another reader, and a password prompt belongs to whoever is reading the
   // tab that raised it.
   const authSessions = new Map();
+  // Challenges the browser is holding open while we decide. A paused request
+  // is a question, and the browser waits on the answer for as long as we are
+  // there to give one — see cancelPendingAuth for what happens when we are
+  // not.
+  const pendingAuth = new Map();
   let answerAuth = null;
+
+  // Every challenge still waiting on an answer, cancelled.
+  //
+  // The prompt is ours the moment the interception is armed: the browser
+  // stops drawing its own dialog and holds the request instead. So a session
+  // that leaves without answering leaves a question nobody can ever answer —
+  // a tab loading for ever in a browser the reader goes on using, with no
+  // dialog to answer because we took it. Cancelling loads the 401's own body,
+  // which is what escaping the prompt does: a page, and a tab that has
+  // finished.
+  //
+  // It matters before we detach as well as after. Detaching a session with
+  // requests paused on it is itself a wait — measured at twenty seconds and
+  // still going, long past the grace a signalled shutdown allows.
+  const cancelPendingAuth = async () => {
+    const pending = [...pendingAuth.entries()];
+    pendingAuth.clear();
+    if (!pending.length) return;
+    log('auth.cancelled', { requests: pending.length });
+    await Promise.all(pending.map(([requestId, session]) => session.send('Fetch.continueWithAuth', {
+      requestId,
+      authChallengeResponse: { response: 'CancelAuth' },
+    }).catch(() => {})));
+  };
 
   const armAuth = async (page) => {
     if (!answerAuth || authSessions.has(page)) return false;
@@ -200,6 +229,7 @@ async function openChromium({
 
     session.on('Fetch.authRequired', async (event) => {
       const challenge = event.authChallenge || {};
+      pendingAuth.set(event.requestId, session);
       let given = null;
       try {
         given = await answerAuth({
@@ -214,6 +244,9 @@ async function openChromium({
       } catch {
         given = null;
       }
+      // Gone from the map means it was cancelled on our way out, and the
+      // request is no longer ours to answer.
+      if (!pendingAuth.delete(event.requestId)) return;
       await session.send('Fetch.continueWithAuth', {
         requestId: event.requestId,
         authChallengeResponse: given
@@ -236,6 +269,9 @@ async function openChromium({
 
     page.once('close', () => {
       authSessions.delete(page);
+      for (const [requestId, owner] of pendingAuth) {
+        if (owner === session) pendingAuth.delete(requestId);
+      }
       session.detach().catch(() => {});
     });
     log('auth.armed', { url: String(page.url()).slice(0, 80) });
@@ -405,6 +441,9 @@ async function openChromium({
     },
 
     async close() {
+      // Answer what the browser is still holding for us before letting go of
+      // the connection it would be answered over.
+      await cancelPendingAuth();
       // Detach what we attached. A session left open is an attachment the
       // browser goes on maintaining for a client that has gone.
       for (const session of sessions.values()) {
