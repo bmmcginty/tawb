@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { processAlive, killProcessGroup } = require('./proc');
+const { processAlive, killProcessGroup, processesUsing } = require('./proc');
 const { otherReadersOn } = require('./session');
 
 // The browsers tweb has started, so that one it never got to close can be
@@ -153,7 +153,106 @@ function sweepStrandedBrowsers({ log = () => {} } = {}) {
   return swept;
 }
 
+// ---------------------------------------------------------------------------
+// Throwaway directories
+//
+// A directory made for one test run — every browser test file makes a profile,
+// and several make a state or config directory too — is removed when that run
+// finishes. A run that does not finish leaves it behind, and the system
+// temporary directory here is a tmpfs, so an abandoned browser profile is not
+// merely clutter: it is resident memory, held until somebody notices.
+// Interrupted runs had accumulated 3.4GB of them.
+//
+// Nothing in the process can help, because the kill that strands them is the
+// one that runs no cleanup. So they are swept by whoever comes next, on the
+// same terms as a stranded browser: believed only as far as a process that is
+// still alive.
+//
+// The owner's pid is written into the directory's own name rather than into a
+// file inside it, so that what we hand back is an empty directory and stays
+// one — a profile is somebody else's to fill, and one test here asserts on
+// exactly what a directory ends up containing.
+//
+// Getting a pid wrong is safe in the only direction that matters. A number
+// reused by some live process makes the directory look busy and it is left
+// alone; there is no reading of it that deletes a directory whose owner is
+// still running.
+
+// tweb-<label>-<pid>-<six random characters>, which is what tempName builds
+// and the only shape swept.
+const TEMP_DIR_RE = /^tweb-[\w.-]*?-(\d+)-[^-]{6}$/;
+
+// The prefix to hand mkdtemp, carrying this process's claim on what it makes.
+function tempName(prefix) {
+  return `${prefix}${process.pid}-`;
+}
+
+function ownerOfTempDir(name) {
+  const found = TEMP_DIR_RE.exec(name);
+  return found ? Number(found[1]) : null;
+}
+
+// Remove throwaway directories whose owner is gone. Returns how many went.
+function sweepStaleProfiles({ dir = os.tmpdir(), log = () => {} } = {}) {
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return 0;
+  }
+
+  let swept = 0;
+  for (const name of names) {
+    const owner = ownerOfTempDir(name);
+    if (owner === null || processAlive(owner)) continue;
+    const candidate = path.join(dir, name);
+
+    // The owner has gone but a browser it started may not have. That browser
+    // is not somebody's session to protect: a throwaway profile is used by one
+    // run, its name says which, and that run is over — nobody will ever rejoin
+    // it. Often it cannot be reached any other way, because a test file that
+    // points XDG_DATA_HOME at a directory of its own records the browser it
+    // starts in a registry that goes when that directory goes.
+    //
+    // So it is taken down here, by the profile it is holding rather than by a
+    // record of it. This is the only place that kills something it did not
+    // find in the registry, and the two conditions above are what make that
+    // safe: a reader's own profile is never named this way, and a name alone
+    // is not enough — the process that made it has to be gone.
+    for (const pid of processesUsing(candidate)) {
+      log('tempdir.holder', { dir: candidate, pid });
+      killProcessGroup(pid);
+    }
+
+    try {
+      // Unlinking works whether or not those have finished exiting; the space
+      // comes back as their handles close.
+      fs.rmSync(candidate, { recursive: true, force: true });
+      log('tempdir.stale', { dir: candidate, owner });
+      swept += 1;
+    } catch { /* gone already, or not ours to remove */ }
+  }
+  return swept;
+}
+
+// The throwaway directories currently on disk, for reporting.
+function tempProfiles({ dir = os.tmpdir() } = {}) {
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names.map((name) => {
+    const owner = ownerOfTempDir(name);
+    return owner === null
+      ? null
+      : { dir: path.join(dir, name), owner, alive: processAlive(owner) };
+  }).filter(Boolean);
+}
+
 module.exports = {
   registryDir, entryPath, readRegistry, writeRegistry, recordBrowser, forgetBrowser,
   markKept, sweepStrandedBrowsers, stillOurBrowser,
+  tempName, ownerOfTempDir, sweepStaleProfiles, tempProfiles,
 };
