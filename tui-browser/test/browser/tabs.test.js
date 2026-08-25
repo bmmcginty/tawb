@@ -69,3 +69,44 @@ test('a tab a live session is reading is one a joining session skips', async () 
   ]));
   assert.equal(claimedTargets(driver.port).has(held), false, 'a dead session still held a tab');
 });
+
+// Two readers in one browser, which is the whole point of naming tabs.
+//
+// On Chromium this has always worked: its protocol takes as many clients as
+// ask. On Firefox it works through the broker, which holds the browser's one
+// session and hands every reader the same one — so the same test runs on both
+// and neither engine gets a special case here.
+test('two readers share one browser and stay off each other\'s tabs', async () => {
+  const second = await openDriver({ engine: ENGINE, profile, log: () => {} });
+  try {
+    assert.equal(second.port, driver.port, 'the second reader joined a different browser');
+
+    const mine = driver.context.pages()[0];
+    const held = await driver.targetIdFor(mine);
+
+    // What the joining reader is told to leave alone, recorded as another live
+    // session would record it.
+    fs.writeFileSync(claimsPath(second.port), JSON.stringify([
+      { pid: process.ppid, targetId: held, at: Date.now() },
+    ]));
+    const taken = claimedTargets(second.port);
+    assert.equal(taken.has(held), true);
+
+    // It opens its own instead, and the two readers drive their own tabs.
+    const theirs = await second.context.newPage();
+    const theirId = await second.targetIdFor(theirs);
+    assert.equal(taken.has(theirId), false, 'the joining reader took a tab that was spoken for');
+
+    await mine.goto('data:text/html,<title>mine</title><h1>mine</h1>', { waitUntil: 'load' });
+    await theirs.goto('data:text/html,<title>theirs</title><h1>theirs</h1>', { waitUntil: 'load' });
+    assert.equal(await mine.mainFrame().evaluate(() => document.title), 'mine');
+    assert.equal(await theirs.mainFrame().evaluate(() => document.title), 'theirs');
+
+    // And one leaving leaves the other reading.
+    await second.close();
+    assert.equal(await mine.mainFrame().evaluate(() => document.title), 'mine',
+      'a reader lost its browser when another reader quit');
+  } finally {
+    await second.close().catch(() => {});
+  }
+});

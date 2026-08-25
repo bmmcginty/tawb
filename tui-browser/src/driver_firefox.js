@@ -3,7 +3,9 @@
 const bidi = require('./bidi');
 const { launchFirefox, defaultProfileDir, releaseStrandedSession } = require('./firefox');
 const { readEndpointRecord, writeEndpointRecord, portOfEndpoint } = require('./endpoint');
+const { ensureBroker } = require('./broker');
 const { processAlive } = require('./proc');
+const { otherReadersOn } = require('./session');
 const { extractAxItems } = require('./ax_own');
 const { readDocument } = require('./frames');
 
@@ -431,8 +433,15 @@ class FirefoxPage {
 // the session records its own process id, and we ask whether that process is
 // still alive. A live owner is another reader, and is left alone. A dead owner
 // stranded it, and Marionette can release it.
-async function startSession(session, { profileDir, marionettePort, log }) {
-  const status = await session.send('session.status', {}).catch(() => null);
+//
+// With a broker in front, none of that is this reader's business: the broker
+// holds the one session and hands every reader the same one, so a second
+// reader is expected rather than refused. What can still happen is a broker
+// that died without saying session.end, and the session it left behind is
+// released the same way — on the refusal, which is the only moment we can
+// tell.
+async function startSession(session, { profileDir, marionettePort, log, brokered = false }) {
+  const status = brokered ? null : await session.send('session.status', {}).catch(() => null);
 
   if (status && status.ready === false) {
     const record = readEndpointRecord(profileDir) || {};
@@ -465,11 +474,30 @@ async function startSession(session, { profileDir, marionettePort, log }) {
     }
   }
 
+  const newSession = () => session.send('session.new', { capabilities: { alwaysMatch: {} } });
   try {
-    await session.send('session.new', { capabilities: { alwaysMatch: {} } });
+    await newSession();
   } catch (err) {
-    session.close();
-    throw err;
+    const stranded = brokered && marionettePort
+      && /Maximum number of active sessions/i.test(String(err.message || ''));
+    if (!stranded) {
+      session.close();
+      throw err;
+    }
+    // A broker that went without ending its session. Nothing is reading
+    // through it — it is gone — so releasing it takes nothing from anybody.
+    const released = await releaseStrandedSession(marionettePort);
+    log('firefox.session.released', { owner: null, marionettePort, released, brokered: true });
+    if (!released) {
+      session.close();
+      throw err;
+    }
+    try {
+      await newSession();
+    } catch (again) {
+      session.close();
+      throw again;
+    }
   }
 
   // Whoever holds the session says so, so the next reader can tell a live
@@ -493,7 +521,7 @@ async function readWebdriverFlag(page) {
 }
 
 async function openFirefox({
-  profile = null, connect = null, keepBrowser = false, log = () => {},
+  profile = null, connect = null, keepBrowser = false, broker = true, log = () => {},
 } = {}) {
   let child = null;
   let endpoint = connect;
@@ -515,13 +543,21 @@ async function openFirefox({
   // The port the remote agent is serving on, which is how per-browser state
   // — tab claims — is keyed. Chromium's driver takes it from the debugging
   // port; here it is in the endpoint we connected to, whether we started this
-  // Firefox or joined one that was already running.
+  // Firefox or joined one that was already running. It stays the browser's own
+  // port when a broker is in front, because what it names is the browser, and
+  // every reader of that browser has to agree on the name.
   const port = portOfEndpoint(endpoint);
 
+  // Firefox serves one session per browser, so a second reader cannot have one
+  // of its own. The broker holds that session and lets every reader speak
+  // through it; see src/broker.js. A caller that named an endpoint itself is
+  // taken at its word and connected to directly.
+  const profileDir = profile || defaultProfileDir();
+  const brokered = broker && !connect;
+  if (brokered) endpoint = await ensureBroker({ profileDir, endpoint, log });
+
   const session = await bidi.connect(endpoint);
-  await startSession(session, {
-    profileDir: profile || defaultProfileDir(), marionettePort, log,
-  });
+  await startSession(session, { profileDir, marionettePort, log, brokered });
 
   const tree = await session.send('browsingContext.getTree', {});
   const top = tree.contexts[0];
@@ -916,7 +952,9 @@ async function openFirefox({
       // somebody else is reading. Disconnecting is all a rejoining session
       // may do.
       session.close();
-      if (child && !keepBrowser) {
+      // Ours to close only while nobody else is reading it — starting the
+      // browser makes this reader its first user, not its owner.
+      if (child && !keepBrowser && !otherReadersOn(port)) {
         try { child.kill(); } catch { /* already gone */ }
       }
     },
