@@ -457,12 +457,27 @@ if (require.main === module) {
     upstream,
     port: Number(port || 0),
     onIdle: async () => {
-      log('broker.idle', {});
-      await broker.close();
+      // The record goes first. A reader that arrives from here on starts a
+      // broker of its own rather than joining one that is leaving — and the
+      // gap between deciding to go and having gone is exactly when a reader
+      // would otherwise connect to a socket about to close under it.
       if (profileDir) {
         const record = readBrokerRecord(profileDir);
         if (record && record.port === Number(port)) clearBrokerRecord(profileDir);
       }
+      await new Promise((r) => setTimeout(r, 250));
+      if (broker.clients > 0) {
+        // Somebody came in through that gap. Stay, and be findable again.
+        if (profileDir) {
+          writeBrokerRecordFor(profileDir, {
+            pid: process.pid, port: Number(port), upstream, at: Date.now(),
+          });
+        }
+        log('broker.idle.cancelled', { readers: broker.clients });
+        return;
+      }
+      log('broker.idle', {});
+      await broker.close();
       process.exit(0);
     },
   });
