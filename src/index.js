@@ -1257,6 +1257,15 @@ async function cycleTab(state, direction) {
   await switchToTab(state, next);
 }
 
+async function openNewTab(state, switchTab = switchToTab) {
+  try {
+    const page = await state.core.newTab();
+    await switchTab(state, page, { note: 'Opened a new tab' });
+  } catch (err) {
+    setStatus(state, `Could not open a new tab: ${err.message.split('\n')[0]}`);
+  }
+}
+
 // Closing the tab the reader is on, which is only ever theirs to ask for.
 //
 // The last tab is not closed. A reader left with no tab has no page, no
@@ -1292,7 +1301,7 @@ async function onNewTab(state, page) {
   if (!state.ready || page === state.core.page) return;
 
   await new Promise((r) => setTimeout(r, NEW_TAB_SETTLE_MS));
-  if (page.isClosed && page.isClosed()) return;
+  if (page === state.core.page || (page.isClosed && page.isClosed())) return;
 
   const foreground = await state.core.isForeground(page);
   log('tab.opened', { url: page.url().slice(0, 120), foreground });
@@ -1599,6 +1608,7 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'history-back') return moveInHistory(state, page, -1);
   if (action === 'history-forward') return moveInHistory(state, page, 1);
 
+  if (action === 'new-tab') return openNewTab(state);
   if (action === 'next-tab') return cycleTab(state, 1);
   if (action === 'previous-tab') return cycleTab(state, -1);
   if (action === 'close-tab') return closeCurrentTab(state);
@@ -2456,7 +2466,7 @@ module.exports = {
   applyTextPatches, loadMore, atEnd,
   historyEntryIdentity, rememberHistoryPlace, rememberCurrentHistoryPlace,
   restoreHistoryPlace, acknowledgeHistoryNavigation, traversePageHistory, moveInHistory,
-  switchToTab, cycleTab, closeCurrentTab, onNewTab,
+  switchToTab, openNewTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation, readTitle, drawTitle,
   navigate, navigationFault, settleAfterFault,

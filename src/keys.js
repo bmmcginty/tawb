@@ -56,6 +56,7 @@ const ACTIONS = [
   ['edit-delete-word', 'Delete next word while editing', ['Alt+D']],
   ['edit-kill-start', 'Delete to start while editing', ['Ctrl+U']],
   ['edit-kill-end', 'Delete to end while editing', ['Ctrl+K']],
+  ['new-tab', 'New tab', ['Ctrl+T']],
   ['next-tab', 'Next tab', ['>']],
   ['previous-tab', 'Previous tab', ['<']],
   ['close-tab', 'Close tab', ['Shift+F4']],

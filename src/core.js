@@ -756,6 +756,10 @@ class Core {
     return targetId;
   }
 
+  async newTab() {
+    return this.driver.newTab();
+  }
+
   async closeTab(page) {
     await withTimeout(page.close(), ACTION_TIMEOUT_MS, 'Closing the tab');
   }

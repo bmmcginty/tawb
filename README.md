@@ -579,6 +579,7 @@ back-tab (`kcbt`) is asked for first and `\e[Z` is the fallback.
 | `Alt+-` / `Alt++` | Back / forward in this tab's page history              |
 | `Alt+?`  | Open the keyboard binding wizard                               |
 | `\`      | Cycle view: AX → PAGE → HTML → SOURCE                            |
+| `Ctrl+T` | Open and follow a new tab                                        |
 | `>` / `<`| Next / previous tab                                              |
 | `Shift+F4`| Close this tab (never the last one)                              |
 | `c` / `C`| Jump to the next / previous area that changed                    |
@@ -675,8 +676,8 @@ we** — the browser has already gone there and you should be where the browser
 is. The status line says so: *"Followed a new tab — tab 3 of 3: Page B"*.
 
 A tab that opens *behind* is announced and left alone, because nothing moves
-you without saying so. `>` and `<` step through everything open, wrapping at
-either end.
+you without saying so. `Ctrl+T` opens a new blank tab and follows it. `>` and
+`<` step through everything open, wrapping at either end.
 
 Tabs in separate windows are in that same list. Neither browser's protocol
 says which window a tab belongs to, and for reading purposes a window is just
