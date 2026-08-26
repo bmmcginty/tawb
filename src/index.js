@@ -1257,10 +1257,23 @@ async function cycleTab(state, direction) {
   await switchToTab(state, next);
 }
 
-async function openNewTab(state, switchTab = switchToTab) {
+function focusAddressBar(state, page, text = page.url()) {
+  state.mode = 'address';
+  state.address = { text, caret: text.length, scroll: 0 };
+  drawHint(state);
+  drawAddress(state, page, { force: true });
+}
+
+async function openNewTab(
+  state, switchTab = switchToTab, focusAddress = focusAddressBar,
+) {
   try {
     const page = await state.core.newTab();
     await switchTab(state, page, { note: 'Opened a new tab' });
+    // A browser's new-tab command leaves the user in a blank location bar,
+    // ready to type where to go. about:blank is the page's internal address,
+    // not text the user should have to erase first.
+    focusAddress(state, page, '');
   } catch (err) {
     setStatus(state, `Could not open a new tab: ${err.message.split('\n')[0]}`);
   }
@@ -1506,10 +1519,7 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'close-popup' && state.core.popup) return closePopup(state, page);
 
   if (action === 'location-bar') {
-    state.mode = 'address';
-    state.address = { text: page.url(), caret: page.url().length, scroll: 0 };
-    drawHint(state);
-    drawAddress(state, page, { force: true });
+    focusAddressBar(state, page);
     return;
   }
 
@@ -2466,7 +2476,7 @@ module.exports = {
   applyTextPatches, loadMore, atEnd,
   historyEntryIdentity, rememberHistoryPlace, rememberCurrentHistoryPlace,
   restoreHistoryPlace, acknowledgeHistoryNavigation, traversePageHistory, moveInHistory,
-  switchToTab, openNewTab, cycleTab, closeCurrentTab, onNewTab,
+  switchToTab, focusAddressBar, openNewTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation, readTitle, drawTitle,
   navigate, navigationFault, settleAfterFault,
