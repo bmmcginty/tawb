@@ -725,6 +725,12 @@ class CdpPage {
       };
       this.session.on('Page.lifecycleEvent', onEvent);
     });
+    // goto() and goBack() must first wait for Page.navigate to answer. The
+    // lifecycle deadline can expire while that command is still pending, so
+    // mark the rejection observed immediately; awaiting the original promise
+    // later still throws the same error, but Node cannot mistake the interval
+    // for an unhandled rejection and tear down the browser.
+    promise.catch(() => {});
     return { promise, cancel };
   }
 

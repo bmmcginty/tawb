@@ -169,6 +169,22 @@ test('waiting for a load state reports its timeout', async () => {
   );
 });
 
+test('a load timeout is observed while Page.navigate is still pending', async () => {
+  const { page, session } = fakePage();
+  session.send = async (method) => {
+    if (method === 'Page.navigate') {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return { loaderId: 'LATER' };
+    }
+    return {};
+  };
+
+  await assert.rejects(
+    page.goto('https://example.com', { waitUntil: 'domcontentloaded', timeout: 10 }),
+    /did not reach DOMContentLoaded/,
+  );
+});
+
 test('the tab closing stops anything still waiting for a context', async () => {
   const { page } = fakePage();
   page.ensureFrame('CHILD', 'MAIN');
