@@ -524,6 +524,26 @@ function moveSelection(state, newCursor, page, newCol = 0) {
   }
 }
 
+// Move the document and cursor together, preserving the cursor's row on the
+// screen. One line remains visible from the previous screen so the reader has
+// context at the join rather than landing in entirely unfamiliar text.
+function moveScreen(state, direction, page, height = viewportHeight()) {
+  const step = Math.max(1, height - 1);
+  const lastLine = Math.max(state.lines.length - 1, 0);
+  const maxScroll = Math.max(0, state.lines.length - height);
+  const targetCursor = Math.min(Math.max(state.cursor + direction * step, 0), lastLine);
+  const targetScroll = Math.min(Math.max(state.scroll + direction * step, 0), maxScroll);
+  if (targetCursor === state.cursor && targetScroll === state.scroll) return;
+
+  state.cursor = targetCursor;
+  state.scroll = targetScroll;
+  state.col = 0;
+  clampCol(state);
+  syncCursor(state);
+  drawList(state);
+  parkCursor(state);
+}
+
 // Character movement that carries across line ends, so holding an arrow key
 // reads straight through the page rather than stopping at every line.
 function moveCaretLeft(state, page) {
@@ -1604,9 +1624,9 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'previous-character') return moveCaretLeft(state, page);
   if (action === 'next-screen') {
     if (atEnd(state)) return loadMore(state, page);
-    return moveSelection(state, state.cursor + viewportHeight(), page);
+    return moveScreen(state, 1, page);
   }
-  if (action === 'previous-screen') return moveSelection(state, state.cursor - viewportHeight(), page);
+  if (action === 'previous-screen') return moveScreen(state, -1, page);
   if (action === 'top') return moveSelection(state, 0, page);
   if (action === 'bottom') return moveSelection(state, state.lines.length - 1, page);
   if (action === 'line-start') return moveSelection(state, state.cursor, page, 0);
@@ -2466,7 +2486,7 @@ if (require.main === module) {
 module.exports = {
   handleBrowseKey, handleTypeKey, handleAddressKey, handleFindKey,
   findText, runSearch,
-  render, drawList, drawAddress, drawHint, moveSelection,
+  render, drawList, drawAddress, drawHint, moveSelection, moveScreen,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,
   clickAsHuman, reportAfterAction,
