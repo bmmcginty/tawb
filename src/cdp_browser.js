@@ -23,15 +23,15 @@ async function enableSession(session) {
   // Order matters: the listeners are already on, and enabling replays the
   // state that existed before we were listening — every execution context,
   // every frame. Enabling first would lose that replay.
-  await session.send('Page.enable').catch(() => {});
-  await session.send('Runtime.enable').catch(() => {});
-  await session.send('Page.setLifecycleEventsEnabled', { enabled: true }).catch(() => {});
-  // Cross-origin iframes below this document, each its own target. Nothing is
-  // paused on start: a browser this program is reading must go on behaving
-  // like a browser somebody is using.
+  await session.send('Page.enable');
+  await session.send('Runtime.enable');
+  await session.send('Page.setLifecycleEventsEnabled', { enabled: true });
+  // Playwright pauses newly attached renderers until their listeners, frame
+  // tree and init scripts are in place. Running immediately loses the race on
+  // popups whose own script changes the document before attachment finishes.
   await session.send('Target.setAutoAttach', {
-    autoAttach: true, waitForDebuggerOnStart: false, flatten: true,
-  }).catch(() => {});
+    autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
+  });
 }
 
 // Wire one session into a page: its documents, its execution contexts, and
@@ -85,8 +85,14 @@ async function wireSession(browserContext, page, session, { root }) {
 
   session.on('Target.attachedToTarget', (params) => {
     const info = params.targetInfo || {};
-    if (info.type !== 'iframe') return;
     const child = session.connection.sessionFor(params.sessionId, info.targetId);
+    if (info.type !== 'iframe') {
+      // Auto-attach includes workers and other auxiliary targets. Playwright
+      // either owns those explicitly or detaches them; this implementation
+      // has no surface for them, so do not leave an attachment accumulating.
+      child.detach().catch(() => {});
+      return;
+    }
     wireSession(browserContext, page, child, { root: false })
       .catch(() => { /* the frame went away while we were attaching to it */ });
   });
@@ -114,7 +120,10 @@ async function wireSession(browserContext, page, session, { root }) {
   }
 
   const tree = await session.send('Page.getFrameTree').catch(() => null);
-  if (!tree) return;
+  if (!tree) {
+    await session.send('Runtime.runIfWaitingForDebugger');
+    return;
+  }
 
   const record = (node, ownedBy) => {
     const frame = page.ensureFrame(node.frame.id, node.frame.parentId || null);
@@ -130,6 +139,10 @@ async function wireSession(browserContext, page, session, { root }) {
   record(tree.frameTree, root ? null : session);
 
   if (root) await seedLoadState(page);
+
+  // Paired with waitForDebuggerOnStart above. This is deliberately last: no
+  // page script runs before all of the state needed to observe it is ready.
+  await session.send('Runtime.runIfWaitingForDebugger');
 }
 
 // What the document has already reached, asked once when the tab is attached
@@ -272,6 +285,11 @@ class CdpBrowser {
   constructor(connection) {
     this.connection = connection;
     this.browserContext = new CdpBrowserContext(this);
+    connection.onClose(() => {
+      for (const page of this.browserContext.pagesByTarget.values()) page.markClosed();
+      this.browserContext.pagesByTarget.clear();
+      this.browserContext.pagesBySession.clear();
+    });
   }
 
   contexts() {
@@ -304,7 +322,10 @@ async function attachToBrowser(connection) {
 
   root.on('Target.attachedToTarget', (params) => {
     const info = params.targetInfo || {};
-    if (info.type !== 'page') return;
+    if (info.type !== 'page') {
+      connection.sessionFor(params.sessionId, info.targetId).detach().catch(() => {});
+      return;
+    }
     // Target.attachToTarget also raises this event. It is another conversation
     // with an existing tab, not another tab. Playwright's page map is keyed by
     // target id, so mirror that distinction before scheduling an announcement.
@@ -323,7 +344,7 @@ async function attachToBrowser(connection) {
   root.on('Target.detachedFromTarget', (params) => context.forget(params.sessionId));
 
   await root.send('Target.setAutoAttach', {
-    autoAttach: true, waitForDebuggerOnStart: false, flatten: true,
+    autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
   });
 
   // Auto-attach reports the targets that already exist, but it does so as

@@ -11,6 +11,7 @@ class FakeSession {
     this.sessionId = sessionId;
     this.targetId = targetId;
     this.listeners = new Map();
+    this.sent = [];
     this.detached = false;
   }
 
@@ -24,7 +25,8 @@ class FakeSession {
     for (const handler of [...(this.listeners.get(event) || [])]) handler(params);
   }
 
-  async send(method) {
+  async send(method, params = {}) {
+    this.sent.push({ method, params });
     if (method === 'Target.setAutoAttach') return {};
     if (method === 'Target.createTarget') {
       const targetId = `TARGET-${++this.connection.nextTarget}`;
@@ -71,7 +73,11 @@ function fakeConnection() {
       });
       return session;
     },
-    close() { this.closed = true; },
+    onClose(handler) { this.closeHandler = handler; },
+    close() {
+      this.closed = true;
+      if (this.closeHandler) this.closeHandler();
+    },
   };
   connection.browser = new FakeSession(connection);
   return connection;
@@ -86,10 +92,40 @@ test('a second CDP session on a tab is not announced as another page', async () 
   const page = await context.newPage();
   assert.deepStrictEqual(context.pages(), [page]);
   assert.deepStrictEqual(announced, [page]);
+  assert.deepStrictEqual(
+    page.session.sent.find((call) => call.method === 'Target.setAutoAttach').params,
+    { autoAttach: true, waitForDebuggerOnStart: true, flatten: true },
+  );
+  assert.ok(page.session.sent.some((call) => call.method === 'Runtime.runIfWaitingForDebugger'));
 
   const extra = await context.newCDPSession(page);
 
   assert.notStrictEqual(extra, page.session);
   assert.deepStrictEqual(context.pages(), [page]);
   assert.deepStrictEqual(announced, [page]);
+});
+
+test('unsupported auto-attached targets are detached', async () => {
+  const connection = fakeConnection();
+  await attachToBrowser(connection);
+
+  const session = connection.sessionFor('WORKER-SESSION', 'WORKER-TARGET');
+  connection.browser.emit('Target.attachedToTarget', {
+    sessionId: session.sessionId,
+    targetInfo: { type: 'service_worker', targetId: session.targetId },
+  });
+
+  assert.strictEqual(session.detached, true);
+});
+
+test('a lost connection closes every page', async () => {
+  const connection = fakeConnection();
+  const browser = await attachToBrowser(connection);
+  const context = browser.contexts()[0];
+  const page = await context.newPage();
+
+  connection.close();
+
+  assert.strictEqual(page.isClosed(), true);
+  assert.deepStrictEqual(context.pages(), []);
 });
