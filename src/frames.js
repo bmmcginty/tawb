@@ -154,8 +154,10 @@ async function walk(frame, source, depth, budget, seen, visited, driver) {
   const tBlocks = Date.now();
   try {
     blocks = await withDeadline(blocksForFrame(frame, source, driver), FRAME_BUDGET_MS, null);
-  } catch {
-    log('frame.blocks.error', { depth, url: frame.url().slice(0, 80) });
+  } catch (err) {
+    log('frame.blocks.error', {
+      depth, url: frame.url().slice(0, 80), error: String(err && err.message ? err.message : err).slice(0, 160),
+    });
     return []; // frame navigated or detached mid-snapshot
   }
   if (blocks === null) {
