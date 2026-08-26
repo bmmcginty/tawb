@@ -65,22 +65,23 @@ test('the address is on the row below the title, and the hint below that', () =>
   assert.match(rows[1].text, /example\.com/, 'the address row lost the URL');
 });
 
-test('typing in the address bar changes only the new character', () => {
+test('typing in the address bar rewrites its suffix like nano', () => {
   const state = {
     ...titleState('Example Domain'),
     mode: 'address',
-    address: { text: 'example.co', caret: 10, scroll: 0 },
+    address: { text: 'example.co', caret: 8, scroll: 0 },
     core: { source: 'ax' },
   };
   const page = { url: () => 'https://old.example/' };
   capture(() => drawAddress(state, page, { force: true }));
 
-  state.address.text += 'm';
+  state.address.text = 'example.xco';
   state.address.caret += 1;
   const { text, rows } = capture(() => drawAddress(state, page));
   assert.deepEqual(rows, [], 'typing repainted the complete address row');
   assert.doesNotMatch(text, /\x1b\[2K/, 'typing erased the complete address row');
-  assert.match(text, /\x1b\[1@m/, 'the new character was not inserted on its own');
+  assert.doesNotMatch(text, /\x1b\[\d*[@P]/, 'typing shifted terminal cells with ICH or DCH');
+  assert.match(text, /xco\x08\x08/, 'typing did not rewrite and backspace over the suffix');
 });
 
 test('an unchanged title is not rewritten, because a repaint is re-read', () => {

@@ -52,7 +52,7 @@ test('readline word movement and deletion edits an internal prompt', () => {
   assert.deepEqual(buffer, { text: 'alpha ', caret: 6 });
 });
 
-test('an edited field inserts and deletes without repainting its row', () => {
+test('an edited field rewrites its suffix like nano', () => {
   const written = [];
   const real = process.stdout.write;
   process.stdout.write = (chunk) => { written.push(String(chunk)); return true; };
@@ -66,8 +66,9 @@ test('an edited field inserts and deletes without repainting its row', () => {
   const output = written.join('');
   assert.doesNotMatch(output, /\x1b\[2K/, 'editing erased the complete field row');
   assert.doesNotMatch(output, /Search/, 'editing rewrote the field label');
-  assert.match(output, /\x1b\[1@b/, 'the typed character was not inserted alone');
-  assert.match(output, /\x1b\[1P/, 'backspace did not delete one terminal cell');
+  assert.doesNotMatch(output, /\x1b\[\d*[@P]/, 'editing shifted terminal cells with ICH or DCH');
+  assert.match(output, /b\]\x08/, 'insertion did not rewrite and backspace over the suffix');
+  assert.match(output, /\]\x1b\[K\x08/, 'deletion did not rewrite, clear, and backspace over the suffix');
 });
 
 test('readline kill and delete keys edit an internal prompt', () => {

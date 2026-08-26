@@ -127,11 +127,11 @@ function writeLine(row, text) {
   process.stdout.write('\x1b[2K' + text);
 }
 
-// Changes only the cells that differ on an actively edited row. Rewriting the
-// row for each character makes a screen reader announce the label and the
-// whole value again. Terminal insert/delete-character operations preserve the
-// unchanged suffix, so ordinary typing emits the new character and nothing
-// else; deletions likewise remove cells without repainting their neighbours.
+// Changes an actively edited row like nano: overwrite from the first changed
+// cell through the unchanged suffix, clear any stale tail, then backspace over
+// the suffix. Screen readers handle these printable writes and relative cursor
+// movements as typing; terminal ICH/DCH operations can instead make them
+// announce every cell shifted by an insertion or deletion.
 function patchEditedLine(row, before, after) {
   const oldText = String(before || '');
   const newText = String(after || '');
@@ -144,18 +144,11 @@ function patchEditedLine(row, before, after) {
   while (suffix < oldText.length - prefix && suffix < newText.length - prefix
     && oldText[oldText.length - 1 - suffix] === newText[newText.length - 1 - suffix]) suffix += 1;
 
-  const removed = oldText.length - prefix - suffix;
-  const inserted = newText.slice(prefix, newText.length - suffix);
   moveCursor(row, prefix + 1);
-  if (removed === inserted.length) {
-    if (inserted) process.stdout.write(inserted);
-    return;
-  }
-  if (removed) process.stdout.write(`\x1b[${removed}P`); // DCH
-  if (inserted) {
-    process.stdout.write(`\x1b[${inserted.length}@`); // ICH
-    process.stdout.write(inserted);
-  }
+  const tail = newText.slice(prefix);
+  if (tail) process.stdout.write(tail);
+  if (newText.length < oldText.length) process.stdout.write('\x1b[K');
+  if (suffix) process.stdout.write('\b'.repeat(suffix));
 }
 
 // DECSTBM: confine scrolling to the list area so the header stays put and a
