@@ -154,6 +154,12 @@ class CdpBrowserContext {
   constructor(browser) {
     this.browser = browser;
     this.connection = browser.connection;
+    // A page target can have more than one CDP session. The auto-attached
+    // session below owns the page; callers such as Fetch authentication may
+    // attach an independent session to the same target. Playwright keys pages
+    // by target id for exactly this reason: treating each session as a page
+    // turns one tab into another "new page" every time a caller attaches.
+    this.pagesByTarget = new Map();
     this.pagesBySession = new Map();
     this.initScripts = [];
     this.newPageHandlers = [];
@@ -164,7 +170,7 @@ class CdpBrowserContext {
   // and a page handed out in that moment answers wrongly about its own main
   // frame — which is a navigation to a frame id that is not there yet.
   pages() {
-    return [...this.pagesBySession.values()].filter((page) => page.wired && !page.isClosed());
+    return [...this.pagesByTarget.values()].filter((page) => page.wired && !page.isClosed());
   }
 
   on(event, handler) {
@@ -173,8 +179,12 @@ class CdpBrowserContext {
     return this;
   }
 
+  pageForTarget(targetId) {
+    return this.pagesByTarget.get(targetId) || null;
+  }
+
   async adopt(sessionId, targetId) {
-    const known = this.pagesBySession.get(sessionId);
+    const known = this.pagesByTarget.get(targetId);
     if (known) {
       await known.ready;
       return known;
@@ -182,7 +192,8 @@ class CdpBrowserContext {
     const session = this.connection.sessionFor(sessionId, targetId);
     const page = new CdpPage(this, session, targetId);
     // Recorded before it is ready, so that a detach arriving mid-wiring finds
-    // it, and so two attachments for one session cannot make two pages.
+    // it, and so a second attachment to this target cannot make a second page.
+    this.pagesByTarget.set(targetId, page);
     this.pagesBySession.set(sessionId, page);
     page.ready = wireSession(this, page, session, { root: true })
       .then(() => { page.wired = true; });
@@ -194,6 +205,7 @@ class CdpBrowserContext {
     const page = this.pagesBySession.get(sessionId);
     if (!page) return null;
     this.pagesBySession.delete(sessionId);
+    this.pagesByTarget.delete(page.targetId);
     page.markClosed();
     return page;
   }
@@ -212,8 +224,7 @@ class CdpBrowserContext {
     for (;;) {
       // Every tab, wired or not, because this one is brand new by
       // construction and waiting for it is exactly what we are here to do.
-      const found = [...this.pagesBySession.values()]
-        .find((page) => page.targetId === targetId);
+      const found = this.pagesByTarget.get(targetId);
       if (found) {
         await found.ready;
         return found;
@@ -294,6 +305,10 @@ async function attachToBrowser(connection) {
   root.on('Target.attachedToTarget', (params) => {
     const info = params.targetInfo || {};
     if (info.type !== 'page') return;
+    // Target.attachToTarget also raises this event. It is another conversation
+    // with an existing tab, not another tab. Playwright's page map is keyed by
+    // target id, so mirror that distinction before scheduling an announcement.
+    if (context.pageForTarget(info.targetId)) return;
     const ready = context.adopt(params.sessionId, info.targetId)
       .then((page) => {
         // Only a tab that opened after we were watching is news. The ones
