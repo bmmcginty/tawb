@@ -195,25 +195,27 @@ class CdpConnection {
     const message = { id, method, params };
     if (sessionId) message.sessionId = sessionId;
 
-    try {
-      this.socket.send(JSON.stringify(message));
-    } catch (err) {
-      return Promise.reject(new CdpError(`${method}: ${err.message}`));
-    }
-
     return new Promise((resolve, reject) => {
-      // Every command is bounded, because the thing on the other end is a
-      // browser and a browser can be busy for ever. This is the same reason
-      // every operation above this file carries a deadline.
+      // Record the command before putting it on the transport. WebSocket
+      // delivery is asynchronous in browsers, but transports and test
+      // doubles are allowed to answer from send(); Playwright likewise puts
+      // its callback in the map first so even that reply has somewhere to go.
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new CdpError(`${method} did not answer within ${timeout / 1000}s`));
       }, timeout);
-      this.pending.set(id, {
+      const waiter = {
         method,
         resolve: (value) => { clearTimeout(timer); resolve(value); },
         reject: (err) => { clearTimeout(timer); reject(err); },
-      });
+      };
+      this.pending.set(id, waiter);
+      try {
+        this.socket.send(JSON.stringify(message));
+      } catch (err) {
+        this.pending.delete(id);
+        waiter.reject(new CdpError(`${method}: ${err.message}`));
+      }
     });
   }
 

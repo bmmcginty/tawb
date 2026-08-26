@@ -55,6 +55,18 @@ test('a command is answered by the reply carrying its own id', async () => {
   assert.deepStrictEqual(await second, { value: 'second' });
 });
 
+test('a reply sent synchronously by the transport is not lost', async () => {
+  const socket = fakeSocket();
+  socket.send = function send(text) {
+    const message = JSON.parse(text);
+    this.sent.push(message);
+    this.deliver({ id: message.id, result: { immediate: true } });
+  };
+  const connection = new CdpConnection(socket);
+
+  assert.deepStrictEqual(await connection.send('Browser.getVersion'), { immediate: true });
+});
+
 test('an error reply rejects with the message the browser gave', async () => {
   const socket = fakeSocket();
   const connection = new CdpConnection(socket);
