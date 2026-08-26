@@ -16,7 +16,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { CdpPage, CdpKeyboard } = require('../src/cdp_page');
+const { CdpPage, CdpHandle, CdpKeyboard } = require('../src/cdp_page');
 
 // Enough of a session to be told apart from another one.
 function fakeSession(sessionId) {
@@ -121,6 +121,29 @@ test('a context recorded against a dead session is dropped rather than returned'
   // give up. It must still not return the dead context.
   await assert.rejects(page.contextFor('CHILD'), /never announced a context/);
   assert.strictEqual(page.contexts.has('CHILD'), false);
+});
+
+test('a quad in an out-of-process frame is moved into tab coordinates', async () => {
+  const { page, session } = fakePage();
+  const iframe = fakeSession('IFRAME');
+  const frame = page.ensureFrame('CHILD', 'MAIN');
+  frame._ownSession = iframe;
+  session.send = async (method) => {
+    if (method === 'DOM.getFrameOwner') return { backendNodeId: 42 };
+    if (method === 'DOM.getBoxModel') {
+      return { model: { border: [100, 50, 200, 50, 200, 150, 100, 150] } };
+    }
+    return {};
+  };
+  iframe.send = async (method) => {
+    if (method === 'DOM.getContentQuads') {
+      return { quads: [[10, 20, 20, 20, 20, 30, 10, 30]] };
+    }
+    return {};
+  };
+  const handle = new CdpHandle(frame, 'OBJECT');
+
+  assert.deepStrictEqual(await handle.clickPoint(), { x: 115, y: 75 });
 });
 
 test('non-text keys use Chromium raw key-down events', async () => {

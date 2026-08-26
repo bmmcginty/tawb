@@ -21,13 +21,13 @@ const { CdpError } = require('./cdp');
 // to those targets and letting each frame say which session answers for it.
 // A same-process frame is answered by the tab's own session.
 //
-// **Coordinates are always the top-level viewport's.** DOM.getContentQuads
-// reports in main-frame coordinates whichever session is asked, so a click on
-// an element inside an out-of-process iframe is dispatched on the tab's
-// session at the coordinates that came back, with no offset arithmetic. The
-// one exception is clickInFrame, which is aiming at a point inside a
-// document's own viewport by construction and dispatches on that document's
-// session.
+// **Input coordinates are always the top-level viewport's.** A tab session's
+// DOM.getContentQuads already reports those coordinates, including for its
+// same-process frames. An out-of-process iframe's session reports coordinates
+// in that target's viewport, however, so its frame owner's position is added
+// before input is dispatched on the tab session. This is the same conversion
+// Playwright's Chromium FrameSession performs. The one exception is
+// clickInFrame, which deliberately dispatches in that document's viewport.
 
 // How long to wait for a document's execution context to appear. A context is
 // announced rather than asked for, so the first evaluate after a navigation
@@ -128,6 +128,8 @@ class CdpHandle {
     const got = await session.send('DOM.getContentQuads', { objectId: this.objectId })
       .catch(() => null);
     const quads = (got && got.quads) || [];
+    const offset = await this.frame.pageObject.sessionOffset(session);
+    if (!offset) return null;
     for (const quad of quads) {
       // A quad is eight numbers: four corners, clockwise from the top left.
       const xs = [quad[0], quad[2], quad[4], quad[6]];
@@ -136,8 +138,8 @@ class CdpHandle {
       const height = Math.max(...ys) - Math.min(...ys);
       if (width < 1 || height < 1) continue;
       return {
-        x: Math.round(xs.reduce((a, b) => a + b, 0) / 4),
-        y: Math.round(ys.reduce((a, b) => a + b, 0) / 4),
+        x: Math.round(xs.reduce((a, b) => a + b, 0) / 4 + offset.x),
+        y: Math.round(ys.reduce((a, b) => a + b, 0) / 4 + offset.y),
       };
     }
     return null;
@@ -490,6 +492,34 @@ class CdpPage {
 
   childFramesOf(frameId) {
     return [...this.frames_.values()].filter((frame) => frame.parentId === frameId);
+  }
+
+  // DOM coordinates from an out-of-process frame are local to that target.
+  // Find the iframe element in its parent process and add each containing
+  // target's offset until the tab session, whose coordinates are top-level.
+  async sessionOffset(session) {
+    if (session === this.session) return { x: 0, y: 0 };
+    const frame = [...this.frames_.values()].find((known) => known._ownSession === session);
+    if (!frame || !frame.parentId) return null;
+    const parent = this.frameById(frame.parentId);
+    if (!parent) return null;
+    const parentSession = parent.session();
+    try {
+      const owner = await parentSession.send('DOM.getFrameOwner', { frameId: frame.frameId });
+      const { model } = await parentSession.send('DOM.getBoxModel', {
+        backendNodeId: owner.backendNodeId,
+      });
+      const quad = model && (model.border || model.content);
+      if (!quad || quad.length < 8) return null;
+      const above = await this.sessionOffset(parentSession);
+      if (!above) return null;
+      return {
+        x: above.x + Math.min(quad[0], quad[2], quad[4], quad[6]),
+        y: above.y + Math.min(quad[1], quad[3], quad[5], quad[7]),
+      };
+    } catch {
+      return null;
+    }
   }
 
   // ---------------------------------------------------------------------
