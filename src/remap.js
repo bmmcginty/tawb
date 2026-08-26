@@ -4,8 +4,8 @@
 // rather than by searching for the line again.
 //
 // Searching is what a text-matching re-anchor does, and it is unreliable for
-// two reasons that show up constantly in practice: block text repeats (an
-// HTML view full of <svg>, <h4>, <option value=30>), and the very line the
+// two reasons that show up constantly in practice: block text repeats (a
+// SOURCE view full of <svg>, <h4>, <option value=30>), and the very line the
 // reader is on may be the one whose text changed (a clock rewrites itself
 // every second, so it never matches what was anchored).
 //

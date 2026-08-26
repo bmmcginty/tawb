@@ -353,10 +353,10 @@ function tokensToHtml(extracted, registry, base, tab, within = null) {
   const title = escapeHtml(extracted.title || extracted.url);
   // One line of our own at the top, and only one: it says which page this
   // really is — edbrowse's own fu would only show the loopback address — and
-  // it is how the other three views and the tab list are reached, since
+  // it is how the other four representations and the tab list are reached, since
   // there is no key here to press for them.
   const header = `<p>tweb ${tab}: ${escapeHtml(extracted.url)}`
-    + ` <a href="ax">ax</a> <a href="render">text</a> <a href="source">source</a>`
+    + ` <a href="ax">ax</a> <a href="render">text</a> <a href="inspect">inspect</a> <a href="source">source</a>`
     + ` <a href="../tabs">tabs</a></p>`;
   return `<html><head><title>${title}</title><base href="${escapeHtml(base)}"></head>\n`
     + `<body>\n${openBar('open', { back: true, value: extracted.url })}\n`
@@ -397,7 +397,7 @@ function fieldHtml(token, id, pressable = false) {
   return `${label}: <input type="${kind}" name="${name}" value="${escapeHtml(token.value)}">`;
 }
 
-// The other three views, as edbrowse can hold them: the reader's own line
+// The other four representations, as edbrowse can hold them: the reader's own line
 // lists, preformatted so edbrowse leaves them alone. This is how the AX tree
 // stays reachable from here, which matters because it is the view that is
 // right when a page's markup is wrong.
@@ -931,7 +931,9 @@ async function startEdbServer({
     const page = tabs.page(number);
     if (!page) return goneTab(res, number);
     const blocks = await snapshotFrameTree(page, view, { driver: core.driver });
-    const heading = { ax: 'Accessibility tree', render: 'Visible text', source: 'Markup' }[view] || view;
+    const heading = {
+      ax: 'Accessibility tree', render: 'Visible text', inspect: 'Accessibility with markup', source: 'Markup',
+    }[view] || view;
     log('edb.view', { tab: number, view, blocks: blocks.length });
     return send(res, 200, linesToHtml(
       `${heading} — tab ${number}`, base, heading,
@@ -1002,7 +1004,7 @@ async function startEdbServer({
       await syncUrl(page);
       return redirect(res, tabUrl(number));
     }
-    if (what === 'ax' || what === 'render' || what === 'source') {
+    if (what === 'ax' || what === 'render' || what === 'inspect' || what === 'source') {
       return renderView(res, number, what, base);
     }
 

@@ -311,6 +311,12 @@ for (const view of VIEWS) {
   });
 }
 
+test('inspect view pairs native media semantics with browser-owned markup', async () => {
+  const text = await readFixture(MEDIA_PAGE, 'inspect');
+  assert.match(text, /(?:audio time scrubber|position).*<(?:input|native-control)/i);
+  assert.match(text, /#(?:privileged|user-agent)-shadow-root/i);
+});
+
 test('ax view: visible native player controls are rendered', async () => {
   const text = await readFixture(MEDIA_PAGE, 'ax');
   assert.match(text, /\[\*play\]/i);

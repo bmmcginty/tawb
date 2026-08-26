@@ -243,6 +243,8 @@ const PIERCE_CHILD_SCRIPT = `
                   el.wrappedJSObject || el,
                   shadow.wrappedJSObject || shadow,
                   mediaControls(el, shadow),
+                  ['audio', 'video'].includes(String(el.localName || '').toLowerCase())
+                    ? 'user-agent' : 'closed',
                 ]);
               } catch (e) { /* not a node we can hand over */ }
               walk(shadow);

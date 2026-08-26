@@ -1,9 +1,9 @@
 'use strict';
 
 const { buildBlocks, foldSeparatorBlocks } = require('./blocks');
-const { snapshotDomBlocks } = require('./dom');
 const { snapshotRenderBlocks } = require('./render_html');
 const { snapshotSourceBlocks } = require('./source_html');
+const { inspectBlocks } = require('./inspect_html');
 const { log } = require('./log');
 
 // Renders embedded frames inline, where they sit in the parent page.
@@ -40,18 +40,17 @@ function isFrameItem(item) {
   return item && (item.role === 'iframe' || item.tag === 'iframe' || item.tag === 'frame');
 }
 
-// The three DOM-derived views are pure injected JavaScript and work on any
-// engine. Only the AX view needs the driver, which is the one that knows how
-// the accessibility tree is computed for the browser in hand.
+// PAGE and SOURCE are plain DOM walks. AX and INSPECT share the driver's
+// accessibility extraction.
 async function blocksForFrame(frame, source, driver = null) {
-  // Raw HTML mode stays unfolded on purpose: it is the inspection view, so
-  // it should show what is there rather than a tidied version of it. The
-  // same goes double for the source view, where tidying would be a lie.
+  // SOURCE stays unfolded on purpose: it shows structure, where separator
+  // folding would be a lie.
   if (source === 'source') return snapshotSourceBlocks(frame);
-  if (source === 'html') return snapshotDomBlocks(frame);
   if (source === 'render') return foldSeparatorBlocks(await snapshotRenderBlocks(frame));
-  if (!driver) throw new Error('the AX view needs a driver to read the accessibility tree');
-  const blocks = buildBlocks(await driver.axItems(frame));
+  if (!driver) throw new Error('the AX and INSPECT views need a driver to read accessibility semantics');
+  const items = await driver.axItems(frame);
+  if (source === 'inspect') return inspectBlocks(items, frame);
+  const blocks = buildBlocks(items);
   // AX items carry no element reference, so record the frame they came from;
   // activation resolves role/name against that frame, not the main page.
   for (const block of blocks) {

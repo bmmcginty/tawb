@@ -823,8 +823,8 @@ async function refresh(state, page, { resetCursor = false, anchor = null } = {})
 // reader was on has gone, staying put is far less disorienting than being
 // silently teleported somewhere proportional.
 // Searching for the anchor's text from the top of the document is wrong here:
-// block text is often not unique — HTML view is full of repeated <svg>,
-// <h4>, <option value=30> — so the first match can be thousands of lines from
+// block text is often not unique — SOURCE is full of repeated <svg>, <h4>
+// and <option value=30> — so the first match can be thousands of lines from
 // where the reader actually is. Identity first, then the *nearest* text match
 // searched outward from the previous position, then stay put. A live update
 // must never relocate the reader across the page.
@@ -2278,7 +2278,8 @@ async function main() {
   const adopted = !!page;
   if (!page) page = await context.newPage();
 
-  const sources = ALL_SOURCES.filter((s) => s !== 'ax' || driver.capabilities?.ax !== false);
+  const sources = ALL_SOURCES.filter(
+    (source) => !['ax', 'inspect'].includes(source) || driver.capabilities?.ax !== false);
   const core = new Core({ driver, page, source: sources[0], sources, browserPort });
   const state = {
     core,

@@ -44,8 +44,8 @@ as today.
 | Visible-content walk (PAGE) | `render_html.js` `extractVisible` | 140 |
 | Mutation observer for live updates | `live.js` `OBSERVER_SCRIPT` | 136 |
 | Markup serialiser (SOURCE) | `source_html.js` `extractSource` | 104 |
+| AX-to-markup pairing (INSPECT) | `inspect_html.js` | 25 |
 | Hit-test check before a real click | `click.js` `prepareRealClick` | 61 |
-| DOM walk (HTML) | `dom.js` `extractDom` | 70 |
 | Feed scrolling | `index.js` `SCROLL_TO_BOTTOM` / `RESTORE_SCROLL` | 45 |
 | Fragment target lookup | `index.js` `TEXT_AT_FRAGMENT` | 32 |
 | Aiming a click at the deepest child | `click.js` `clickThrough` | 30 |

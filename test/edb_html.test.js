@@ -199,6 +199,7 @@ test('every page says which page it really is', () => {
   assert.match(html, /https:\/\/example\.com\//);
   assert.match(html, /<a href="ax">ax<\/a>/);
   assert.match(html, /<a href="render">text<\/a>/);
+  assert.match(html, /<a href="inspect">inspect<\/a>/);
   assert.match(html, /<a href="source">source<\/a>/);
   assert.match(html, /<a href="\.\.\/tabs">tabs<\/a>/);
   assert.match(html, /<base href="BASE">/);

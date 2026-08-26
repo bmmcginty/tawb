@@ -20,7 +20,7 @@
 // Most content cannot do this, because every view collapses whitespace as it
 // extracts text. Two routes survive that: a <textarea>'s value, which is its
 // live content rather than extracted text, and an attribute written across
-// several lines, which HTML view prints verbatim. Both are real, and both
+// several lines, which SOURCE prints verbatim. Both are real, and both
 // reached the screen.
 //
 // Newlines become row breaks, which is what they mean, and every other

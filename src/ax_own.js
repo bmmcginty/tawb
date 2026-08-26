@@ -163,14 +163,18 @@ function extractAxItems(options) {
     }
   };
   for (const pair of opts.pairs || []) {
-    if (pair && pair[0] && pair[1]) privilegedRoots.set(pair[0], pair[1]);
+    if (pair && pair[0] && pair[1]) {
+      privilegedRoots.set(pair[0], { root: pair[1], kind: pair[3] || 'closed' });
+    }
     if (pair) rememberNative(pair[2]);
   }
   const privileged = window[Symbol.for('tweb.pierce')];
   if (opts.pierce && typeof privileged === 'function') {
     try {
       for (const pair of privileged() || []) {
-        if (pair && pair[0] && pair[1]) privilegedRoots.set(pair[0], pair[1]);
+        if (pair && pair[0] && pair[1]) {
+          privilegedRoots.set(pair[0], { root: pair[1], kind: pair[3] || 'closed' });
+        }
         if (pair) rememberNative(pair[2]);
       }
     } catch { /* the privileged half is not installed here */ }
@@ -183,7 +187,7 @@ function extractAxItems(options) {
     // process script — and hand the pairs to this call, so the walk goes on
     // from here as if the root had been open.
     const privileged = privilegedRoots.get(node);
-    if (privileged) return Array.from(privileged.childNodes);
+    if (privileged) return Array.from(privileged.root.childNodes);
     if (node.shadowRoot) return Array.from(node.shadowRoot.childNodes);
     if (typeof node.assignedNodes === 'function') {
       const assigned = node.assignedNodes({ flatten: true });
@@ -486,6 +490,26 @@ function extractAxItems(options) {
     return nodes.length - 1;
   };
 
+  // A compact description of the DOM node behind an accessibility item.
+  // INSPECT carries this beside the semantic line, which makes relationships
+  // such as "this slider is that input inside a browser-owned shadow root"
+  // visible without inventing a fifth independent tree.
+  const markupOf = (el) => {
+    const tag = String(el.localName || el.tagName || 'element').toLowerCase();
+    const parts = [tag];
+    for (const attr of Array.from(el.attributes || [])) {
+      let value = String(attr.value || '').replace(/\s+/g, ' ');
+      if (value.length > 80) value = value.slice(0, 79) + '…';
+      parts.push(value ? `${attr.name}="${value.replace(/"/g, '&quot;')}"` : attr.name);
+    }
+    return `<${parts.join(' ')}>`;
+  };
+  const fromElement = (item, el) => ({
+    ...item,
+    markup: markupOf(el),
+    shadow: insideShadow || undefined,
+  });
+
   const emit = (item) => {
     if (item.role !== '__break__') {
       if (insidePopup) item.popup = insidePopup;
@@ -502,6 +526,7 @@ function extractAxItems(options) {
   // click: a closed shadow root is what a bot check is built out of, and the
   // DOM's own default action is not a person pressing anything.
   let insideClosed = false;
+  let insideShadow = null;
 
   // Which elements are somebody's popup, and whose.
   //
@@ -554,12 +579,12 @@ function extractAxItems(options) {
     // A frame marks where embedded content begins; its own lines are spliced
     // in after it by the frame walker.
     if (shown && role === 'iframe') {
-      emit({ role: 'iframe', name: accessibleName(el), axIndex: register(el) });
+      emit(fromElement({ role: 'iframe', name: accessibleName(el), axIndex: register(el) }, el));
       return;
     }
 
     if (shown && MEDIA.has(role)) {
-      emit({ role, name: mediaState(el), axIndex: register(el) });
+      emit(fromElement({ role, name: mediaState(el), axIndex: register(el) }, el));
 
       // Native controls are rendered in a user-agent shadow root. Chromium
       // can lend that root to this walk, so its actual visible buttons and
@@ -574,6 +599,8 @@ function extractAxItems(options) {
           name: control.name,
           value: control.value || undefined,
           nativeControl: { media: control.media, index: control.index },
+          markup: `<native-control role="${control.role}" name="${String(control.name).replace(/"/g, '&quot;')}">`,
+          shadow: 'user-agent',
           pierced: true,
         });
       }
@@ -602,20 +629,20 @@ function extractAxItems(options) {
         if (expanded !== undefined) item.expanded = expanded;
         const controls = opensPopup(el);
         if (controls) item.controls = controls;
-        emit(item);
+        emit(fromElement(item, el));
       }
       return; // the name already covers everything inside
     }
 
     if (shown && FIELDS.has(role)) {
-      emit({
+      emit(fromElement({
         role,
         name: accessibleName(el),
         value: valueOf(el, role),
         expanded: expandedOf(el),
         controls: opensPopup(el),
         axIndex: register(el),
-      });
+      }, el));
 
       // A listbox is the one field whose contents are the point of it. Every
       // other field holds a value; a listbox holds the choices, and returning
@@ -646,7 +673,7 @@ function extractAxItems(options) {
       if (child.nodeType === Node.TEXT_NODE) {
         if (!shown) continue; // this element's own text is not on screen
         const text = clean(child.data);
-        if (text) emit({ role: 'text', name: text });
+        if (text) emit({ role: 'text', name: text, markup: '#text' });
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         walk(child);
       }
@@ -657,7 +684,7 @@ function extractAxItems(options) {
     const produced = out.slice(before).some((i) => i.role !== '__break__');
     if (shown && !produced) {
       const name = accessibleName(el);
-      if (name) emit({ role: 'text', name });
+      if (name) emit(fromElement({ role: 'text', name }, el));
     }
 
     if (blockLevel) boundary();
@@ -669,13 +696,18 @@ function extractAxItems(options) {
   const walk = (el) => {
     const outerPopup = insidePopup;
     const outerClosed = insideClosed;
+    const outerShadow = insideShadow;
     if (ownedPopups.has(el)) insidePopup = ownedPopups.get(el);
-    if (privilegedRoots.has(el)) insideClosed = true;
+    if (privilegedRoots.has(el)) {
+      insideClosed = true;
+      insideShadow = privilegedRoots.get(el).kind;
+    }
     try {
       walkInner(el);
     } finally {
       insidePopup = outerPopup;
       insideClosed = outerClosed;
+      insideShadow = outerShadow;
     }
   };
 

@@ -16,7 +16,7 @@ const { Core } = require('../src/core');
 const blocksOf = (texts) => texts.map((text, i) => ({ text, item: { name: text, domIndex: i } }));
 
 function coreWith(texts, cursorBlock = 0) {
-  const core = new Core({ driver: {}, page: {}, source: 'html', sources: ['html'] });
+  const core = new Core({ driver: {}, page: {}, source: 'source', sources: ['source'] });
   core.blocks = blocksOf(texts);
   core.at(cursorBlock);
   return core;

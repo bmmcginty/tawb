@@ -1,6 +1,6 @@
 'use strict';
 
-// The third view: the page as a reader should see it, derived from the DOM
+// PAGE view: the page as a reader should see it, derived from the DOM
 // rather than from the accessibility tree.
 //
 // It produces the same shape of output as AX mode — {links}, [*buttons],
@@ -11,7 +11,7 @@
 // this shows the page anyway.
 //
 // Only visible content is included. Anything hidden is deliberately out of
-// scope here — backslash reaches raw HTML mode when the hidden parts matter.
+// scope here — backslash reaches SOURCE when the hidden parts matter.
 
 function extractVisible() {
   const SKIP = new Set(['script', 'style', 'noscript', 'template', 'head', 'meta',

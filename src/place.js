@@ -9,7 +9,7 @@ const { log } = require('./log');
 // album page — so a line number means nothing across a switch. Matching the
 // text does not work either, because the views do not render the same thing:
 // a play button that reads `[*Play Weird Fish]` in the accessibility tree is
-// `<a aria-label=Play Weird Fish>` in HTML view and, in source view, an
+// paired with `<a aria-label=Play Weird Fish>` in INSPECT and, in SOURCE, an
 // `<a role="button" aria-label="Play Weird Fish">` several lines away from
 // the `<div class="playbutton">` inside it. Matching on the item's *name* is
 // worse still: in the DOM-derived views a name is often just the tag, so
@@ -17,9 +17,9 @@ const { log } = require('./log');
 // the letter a", which is line one of the page.
 //
 // What all four views do have in common is the element each line came from.
-// Three of them stash their elements page-side already, because that is how a
-// line is activated later, and the accessibility view does the same wherever
-// we compute the tree ourselves. So a place is an element, not a line: ask
+// Their extractors stash those elements page-side because that is how a line
+// is activated later; AX and INSPECT share the accessibility extractor's
+// references. So a place is an element, not a line: ask
 // the view we are leaving which element the reader is on, then ask the view
 // we are entering which of its lines that element produced.
 //
@@ -31,13 +31,10 @@ const { log } = require('./log');
 //   searching down from where that element landed rather than from the top
 //   of the document, which is what makes repeated text harmless.
 //
-//   Playwright's accessibility tree carries no element reference at all, so
-//   on Chromium the AX view can be left by resolving role and name to an
-//   element, but cannot be entered that way. Entering it falls back to the
-//   element's own label — the aria-label that gave the AX line its name — and
-//   where several lines match, to the one nearest the element's position in
-//   the document. That is a guess, but a guess anchored to document order
-//   rather than to line-number arithmetic between lists of different lengths.
+//   Some semantic lines, such as generated text, carry no element reference.
+//   Entering one falls back to the nearest element's label and, where several
+//   lines match, to the one nearest its position in document order. That is a
+//   guess, but not line-number arithmetic between lists of different lengths.
 
 // Where each view stashes the elements its lines came from, and the property
 // on an item that indexes into it.
@@ -49,12 +46,12 @@ const { log } = require('./log');
 // program most needs to be unremarkable in are the ones looking hardest.
 const NODE_ARRAY = {
   render: 'tweb.render',
-  html: 'tweb.dom',
   source: 'tweb.dom',
   ax: 'tweb.ax',
+  inspect: 'tweb.ax',
 };
 const INDEX_KEY = {
-  render: 'renderIndex', html: 'domIndex', source: 'domIndex', ax: 'axIndex',
+  render: 'renderIndex', source: 'domIndex', ax: 'axIndex', inspect: 'axIndex',
 };
 
 // How far back to look for an element to anchor to when the cursor is on
@@ -88,8 +85,8 @@ function describeElement(el) {
 // Runs in the page after the new view has been built: which entry of that
 // view's node array is this element?
 //
-// An element can be missing from the view being entered — PAGE view lists
-// only what is visible, and HTML view skips containers that carry nothing —
+// An element can be missing from the view being entered — PAGE lists only
+// visible content, while AX and INSPECT skip semantically empty containers —
 // so the answer is allowed to be an ancestor of it, and failing that the
 // nearest entry above it in document order. Landing just before where the
 // reader was is a much smaller move than landing wherever the text happened

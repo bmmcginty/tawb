@@ -57,14 +57,13 @@ const { log } = require('./log');
 // need — `announce`, `changed`, `navigated`, `tab-opened`, `tab-closed` —
 // arrives with them rather than ahead of them.
 
-// The views of a page, cycled by backslash. Which are available depends on
-// the engine: everything but AX is injected JavaScript and works anywhere,
-// while the accessibility tree needs the driver to compute it.
-const ALL_SOURCES = ['ax', 'render', 'html', 'source'];
-const SOURCE_LABELS = { ax: 'AX', render: 'PAGE', html: 'HTML', source: 'SOURCE' };
-// The two views built from a DOM walk keep their own page-side node array
-// and are activated through it, rather than by matching role and name.
-const DOM_SOURCES = new Set(['html', 'source']);
+// The views of a page, cycled by backslash. AX and INSPECT share the driver's
+// accessibility extraction; PAGE and SOURCE are DOM-derived.
+const ALL_SOURCES = ['ax', 'render', 'inspect', 'source'];
+const SOURCE_LABELS = { ax: 'AX', render: 'PAGE', inspect: 'INSPECT', source: 'SOURCE' };
+// SOURCE keeps its own page-side node array and is activated through it,
+// rather than by matching role and name. INSPECT carries AX's own references.
+const DOM_SOURCES = new Set(['source']);
 
 async function snapshotBlocks(page, source = 'ax', { visited = null, driver = null } = {}) {
   const t0 = Date.now();
@@ -165,7 +164,7 @@ function sameDocumentFragment(before, after) {
 // better answer.
 const REANCHOR_WINDOW = 250;
 // How many neighbours on each side identify a position. Block text is
-// routinely duplicated — an HTML view is full of repeated <svg> and
+// routinely duplicated — a markup view is full of repeated <svg> and
 // <option> — so what tells two identical blocks apart is what sits around
 // them.
 const CONTEXT_RADIUS = 3;

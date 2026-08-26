@@ -383,16 +383,16 @@ of the address line.
 
 | View       | What it shows                                                        |
 | ---------- | -------------------------------------------------------------------- |
-| `[AX]`     | The accessibility tree — what a screen reader sees.                   |
-| `[PAGE]`   | Visible text derived from the DOM, for when the AX tree is wrong.     |
-| `[HTML]`   | Tags and attributes, including URLs the other two views never expose. |
-| `[SOURCE]` | The markup itself, as written, tag by tag.                            |
+| `[AX]`      | The accessibility tree — what a screen reader sees.                  |
+| `[PAGE]`    | Visible text derived from the DOM, for when the AX tree is wrong.    |
+| `[INSPECT]` | Each AX item beside the element or native control that produced it.  |
+| `[SOURCE]`  | The markup itself, as written, tag by tag.                           |
 
-The views disagree more than you would hope, and AX is the lossy one. A
-`<video>` with a perfectly playable source often reports only its fallback
-text — "Your browser does not support videos." — because that text is the
-element's content; the actual media URL appears nowhere in the AX tree.
-`HTML` view shows the URL. That is what the third view is for.
+The views disagree more than you would hope. `INSPECT` makes that disagreement
+concrete rather than asking the reader to align two unrelated lists. A native
+scrubber may appear as `[Position: 0:12 / 3:04] <input type="range">`; where
+Firefox cannot expose its browser-owned node safely, the same line carries an
+honest synthetic `<native-control role="slider" name="Position">` instead.
 
 `PAGE` names a control by whatever names it — its own text, its value, or
 the label it carries — rather than by text alone. A play button is an icon
@@ -402,9 +402,9 @@ while the accessibility view listed all twelve. `role="button"` counts as a
 button too, whatever tag it was built from, which is how most of them are
 built.
 
-`HTML` is a summary rather than the markup: it lists tags it considers
-notable and leaves out the rest, so an `<em>` or a `<strong>` — which carry
-no attributes — do not appear in it at all. `SOURCE` is the markup:
+`INSPECT` is accessibility-first: generated text with no backing element is
+marked `<generated-accessibility-node>`, and items inside closed or user-agent
+shadow roots say so on their line. `SOURCE` is markup-first:
 
 ```
 <p>
@@ -457,9 +457,9 @@ four views have completely different line counts — a Bandcamp album page is
 135 lines of accessibility tree and 1500 lines of markup — so a line number
 means nothing across a switch, and the text does not carry either: the play
 button that reads `[*Play Weird Fish]` in the accessibility tree is
-`<a aria-label=Play Weird Fish>` in `HTML` and
-`<a role="button" aria-label="Play Weird Fish">` in `SOURCE`, with the
-`<div class="playbutton">` inside it on another line again.
+`<a aria-label=Play Weird Fish>` paired with its AX line in `INSPECT`, while
+`SOURCE` shows `<a role="button" aria-label="Play Weird Fish">` and its
+`<div class="playbutton">` child on separate lines.
 
 Every view already knows which element each of its lines came from, because
 that is how a line is activated. So switching asks the view you are leaving
@@ -467,9 +467,8 @@ which element you are on, and the view you are entering which of its lines
 that element produced. Standing on the play button in any view and cycling
 all the way round lands you back on the play button.
 
-Two cases need more than that, and the status line says so — *"HTML view —
-nearest place."* — rather than leaving you to work out why you are somewhere
-else:
+Two cases need more than that, and the status line says `nearest place`
+rather than leaving you to work out why you are somewhere else:
 
 - **Prose has no element of its own.** It is a text node, and the views
   number elements. The nearest element above you is the anchor, and your own
@@ -578,7 +577,7 @@ back-tab (`kcbt`) is asked for first and `\e[Z` is the fallback.
 | `Ctrl+L` | Address bar (scrolls sideways for long URLs; `Esc` cancels)      |
 | `Alt+-` / `Alt++` | Back / forward in this tab's page history              |
 | `Alt+?`  | Open the keyboard binding wizard                               |
-| `\`      | Cycle view: AX → PAGE → HTML → SOURCE                            |
+| `\`      | Cycle view: AX → PAGE → INSPECT → SOURCE                         |
 | `Ctrl+T` | Open and follow a new tab                                        |
 | `>` / `<`| Next / previous tab                                              |
 | `Shift+F4`| Close this tab (never the last one)                              |
@@ -612,8 +611,8 @@ plain button is not a closed anything. The distinction is the difference
 between "press this to see the menu" and "the menu is already here, further
 down" — which, with no screen to glance at, is otherwise invisible.
 
-Only the accessibility view knows this. `PAGE`, `HTML` and `SOURCE` are DOM
-walks with no notion of a control's state. It is also one of the two reasons
+AX and `INSPECT` know this. `PAGE` and `SOURCE` are DOM walks with no notion
+of a control's accessibility state. It is also one of the two reasons
 we compute that tree ourselves rather than asking Playwright for it:
 `ariaSnapshot` marks a control that is open and has no way to say that one is
 closed, so it can report `expanded` and never `collapsed`.
@@ -627,9 +626,9 @@ a node of its own in the accessibility tree, so `teenagers are just
 line reads as a heading or a link when you are arrowing through, a
 structural break that is not in the page. Runs of prose are joined back
 into one line; links are not, so their position stays predictable, and a
-paragraph boundary still ends the line. `[HTML]` view is left fragmented on
-purpose, being the view for seeing what is actually there, and `[SOURCE]`
-shows the emphasis itself.
+paragraph boundary still ends the line. `[INSPECT]` keeps AX's item boundaries
+so each semantic line stays paired with its producer, and `[SOURCE]` shows the
+emphasis itself.
 
 A line longer than the terminal wraps, and each wrapped row is navigable in
 its own right — so several rows in a row of plain prose are wrapping, while
@@ -725,7 +724,7 @@ click and never heard ours. On a Bandcamp album page the control is
 
 and the player listens on the inner `div`. Pressing `Enter` on the play
 button did nothing at all, in both browsers, and the only way to play a
-track was to switch to `HTML` view and activate the bare `<div>` there.
+track was to use the old tag-summary view and activate the bare `<div>` there.
 
 So the click is aimed the way a mouse would be: at the deepest descendant
 covering the middle of the element. Events bubble from there back up through
@@ -999,8 +998,8 @@ http, and something with no host in it gets an offer to search rather than
 being quietly sent to a search engine.
 
 The line below it says which site you are really on and links to the other
-three views (`ax`, `text`, `source` — the reader's own line lists) and to the
-tab list. `Shift+F4` has no meaning here; the tab list has a close link per
+four representations (`ax`, `text`, `inspect`, `source` — the reader's own
+line lists) and to the tab list. `Shift+F4` has no meaning here; the tab list has a close link per
 tab.
 
 Everything that acts on a page answers a redirect back to the tab's own

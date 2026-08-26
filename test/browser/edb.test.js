@@ -106,9 +106,9 @@ test('following a control answers a redirect back to the tab', async () => {
   assert.match(String(acted.location), /\/1\/$/);
 });
 
-test('the other three views render', async () => {
+test('the other four representations render', async () => {
   const { base } = await browser();
-  for (const view of ['ax', 'render', 'source']) {
+  for (const view of ['ax', 'render', 'inspect', 'source']) {
     const { status, body } = await get(`${base}/1/${view}`);
     assert.equal(status, 200, `${view} should render`);
     assert.match(body, /<pre>/, `${view} should be handed over untidied`);

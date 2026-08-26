@@ -106,7 +106,7 @@ async function openChromium({
         // lists both kinds and lets the extractor walk them identically.
         if (['closed', 'user-agent'].includes(shadow.shadowRootType)
           && (ownSession || here === wanted)) {
-          pairs.push({ host: node.nodeId, root: shadow.nodeId });
+          pairs.push({ host: node.nodeId, root: shadow.nodeId, kind: shadow.shadowRootType });
         }
         collect(shadow, here);
       }
@@ -132,8 +132,12 @@ async function openChromium({
         const shadow = await session.send('DOM.resolveNode', { nodeId: pair.root });
         await session.send('Runtime.callFunctionOn', {
           objectId: basket.objectId,
-          functionDeclaration: 'function (host, root) { this.push([host, root]); }',
-          arguments: [{ objectId: host.object.objectId }, { objectId: shadow.object.objectId }],
+          functionDeclaration: 'function (host, root, kind) { this.push([host, root, null, kind]); }',
+          arguments: [
+            { objectId: host.object.objectId },
+            { objectId: shadow.object.objectId },
+            { value: pair.kind },
+          ],
         });
         registered += 1;
       } catch {
