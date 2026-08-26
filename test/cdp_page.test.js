@@ -123,6 +123,15 @@ test('a context recorded against a dead session is dropped rather than returned'
   assert.strictEqual(page.contexts.has('CHILD'), false);
 });
 
+test('waiting for a load state reports its timeout', async () => {
+  const { page } = fakePage();
+
+  await assert.rejects(
+    page.waitForLoadState('load', { timeout: 20 }),
+    /did not reach load/,
+  );
+});
+
 test('the tab closing stops anything still waiting for a context', async () => {
   const { page } = fakePage();
   page.ensureFrame('CHILD', 'MAIN');

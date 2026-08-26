@@ -666,7 +666,7 @@ class CdpPage {
   async waitForLoadState(state = 'load', { timeout = this.navigationTimeout } = {}) {
     const wanted = LIFECYCLE[state] || 'load';
     if (this.reached.has(wanted)) return;
-    await this.#awaitLifecycle(wanted, timeout).promise.catch(() => {});
+    await this.#awaitLifecycle(wanted, timeout).promise;
   }
 
   // A promise for the tab's document reaching `name`, armed before whatever
