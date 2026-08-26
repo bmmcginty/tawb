@@ -368,6 +368,7 @@ function drawAddress(state, page, { force = false } = {}) {
 function hintText(state) {
   if (state.mode === 'address') return 'Address — Enter: go  Esc: cancel';
   if (state.mode === 'type') return 'Typing — Esc: stop  Enter: submit';
+  if (state.mode === 'control') return 'Control — arrows adjust  Home/End  Esc: stop';
   if (state.mode === 'find') return 'Find — Enter: search  Esc: cancel';
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
   if (state.mode === 'auth') {
@@ -1745,6 +1746,16 @@ async function activateCurrent(state, page) {
 
   try {
     setStatus(state, `Activating "${item.name}"...`);
+    if (item.role === 'slider') {
+      const focused = await state.core.focusControl(item, page);
+      if (!focused) throw new Error('the browser could not focus that control');
+      state.mode = 'control';
+      state.controlling = { item };
+      drawHint(state);
+      setStatus(state, `Controlling "${item.name}" — use arrows, Home or End; Esc to stop.`);
+      return;
+    }
+
     if (FIELD_ROLES.has(item.role) && !item.nativeControl) {
       // A native select is a list of choices, not a field to type into. It
       // came through here as a combobox and landed the reader in typing mode
@@ -2130,6 +2141,30 @@ async function handleTypeKey(chunk, state, page) {
   moveCursor(row, caretCol);
 }
 
+async function handleControlKey(chunk, state, page) {
+  markInput(state);
+  const controlling = state.controlling;
+  if (!controlling) { state.mode = 'browse'; return; }
+
+  if (keyIs(chunk, 'Escape', state) || chunk === '\r' || chunk === '\n') {
+    state.mode = 'browse';
+    state.controlling = null;
+    drawHint(state);
+    setStatus(state, `Stopped controlling "${controlling.item.name}".`);
+    return;
+  }
+
+  const names = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'];
+  const name = names.find((candidate) => keyIs(chunk, candidate, state));
+  if (!name) return;
+
+  await page.keyboard.press(name);
+  const screen = screenBefore(state);
+  await refresh(state, page, { anchor: anchorFor(state) });
+  repaintList(state, page, screen);
+  setStatus(state, `Adjusted "${controlling.item.name}" with ${name}.`);
+}
+
 async function handleFindKey(chunk, state, page) {
   markInput(state);
   const find = state.find;
@@ -2296,9 +2331,10 @@ async function main() {
     col: 0,
     scroll: 0,
     statusMsg: '',
-    // 'browse' | 'choose' | 'type' | 'address' | 'find' | 'auth' | 'keyboard'
+    // 'browse' | 'choose' | 'type' | 'control' | 'address' | 'find' | 'auth' | 'keyboard'
     mode: 'browse',
     typing: null,
+    controlling: null,
     chooser: null,
     address: null,
     find: null,
@@ -2394,6 +2430,7 @@ async function main() {
     const current = state.core.page;
     if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
     else if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
+    else if (state.mode === 'control') result = await handleControlKey(chunk, state, current);
     else if (state.mode === 'address') result = await handleAddressKey(chunk, state, current);
     else if (state.mode === 'find') result = await handleFindKey(chunk, state, current);
     else result = await handleBrowseKey(chunk, state, current);
@@ -2485,7 +2522,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  handleBrowseKey, handleTypeKey, handleAddressKey, handleFindKey,
+  handleBrowseKey, handleTypeKey, handleControlKey, handleAddressKey, handleFindKey,
   findText, runSearch,
   render, drawList, drawAddress, drawHint, moveSelection, moveScreen,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,

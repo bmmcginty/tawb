@@ -147,7 +147,11 @@ since page script is forbidden from reading those roots directly. Only
 controls with a visible box are included. If the browser lays out two visible
 versions, both are retained rather than guessing which one a sighted user
 meant. Native buttons and menu choices — including individual playback speeds
-— remain controls, so Enter or `m` acts on the browser's own item.
+— remain controls, so Enter or `m` acts on the browser's own item. Enter on a
+position or volume slider starts control mode; arrows, Home, End, Page Up and
+Page Down are sent as trusted keys to the focused browser control, and Esc
+returns to reading. This is tested by observing the media element's elapsed
+time change in both engines.
 
 ### Startup, and why it looks worse than it is
 

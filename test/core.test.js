@@ -193,6 +193,19 @@ test('a dropdown becomes lines under its control', async (t) => {
   });
 });
 
+test('a privileged native media slider can be focused for keyboard control', async () => {
+  const item = { role: 'slider', name: 'Position', nativeControl: { media: 0, index: 2 } };
+  let focused = null;
+  const driver = {
+    focusNativeControl: async (scope, given) => { focused = { scope, given }; return true; },
+  };
+  const page = {};
+  const core = new Core({ driver, page, source: 'ax', sources: ['ax'] });
+
+  assert.equal(await core.focusControl(item, page), true);
+  assert.deepEqual(focused, { scope: page, given: item });
+});
+
 test('a privileged native media control can receive the real-click command', async () => {
   let received = null;
   const page = {};

@@ -253,14 +253,28 @@ const PIERCE_CHILD_SCRIPT = `
           walk(win.document);
           return Cu.cloneInto(found, win.wrappedJSObject, { wrapReflectors: true });
         };
-        const pressNative = function (media, index) {
+        const nativeControl = function (media, index) {
           const host = win.document.querySelectorAll('video,audio')[media];
-          if (!host) return false;
+          if (!host) return null;
           let shadow = null;
-          try { shadow = host.openOrClosedShadowRoot; } catch (e) { return false; }
+          try { shadow = host.openOrClosedShadowRoot; } catch (e) { return null; }
           const control = shadow && candidates(shadow)[index];
-          if (!control || !visible(control)) return false;
+          return control && visible(control) ? control : null;
+        };
+        const pressNative = function (media, index) {
+          const control = nativeControl(media, index);
+          if (!control) return false;
           control.click();
+          return true;
+        };
+        const focusNative = function (media, index) {
+          const control = nativeControl(media, index);
+          if (!control) return false;
+          control.focus();
+          // A user-agent shadow root does not expose activeElement back across
+          // its boundary. Finding the visible control and completing focus()
+          // is the strongest answer the privileged side can report; the
+          // trusted key event is the behavioural verification.
           return true;
         };
         // Under a symbol rather than a name, like everything else this
@@ -272,6 +286,8 @@ const PIERCE_CHILD_SCRIPT = `
           Cu.exportFunction(pierce, win.wrappedJSObject);
         win.wrappedJSObject[Symbol.for('tweb.nativeControl')] =
           Cu.exportFunction(pressNative, win.wrappedJSObject);
+        win.wrappedJSObject[Symbol.for('tweb.focusNativeControl')] =
+          Cu.exportFunction(focusNative, win.wrappedJSObject);
       } catch (e) { /* a window we cannot reach; the rest still get it */ }
     }, 'content-document-global-created');
   }

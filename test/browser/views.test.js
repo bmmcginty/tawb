@@ -330,6 +330,22 @@ test('ax view: visible native player controls are rendered', async () => {
   assert.match(text, /\[(?:audio time scrubber|position):/i);
 });
 
+test('ax view: the native time scrubber accepts keyboard control', async () => {
+  await readFixture(MEDIA_PAGE, 'ax');
+  const { driver } = await browser();
+  const blocks = await snapshotFrameTree(fixture.page, 'ax', { driver });
+  const scrubber = blocks.find((block) => block.item
+    && block.item.role === 'slider' && /time scrubber|position/i.test(block.item.name));
+  assert.ok(scrubber, 'the time scrubber is in the buffer');
+
+  const core = new Core({ driver, page: fixture.page, source: 'ax', sources: ['ax'] });
+  assert.equal(await core.focusControl(scrubber.item, fixture.page), true);
+  const before = await fixture.page.evaluate(() => document.querySelector('audio').currentTime);
+  await fixture.page.keyboard.press('ArrowRight');
+  const after = await fixture.page.evaluate(() => document.querySelector('audio').currentTime);
+  assert.notEqual(after, before, 'ArrowRight did not adjust elapsed time');
+});
+
 test('ax view: the native play control operates the player', async () => {
   await readFixture(MEDIA_PAGE, 'ax');
   const { driver } = await browser();

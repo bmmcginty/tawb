@@ -863,6 +863,14 @@ async function openFirefox({
       }, item.nativeControl);
     },
 
+    async focusNativeControl(scope, item) {
+      const target = scope && scope.contextId ? scope : page;
+      return target.evaluate((token) => {
+        const focus = window[Symbol.for('tweb.focusNativeControl')];
+        return typeof focus === 'function' && focus(token.media, token.index);
+      }, item.nativeControl);
+    },
+
     // A click the browser treats as a person's.
     //
     // Everything else here activates through the DOM's own default action,

@@ -1128,6 +1128,26 @@ class Core {
     return this.driver.axElementHandle(scope, item);
   }
 
+  // Put a slider or other adjustable control under the browser's keyboard.
+  // Firefox's native media controls are privileged descriptors rather than
+  // page handles, so its startup helper performs the focus; ordinary page and
+  // Chromium user-agent controls take the normal element route.
+  async focusControl(item, page = this.page) {
+    const scope = item.frame || page;
+    if (item.nativeControl && typeof this.driver.focusNativeControl === 'function') {
+      return this.driver.focusNativeControl(scope, item);
+    }
+    const handle = await withTimeout(
+      this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating control');
+    try {
+      await withTimeout(handle.evaluate((el) => { el.focus(); return true; }),
+        ACTION_TIMEOUT_MS, 'Focusing control');
+      return true;
+    } finally {
+      await handle.dispose().catch(() => {});
+    }
+  }
+
   // The DOM's own default action, rather than a mouse-coordinate click: a
   // blind user has no viewport, and legitimate targets (skip links, visually
   // hidden controls) sit off-screen. The click is still aimed where a mouse
