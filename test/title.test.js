@@ -77,11 +77,15 @@ test('typing in the address bar rewrites its suffix like nano', () => {
 
   state.address.text = 'example.xco';
   state.address.caret += 1;
-  const { text, rows } = capture(() => drawAddress(state, page));
+  const { text, rows } = capture(() => drawAddress(state, page, { edit: true }));
   assert.deepEqual(rows, [], 'typing repainted the complete address row');
   assert.doesNotMatch(text, /\x1b\[2K/, 'typing erased the complete address row');
   assert.doesNotMatch(text, /\x1b\[\d*[@P]/, 'typing shifted terminal cells with ICH or DCH');
-  assert.match(text, /xco\x08\x08/, 'typing did not rewrite and backspace over the suffix');
+  assert.equal(text, 'xco\x08\x08', 'typing was not one nano-style terminal transaction');
+
+  state.address.caret -= 1;
+  assert.equal(capture(() => drawAddress(state, page, { edit: true })).text, '\x08',
+    'moving left used absolute positioning instead of backspace');
 });
 
 test('an unchanged title is not rewritten, because a repaint is re-read', () => {

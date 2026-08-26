@@ -117,25 +117,46 @@ function keyIs(chunk, name, state) {
 // exercise: a terminal screen reader / braille display follows the actual
 // terminal cursor, so it must land on the focused line, and mid-edit on the
 // real caret column.
+let terminalGeneration = 0;
+
+function writeTerminal(text) {
+  terminalGeneration += 1;
+  return process.stdout.write(text);
+}
+
 function moveCursor(row, col) {
-  process.stdout.write(`\x1b[${row};${col}H`);
+  writeTerminal(`\x1b[${row};${col}H`);
 }
 
 // Rewrites a single row in place (move, erase-to-end-of-line, write).
 function writeLine(row, text) {
   moveCursor(row, 1);
-  process.stdout.write('\x1b[2K' + text);
+  writeTerminal('\x1b[2K' + text);
 }
 
-// Changes an actively edited row like nano: overwrite from the first changed
-// cell through the unchanged suffix, clear any stale tail, then backspace over
-// the suffix. Screen readers handle these printable writes and relative cursor
-// movements as typing; terminal ICH/DCH operations can instead make them
-// announce every cell shifted by an insertion or deletion.
-function patchEditedLine(row, before, after) {
+function relativeCursor(cells) {
+  if (cells < 0) return '\b'.repeat(-cells);
+  if (cells > 0) return `\x1b[${cells}C`;
+  return '';
+}
+
+// Changes an actively edited row like nano: one terminal write moves from the
+// old caret, overwrites through the unchanged suffix, clears any stale tail,
+// and returns to the new caret. Keeping the whole transaction together avoids
+// exposing its intermediate screen states to a terminal or screen reader.
+function patchEditedLine(row, before, after, { currentCol = null, finalCol = null } = {}) {
   const oldText = String(before || '');
   const newText = String(after || '');
-  if (oldText === newText) return;
+  const currentKnown = Number.isInteger(currentCol);
+  const finalKnown = Number.isInteger(finalCol);
+
+  if (oldText === newText) {
+    if (!finalKnown || (currentKnown && currentCol === finalCol)) return false;
+    writeTerminal(currentKnown
+      ? relativeCursor(finalCol - currentCol)
+      : `\x1b[${row};${finalCol}H`);
+    return true;
+  }
 
   let prefix = 0;
   while (prefix < oldText.length && prefix < newText.length
@@ -144,21 +165,28 @@ function patchEditedLine(row, before, after) {
   while (suffix < oldText.length - prefix && suffix < newText.length - prefix
     && oldText[oldText.length - 1 - suffix] === newText[newText.length - 1 - suffix]) suffix += 1;
 
-  moveCursor(row, prefix + 1);
-  const tail = newText.slice(prefix);
-  if (tail) process.stdout.write(tail);
-  if (newText.length < oldText.length) process.stdout.write('\x1b[K');
-  if (suffix) process.stdout.write('\b'.repeat(suffix));
+  const startCol = prefix + 1;
+  let output = currentKnown
+    ? relativeCursor(startCol - currentCol)
+    : `\x1b[${row};${startCol}H`;
+  output += newText.slice(prefix);
+  if (newText.length < oldText.length) output += '\x1b[K';
+  output += '\b'.repeat(suffix);
+
+  const naturalCol = newText.length - suffix + 1;
+  if (finalKnown) output += relativeCursor(finalCol - naturalCol);
+  writeTerminal(output);
+  return true;
 }
 
 // DECSTBM: confine scrolling to the list area so the header stays put and a
 // single-line step past an edge costs one new line instead of a repaint.
 function setScrollRegion() {
-  process.stdout.write(`\x1b[${HEADER_ROWS + 1};${HEADER_ROWS + viewportHeight()}r`);
+  writeTerminal(`\x1b[${HEADER_ROWS + 1};${HEADER_ROWS + viewportHeight()}r`);
 }
 
 function resetScrollRegion() {
-  process.stdout.write('\x1b[r');
+  writeTerminal('\x1b[r');
 }
 
 function scrollRegion(direction) {
@@ -166,11 +194,11 @@ function scrollRegion(direction) {
   const bottom = HEADER_ROWS + viewportHeight();
   if (direction > 0) {
     moveCursor(bottom, 1);
-    process.stdout.write('\x1bD'); // IND — scroll up, blank line at bottom
+    writeTerminal('\x1bD'); // IND — scroll up, blank line at bottom
     return bottom;
   }
   moveCursor(top, 1);
-  process.stdout.write('\x1bM'); // RI — scroll down, blank line at top
+  writeTerminal('\x1bM'); // RI — scroll down, blank line at top
   return top;
 }
 
@@ -385,7 +413,7 @@ function addressText(state, page) {
 
 // The address is one line and URLs are routinely longer than the terminal is
 // wide, so it scrolls horizontally around the caret instead of wrapping.
-function drawAddress(state, page, { force = false } = {}) {
+function drawAddress(state, page, { force = false, edit = false } = {}) {
   const label = `[${SOURCE_LABELS[state.core.source]}] `;
   const width = Math.max(10, termSize().cols - label.length);
   const full = addressText(state, page);
@@ -406,17 +434,31 @@ function drawAddress(state, page, { force = false } = {}) {
 
   const rendered = label + view;
   const previous = state.drawn.address;
+  const caretCol = label.length + caretOffset + 1;
+  const previousCaretCol = state.drawn.addressCaretCol;
+  let cursorPlaced = false;
   if (rendered !== previous) {
     state.drawn.address = rendered;
     if (!force && state.mode === 'address' && previous != null) {
-      patchEditedLine(ADDRESS_ROW, previous, rendered);
+      cursorPlaced = patchEditedLine(ADDRESS_ROW, previous, rendered, {
+        currentCol: edit ? previousCaretCol : null,
+        finalCol: caretCol,
+      });
     } else {
       writeLine(ADDRESS_ROW, rendered);
     }
+  } else if (state.mode === 'address' && edit) {
+    cursorPlaced = patchEditedLine(ADDRESS_ROW, rendered, rendered, {
+      currentCol: previousCaretCol,
+      finalCol: caretCol,
+    });
   }
 
   if (state.mode === 'address') {
-    moveCursor(ADDRESS_ROW, label.length + caretOffset + 1);
+    state.drawn.addressCaretCol = caretCol;
+    if (!cursorPlaced) moveCursor(ADDRESS_ROW, caretCol);
+  } else {
+    state.drawn.addressCaretCol = null;
   }
 }
 
@@ -2139,6 +2181,8 @@ async function handleTypeKey(chunk, state, page) {
   markInput(state);
   const t = state.typing;
   if (!t) { state.mode = 'browse'; return; }
+  const oldCaretCol = typingText(state).caretCol;
+  const outputGeneration = terminalGeneration;
 
   if (keyIs(chunk, 'Escape', state)) {
     // Captured while the field is still drawn as it is on screen, so the one
@@ -2193,9 +2237,14 @@ async function handleTypeKey(chunk, state, page) {
   t.caret = info.native ? info.caret : Math.min(Math.max(t.caret, 0), t.text.length);
   const { text, caretCol } = typingText(state);
   const row = lineRow(state, state.cursor);
-  patchEditedLine(row, t.drawn, text);
+  patchEditedLine(row, t.drawn, text, {
+    // Browser editing is asynchronous. Use nano's relative update when no
+    // concurrent refresh touched the terminal, and an absolute start when one
+    // did; either way the complete edit is one write.
+    currentCol: terminalGeneration === outputGeneration ? oldCaretCol : null,
+    finalCol: caretCol,
+  });
   t.drawn = text;
-  moveCursor(row, caretCol);
 }
 
 async function handleControlKey(chunk, state, page) {
@@ -2314,7 +2363,7 @@ async function handleAddressKey(chunk, state, page) {
     a.caret += chunk.length;
   }
 
-  drawAddress(state, page);
+  drawAddress(state, page, { edit: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -2418,7 +2467,7 @@ async function main() {
   setupRawInput();
   const keyReader = new KeyReader(process.stdin);
   state.keyReader = keyReader;
-  process.stdout.write('\x1b[2J');
+  writeTerminal('\x1b[2J');
 
   // Passwords are asked for here rather than in a browser dialog the reader
   // cannot see. Nothing is written down: what the reader types answers this
@@ -2466,7 +2515,7 @@ async function main() {
   process.stdout.on('resize', () => {
     if (state.mode === 'keyboard') return; // the wizard owns its alternate screen
     relayout(state);
-    process.stdout.write('\x1b[2J');
+    writeTerminal('\x1b[2J');
     render(state, state.core.page, { force: true });
   });
 
@@ -2526,7 +2575,7 @@ async function main() {
 function restoreTerminal() {
   resetScrollRegion();
   moveCursor(termSize().rows, 1);
-  process.stdout.write('\n');
+  writeTerminal('\n');
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
 }
 

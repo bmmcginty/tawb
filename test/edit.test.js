@@ -57,8 +57,8 @@ test('an edited field rewrites its suffix like nano', () => {
   const real = process.stdout.write;
   process.stdout.write = (chunk) => { written.push(String(chunk)); return true; };
   try {
-    patchEditedLine(7, '[Search: a]', '[Search: ab]');
-    patchEditedLine(7, '[Search: ab]', '[Search: a]');
+    patchEditedLine(7, '[Search: a]', '[Search: ab]', { currentCol: 11, finalCol: 12 });
+    patchEditedLine(7, '[Search: ab]', '[Search: a]', { currentCol: 12, finalCol: 11 });
   } finally {
     process.stdout.write = real;
   }
@@ -67,8 +67,23 @@ test('an edited field rewrites its suffix like nano', () => {
   assert.doesNotMatch(output, /\x1b\[2K/, 'editing erased the complete field row');
   assert.doesNotMatch(output, /Search/, 'editing rewrote the field label');
   assert.doesNotMatch(output, /\x1b\[\d*[@P]/, 'editing shifted terminal cells with ICH or DCH');
-  assert.match(output, /b\]\x08/, 'insertion did not rewrite and backspace over the suffix');
-  assert.match(output, /\]\x1b\[K\x08/, 'deletion did not rewrite, clear, and backspace over the suffix');
+  assert.deepEqual(written, [
+    'b]\x08',
+    '\x08]\x1b[K\x08',
+  ], 'each edit was not emitted as one nano-style terminal transaction');
+});
+
+test('an edited field keeps its absolute-position fallback in one write', () => {
+  const written = [];
+  const real = process.stdout.write;
+  process.stdout.write = (chunk) => { written.push(String(chunk)); return true; };
+  try {
+    patchEditedLine(7, '[Search: a]', '[Search: ab]', { finalCol: 12 });
+  } finally {
+    process.stdout.write = real;
+  }
+
+  assert.deepEqual(written, ['\x1b[7;11Hb]\x08']);
 });
 
 test('readline kill and delete keys edit an internal prompt', () => {
