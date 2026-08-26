@@ -16,7 +16,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { CdpPage } = require('../src/cdp_page');
+const { CdpPage, CdpKeyboard } = require('../src/cdp_page');
 
 // Enough of a session to be told apart from another one.
 function fakeSession(sessionId) {
@@ -121,6 +121,20 @@ test('a context recorded against a dead session is dropped rather than returned'
   // give up. It must still not return the dead context.
   await assert.rejects(page.contextFor('CHILD'), /never announced a context/);
   assert.strictEqual(page.contexts.has('CHILD'), false);
+});
+
+test('non-text keys use Chromium raw key-down events', async () => {
+  const sent = [];
+  const keyboard = new CdpKeyboard({
+    session: { send: async (method, params) => sent.push({ method, params }) },
+  });
+
+  await keyboard.press('Control+Backspace');
+
+  const target = sent.find((event) => event.params.key === 'Backspace'
+    && event.params.type !== 'keyUp');
+  assert.strictEqual(target.params.type, 'rawKeyDown');
+  assert.strictEqual('text' in target.params, false);
 });
 
 test('waiting for a load state reports its timeout', async () => {

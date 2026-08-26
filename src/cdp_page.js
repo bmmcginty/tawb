@@ -386,7 +386,8 @@ class CdpKeyboard {
       modifiers,
     };
     await this.#send({
-      ...base, type: 'keyDown', ...(text ? { text, unmodifiedText: text } : {}),
+      ...base, type: text ? 'keyDown' : 'rawKeyDown',
+      ...(text ? { text, unmodifiedText: text } : {}),
     });
     await this.#send({ ...base, type: 'keyUp' });
 
