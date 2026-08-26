@@ -43,7 +43,7 @@ as today.
 | Accessibility tree | `ax_own.js` `extractAxItems` | 302 |
 | Visible-content walk (PAGE) | `render_html.js` `extractVisible` | 140 |
 | Mutation observer for live updates | `live.js` `OBSERVER_SCRIPT` | 136 |
-| Markup serialiser (SOURCE) | `source_html.js` `extractSource` | 104 |
+| Markup serialiser (SOURCE) | `source_html.js` `extractSource` | 140 |
 | AX-to-markup pairing (INSPECT) | `inspect_html.js` | 25 |
 | Hit-test check before a real click | `click.js` `prepareRealClick` | 61 |
 | Feed scrolling | `index.js` `SCROLL_TO_BOTTOM` / `RESTORE_SCROLL` | 45 |

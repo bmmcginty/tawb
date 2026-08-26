@@ -311,6 +311,12 @@ for (const view of VIEWS) {
   });
 }
 
+test('source view marks the browser-owned media shadow tree', async () => {
+  const text = await readFixture(MEDIA_PAGE, 'source');
+  assert.match(text, /#user-agent-shadow-root/i);
+  assert.match(text, /<(?:input|button|native-control)/i);
+});
+
 test('inspect view pairs native media semantics with browser-owned markup', async () => {
   const text = await readFixture(MEDIA_PAGE, 'inspect');
   assert.match(text, /(?:audio time scrubber|position).*<(?:input|native-control)/i);

@@ -2,7 +2,7 @@
 
 const { buildBlocks, foldSeparatorBlocks } = require('./blocks');
 const { snapshotRenderBlocks } = require('./render_html');
-const { snapshotSourceBlocks } = require('./source_html');
+const { snapshotSourceBlocks, sourceEntriesToBlocks, extractSource } = require('./source_html');
 const { inspectBlocks } = require('./inspect_html');
 const { log } = require('./log');
 
@@ -40,12 +40,21 @@ function isFrameItem(item) {
   return item && (item.role === 'iframe' || item.tag === 'iframe' || item.tag === 'frame');
 }
 
-// PAGE and SOURCE are plain DOM walks. AX and INSPECT share the driver's
-// accessibility extraction.
+// PAGE is a plain DOM walk. AX and INSPECT share the driver's accessibility
+// extraction, while SOURCE also asks the driver for privileged shadow roots
+// so browser-owned controls do not disappear from its markup.
 async function blocksForFrame(frame, source, driver = null) {
   // SOURCE stays unfolded on purpose: it shows structure, where separator
   // folding would be a lie.
-  if (source === 'source') return snapshotSourceBlocks(frame);
+  if (source === 'source') {
+    if (!driver) return snapshotSourceBlocks(frame);
+    // SOURCE is the explicit inspection view, so completeness is worth the
+    // privileged scan: mark open, closed and browser-owned shadow boundaries
+    // rather than silently stopping at the host.
+    const entries = await readDocument(
+      frame, extractSource, driver, (answer) => !answer || !answer.length, async () => true);
+    return sourceEntriesToBlocks(entries, frame);
+  }
   if (source === 'render') return foldSeparatorBlocks(await snapshotRenderBlocks(frame));
   if (!driver) throw new Error('the AX and INSPECT views need a driver to read accessibility semantics');
   const items = await driver.axItems(frame);

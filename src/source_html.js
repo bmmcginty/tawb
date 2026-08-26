@@ -2,17 +2,13 @@
 
 const { roleForTag } = require('./dom');
 
-// The fourth view: the page's actual markup.
+// The fourth view: the page's live markup.
 //
-// The other three all answer "what does this page say". None answers "what
-// is this page made of", and the HTML view is the one that looks like it
-// should. It does not: it lists tags it considers notable and drops the
-// rest, so `<em>really</em>` in the middle of a sentence appears as the bare
-// word "really" with nothing to say it was emphasised — the tag is gone, and
-// there is no view left that would have shown it.
-//
-// This one serialises the DOM as written: real opening and closing tags,
-// every attribute, text where the text is, indented by depth.
+// AX and INSPECT answer what the page means, and PAGE answers what it visibly
+// says. This answers what it is made of: real opening and closing tags, every
+// attribute, and text where the text sits. Privileged shadow roots are marked
+// explicitly; where Firefox cannot safely expose browser-owned media nodes,
+// honest <native-control> descriptors stand in for them.
 //
 //   <p>
 //     teenagers are just
@@ -42,7 +38,7 @@ const VOID_TAGS = new Set([
 const MAX_LINES = 20000;
 const MAX_ATTR = 120;
 
-function extractSource() {
+function extractSource(options = {}) {
   const OPAQUE = new Set(['script', 'style']);
   const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
     'link', 'meta', 'param', 'source', 'track', 'wbr']);
@@ -52,6 +48,33 @@ function extractSource() {
   const nodes = [];
   window[Symbol.for('tweb.dom')] = nodes;
   const out = [];
+  const privilegedRoots = new Map();
+  const nativeControls = new Map();
+  const remember = (pairs) => {
+    for (const pair of pairs || []) {
+      if (pair && pair[0] && pair[1]) {
+        privilegedRoots.set(pair[0], { root: pair[1], kind: pair[3] || 'closed' });
+      }
+      if (pair && pair[0] && pair[2] && Array.from(pair[2]).length) {
+        nativeControls.set(pair[0], Array.from(pair[2]));
+      }
+    }
+  };
+  remember(options.pairs);
+  if (options.pierce) {
+    const pierce = window[Symbol.for('tweb.pierce')];
+    if (typeof pierce === 'function') {
+      try { remember(pierce()); } catch { /* privileged roots unavailable */ }
+    }
+  }
+  const shadowOf = (el) => {
+    const privileged = privilegedRoots.get(el);
+    if (privileged) return { ...privileged, controls: nativeControls.get(el) || [] };
+    if (nativeControls.has(el)) {
+      return { root: null, controls: nativeControls.get(el), kind: 'user-agent' };
+    }
+    return el.shadowRoot ? { root: el.shadowRoot, kind: 'open' } : null;
+  };
 
   const attrsOf = (el) => {
     const attrs = {};
@@ -75,7 +98,7 @@ function extractSource() {
   // Whether everything inside is text, so the element fits on one line. A
   // shadow host never does: it has a whole second tree to show.
   const textOnly = (el) => {
-    if (el.shadowRoot) return false;
+    if (shadowOf(el)) return false;
     for (const child of el.childNodes) {
       if (child.nodeType === Node.ELEMENT_NODE) return false;
     }
@@ -115,9 +138,20 @@ function extractSource() {
     // view shows what is there rather than a flattened impression of it. The
     // light children still follow, where they are written; what the browser
     // renders in their place is the shadow tree's <slot>s.
-    if (el.shadowRoot) {
-      out.push({ kind: 'text', depth: depth + 1, text: '#shadow-root' });
-      for (const child of el.shadowRoot.childNodes) {
+    const shadow = shadowOf(el);
+    if (shadow) {
+      out.push({ kind: 'text', depth: depth + 1, text: `#${shadow.kind}-shadow-root` });
+      for (const control of shadow.controls || []) {
+        if (out.length >= LIMIT) break;
+        const attrs = { role: control.role, name: control.name };
+        if (control.value) attrs.value = control.value;
+        out.push({
+          kind: 'element', tag: 'native-control', attrs, depth: depth + 2,
+          index: nodes.length, text: `${openTag('native-control', attrs)}</native-control>`,
+        });
+        nodes.push(el);
+      }
+      for (const child of shadow.root && !(shadow.controls || []).length ? shadow.root.childNodes : []) {
         if (out.length >= LIMIT) break;
         if (child.nodeType === Node.TEXT_NODE) {
           const text = textOf(child);
@@ -158,10 +192,7 @@ function extractSource() {
 // The tags say what the indentation would have: every element opens and
 // closes on its own line unless it fits on one.
 
-async function snapshotSourceBlocks(target) {
-  const frame = typeof target.mainFrame === 'function' ? target.mainFrame() : target;
-  const entries = await target.evaluate(extractSource);
-
+function sourceEntriesToBlocks(entries, frame) {
   return entries.map((entry) => {
     const { text } = entry;
     if (entry.kind === 'element') {
@@ -186,6 +217,12 @@ async function snapshotSourceBlocks(target) {
   }).filter((b) => b.text.trim());
 }
 
+async function snapshotSourceBlocks(target) {
+  const frame = typeof target.mainFrame === 'function' ? target.mainFrame() : target;
+  return sourceEntriesToBlocks(await target.evaluate(extractSource), frame);
+}
+
 module.exports = {
-  snapshotSourceBlocks, extractSource, OPAQUE_TAGS, VOID_TAGS, MAX_LINES, MAX_ATTR,
+  snapshotSourceBlocks, sourceEntriesToBlocks, extractSource,
+  OPAQUE_TAGS, VOID_TAGS, MAX_LINES, MAX_ATTR,
 };

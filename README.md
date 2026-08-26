@@ -386,7 +386,7 @@ of the address line.
 | `[AX]`      | The accessibility tree — what a screen reader sees.                  |
 | `[PAGE]`    | Visible text derived from the DOM, for when the AX tree is wrong.    |
 | `[INSPECT]` | Each AX item beside the element or native control that produced it.  |
-| `[SOURCE]`  | The markup itself, as written, tag by tag.                           |
+| `[SOURCE]`  | The live markup, tag by tag, including privileged shadow trees.      |
 
 The views disagree more than you would hope. `INSPECT` makes that disagreement
 concrete rather than asking the reader to align two unrelated lists. A native
@@ -437,9 +437,10 @@ click kept being refused.
 
 Now `## We care about your privacy` and `[*Accept all]` are in all four
 views, `Enter` dismisses the dialog, and `m` reaches the play button behind
-it. `SOURCE` marks the boundary with a `#shadow-root` line and shows the
-shadow tree there, then the light children where they are written, since that
-view answers what is *there* rather than what is rendered in whose place.
+it. `SOURCE` marks boundaries as `#open-shadow-root`, `#closed-shadow-root`
+or `#user-agent-shadow-root`. Chromium supplies actual browser-owned markup;
+Firefox supplies explicit `<native-control>` descriptors where its internal
+nodes cannot safely cross the privilege boundary.
 
 `SOURCE` is not indented, deliberately. Leading spaces shift every line
 sideways, and a reader who cannot see the shape of the indentation pays the
