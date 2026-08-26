@@ -5,6 +5,7 @@ const assert = require('node:assert');
 
 const { Keymap } = require('../src/keys');
 const { editAction, applyBufferEdit } = require('../src/edit');
+const { patchEditedLine } = require('../src/index');
 
 const keys = new Keymap({ terminfo: {}, load: false });
 
@@ -49,6 +50,24 @@ test('readline word movement and deletion edits an internal prompt', () => {
   assert.deepEqual(buffer, { text: 'alpha gamma', caret: 6 });
   press(buffer, '\x1bd'); // Alt+D
   assert.deepEqual(buffer, { text: 'alpha ', caret: 6 });
+});
+
+test('an edited field inserts and deletes without repainting its row', () => {
+  const written = [];
+  const real = process.stdout.write;
+  process.stdout.write = (chunk) => { written.push(String(chunk)); return true; };
+  try {
+    patchEditedLine(7, '[Search: a]', '[Search: ab]');
+    patchEditedLine(7, '[Search: ab]', '[Search: a]');
+  } finally {
+    process.stdout.write = real;
+  }
+
+  const output = written.join('');
+  assert.doesNotMatch(output, /\x1b\[2K/, 'editing erased the complete field row');
+  assert.doesNotMatch(output, /Search/, 'editing rewrote the field label');
+  assert.match(output, /\x1b\[1@b/, 'the typed character was not inserted alone');
+  assert.match(output, /\x1b\[1P/, 'backspace did not delete one terminal cell');
 });
 
 test('readline kill and delete keys edit an internal prompt', () => {

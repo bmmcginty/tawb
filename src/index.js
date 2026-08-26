@@ -127,6 +127,37 @@ function writeLine(row, text) {
   process.stdout.write('\x1b[2K' + text);
 }
 
+// Changes only the cells that differ on an actively edited row. Rewriting the
+// row for each character makes a screen reader announce the label and the
+// whole value again. Terminal insert/delete-character operations preserve the
+// unchanged suffix, so ordinary typing emits the new character and nothing
+// else; deletions likewise remove cells without repainting their neighbours.
+function patchEditedLine(row, before, after) {
+  const oldText = String(before || '');
+  const newText = String(after || '');
+  if (oldText === newText) return;
+
+  let prefix = 0;
+  while (prefix < oldText.length && prefix < newText.length
+    && oldText[prefix] === newText[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < oldText.length - prefix && suffix < newText.length - prefix
+    && oldText[oldText.length - 1 - suffix] === newText[newText.length - 1 - suffix]) suffix += 1;
+
+  const removed = oldText.length - prefix - suffix;
+  const inserted = newText.slice(prefix, newText.length - suffix);
+  moveCursor(row, prefix + 1);
+  if (removed === inserted.length) {
+    if (inserted) process.stdout.write(inserted);
+    return;
+  }
+  if (removed) process.stdout.write(`\x1b[${removed}P`); // DCH
+  if (inserted) {
+    process.stdout.write(`\x1b[${inserted.length}@`); // ICH
+    process.stdout.write(inserted);
+  }
+}
+
 // DECSTBM: confine scrolling to the list area so the header stays put and a
 // single-line step past an edge costs one new line instead of a repaint.
 function setScrollRegion() {
@@ -381,9 +412,15 @@ function drawAddress(state, page, { force = false } = {}) {
   }
 
   const rendered = label + view;
-  if (!force && rendered === state.drawn.address) return;
-  state.drawn.address = rendered;
-  writeLine(ADDRESS_ROW, rendered);
+  const previous = state.drawn.address;
+  if (rendered !== previous) {
+    state.drawn.address = rendered;
+    if (!force && state.mode === 'address' && previous != null) {
+      patchEditedLine(ADDRESS_ROW, previous, rendered);
+    } else {
+      writeLine(ADDRESS_ROW, rendered);
+    }
+  }
 
   if (state.mode === 'address') {
     moveCursor(ADDRESS_ROW, label.length + caretOffset + 1);
@@ -460,7 +497,7 @@ function parkCursor(state) {
     return;
   }
   if (state.mode === 'address') {
-    drawAddress(state, state.core.page, { force: true });
+    drawAddress(state, state.core.page);
     return;
   }
   if (state.mode === 'find') {
@@ -1799,9 +1836,10 @@ async function activateCurrent(state, page) {
       await withTimeout(handle.evaluate((el) => el.focus()), ACTION_TIMEOUT_MS, 'Focusing field');
       const info = await readFieldState(handle);
       state.mode = 'type';
-      state.typing = { handle, item, text: info.text, caret: info.caret };
+      state.typing = { handle, item, text: info.text, caret: info.caret, drawn: null };
       drawHint(state);
-      writeLine(lineRow(state, state.cursor), typingText(state).text);
+      state.typing.drawn = typingText(state).text;
+      writeLine(lineRow(state, state.cursor), state.typing.drawn);
       setStatus(state, `Typing into "${item.name}" — Esc to stop, Enter to submit.`);
       return;
     }
@@ -2162,7 +2200,8 @@ async function handleTypeKey(chunk, state, page) {
   t.caret = info.native ? info.caret : Math.min(Math.max(t.caret, 0), t.text.length);
   const { text, caretCol } = typingText(state);
   const row = lineRow(state, state.cursor);
-  writeLine(row, text);
+  patchEditedLine(row, t.drawn, text);
+  t.drawn = text;
   moveCursor(row, caretCol);
 }
 
@@ -2282,7 +2321,7 @@ async function handleAddressKey(chunk, state, page) {
     a.caret += chunk.length;
   }
 
-  drawAddress(state, page, { force: true });
+  drawAddress(state, page);
 }
 
 // ---------------------------------------------------------------------------
@@ -2555,7 +2594,7 @@ if (require.main === module) {
 module.exports = {
   handleBrowseKey, handleTypeKey, handleControlKey, handleAddressKey, handleFindKey,
   findText, runSearch,
-  render, drawList, drawAddress, drawHint, moveSelection, moveScreen,
+  render, drawList, drawAddress, drawHint, patchEditedLine, moveSelection, moveScreen,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,
   clickAsHuman, reportAfterAction,
