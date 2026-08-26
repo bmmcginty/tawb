@@ -383,6 +383,16 @@ class FirefoxPage {
     return null;
   }
 
+  async stopLoading() {
+    try {
+      await this.session.send('browsingContext.stopLoading', {
+        context: this.contextId,
+      }, { timeout: 2000 });
+    } finally {
+      this._loading = false;
+    }
+  }
+
   // Waits for a navigation that an action may have started.
   //
   // Doing nothing here was a real bug rather than a missing nicety: activation

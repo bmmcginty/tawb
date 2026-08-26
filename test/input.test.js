@@ -88,6 +88,26 @@ test('the end of the stream answers everyone still waiting for a key', async () 
   reader.close();
 });
 
+test('an operation winning a key race does not steal the next key', async () => {
+  const stream = new PassThrough();
+  const reader = new KeyReader(stream, { escapeMs: 5 });
+  const outcome = await reader.nextOr(Promise.resolve('loaded'));
+  assert.deepEqual(outcome, { value: 'loaded' });
+
+  stream.write('j');
+  assert.equal(await reader.next(), 'j');
+  reader.close();
+});
+
+test('a key can interrupt an operation', async () => {
+  const stream = new PassThrough();
+  const reader = new KeyReader(stream, { escapeMs: 5 });
+  const waiting = reader.nextOr(new Promise(() => {}));
+  stream.write('x');
+  assert.deepEqual(await waiting, { key: 'x' });
+  reader.close();
+});
+
 test('a reader that has been closed answers rather than hanging', async () => {
   const stream = new PassThrough();
   const reader = new KeyReader(stream, { escapeMs: 5 });

@@ -329,6 +329,31 @@ async function navigate(page, url) {
   }
 }
 
+// Address-bar navigation must not own the keyboard for an entire protocol
+// timeout. Keep consuming input while it is pending, and let Escape ask the
+// engine to stop without waiting for that request or the original command to
+// answer. navigate() observes the eventual outcome, while the external-
+// navigation watcher refreshes any document that did manage to replace ours.
+async function navigateInterruptibly(state, page, url) {
+  const pending = navigate(page, url);
+  if (!state.keyReader || typeof state.keyReader.nextOr !== 'function') return pending;
+
+  for (;;) {
+    const outcome = await state.keyReader.nextOr(pending);
+    if (Object.hasOwn(outcome, 'value')) return outcome.value;
+
+    const chunk = outcome.key;
+    markInput(state);
+    if (chunk !== EOF && !keyIs(chunk, 'Escape', state)) continue;
+
+    if (typeof page.stopLoading === 'function') {
+      try { Promise.resolve(page.stopLoading()).catch(() => {}); } catch { /* already gone */ }
+    }
+    log('navigate.cancelled', { url: String(url).slice(0, 120), eof: chunk === EOF });
+    return { ok: false, fault: null, cancelled: true };
+  }
+}
+
 function addressText(state, page) {
   if (state.mode === 'address') return state.address.text;
   return page.url();
@@ -2228,7 +2253,13 @@ async function handleAddressKey(chunk, state, page) {
       state.credentials.remember({ url }, { username, password: password || '' });
     }
     await rememberCurrentHistoryPlace(state, page);
-    const went = await navigate(page, url);
+    setStatus(state, `Loading ${url} — Esc: stop.`);
+    const went = await navigateInterruptibly(state, page, url);
+    if (went.cancelled) {
+      render(state, page, { force: true });
+      setStatus(state, `Stopped loading ${url}.`);
+      return;
+    }
     // Read the tab whether or not the navigation succeeded: a refusal leaves
     // the browser's own warning page in it, and that page is where the reader
     // finds out why and how to go on anyway.
@@ -2537,6 +2568,6 @@ module.exports = {
   switchToTab, focusAddressBar, openNewTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, parseArgs, onExternalNavigation, readTitle, drawTitle,
-  navigate, navigationFault, settleAfterFault,
+  navigate, navigateInterruptibly, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
 };

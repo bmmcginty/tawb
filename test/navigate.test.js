@@ -11,7 +11,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { navigate, navigationFault, settleAfterFault } = require('../src/index');
+const {
+  navigate, navigateInterruptibly, navigationFault, settleAfterFault,
+} = require('../src/index');
 
 test('the engine\'s own name for the fault is picked out of a developer message', () => {
   assert.equal(
@@ -56,6 +58,23 @@ test('a navigation that fails is reported, not thrown', async () => {
 
   const fine = { goto: async () => null };
   assert.deepEqual(await navigate(fine, 'https://y/'), { ok: true, fault: null });
+});
+
+test('Escape stops waiting for an address navigation', async () => {
+  let stopped = false;
+  const page = {
+    goto: () => new Promise((resolve) => setTimeout(resolve, 100)),
+    stopLoading: async () => { stopped = true; },
+  };
+  const state = {
+    keyReader: { nextOr: async () => ({ key: '\x1b' }) },
+  };
+
+  const started = Date.now();
+  const went = await navigateInterruptibly(state, page, 'https://slow.example/');
+  assert.equal(went.cancelled, true);
+  assert.equal(stopped, true);
+  assert.ok(Date.now() - started < 50, 'Escape waited for the navigation timeout');
 });
 
 // A core whose page becomes readable only after `readableAfter` scans, which

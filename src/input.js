@@ -144,6 +144,30 @@ class KeyReader {
     return new Promise((resolve) => this.waiters.push({ owner, resolve }));
   }
 
+  // Wait for either a key or an operation to finish. Unlike a bare
+  // Promise.race with next(), this removes the key waiter when the operation
+  // wins, so the next key cannot disappear into an abandoned promise.
+  nextOr(operation, owner = null) {
+    const completed = Promise.resolve(operation).then((value) => ({ value }));
+    let waiter = null;
+    let key;
+    if (owner === this.owner && this.keys.length) {
+      key = Promise.resolve({ key: this.keys.shift() });
+    } else if (this.ended) {
+      key = Promise.resolve({ key: EOF });
+    } else {
+      key = new Promise((resolve) => {
+        waiter = { owner, resolve: (pressed) => resolve({ key: pressed }) };
+        this.waiters.push(waiter);
+      });
+    }
+    return Promise.race([completed, key]).finally(() => {
+      if (!waiter) return;
+      const at = this.waiters.indexOf(waiter);
+      if (at >= 0) this.waiters.splice(at, 1);
+    });
+  }
+
   close() {
     if (this.escapeTimer) clearTimeout(this.escapeTimer);
     // Deliberate teardown ends the stream as far as this reader is concerned,

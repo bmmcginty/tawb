@@ -675,6 +675,10 @@ class CdpPage {
     return null;
   }
 
+  async stopLoading() {
+    await this.session.send('Page.stopLoading', {}, { timeout: 2000 });
+  }
+
   async goBack({ waitUntil = 'load', timeout = this.navigationTimeout } = {}) {
     const history = await this.session.send('Page.getNavigationHistory');
     const previous = history.entries[history.currentIndex - 1];
