@@ -8,7 +8,9 @@ const cdpBrowser = require('./cdp_browser');
 const {
   readEndpointRecord, writeEndpointRecord, endpointReady, runningEndpoint, portOfEndpoint, freePort,
 } = require('./endpoint');
-const { killProcessGroup } = require('./proc');
+const {
+  killProcessGroup, requireBrowserUser, watchChildStartup, browserStartupError,
+} = require('./proc');
 const { recordBrowser, sweepStrandedBrowsers } = require('./registry');
 
 // Getting hold of a browser to read.
@@ -115,6 +117,7 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
     );
   }
 
+  requireBrowserUser(found.name);
   fs.mkdirSync(profileDir, { recursive: true });
 
   // Before starting another one, take down any left behind by sessions that
@@ -150,31 +153,32 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   // Detached, so the browser leads a process group of its own. That is the
   // only handle that reaches all of it: with no display the command above is
   // xvfb-run, and the browser is that shell's child rather than ours.
-  const child = spawn(command, args, { stdio: 'ignore', detached: true });
+  const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'], detached: true });
+  const startup = watchChildStartup(child);
   child.unref();
-  child.on('error', () => { /* surfaced by the readiness check below */ });
 
-  // A browser that hands off to another instance exits straight away. Notice
-  // that rather than waiting out the full timeout for a port that will never
-  // open, and say what actually happened.
-  let exitedEarly = false;
-  child.on('exit', () => { exitedEarly = true; });
-
+  // Stop waiting when the process exits, but do not guess why. A profile clash
+  // is only one possible quick exit; the browser's own stderr is the evidence.
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
   let ready = false;
   while (Date.now() < deadline) {
     if (await endpointReady(port)) { ready = true; break; }
-    if (exitedEarly) break;
+    if (startup.closed) break;
     await new Promise((r) => setTimeout(r, 200));
   }
 
   if (!ready) {
     killProcessGroup(child.pid);
-    throw new Error(exitedEarly
-      ? `${found.name} exited immediately: another browser is already using ${profileDir}. `
-        + 'Close it, or use --connect to attach to it.'
-      : `${found.name} did not open a debugging port within ${STARTUP_TIMEOUT_MS / 1000}s`);
+    throw browserStartupError({
+      name: found.name,
+      executable: found.executable,
+      profileDir,
+      port,
+      timeoutMs: STARTUP_TIMEOUT_MS,
+      state: startup,
+    });
   }
+  startup.unref();
 
   writeEndpointRecord(profileDir, { port, pid: child.pid, startedAt: Date.now() });
   recordBrowser({ pid: child.pid, port, profileDir, engine: 'chromium' });

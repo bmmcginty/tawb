@@ -93,4 +93,75 @@ function anyProcessUsing(target) {
   return processesUsing(target).length > 0;
 }
 
-module.exports = { processAlive, killProcessGroup, processesUsing, anyProcessUsing };
+// Browsers deliberately refuse to use their sandbox as root. Chromium's own
+// suggestion is --no-sandbox, but silently taking it would turn a confusing
+// startup failure into an unsafe browser. Say what to do before launching it.
+function requireBrowserUser(name, getuid = process.getuid) {
+  if (typeof getuid !== 'function' || getuid() !== 0) return;
+  throw new Error(
+    `TAWB will not launch ${name} as root because its security sandbox cannot run safely that way. `
+    + 'Run TAWB from a normal user account; --no-sandbox is intentionally not used.',
+  );
+}
+
+// Keep the browser's own explanation of a startup failure. This used to be
+// discarded, after which every quick exit was guessed to be a profile clash —
+// including Chromium's very explicit refusal to run as root. The stream is
+// drained for the child's lifetime so a noisy browser cannot block on a full
+// pipe, but only its bounded tail is retained.
+function watchChildStartup(child, limit = 8192) {
+  const state = {
+    exited: false, closed: false, code: null, signal: null, error: null, stderr: '',
+  };
+  if (child.stderr) {
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => {
+      state.stderr = (state.stderr + chunk).slice(-limit);
+    });
+    // Keep the pipe referenced until startup finishes, or Node can leave
+    // before its final data events. Once the browser is ready it may outlive
+    // the reader, so the launcher releases this handle explicitly.
+    state.unref = () => {
+      if (typeof child.stderr.unref === 'function') child.stderr.unref();
+    };
+  }
+  child.once('error', (err) => { state.error = err; state.exited = true; });
+  child.once('exit', (code, signal) => {
+    state.exited = true;
+    state.code = code;
+    state.signal = signal;
+  });
+  // exit can precede the last stderr data event. Read the diagnosis only once
+  // close says all of the child's stdio has been drained.
+  child.once('close', () => { state.closed = true; });
+  if (!state.unref) state.unref = () => {};
+  return state;
+}
+
+function compactDiagnostic(value, limit = 1200) {
+  return String(value || '')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(-limit);
+}
+
+function browserStartupError({ name, executable, profileDir, port, timeoutMs, state }) {
+  let reason;
+  if (state.error) reason = `could not be started: ${state.error.message}`;
+  else if (state.exited && state.signal) reason = `was killed by ${state.signal} before it was ready`;
+  else if (state.exited) reason = `exited with status ${state.code ?? 'unknown'} before it was ready`;
+  else reason = `did not open debugging port ${port} within ${timeoutMs / 1000}s`;
+
+  const diagnostic = compactDiagnostic(state.stderr);
+  return new Error(
+    `${name} ${reason}. Executable: ${executable}. Profile: ${profileDir}.`
+    + (diagnostic ? ` Browser said: ${diagnostic}` : ''),
+  );
+}
+
+module.exports = {
+  processAlive, killProcessGroup, processesUsing, anyProcessUsing,
+  requireBrowserUser, watchChildStartup, compactDiagnostic, browserStartupError,
+};

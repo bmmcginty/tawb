@@ -8,7 +8,9 @@ const path = require('path');
 const {
   writeEndpointRecord, readEndpointRecord, runningEndpoint, waitForEndpoint, freePort,
 } = require('./endpoint');
-const { killProcessGroup } = require('./proc');
+const {
+  killProcessGroup, requireBrowserUser, watchChildStartup, browserStartupError,
+} = require('./proc');
 const { recordBrowser, sweepStrandedBrowsers } = require('./registry');
 
 // Getting hold of a Firefox that is not pretending to be a robot.
@@ -436,6 +438,7 @@ async function launchFirefox({
     );
   }
 
+  requireBrowserUser(found.name);
   fs.mkdirSync(profileDir, { recursive: true });
 
   // Before starting another one, take down any left behind by sessions that
@@ -486,27 +489,33 @@ async function launchFirefox({
   // or the reader crashing. It is still killed explicitly on a clean exit
   // unless --keep-browser asked for it to stay, in which case the next session
   // rejoins it instead of waiting four seconds for a cold start.
-  const child = spawn(command, spawnArgs, { stdio: 'ignore', detached: true });
+  const child = spawn(command, spawnArgs, {
+    stdio: ['ignore', 'ignore', 'pipe'], detached: true,
+  });
+  const startup = watchChildStartup(child);
   child.unref();
-  child.on('error', () => { /* surfaced by the readiness check */ });
-  let exitedEarly = false;
-  child.on('exit', () => { exitedEarly = true; });
 
   const spawnedAt = Date.now();
   const deadline = spawnedAt + STARTUP_TIMEOUT_MS;
   let ready = false;
   while (Date.now() < deadline) {
     if (await portOpen(port)) { ready = true; break; }
-    if (exitedEarly) break;
+    if (startup.closed) break;
     await new Promise((r) => setTimeout(r, 200));
   }
   const portMs = Date.now() - spawnedAt;
   if (!ready) {
     killProcessGroup(child.pid);
-    throw new Error(exitedEarly
-      ? `${found.name} exited immediately: another Firefox may be using ${profileDir}.`
-      : `${found.name} did not open a debugging port within ${STARTUP_TIMEOUT_MS / 1000}s`);
+    throw browserStartupError({
+      name: found.name,
+      executable: found.executable,
+      profileDir,
+      port,
+      timeoutMs: STARTUP_TIMEOUT_MS,
+      state: startup,
+    });
   }
+  startup.unref();
 
   writeEndpointRecord(profileDir, {
     port, marionettePort, pid: child.pid, startedAt: Date.now(),

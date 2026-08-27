@@ -12,7 +12,10 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { spawn } = require('node:child_process');
 
-const { processAlive, killProcessGroup, processesUsing, anyProcessUsing } = require('../src/proc');
+const {
+  processAlive, killProcessGroup, processesUsing, anyProcessUsing,
+  requireBrowserUser, watchChildStartup, compactDiagnostic, browserStartupError,
+} = require('../src/proc');
 
 // A shell holding a long-running child, in a process group of its own. Resolves
 // once the grandchild has announced its pid, so both are known to be running.
@@ -110,4 +113,46 @@ test('a path a running process names is seen as in use', async () => {
 test('asking about nothing is not asking about everything', () => {
   assert.deepEqual(processesUsing(''), [], 'an empty path matched processes');
   assert.equal(anyProcessUsing(null), false);
+});
+
+// Browser startup diagnostics have to survive the launcher. Without these,
+// Chromium's root refusal was discarded and then misreported as a profile
+// conflict, sending the user towards a directory that was not the problem.
+
+test('launching a browser as root is refused without disabling its sandbox', () => {
+  assert.throws(
+    () => requireBrowserUser('chromium', () => 0),
+    /will not launch chromium as root.*normal user account.*--no-sandbox/i,
+  );
+  assert.doesNotThrow(() => requireBrowserUser('chromium', () => 1000));
+});
+
+test('a browser exit reports its status and bounded stderr instead of guessing', async () => {
+  const child = spawn('sh', ['-c', 'printf "first line\\nreal failure\\n" >&2; exit 23'], {
+    stdio: ['ignore', 'ignore', 'pipe'], detached: true,
+  });
+  const startup = watchChildStartup(child);
+  await new Promise((resolve) => child.once('close', resolve));
+
+  const err = browserStartupError({
+    name: 'test-browser', executable: '/bin/test-browser', profileDir: '/tmp/profile',
+    port: 9123, timeoutMs: 25000, state: startup,
+  });
+  assert.match(err.message, /exited with status 23/);
+  assert.match(err.message, /Executable: \/bin\/test-browser/);
+  assert.match(err.message, /Profile: \/tmp\/profile/);
+  assert.match(err.message, /Browser said: first line real failure/);
+  assert.doesNotMatch(err.message, /another browser|profile (?:clash|conflict)/i);
+});
+
+test('a browser timeout identifies its port and keeps diagnostics readable', () => {
+  const stderr = `ignored-${'x'.repeat(9000)}\n\x1b[31mremote agent unavailable\x1b[0m\n`;
+  assert.equal(compactDiagnostic(stderr, 24), 'remote agent unavailable');
+
+  const err = browserStartupError({
+    name: 'firefox', executable: '/usr/bin/firefox', profileDir: '/tmp/firefox-profile',
+    port: 9333, timeoutMs: 45000,
+    state: { exited: false, code: null, signal: null, error: null, stderr: '' },
+  });
+  assert.match(err.message, /did not open debugging port 9333 within 45s/);
 });
