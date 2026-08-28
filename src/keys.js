@@ -57,6 +57,15 @@ const ACTIONS = [
   ['edit-kill-start', 'Delete to start while editing', ['Ctrl+U']],
   ['edit-kill-end', 'Delete to end while editing', ['Ctrl+K']],
   ['new-tab', 'New tab', ['Ctrl+T']],
+  // The browser's own lists. Chrome and Firefox reach these with Ctrl+H,
+  // Ctrl+J and Ctrl+Shift+O, and two of those three cannot exist in a
+  // terminal: Ctrl+H is Backspace and Ctrl+J is Enter, and both are bytes a
+  // terminal has spent since before there were browsers. Ctrl+Shift+O arrives
+  // as plain Ctrl+O and is kept; the other two become the Alt keys of the
+  // same letters, which is as near as the terminal allows.
+  ['bookmarks', 'Bookmarks', ['Ctrl+O']],
+  ['history', 'History', ['Alt+H']],
+  ['downloads', 'Downloads', ['Alt+J']],
   ['next-tab', 'Next tab', ['>']],
   ['previous-tab', 'Previous tab', ['<']],
   ['close-tab', 'Close tab', ['Shift+F4']],

@@ -20,6 +20,7 @@ const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
 const { Credentials, describeChallenge, splitCredentials } = require('./auth');
+const { entryLine, matches, KIND_LABELS } = require('./library');
 
 // --connect <port|host:port|url> attaches to a browser that is already
 // running with --remote-debugging-port, rather than launching one.
@@ -215,9 +216,16 @@ function currentLine(state) {
   return state.lines[state.cursor] || null;
 }
 
+// The blocks the screen is showing. Ordinarily the page's, but while one of
+// the browser's own lists is open it is that list: the buffer on screen is no
+// longer the tab, and everything that reads lines has to agree about which.
+function activeBlocks(state) {
+  return state.library ? state.library.blocks : state.core.blocks;
+}
+
 function currentBlock(state) {
   const line = currentLine(state);
-  return line ? state.core.blocks[line.blockIndex] : null;
+  return line ? activeBlocks(state)[line.blockIndex] : null;
 }
 
 function itemUnderCursor(state) {
@@ -255,12 +263,17 @@ function clampScroll(state) {
 // worst a stale answer can cost is one refused text patch.
 function syncCursor(state) {
   if (!state.core) return;
+  // A block index only means something to the core while the buffer is the
+  // page. With a list of bookmarks on screen, line 12 is the twelfth
+  // bookmark, and telling the core the reader is standing on the page's
+  // twelfth block would let a text patch land where they are not.
+  if (state.library) return;
   const line = state.lines[state.cursor];
   state.core.at(line ? line.blockIndex : -1);
 }
 
 function relayout(state) {
-  state.lines = layoutLines(state.core.blocks, contentWidth());
+  state.lines = layoutLines(activeBlocks(state), contentWidth());
   if (state.cursor >= state.lines.length) state.cursor = Math.max(state.lines.length - 1, 0);
   clampCol(state);
   clampScroll(state);
@@ -469,6 +482,9 @@ function hintText(state) {
   if (state.mode === 'control') return 'Control — arrows adjust  Home/End  Esc: stop';
   if (state.mode === 'find') return 'Find — Enter: search  Esc: cancel';
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
+  if (state.mode === 'library') {
+    return `${state.library.label} — type: filter  Enter: open  Esc: close`;
+  }
   if (state.mode === 'auth') {
     const { challenge, refused } = state.auth;
     return `${refused ? 'Password refused. ' : ''}Sign in to ${describeChallenge(challenge)}`
@@ -1737,6 +1753,10 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'history-back') return moveInHistory(state, page, -1);
   if (action === 'history-forward') return moveInHistory(state, page, 1);
 
+  if (action === 'bookmarks') return openLibrary(state, page, 'bookmarks');
+  if (action === 'history') return openLibrary(state, page, 'history');
+  if (action === 'downloads') return openLibrary(state, page, 'downloads');
+
   if (action === 'new-tab') return openNewTab(state);
   if (action === 'next-tab') return cycleTab(state, 1);
   if (action === 'previous-tab') return cycleTab(state, -1);
@@ -2178,6 +2198,159 @@ function refilter(state, page, filter) {
     : `${shown} choice${shown === 1 ? '' : 's'}.`);
 }
 
+// ---------------------------------------------------------------------------
+// The browser's own lists: bookmarks, history, downloads
+//
+// These are not pages, so they are not read like one. src/library.js takes
+// them out of the profile the browser is using, and what arrives here is a
+// list of entries that becomes a buffer of its own — the same lines, cursor
+// and wrapping as everything else, so a braille display tracks a bookmark
+// exactly as it tracks a paragraph.
+//
+// It borrows the dropdown's shape rather than the page's, because that is
+// what a list of a thousand addresses needs: typing filters instead of
+// jumping, since a reader looking for a page they saw yesterday knows a word
+// of its title and not its position. The tab underneath is left alone and
+// live rebuilds are held, so closing the list puts the reader back on the
+// page they were reading, where they were reading it.
+// ---------------------------------------------------------------------------
+
+function libraryStatus(state) {
+  const { rows, blocks, filter, empty } = state.library;
+  if (empty) return filter ? `Nothing matching "${filter}".` : 'Nothing here yet.';
+  if (filter) return `${blocks.length} of ${rows.length} matching "${filter}".`;
+  return `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} — type to filter.`;
+}
+
+// Rebuilds the buffer from whatever the filter now admits. The reader is put
+// at the top: after a keystroke that changed which entries exist, the line
+// they were on is not the line they would be on, and staying at an index is
+// staying nowhere in particular.
+function showLibrary(state, page, filter) {
+  const lib = state.library;
+  lib.filter = filter;
+  lib.blocks = lib.rows
+    .filter((row) => matches(row.text, filter))
+    .map((row) => ({ text: row.text, item: { role: 'link', name: row.text }, entry: row.entry }));
+  lib.empty = lib.blocks.length === 0;
+  if (lib.empty) {
+    lib.blocks = [{ text: libraryStatus(state), item: null, entry: null }];
+  }
+  state.cursor = 0;
+  state.col = 0;
+  state.scroll = 0;
+  relayout(state);
+  render(state, page, { force: true });
+  setStatus(state, libraryStatus(state));
+}
+
+async function openLibrary(state, page, kind) {
+  const label = KIND_LABELS[kind];
+  // Asking costs a round trip and, on Chromium, a tab of the browser's own
+  // that has to load first. Say so: silence is the one thing a reader cannot
+  // interpret.
+  setStatus(state, `Reading ${label.toLowerCase()}…`);
+
+  const startedAt = Date.now();
+  let entries;
+  try {
+    entries = await state.driver.readLibrary(kind, page);
+  } catch (err) {
+    const reason = String(err.message || err).split('\n')[0];
+    log('library.error', { kind, engine: state.driver.name, error: reason.slice(0, 200) });
+    setStatus(state, `Could not read ${label.toLowerCase()}: ${reason}`);
+    return;
+  }
+
+  // Hold live rebuilds for the same reason the dropdown does: a refresh would
+  // replace the buffer, and the buffer is not the page's any more.
+  state.core.live.refreshing = true;
+  state.mode = 'library';
+  const now = Date.now();
+  state.library = {
+    kind,
+    label,
+    filter: '',
+    rows: entries.map((entry) => ({ text: entryLine(kind, entry, now), entry })),
+    blocks: [],
+    empty: false,
+    // Where the reader was standing on the page, so closing the list is not a
+    // second navigation.
+    place: {
+      cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title,
+    },
+  };
+  state.title = `${label} — ${entries.length}`;
+  log('library.open', {
+    kind, entries: entries.length, engine: state.driver.name, ms: Date.now() - startedAt,
+  });
+  showLibrary(state, page, '');
+}
+
+function closeLibrary(state, page, note) {
+  const { place } = state.library;
+  state.library = null;
+  state.mode = 'browse';
+  state.core.live.refreshing = false;
+  state.title = place.title;
+  relayout(state);
+  state.cursor = Math.min(place.cursor, Math.max(state.lines.length - 1, 0));
+  state.col = place.col;
+  state.scroll = place.scroll;
+  clampCol(state);
+  clampScroll(state);
+  render(state, page, { force: true });
+  if (note) setStatus(state, note);
+}
+
+async function handleLibraryKey(chunk, state, page) {
+  markInput(state);
+  const lib = state.library;
+  if (!lib) { state.mode = 'browse'; return; }
+
+  if (keyIs(chunk, 'Escape', state)) {
+    closeLibrary(state, page, `Closed ${lib.label.toLowerCase()}.`);
+    return;
+  }
+
+  if (chunk === '\r' || chunk === '\n') {
+    const block = currentBlock(state);
+    const entry = block && block.entry;
+    if (!entry) {
+      setStatus(state, 'Move to an entry first.');
+      return;
+    }
+    if (!entry.url) {
+      // A download whose source the browser no longer records. The file is on
+      // the line; there is simply nowhere to go.
+      setStatus(state, `"${entry.title}" has no address recorded.`);
+      return;
+    }
+    // The list closes before the load, so the reader is put back on the tab
+    // and then taken to the page — rather than watching an address load
+    // behind a list they can still see.
+    closeLibrary(state, page, null);
+    await loadAddress(state, page, entry.url);
+    return;
+  }
+
+  const last = state.lines.length - 1;
+  if (keyIs(chunk, 'ArrowDown', state)) return moveSelection(state, Math.min(state.cursor + 1, last), page);
+  if (keyIs(chunk, 'ArrowUp', state)) return moveSelection(state, Math.max(state.cursor - 1, 0), page);
+  if (keyIs(chunk, 'PageDown', state)) return moveScreen(state, 1, page);
+  if (keyIs(chunk, 'PageUp', state)) return moveScreen(state, -1, page);
+  if (keyIs(chunk, 'Home', state)) return moveSelection(state, 0, page);
+  if (keyIs(chunk, 'End', state)) return moveSelection(state, last, page);
+
+  if (keyIs(chunk, 'Backspace', state)) {
+    if (!lib.filter) return;
+    showLibrary(state, page, lib.filter.slice(0, -1));
+    return;
+  }
+  if (chunk.startsWith(ESC)) return; // an escape sequence this list has no use for
+  if (chunk >= ' ') showLibrary(state, page, lib.filter + chunk);
+}
+
 async function handleTypeKey(chunk, state, page) {
   markInput(state);
   const t = state.typing;
@@ -2308,6 +2481,29 @@ async function handleFindKey(chunk, state, page) {
   drawFind(state);
 }
 
+// Going somewhere, from wherever the address came from — the address bar, or
+// a line in one of the browser's own lists.
+async function loadAddress(state, page, url) {
+  await rememberCurrentHistoryPlace(state, page);
+  setStatus(state, `Loading ${url} — Esc: stop.`);
+  const went = await navigateInterruptibly(state, page, url);
+  if (went.cancelled) {
+    render(state, page, { force: true });
+    setStatus(state, `Stopped loading ${url}.`);
+    return went;
+  }
+  // Read the tab whether or not the navigation succeeded: a refusal leaves
+  // the browser's own warning page in it, and that page is where the reader
+  // finds out why and how to go on anyway.
+  if (went.ok) await refresh(state, page, { resetCursor: true });
+  else await settleAfterFault(state, page);
+  render(state, page, { force: true });
+  setStatus(state, went.ok
+    ? `Loaded ${page.url()}`
+    : `${url} was refused — ${went.fault}. The browser's own warning is on screen.`);
+  return went;
+}
+
 async function handleAddressKey(chunk, state, page) {
   markInput(state);
   const a = state.address;
@@ -2334,23 +2530,7 @@ async function handleAddressKey(chunk, state, page) {
     if (username && state.credentials) {
       state.credentials.remember({ url }, { username, password: password || '' });
     }
-    await rememberCurrentHistoryPlace(state, page);
-    setStatus(state, `Loading ${url} — Esc: stop.`);
-    const went = await navigateInterruptibly(state, page, url);
-    if (went.cancelled) {
-      render(state, page, { force: true });
-      setStatus(state, `Stopped loading ${url}.`);
-      return;
-    }
-    // Read the tab whether or not the navigation succeeded: a refusal leaves
-    // the browser's own warning page in it, and that page is where the reader
-    // finds out why and how to go on anyway.
-    if (went.ok) await refresh(state, page, { resetCursor: true });
-    else await settleAfterFault(state, page);
-    render(state, page, { force: true });
-    setStatus(state, went.ok
-      ? `Loaded ${page.url()}`
-      : `${url} was refused — ${went.fault}. The browser's own warning is on screen.`);
+    await loadAddress(state, page, url);
     return;
   }
 
@@ -2437,6 +2617,10 @@ async function main() {
     credentials: null,
     sources,
     browserPort,
+    // The browser itself, which is what answers for its own bookmarks,
+    // history and downloads. Each engine reaches them its own way; see
+    // driver.js.
+    driver,
     // Nothing may follow a tab until the first page is drawn: the browser
     // reports the tab we open ourselves at startup as new, like any other.
     ready: false,
@@ -2445,11 +2629,14 @@ async function main() {
     col: 0,
     scroll: 0,
     statusMsg: '',
-    // 'browse' | 'choose' | 'type' | 'control' | 'address' | 'find' | 'auth' | 'keyboard'
+    // 'browse' | 'choose' | 'library' | 'type' | 'control' | 'address' | 'find'
+    // | 'auth' | 'keyboard'
     mode: 'browse',
     typing: null,
     controlling: null,
     chooser: null,
+    // One of the browser's own lists, while it is open. See openLibrary().
+    library: null,
     address: null,
     find: null,
     lastFind: null,
@@ -2543,6 +2730,7 @@ async function main() {
     // reader between tabs and every handler must act on the one they are on.
     const current = state.core.page;
     if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
+    else if (state.mode === 'library') result = await handleLibraryKey(chunk, state, current);
     else if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
     else if (state.mode === 'control') result = await handleControlKey(chunk, state, current);
     else if (state.mode === 'address') result = await handleAddressKey(chunk, state, current);
@@ -2653,4 +2841,5 @@ module.exports = {
   renderRow, parseArgs, onExternalNavigation, readTitle, drawTitle,
   navigate, navigateInterruptibly, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
+  openLibrary, closeLibrary, showLibrary, handleLibraryKey,
 };
