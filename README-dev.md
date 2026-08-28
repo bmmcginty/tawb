@@ -719,9 +719,9 @@ Function keys are the least standardised part of terminal input, so four
 encodings of Shift+F4 are recognised: `\e[1;2S` (xterm, VTE, kitty,
 alacritty, tmux), `\eO2S`, `\e[14;2~`, and `\e[26~` — the Linux console and
 rxvt, which send a shifted function key as a higher-numbered one, so Shift+F4
-arrives as F14. Any escape sequence nothing claims is written to `tweb.log`
-with its bytes, so a terminal speaking a fifth dialect can be added by
-reading the log.
+arrives as F14. With `--log`, any escape sequence nothing claims is written
+to the diagnostic log with its bytes, so a terminal speaking a fifth dialect
+can be added by reading the log.
 
 ## When something changes elsewhere
 
@@ -935,10 +935,17 @@ way in from here, so use the address bar to go somewhere else.
 
 ## Timing log
 
-Every run writes `tweb.log` next to the package (override with `TWEB_LOG`),
-one JSON record per line, timestamped from process start. A second session
-started while the first is still running writes `tweb-<pid>.log` instead, so
-neither log overwrites the other:
+Logging is off by default. Add `--log` when a run needs diagnosing:
+
+```
+npm start -- --log https://example.com
+npm run edb -- --log
+```
+
+The log is written in the user's home directory as
+`~/.tawb.YYYYMMDDhhmmss.<pid>.log`. The timestamp and process id give every
+session its own file, so simultaneous readers never overwrite one another.
+It contains one JSON record per line, timestamped from process start:
 
 ```json
 {"t":1209,"event":"snapshot","source":"ax","ms":396,"blocks":346,"frames":3}

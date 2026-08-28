@@ -9,7 +9,7 @@ const {
   ActionTimeout, withTimeout, readFieldState, ACTION_TIMEOUT_MS,
 } = require('./core');
 const { armFrame, refreshDue, pulse, TICK_MS } = require('./live');
-const { log, timed, count, flushCounters, LOG_PATH } = require('./log');
+const { log, timed, count, flushCounters, enableLog } = require('./log');
 const { layoutLines } = require('./layout');
 const { normaliseEndpoint } = require('./browser');
 const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
@@ -27,7 +27,7 @@ const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 function parseArgs(argv) {
   const options = {
     url: null, connect: null, profile: null, engine: DEFAULT_ENGINE, keepBrowser: false,
-    keyboard: false,
+    keyboard: false, log: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -37,6 +37,7 @@ function parseArgs(argv) {
     else if (arg.startsWith('--profile=')) { options.profile = arg.slice('--profile='.length); }
     else if (arg === '--keep-browser') { options.keepBrowser = true; }
     else if (arg === '--keyboard') { options.keyboard = true; }
+    else if (arg === '--log') { options.log = true; }
     else if (arg === '--browser') { options.engine = argv[i + 1] || DEFAULT_ENGINE; i += 1; }
     else if (arg.startsWith('--browser=')) { options.engine = arg.slice('--browser='.length); }
     else if (!arg.startsWith('-') && !options.url) { options.url = arg; }
@@ -2369,6 +2370,7 @@ async function handleAddressKey(chunk, state, page) {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  const logPath = ARGS.log ? enableLog() : null;
   if (ARGS.keyboard) {
     await runKeyWizard();
     return;
@@ -2376,7 +2378,7 @@ async function main() {
 
   const keys = new Keymap();
   log('start', {
-    url: START_URL, logPath: LOG_PATH, connect: ARGS.connect || null, engine: ARGS.engine,
+    url: START_URL, logPath, connect: ARGS.connect || null, engine: ARGS.engine,
   });
 
   // Either attach to a browser the user is already running, or start an

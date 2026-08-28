@@ -4,7 +4,7 @@
 const { openDriver, DEFAULT_ENGINE } = require('./driver');
 const { normaliseEndpoint } = require('./browser');
 const { startEdbServer } = require('./edb_server');
-const { log, timed, LOG_PATH } = require('./log');
+const { log, timed, enableLog } = require('./log');
 
 // The edbrowse side of tweb: a browser, and an http origin that serves it.
 //
@@ -24,7 +24,7 @@ const { log, timed, LOG_PATH } = require('./log');
 function parseArgs(argv) {
   const options = {
     engine: DEFAULT_ENGINE, connect: null, profile: null, keepBrowser: false,
-    port: 0, url: null,
+    port: 0, url: null, log: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -35,6 +35,7 @@ function parseArgs(argv) {
     else if (arg === '--profile') { options.profile = argv[i + 1] || null; i += 1; }
     else if (arg.startsWith('--profile=')) options.profile = arg.slice('--profile='.length);
     else if (arg === '--keep-browser') options.keepBrowser = true;
+    else if (arg === '--log') options.log = true;
     else if (arg === '--port') { options.port = Number(argv[i + 1] || 0); i += 1; }
     else if (arg.startsWith('--port=')) options.port = Number(arg.slice('--port='.length));
     else if (!arg.startsWith('-') && !options.url) options.url = arg;
@@ -44,7 +45,8 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  log('edb.start', { engine: args.engine, logPath: LOG_PATH });
+  const logPath = args.log ? enableLog() : null;
+  log('edb.start', { engine: args.engine, logPath });
 
   // One way to get a browser, used twice: once now, and again whenever the
   // reader closes the one they were reading. Nothing about this server

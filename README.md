@@ -32,6 +32,16 @@ If you don't specify a URL on the command line, you'll be sent to `https://www.g
 - `q`: quit
 - `Alt+?`: keyboard help/configuration
 
+TAWB does not create a diagnostic log by default. If you are investigating a
+problem, add `--log`:
+
+```
+npm start -- --log https://example.com
+```
+
+The log is written to your home directory with a name such as
+`~/.tawb.20260827140509.1234.log`.
+
 To configure your key bindings, use alt-shift-slash (or alt-questionmark).
 
 ## Purpose

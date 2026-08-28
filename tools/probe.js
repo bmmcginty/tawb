@@ -16,7 +16,7 @@
 // stray global with our name on it is the whole ballgame.
 //
 // The debugging port is not 9222 unless you said so. tweb starts its own
-// browser on a port of the moment; tweb.log records it as `browser.spawn`
+// browser on a port of the moment; a --log run records it as `browser.spawn`
 // or `browser.rejoin`.
 
 const path = require('path');
