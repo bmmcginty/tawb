@@ -2,6 +2,7 @@
 
 const { spawn } = require('child_process');
 const fs = require('fs');
+const crypto = require('crypto');
 const net = require('net');
 const os = require('os');
 const path = require('path');
@@ -324,6 +325,213 @@ const PIERCE_CHILD_SCRIPT = `
   }
 `;
 
+// ---------------------------------------------------------------------------
+// The browser's own lists: bookmarks, history and downloads
+//
+// BiDi does not answer for these and no content page can: Places lives in the
+// parent process, behind APIs only privileged code may call, and Firefox has
+// no equivalent of chrome://history that content could be pointed at. The
+// browser's own Library window is chrome, not a document.
+//
+// So the same road the shadow-root piercing takes is taken again. While we
+// legitimately hold the WebDriver session at startup — the one moment there is
+// to hold it — an agent is installed in the parent process that answers three
+// questions, and a function is handed to content windows that asks them. The
+// agent calls PlacesUtils and Downloads: the very APIs the Library and the
+// downloads panel are built on. Nothing is read out of a file, and nothing is
+// asked of Marionette after startup, which is what makes it possible at all —
+// Marionette shares one session slot with BiDi, so connecting to it later
+// would take the reader's own session away.
+//
+// The function is gated on a secret. Unlike piercing, which returns a page its
+// own shadow roots, this returns the reader's browsing history, and it is
+// installed in every document there is — including hostile ones. The secret is
+// made fresh at every launch, never leaves this process and the closure in the
+// content process, and a call without it is refused before anything is asked.
+// A page cannot read a closure, so a page cannot obtain it.
+// ---------------------------------------------------------------------------
+
+// Firefox's own folders are stored under internal names and shown to everyone
+// under translated ones. A reader who has only ever seen the browser's words
+// for them should not have to learn a second set here.
+const FIREFOX_ROOT_LABELS = {
+  toolbar_____: 'Bookmarks toolbar',
+  menu________: 'Bookmarks menu',
+  unfiled_____: 'Other bookmarks',
+  mobile______: 'Mobile bookmarks',
+};
+
+// Runs in the parent process, where Places and Downloads are. Loaded as a
+// subscript rather than left in the sandbox that installed it: that sandbox
+// belongs to the Marionette session, which ends moments later, and a listener
+// whose closure died with it would answer nothing.
+const LIBRARY_PARENT_BODY = `
+  const { PlacesUtils } = ChromeUtils.importESModule(
+    "resource://gre/modules/PlacesUtils.sys.mjs");
+  const { Downloads } = ChromeUtils.importESModule(
+    "resource://gre/modules/Downloads.sys.mjs");
+  const ROOTS = __ROOTS__;
+  const TOKEN = __TOKEN__;
+
+  // Newest first, and no further back than the reader can use. This is
+  // nsINavHistoryService — the query the Library itself runs.
+  const history = function (max) {
+    const service = PlacesUtils.history.QueryInterface(Ci.nsINavHistoryService);
+    const query = service.getNewQuery();
+    const options = service.getNewQueryOptions();
+    options.sortingMode = options.SORT_BY_DATE_DESCENDING;
+    options.resultType = options.RESULTS_AS_URI;
+    options.maxResults = max;
+    const root = service.executeQuery(query, options).root;
+    root.containerOpen = true;
+    const out = [];
+    try {
+      for (let i = 0; i < root.childCount; i++) {
+        const node = root.getChild(i);
+        out.push({
+          title: String(node.title || ""),
+          url: String(node.uri || ""),
+          when: node.time ? Math.round(node.time / 1000) : null,
+        });
+      }
+    } finally {
+      root.containerOpen = false;
+    }
+    return Promise.resolve(out);
+  };
+
+  // The whole bookmark tree, flattened, each entry carrying the folders above
+  // it. A tag is stored as a bookmark too — under the tags root, pointing at
+  // the page it tags — so that subtree is left out: listing it shows every
+  // tagged page once per tag, filed under folders the reader never made.
+  const bookmarks = async function () {
+    const tree = await PlacesUtils.promiseBookmarksTree();
+    const out = [];
+    const walk = (node, trail) => {
+      if (!node) return;
+      if (node.guid === PlacesUtils.bookmarks.tagsGuid) return;
+      if (node.uri) {
+        out.push({
+          title: String(node.title || ""),
+          url: String(node.uri),
+          folder: trail.join("/"),
+          when: node.dateAdded ? Math.round(node.dateAdded / 1000) : null,
+        });
+        return;
+      }
+      const name = ROOTS[node.guid] || String(node.title || "");
+      const here = name ? trail.concat([name]) : trail;
+      for (const child of node.children || []) walk(child, here);
+    };
+    walk(tree, []);
+    return out;
+  };
+
+  // Every download the browser still remembers, finished or not.
+  const downloads = async function () {
+    const list = await Downloads.getList(Downloads.ALL);
+    const all = await list.getAll();
+    return all.map((item) => {
+      const target = (item.target && item.target.path) || "";
+      const state = item.succeeded ? "complete"
+        : item.canceled ? (item.hasPartialData ? "paused" : "cancelled")
+        : item.error ? "failed"
+        : item.stopped ? "stopped" : "in progress";
+      return {
+        title: target.split("/").pop() || target,
+        file: target,
+        url: String((item.source && item.source.url) || ""),
+        state,
+        bytes: Number(item.currentBytes) || 0,
+        totalBytes: Number(item.totalBytes) || 0,
+        when: item.startTime ? Number(new Date(item.startTime)) : null,
+      };
+    });
+  };
+
+  const answer = { bookmarks, history, downloads };
+
+  Services.ppmm.addMessageListener("tweb:library", function (message) {
+    const { id, token, kind, max } = message.data || {};
+    const reply = (data) => {
+      try { message.target.sendAsyncMessage("tweb:library:done", { id, ...data }); }
+      catch (e) { /* the process asking has gone */ }
+    };
+    if (token !== TOKEN) { reply({ error: "refused" }); return; }
+    const ask = answer[kind];
+    if (!ask) { reply({ error: "unknown list" }); return; }
+    Promise.resolve()
+      .then(() => ask(max))
+      .then((entries) => reply({ entries }))
+      .catch((e) => reply({ error: String((e && e.message) || e) }));
+  });
+`;
+
+// Hands each content window a function that asks the parent. The answer is
+// resolved into a promise built from the page's own Promise constructor, so
+// what content receives is an ordinary page-side promise of ordinary page-side
+// objects, and nothing privileged crosses the boundary.
+const LIBRARY_CHILD_BODY = `
+  const TOKEN = __TOKEN__;
+  let nextId = 1;
+  const waiting = new Map();
+
+  Services.cpmm.addMessageListener("tweb:library:done", function (message) {
+    const { id } = message.data || {};
+    const waiter = waiting.get(id);
+    if (!waiter) return;
+    waiting.delete(id);
+    waiter(message.data);
+  });
+
+  const install = function (win) {
+    const ask = function (token, kind, max) {
+      return new win.Promise(function (resolve, reject) {
+        if (token !== TOKEN) { reject(new win.Error("refused")); return; }
+        const id = nextId++;
+        waiting.set(id, function (data) {
+          if (data.error) reject(new win.Error(String(data.error)));
+          else resolve(Cu.cloneInto(data.entries || [], win.wrappedJSObject));
+        });
+        Services.cpmm.sendAsyncMessage("tweb:library", {
+          id, token, kind, max: Number(max) || 1000,
+        });
+      });
+    };
+    // Under a symbol, like everything else this program leaves on a page: a
+    // string property is listed by getOwnPropertyNames and by Object.keys, and
+    // this one is installed in every document there is.
+    win.wrappedJSObject[Symbol.for("tweb.library")] =
+      Cu.exportFunction(ask, win.wrappedJSObject);
+  };
+`;
+
+// The token is a per-launch secret. It is interpolated into both scripts, and
+// into nothing that is ever written down.
+function libraryChildScript(token) {
+  return `
+  if (!globalThis.__twebLibraryInstalled) {
+    globalThis.__twebLibraryInstalled = true;
+    ${LIBRARY_CHILD_BODY.replace('__TOKEN__', JSON.stringify(token))}
+    Services.obs.addObserver(function (win) {
+      try { install(win); } catch (e) { /* a window we cannot reach */ }
+    }, 'content-document-global-created');
+  }
+`;
+}
+
+function libraryParentScript(token) {
+  const parent = LIBRARY_PARENT_BODY
+    .replace('__TOKEN__', JSON.stringify(token))
+    .replace('__ROOTS__', JSON.stringify(FIREFOX_ROOT_LABELS));
+  const childUrl = `data:text/javascript,${encodeURIComponent(libraryChildScript(token))}`;
+  return `
+  ${parent}
+  Services.ppmm.loadProcessScript(${JSON.stringify(childUrl)}, true);
+  return true;
+`;
+}
+
 // Loads the above into every content process, present and future.
 const PIERCE_PARENT_SCRIPT = `
   const source = 'data:text/javascript,' + encodeURIComponent(${JSON.stringify(PIERCE_CHILD_SCRIPT)});
@@ -405,7 +613,8 @@ function marionetteCommand(port, commands, { timeout = 20000 } = {}) {
 // Disconnecting from it deletes the session it just created, which is also how
 // the BiDi session that follows is able to start at all — the two share one
 // slot.
-async function clearAutomationFlag({ port, stopAfter = false } = {}) {
+async function clearAutomationFlag({ port, stopAfter = false, libraryToken = null } = {}) {
+  let installFault = null;
   return marionetteCommand(port, async (send) => {
     await send('WebDriver:NewSession', {});
     await send('Marionette:SetContext', { value: 'chrome' });
@@ -415,6 +624,16 @@ async function clearAutomationFlag({ port, stopAfter = false } = {}) {
     // connection.
     await send('WebDriver:ExecuteScript', { script: PIERCE_PARENT_SCRIPT, args: [] })
       .catch(() => { /* an older Firefox without ppmm; piercing is simply absent */ });
+    if (libraryToken) {
+      await send('WebDriver:ExecuteScript', {
+        script: libraryParentScript(libraryToken), args: [],
+      }).catch((err) => {
+        // Not fatal: the reader works without its lists. But a browser that
+        // silently has none is a browser nobody can debug, so say what
+        // happened where the rest of the startup account goes.
+        installFault = String((err && err.message) || err).slice(0, 300);
+      });
+    }
     if (stopAfter) {
       send('WebDriver:ExecuteScript', {
         script: `const { Marionette } = ChromeUtils.importESModule(
@@ -423,7 +642,8 @@ async function clearAutomationFlag({ port, stopAfter = false } = {}) {
       }).catch(() => {});
       await new Promise((r) => setTimeout(r, 300));
     }
-    return result && result.value;
+    const value = (result && result.value) || {};
+    return installFault ? { ...value, libraryFault: installFault } : value;
   });
 }
 
@@ -498,6 +718,9 @@ async function launchFirefox({
   }
 
   const port = await freePort();
+  // A secret for this launch alone, which is what keeps the reader's history
+  // out of reach of the pages the answering function is installed in.
+  const libraryToken = crypto.randomUUID();
   const marionettePort = await freePort();
   writeProfilePrefs(profileDir, { ...MEDIA_PREFS, 'marionette.port': marionettePort });
 
@@ -561,7 +784,7 @@ async function launchFirefox({
   const clearStarted = Date.now();
   if (await waitForEndpoint(marionettePort, Date.now() + 15000)) {
     try {
-      cleared = await clearAutomationFlag({ port: marionettePort });
+      cleared = await clearAutomationFlag({ port: marionettePort, libraryToken });
       log('firefox.automation.cleared', { ...cleared, portMs, clearMs: Date.now() - clearStarted });
     } catch (err) {
       log('firefox.automation.error', { error: String(err.message || err).slice(0, 200) });
@@ -574,6 +797,7 @@ async function launchFirefox({
     child,
     port,
     marionettePort,
+    libraryToken,
     endpoint: `ws://127.0.0.1:${port}/session`,
     executable: found.executable,
     profileDir,
@@ -586,4 +810,5 @@ module.exports = {
   launchFirefox, requireReachableProfile, clearAutomationFlag, releaseStrandedSession, findFirefox,
   defaultProfileDir, writeProfilePrefs, MEDIA_PREFS, ACTIVE_KEYS, CLEAR_SCRIPT,
   PIERCE_PARENT_SCRIPT, PIERCE_CHILD_SCRIPT,
+  libraryParentScript, libraryChildScript, FIREFOX_ROOT_LABELS,
 };
