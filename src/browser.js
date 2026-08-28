@@ -10,6 +10,7 @@ const {
 } = require('./endpoint');
 const {
   killProcessGroup, requireBrowserUser, watchChildStartup, browserStartupError,
+  snapPackageName, snapCanReach, snapProfileDir,
 } = require('./proc');
 const { recordBrowser, sweepStrandedBrowsers } = require('./registry');
 
@@ -48,7 +49,12 @@ const STARTUP_TIMEOUT_MS = 25000;
 // was given a real display or a virtual one.
 let lastDisplayNote = null;
 
-function defaultProfileDir() {
+// The profile a browser we start keeps its logins in. A Snap-packaged browser
+// cannot read the usual location — see the note on confinement in proc.js — so
+// one gets a directory inside the snap's own data area instead.
+function defaultProfileDir(executable = (findBrowserExecutable() || {}).executable) {
+  const snap = snapPackageName(executable);
+  if (snap) return snapProfileDir(snap, 'profile');
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
   return path.join(base, 'tawb', 'profile');
 }
@@ -106,6 +112,21 @@ function buildCommand(executable, args) {
   return { command: xvfb, args: ['-a', '-s', `-screen 0 ${SCREEN}`, executable, ...args] };
 }
 
+// A Snap-packaged browser can only reach a profile inside its own data area.
+// Told to use one it cannot open, it does not fail: it puts a message in a
+// window on a virtual screen nobody is looking at, and the launcher waits out
+// its whole timeout for a port that will never open. Say so before launching.
+function requireReachableProfile({ executable, name }, profileDir) {
+  const snap = snapPackageName(executable);
+  if (!snap || snapCanReach(profileDir)) return;
+  throw new Error(
+    `${name} at ${executable} runs the ${snap} snap, and a Snap cannot open ${profileDir}: `
+    + 'its confinement allows only non-hidden directories under your home directory. '
+    + `Use a profile it can reach, such as ${snapProfileDir(snap, 'profile')}, `
+    + 'or install a packaged browser that is not confined.',
+  );
+}
+
 // Chromium writes the port it really opened into the profile. If that file is
 // there after a timeout, the browser started and chose a port, and the failure
 // is between it and us rather than in the browser itself — which is a wholly
@@ -143,6 +164,7 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   }
 
   requireBrowserUser(found.name);
+  requireReachableProfile(found, profileDir);
   fs.mkdirSync(profileDir, { recursive: true });
 
   // Before starting another one, take down any left behind by sessions that

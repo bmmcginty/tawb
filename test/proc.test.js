@@ -15,7 +15,10 @@ const { spawn } = require('node:child_process');
 const {
   processAlive, killProcessGroup, processesUsing, anyProcessUsing,
   requireBrowserUser, watchChildStartup, compactDiagnostic, browserStartupError,
+  snapPackageName, snapCanReach, snapProfileDir,
 } = require('../src/proc');
+const path = require('node:path');
+const os = require('node:os');
 
 // A shell holding a long-running child, in a process group of its own. Resolves
 // once the grandchild has announced its pid, so both are known to be running.
@@ -198,4 +201,105 @@ test('a startup failure says what display the browser was given', () => {
   assert.match(err.message, /Display: none, so the browser was run under \/usr\/bin\/xvfb-run/);
   // A silent browser is a fact about the failure, not an absence to leave out.
   assert.match(err.message, /The browser said nothing/);
+});
+
+// A Snap-packaged browser reaches non-hidden files under $HOME and nothing
+// else, so the usual profile in ~/.local/share is invisible to it. Ubuntu
+// ships Firefox that way, and the failure is silent: the browser waits on a
+// window nobody can see until the launcher times out.
+//
+// Ubuntu hides the snap two different ways, and neither is visible in the
+// path. The firefox deb installs a shell script that ends in `exec
+// /snap/bin/firefox "$@"`; elsewhere /usr/bin/firefox is a symlink into
+// /snap/bin, and what is there is a symlink to the snap command itself.
+
+const SNAP_LINKS = {
+  '/usr/bin/firefox': '/snap/bin/firefox',
+  '/snap/bin/firefox': '/usr/bin/snap',
+  '/usr/bin/firefox-esr': '/usr/lib/firefox-esr/firefox-esr',
+};
+
+// Ubuntu's wrapper, shortened: it names the snap once while complaining that
+// it is missing, and again when it launches it.
+const UBUNTU_WRAPPER = [
+  '#!/bin/sh',
+  'if ! [ -x /snap/bin/chromium ]; then',
+  '  echo "Command \'$0\' requires the chromium snap to be installed." >&2',
+  '  exit 1',
+  'fi',
+  'exec /snap/bin/chromium "$@"',
+].join('\n');
+
+function fakeIo({ links = SNAP_LINKS, files = {}, installed = true } = {}) {
+  return {
+    readlink: (target) => {
+      if (!(target in links)) throw new Error('not a symlink');
+      return links[target];
+    },
+    readFile: (target) => {
+      if (!(target in files)) throw new Error('no such file');
+      return files[target];
+    },
+    exists: () => installed,
+  };
+}
+
+test('a snap is recognised through the symlinks that hide it', () => {
+  assert.equal(snapPackageName('/usr/bin/firefox', fakeIo()), 'firefox');
+  assert.equal(snapPackageName('/snap/bin/chromium', fakeIo()), 'chromium');
+  assert.equal(snapPackageName('/snap/firefox/current/usr/lib/firefox/firefox', fakeIo()), 'firefox');
+});
+
+test('a snap is recognised through the wrapper script that launches it', () => {
+  const io = fakeIo({ files: { '/usr/bin/chromium-browser': UBUNTU_WRAPPER } });
+  // The deb is chromium-browser and the snap is chromium: the profile has to
+  // go where snapd put the snap, not where the command was named.
+  assert.equal(snapPackageName('/usr/bin/chromium-browser', io), 'chromium');
+});
+
+test('nothing is taken for a snap without one installed to run', () => {
+  const io = fakeIo({ files: { '/usr/bin/firefox-esr': '#!/bin/sh\nexec /usr/lib/firefox-esr/firefox-esr "$@"' } });
+  assert.equal(snapPackageName('/usr/bin/firefox-esr', io), null, 'an ordinary wrapper looked confined');
+  assert.equal(snapPackageName('/usr/bin/google-chrome-stable', io), null, 'a binary looked confined');
+  assert.equal(snapPackageName(null, io), null);
+
+  // The wrapper is there, the snap it names is not. That browser is not a snap
+  // browser; it is one that will explain itself perfectly well on its own.
+  const uninstalled = fakeIo({
+    files: { '/usr/bin/chromium-browser': UBUNTU_WRAPPER }, installed: false,
+  });
+  assert.equal(snapPackageName('/usr/bin/chromium-browser', uninstalled), null);
+});
+
+test('a confined browser can only be given a profile it is allowed to open', () => {
+  const home = '/home/someone';
+  assert.equal(snapCanReach(`${home}/.local/share/tawb/firefox-profile`, home), false);
+  assert.equal(snapCanReach('/tmp/tawb-profile', home), false, 'a snap has a private /tmp of its own');
+  assert.equal(snapCanReach(`${home}/snap/firefox/common/tawb/firefox-profile`, home), true);
+  assert.equal(
+    snapProfileDir('firefox', 'firefox-profile', home),
+    `${home}/snap/firefox/common/tawb/firefox-profile`,
+  );
+});
+
+test('a snap firefox is refused an unreachable profile instead of timing out', () => {
+  const { requireReachableProfile } = require('../src/firefox');
+  const snapFirefox = { executable: '/snap/bin/firefox', name: 'firefox' };
+  assert.throws(
+    () => requireReachableProfile(snapFirefox, '/home/someone/.local/share/tawb/firefox-profile'),
+    /runs the firefox snap.*cannot open.*non-hidden.*snap\/firefox\/common/s,
+  );
+  assert.doesNotThrow(
+    () => requireReachableProfile(
+      snapFirefox,
+      path.join(os.homedir(), 'snap', 'firefox', 'common', 'tawb', 'firefox-profile'),
+    ),
+  );
+  // An unconfined Firefox keeps the ordinary profile, wherever it is.
+  assert.doesNotThrow(
+    () => requireReachableProfile(
+      { executable: '/usr/lib/firefox-esr/firefox-esr', name: 'firefox-esr' },
+      '/home/someone/.local/share/tawb/firefox-profile',
+    ),
+  );
 });

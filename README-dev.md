@@ -56,6 +56,13 @@ a machine with no display is watching a stream that is empty by construction,
 and that is why headless Ubuntu once reported startup timeouts with no
 explanation attached to them.
 
+A Snap-packaged browser reaches non-hidden files under `$HOME` and nothing
+else, so `~/.local/share` is invisible to it and `/tmp` is private to it. Such
+a browser is given a profile under `~/snap/<name>/common/tawb/` instead, and an
+unreachable `--profile` is refused before launch rather than after the timeout:
+told to use a profile it cannot open, Firefox does not exit, it waits on a
+window drawn to a screen nobody is looking at.
+
 Your profile persists between runs, so logins and cookies survive:
 
 ```

@@ -10,6 +10,7 @@ const {
 } = require('./endpoint');
 const {
   killProcessGroup, requireBrowserUser, watchChildStartup, browserStartupError,
+  snapPackageName, snapCanReach, snapProfileDir,
 } = require('./proc');
 const { recordBrowser, sweepStrandedBrowsers } = require('./registry');
 
@@ -113,9 +114,29 @@ function writeProfilePrefs(profileDir, prefs) {
   fs.writeFileSync(target, [...kept, ...written].join('\n') + '\n');
 }
 
-function defaultProfileDir() {
+// Ubuntu's Firefox is a Snap, and a Snap cannot read ~/.local/share at all —
+// see the note on confinement in proc.js. Such a build gets its profile inside
+// the snap's own data area, which is the one place it is allowed to write.
+function defaultProfileDir(executable = (findFirefox() || {}).executable) {
+  const snap = snapPackageName(executable);
+  if (snap) return snapProfileDir(snap, 'firefox-profile');
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
   return path.join(base, 'tawb', 'firefox-profile');
+}
+
+// Pointed at a profile its confinement forbids, a Snap Firefox does not exit:
+// it opens a window explaining itself on a virtual screen nobody can see, and
+// the launcher waits out the whole timeout for a port that never opens. Say so
+// before launching rather than after 45 seconds of nothing.
+function requireReachableProfile({ executable, name }, profileDir) {
+  const snap = snapPackageName(executable);
+  if (!snap || snapCanReach(profileDir)) return;
+  throw new Error(
+    `${name} at ${executable} runs the ${snap} snap, and a Snap cannot open ${profileDir}: `
+    + 'its confinement allows only non-hidden directories under your home directory. '
+    + `Use a profile it can reach, such as ${snapProfileDir(snap, 'firefox-profile')}, `
+    + 'or install Firefox from a package that is not confined.',
+  );
 }
 
 function which(command) {
@@ -447,6 +468,7 @@ async function launchFirefox({
   }
 
   requireBrowserUser(found.name);
+  requireReachableProfile(found, profileDir);
   fs.mkdirSync(profileDir, { recursive: true });
 
   // Before starting another one, take down any left behind by sessions that
@@ -560,7 +582,7 @@ async function launchFirefox({
 }
 
 module.exports = {
-  launchFirefox, clearAutomationFlag, releaseStrandedSession, findFirefox,
+  launchFirefox, requireReachableProfile, clearAutomationFlag, releaseStrandedSession, findFirefox,
   defaultProfileDir, writeProfilePrefs, MEDIA_PREFS, ACTIVE_KEYS, CLEAR_SCRIPT,
   PIERCE_PARENT_SCRIPT, PIERCE_CHILD_SCRIPT,
 };

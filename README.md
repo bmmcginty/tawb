@@ -85,6 +85,14 @@ usually about the browser rather than about TAWB. The error message names the
 browser, its profile directory, the display it was given, and whatever the
 browser itself printed; that last part is normally the answer.
 
+One case is worth knowing about:
+
+- **A Snap browser.** Ubuntu ships Firefox (and Chromium) as Snap packages,
+  and a Snap can only open non-hidden directories under your home directory.
+  TAWB gives such a browser a profile inside its snap directory, for example
+  `~/snap/firefox/common/tawb/firefox-profile`. If you pass `--profile`
+  yourself, it has to be somewhere the Snap can reach, or the browser will sit
+  there showing an error you cannot see.
 Do not run TAWB as root: browsers refuse to use their security sandbox as
 root, and TAWB will not disable the sandbox for them.
 

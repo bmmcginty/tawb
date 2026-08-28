@@ -1,6 +1,8 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 // Whether a process id recorded earlier still belongs to a running process.
 //
@@ -173,7 +175,86 @@ function browserStartupError({
   );
 }
 
+// Ubuntu ships Firefox — and Chromium — as Snap packages, and a Snap is
+// confined: its home interface grants access to non-hidden files under $HOME
+// and nothing else, and it gets a private /tmp of its own. A profile in
+// ~/.local/share is therefore unreadable to it, and the failure has no output
+// to show for it: the browser puts its complaint in a window nobody can see
+// and waits there until the launcher gives up.
+//
+// snapPackageName is which snap package an executable really runs, or null if
+// it does not run one. Nothing about the path says it, and the two ways it
+// hides are different: Ubuntu's firefox deb installs a shell script
+// at /usr/bin/firefox whose last line is `exec /snap/bin/firefox "$@"`, while
+// elsewhere /usr/bin/firefox is a symlink into /snap/bin and what is there is
+// a symlink to the snap command itself. So the symlink chain is walked, and
+// then the script at the end of it is read.
+//
+// The name is wanted as well as the fact, because the profile has to go in the
+// directory snapd made for that package and the two names differ: the deb is
+// chromium-browser, the snap it runs is chromium.
+//
+// Nothing is assumed from a name alone. A wrapper naming a snap that is not
+// installed is not a snap browser — it is a browser that will explain itself
+// perfectly well on its own — so /snap/bin has to have it.
+function snapNameOfPath(target) {
+  if (target.startsWith('/snap/bin/')) return path.basename(target) || null;
+  if (target.startsWith('/snap/')) return target.split('/')[2] || null;
+  return null;
+}
+
+function snapPackageName(executable, io = {}) {
+  const readlink = io.readlink || fs.readlinkSync;
+  const readFile = io.readFile || fs.readFileSync;
+  const exists = io.exists || fs.existsSync;
+  if (!executable) return null;
+
+  let current = executable;
+  for (let hop = 0; hop < 10; hop += 1) {
+    const named = snapNameOfPath(current);
+    if (named) return named;
+    let target;
+    try {
+      target = readlink(current);
+    } catch {
+      break; // not a symlink: this is the file that actually runs
+    }
+    current = path.isAbsolute(target) ? target : path.resolve(path.dirname(current), target);
+  }
+
+  // A wrapper script. The launch is its last word on the subject, so the last
+  // mention wins over any earlier one — the Ubuntu script names the snap once
+  // in an error message before exec'ing it.
+  let script;
+  try {
+    script = readFile(current, 'utf8');
+  } catch {
+    return null; // a binary, or not readable: not a wrapper we can follow
+  }
+  if (!script.startsWith('#!')) return null;
+  const names = [...script.matchAll(/\/snap\/bin\/([A-Za-z0-9][\w.+-]*)|snap\s+run\s+([A-Za-z0-9][\w.+-]*)/g)]
+    .map((match) => match[1] || match[2]);
+  const name = names[names.length - 1];
+  if (!name) return null;
+  return exists(`/snap/bin/${name}`) ? name : null;
+}
+
+// Whether a confined browser could open this directory at all.
+function snapCanReach(dir, home = os.homedir()) {
+  const resolved = path.resolve(dir);
+  const withinHome = path.resolve(home);
+  if (resolved !== withinHome && !resolved.startsWith(`${withinHome}${path.sep}`)) return false;
+  return !resolved.slice(withinHome.length).split(path.sep).some((part) => part.startsWith('.'));
+}
+
+// Where a confined browser can keep a profile: the data directory the snap
+// owns, which is the one place it is always allowed to write.
+function snapProfileDir(snapName, leaf, home = os.homedir()) {
+  return path.join(home, 'snap', snapName, 'common', 'tawb', leaf);
+}
+
 module.exports = {
   processAlive, killProcessGroup, processesUsing, anyProcessUsing,
   requireBrowserUser, watchChildStartup, compactDiagnostic, browserStartupError,
+  snapPackageName, snapCanReach, snapProfileDir,
 };
