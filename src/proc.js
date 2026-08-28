@@ -149,6 +149,16 @@ function watchChildStartup(child, limit = 8192) {
   return state;
 }
 
+// How long to wait for a browser to open its port. The default suits a machine
+// that has started one before; a first launch on a slow machine, or one with a
+// cold profile, can want more, and asking the user to raise this is the only
+// way to tell "too slow" apart from "never going to happen".
+function startupTimeoutMs(defaultMs, env = process.env) {
+  const seconds = Number(env.TAWB_BROWSER_TIMEOUT);
+  if (!Number.isFinite(seconds) || seconds <= 0) return defaultMs;
+  return Math.round(seconds * 1000);
+}
+
 function compactDiagnostic(value, limit = 1200) {
   return String(value || '')
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
@@ -256,5 +266,5 @@ function snapProfileDir(snapName, leaf, home = os.homedir()) {
 module.exports = {
   processAlive, killProcessGroup, processesUsing, anyProcessUsing,
   requireBrowserUser, watchChildStartup, compactDiagnostic, browserStartupError,
-  snapPackageName, snapCanReach, snapProfileDir,
+  startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir,
 };

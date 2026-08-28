@@ -10,7 +10,7 @@ const {
 } = require('./endpoint');
 const {
   killProcessGroup, requireBrowserUser, watchChildStartup, browserStartupError,
-  snapPackageName, snapCanReach, snapProfileDir,
+  startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir,
 } = require('./proc');
 const { recordBrowser, sweepStrandedBrowsers } = require('./registry');
 
@@ -209,7 +209,8 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
 
   // Stop waiting when the process exits, but do not guess why. A profile clash
   // is only one possible quick exit; the browser's own stderr is the evidence.
-  const deadline = Date.now() + STARTUP_TIMEOUT_MS;
+  const timeoutMs = startupTimeoutMs(STARTUP_TIMEOUT_MS);
+  const deadline = Date.now() + timeoutMs;
   let ready = false;
   while (Date.now() < deadline) {
     if (await endpointReady(port)) { ready = true; break; }
@@ -224,7 +225,7 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
       executable: found.executable,
       profileDir,
       port,
-      timeoutMs: STARTUP_TIMEOUT_MS,
+      timeoutMs,
       state: startup,
       context: [displayNote, devToolsPortNote(profileDir, port)],
     });

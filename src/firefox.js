@@ -10,7 +10,7 @@ const {
 } = require('./endpoint');
 const {
   killProcessGroup, requireBrowserUser, watchChildStartup, browserStartupError,
-  snapPackageName, snapCanReach, snapProfileDir,
+  startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir,
 } = require('./proc');
 const { recordBrowser, sweepStrandedBrowsers } = require('./registry');
 
@@ -529,7 +529,8 @@ async function launchFirefox({
   child.unref();
 
   const spawnedAt = Date.now();
-  const deadline = spawnedAt + STARTUP_TIMEOUT_MS;
+  const timeoutMs = startupTimeoutMs(STARTUP_TIMEOUT_MS);
+  const deadline = spawnedAt + timeoutMs;
   let ready = false;
   while (Date.now() < deadline) {
     if (await portOpen(port)) { ready = true; break; }
@@ -544,7 +545,7 @@ async function launchFirefox({
       executable: found.executable,
       profileDir,
       port,
-      timeoutMs: STARTUP_TIMEOUT_MS,
+      timeoutMs,
       state: startup,
       context: [displayNote],
     });

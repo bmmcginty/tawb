@@ -85,7 +85,7 @@ usually about the browser rather than about TAWB. The error message names the
 browser, its profile directory, the display it was given, and whatever the
 browser itself printed; that last part is normally the answer.
 
-One case is worth knowing about:
+Two cases are worth knowing about:
 
 - **A Snap browser.** Ubuntu ships Firefox (and Chromium) as Snap packages,
   and a Snap can only open non-hidden directories under your home directory.
@@ -93,6 +93,12 @@ One case is worth knowing about:
   `~/snap/firefox/common/tawb/firefox-profile`. If you pass `--profile`
   yourself, it has to be somewhere the Snap can reach, or the browser will sit
   there showing an error you cannot see.
+- **A slow first launch.** A browser creating a profile for the first time on
+  a slow machine can take longer than TAWB waits (25s for Chrome, 45s for
+  Firefox). Set `TAWB_BROWSER_TIMEOUT` to a number of seconds to wait longer:
+  `TAWB_BROWSER_TIMEOUT=120 npm start -- https://example.com`. If that makes
+  it work, the browser was only slow.
+
 Do not run TAWB as root: browsers refuse to use their security sandbox as
 root, and TAWB will not disable the sandbox for them.
 

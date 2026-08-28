@@ -15,7 +15,7 @@ const { spawn } = require('node:child_process');
 const {
   processAlive, killProcessGroup, processesUsing, anyProcessUsing,
   requireBrowserUser, watchChildStartup, compactDiagnostic, browserStartupError,
-  snapPackageName, snapCanReach, snapProfileDir,
+  startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir,
 } = require('../src/proc');
 const path = require('node:path');
 const os = require('node:os');
@@ -201,6 +201,16 @@ test('a startup failure says what display the browser was given', () => {
   assert.match(err.message, /Display: none, so the browser was run under \/usr\/bin\/xvfb-run/);
   // A silent browser is a fact about the failure, not an absence to leave out.
   assert.match(err.message, /The browser said nothing/);
+});
+
+// Waiting longer is the only way to tell a slow first launch from one that was
+// never going to finish, so the wait is something a user can raise.
+
+test('the startup wait can be raised for a machine that needs it', () => {
+  assert.equal(startupTimeoutMs(25000, {}), 25000);
+  assert.equal(startupTimeoutMs(25000, { TAWB_BROWSER_TIMEOUT: '120' }), 120000);
+  assert.equal(startupTimeoutMs(25000, { TAWB_BROWSER_TIMEOUT: 'soon' }), 25000);
+  assert.equal(startupTimeoutMs(25000, { TAWB_BROWSER_TIMEOUT: '-5' }), 25000);
 });
 
 // A Snap-packaged browser reaches non-hidden files under $HOME and nothing

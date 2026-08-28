@@ -63,6 +63,10 @@ unreachable `--profile` is refused before launch rather than after the timeout:
 told to use a profile it cannot open, Firefox does not exit, it waits on a
 window drawn to a screen nobody is looking at.
 
+`TAWB_BROWSER_TIMEOUT`, in seconds, replaces the startup wait (25s for
+Chromium, 45s for Firefox). It exists to tell a slow first launch apart from
+one that was never going to finish.
+
 Your profile persists between runs, so logins and cookies survive:
 
 ```
