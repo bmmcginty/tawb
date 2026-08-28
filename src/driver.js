@@ -45,6 +45,22 @@
 //   armAuth()         one tab covered by the above. Chromium needs it per
 //                     tab, since a browser can be shared with another reader;
 //                     on Firefox it is already true and answers so.
+//   readLibrary()     the browser's own bookmarks, history and downloads,
+//                     which is the sharpest difference of the lot. Neither
+//                     protocol answers for them — both describe documents, and
+//                     a record of where you have been is not one — so each
+//                     engine is asked the way that engine can be asked.
+//                     Chromium has pages of its own for all three, and CDP can
+//                     attach to them: a background tab is opened on
+//                     chrome://bookmarks, chrome://history or
+//                     chrome://downloads, the page's own API is called, and
+//                     the tab is closed. Firefox has no such page and no such
+//                     protocol call; its answer comes from a privileged agent
+//                     installed while the browser starts, which calls
+//                     PlacesUtils and Downloads directly. Both return entries
+//                     of one shape, described in library.js. The second
+//                     argument is a page to ask through, which Firefox needs
+//                     and Chromium ignores.
 //   realClick()       a click the browser treats as a person's, which only
 //                     the protocol can produce: real input dispatched above
 //                     content, so the events are trusted and carry user

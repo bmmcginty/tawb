@@ -7,6 +7,7 @@ const { otherReadersOn } = require('./session');
 const { forgetBrowser, markKept } = require('./registry');
 const { killProcessGroup } = require('./proc');
 const { log } = require('./log');
+const { readChromiumLibrary } = require('./library_chromium');
 
 // Chromium, attached to over the DevTools protocol.
 //
@@ -267,6 +268,12 @@ async function openChromium({
     return true;
   };
 
+  // The browser's own bookmarks, history and downloads. Not in the protocol —
+  // CDP describes documents, and a record of where you have been is not one —
+  // so they are asked of the pages the browser answers them on. See
+  // library_chromium.js.
+  const readLibrary = (kind) => readChromiumLibrary(context, kind);
+
   return {
     name: 'chromium',
     ax: 'own',
@@ -276,6 +283,7 @@ async function openChromium({
     owned,
     port,
     rejoined,
+    readLibrary,
 
     // A tab's identity as the browser knows it — the only name for a tab that
     // means the same thing in another session's process. It is the target id

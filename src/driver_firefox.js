@@ -9,6 +9,7 @@ const { otherReadersOn } = require('./session');
 const { forgetBrowser, markKept } = require('./registry');
 const { extractAxItems } = require('./ax_own');
 const { readDocument } = require('./frames');
+const { orderEntries, MAX_ENTRIES } = require('./library');
 
 // Firefox, driven over WebDriver BiDi.
 //
@@ -539,6 +540,8 @@ async function openFirefox({
   let cleared = null;
   let marionettePort = null;
 
+  let libraryToken = null;
+
   if (!endpoint) {
     const started = await launchFirefox({
       profileDir: profile || defaultProfileDir(), keepBrowser, log,
@@ -547,6 +550,7 @@ async function openFirefox({
     endpoint = started.endpoint;
     cleared = started.cleared;
     marionettePort = started.marionettePort;
+    libraryToken = started.libraryToken;
   } else {
     marionettePort = (readEndpointRecord(profile || defaultProfileDir()) || {}).marionettePort;
   }
@@ -744,6 +748,37 @@ async function openFirefox({
     port,
     rejoined: !child,
     session,
+
+    // The browser's own bookmarks, history and downloads.
+    //
+    // BiDi does not answer for these and no content page can: Places lives in
+    // the parent process behind privileged APIs, and Firefox has nothing like
+    // chrome://history for content to be pointed at. What answers is the agent
+    // installed at startup — see firefox.js — reached through the function it
+    // hands each document, which is an ordinary page call from here.
+    //
+    // A Firefox this session did not start never had the agent installed, and
+    // there is nothing to be done about that from outside: the one moment a
+    // privileged script can be installed is the moment the browser starts.
+    async readLibrary(kind, scope) {
+      if (!libraryToken) {
+        throw new Error(
+          'this Firefox was already running when tawb attached to it, and its '
+          + 'bookmarks, history and downloads can only be reached by a session '
+          + 'that started it. Start Firefox through tawb to read them.');
+      }
+      const page = scope || browserContext.pages()[0];
+      if (!page) throw new Error('there is no tab to ask through');
+      const entries = await page.mainFrame().evaluate(
+        (arg) => {
+          const ask = window[Symbol.for('tweb.library')];
+          if (!ask) throw new Error('this browser has no reader agent installed');
+          return ask(arg.token, arg.kind, arg.max);
+        },
+        { token: libraryToken, kind, max: MAX_ENTRIES },
+      );
+      return orderEntries(kind, entries);
+    },
 
     // Which views this engine can offer.
     capabilities: { ax: true, frames: true },
