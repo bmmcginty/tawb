@@ -602,6 +602,9 @@ back-tab (`kcbt`) is asked for first and `\e[Z` is the fallback.
 | `Alt+?`  | Open the keyboard binding wizard                               |
 | `\`      | Cycle view: AX → PAGE → INSPECT → SOURCE                         |
 | `Ctrl+T` | Open and follow a new tab                                        |
+| `Ctrl+O` | Bookmarks                                                        |
+| `Alt+H`  | History                                                          |
+| `Alt+J`  | Downloads                                                        |
 | `>` / `<`| Next / previous tab                                              |
 | `Shift+F4`| Close this tab (never the last one)                              |
 | `c` / `C`| Jump to the next / previous area that changed                    |
@@ -722,6 +725,115 @@ rxvt, which send a shifted function key as a higher-numbered one, so Shift+F4
 arrives as F14. With `--log`, any escape sequence nothing claims is written
 to the diagnostic log with its bytes, so a terminal speaking a fifth dialect
 can be added by reading the log.
+
+## The browser's own lists
+
+Bookmarks, history and downloads are not pages, and neither protocol will
+answer for them. CDP and BiDi describe documents; a record of where you have
+been is not a document. Nothing here reads the profile either — the files those
+records are kept in are the browser's private business, and a reader that
+parsed them would be reimplementing the browser's own schema, version by
+version, for data the browser will hand over if you ask it properly.
+
+So each engine is asked the way that engine can be asked, and the two answers
+look nothing alike.
+
+### Chromium: its own pages, over CDP
+
+Chrome has a page for each of the three, and they are ordinary tabs that CDP
+can attach to and run script in. A background tab is opened on the page that
+owns the list, the page's own API is called, and the tab is closed again.
+
+The three are not equally well served, and it is worth being precise:
+
+| List | What is called |
+| ---- | -------------- |
+| bookmarks | `chrome.bookmarks.getTree()` — the real extension API, which that WebUI is granted |
+| downloads | `getDownloads()` on the Mojo handler the `<downloads-manager>` element holds |
+| history   | the query result that machinery has already produced, read off `<history-list>` |
+
+The first two are the browser implementing an interface and us calling it. The
+third is not: the history page keeps its handler in a module of its own where
+nothing can reach it, so that one reads the page's model rather than calling
+the browser. It is still the browser's structured answer — url, title, visit
+time — and not scraped text, but it is the one of the three that a Chrome
+release could rename out from under us.
+
+Folder names arrive already in the browser's own words, because the browser is
+the one saying them. There is nothing here to relabel.
+
+The tab used for this is **internal**: created in the background so the browser
+does not move to it, kept out of `pages()`, never announced as a new tab, and
+closed as soon as the answer is in hand. Its target is marked before the tab is
+waited for, which is soon enough — a tab is announced only once it has been
+wired up, and wiring it costs several round trips after the response that names
+it. So the reader is never told a tab opened, and never finds one in the list
+that was not theirs.
+
+### Firefox: a privileged agent, installed at startup
+
+Firefox has no equivalent page. Places lives in the parent process behind APIs
+only privileged code may call, and the Library is a chrome window rather than a
+document, so there is nothing for content to be pointed at.
+
+So the same road the shadow-root piercing takes is taken again. While we
+legitimately hold the WebDriver session at startup — the one moment there is to
+hold it — an agent is installed in the parent process that answers three
+questions, and a function is handed to content windows that asks them. The
+agent calls `PlacesUtils` and `Downloads`: the APIs the Library and the
+downloads panel are themselves built on. Nothing is asked of Marionette after
+startup, which is what makes any of it possible — Marionette shares one session
+slot with BiDi, so connecting to it later would take the reader's own session
+away.
+
+**The function is gated on a secret.** Unlike piercing, which returns a page its
+own shadow roots, this returns the reader's browsing history, and it is
+installed in every document there is — including hostile ones. The secret is
+made fresh at every launch, and lives only in this process and in the closure
+inside the content process. A page cannot read a closure, so a page cannot
+obtain it; a call without it is refused before anything is asked.
+
+The consequence is that **this only works for a Firefox tawb started**. A
+browser reached with `--connect` was already running when we arrived, and the
+one moment a privileged script can be installed has passed. It says so rather
+than answering emptily.
+
+Firefox stores its own five folders under internal names — `toolbar`,
+`unfiled` — and shows them under translated ones, so those four are relabelled
+on the way out. A tag is stored as a bookmark too, under the tags root,
+pointing at the page it tags; that subtree is skipped, because listing it shows
+every tagged page once per tag, filed under folders the reader never made.
+
+### What both answers become
+
+Entries of one shape — title, url, when, and whatever else that kind has —
+which `library.js` orders and writes on a line. History and downloads are
+newest first, which is the only order a record of what happened has; bookmarks
+keep the order they are filed in, because a bookmark's place in its folder is
+something the reader chose.
+
+One thing there is policy rather than shape. **A long address wraps and buries
+the list**: one entry of a real history — a tracking link carrying a base64
+payload — filled twelve of a twenty-two row screen. An address over a hundred
+characters is cut back to its host and path and marked with an ellipsis, and a
+title that is itself an address gets the same treatment, because a page that
+never titled itself is titled by its address. Enter still goes to the address
+the browser gave us; only the line is short.
+
+The list itself is a buffer like any other: the same lines, cursor, wrapping
+and repainting, so a braille display tracks a bookmark exactly as it tracks a
+paragraph. What it borrows is the dropdown's *mode* rather than the page's.
+Typing filters instead of jumping, because a reader looking for a page they saw
+yesterday knows a word of its title and not its position, and every
+space-separated word has to appear somewhere in the entry — `wiki braille`
+finds the article without knowing which order they come in. Live rebuilds are
+held while a list is open, for the same reason the dropdown holds them: a
+refresh would replace the block list, and the block list is not the page's. The
+core is not told where the reader is standing either, since block twelve of a
+list of bookmarks is not block twelve of the tab, and a text patch aimed there
+would land where they are not. Escape puts the reader back on the line, column
+and screen they left, because closing a list is not a navigation and must not
+read as one.
 
 ## When something changes elsewhere
 
@@ -995,6 +1107,12 @@ properly — nonce, client nonce, request counter and all — so an answer the
 engine computed wrongly is refused exactly as a real server refuses it. It
 also serves a public page whose image is protected, which is how a challenge
 arrives for an origin that is not the one being read.
+
+`test/browser/library.test.js` is there for the same reason: what the reader's
+bookmarks, history and downloads amount to is entirely the browser answering,
+and there is nothing to stub that would prove anything. It starts a browser on
+a fresh profile, visits a page, fetches a file, and asks whether the browser
+hands them back.
 
 The browser suite reads `tools/testpage.html` through the whole stack, and
 checks the things that only a real browser can answer: that a sixty-entry

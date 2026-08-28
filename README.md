@@ -79,6 +79,32 @@ If you need to perform an actual mouse click, press `m`.
 Go back a page by pressing `alt--` and forward by pressing `alt-+`.
 For a new tab, press Ctrl-t.
 
+## Your bookmarks, history and downloads
+
+TAWB asks the browser for its own three lists, so they are the same bookmarks
+and the same history you would see in the browser itself.
+
+- `Ctrl-o` for bookmarks
+- `alt-h` for history
+- `alt-j` for downloads
+
+(Browsers use Ctrl-h and Ctrl-j for the last two, but a terminal spent those
+two keys on Backspace and Enter long before browsers existed, so they become
+the alt keys of the same letters.)
+
+Each opens as an ordinary list you move through with the arrow and page keys.
+**Typing filters it**, rather than jumping: type `braille` and only the
+entries with that word in them remain, and every word you type has to appear
+somewhere in the entry, in any order. Backspace takes a letter back. Press
+Enter to go to the entry you are standing on, or Escape to close the list and
+return to exactly where you were reading.
+
+On Chrome and Chromium this works with any browser, including one you attached
+to with `--connect`. On Firefox it works only with a browser TAWB started
+itself: Firefox will only answer these questions to privileged code, and the
+one moment such code can be installed is while the browser is starting up. A
+Firefox that was already running says so instead.
+
 ## Keys
 
 Pressing alt-shift-slash will bring you into a keyboard wizard.
