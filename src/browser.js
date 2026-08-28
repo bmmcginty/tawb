@@ -44,6 +44,10 @@ const CANDIDATE_BROWSERS = [
 
 const STARTUP_TIMEOUT_MS = 25000;
 
+// What xvfb-run was told to do, kept so a failure can say whether the browser
+// was given a real display or a virtual one.
+let lastDisplayNote = null;
+
 function defaultProfileDir() {
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
   return path.join(base, 'tawb', 'profile');
@@ -86,7 +90,10 @@ const SCREEN = '1280x1024x24';
 // under Xvfb, which is a real browser rendering to a virtual screen rather
 // than a different mode of operation.
 function buildCommand(executable, args) {
-  if (process.env.DISPLAY) return { command: executable, args };
+  if (process.env.DISPLAY) {
+    lastDisplayNote = `Display: ${process.env.DISPLAY}`;
+    return { command: executable, args };
+  }
   const xvfb = which('xvfb-run');
   if (!xvfb) {
     throw new Error(
@@ -95,7 +102,25 @@ function buildCommand(executable, args) {
       + 'Install xvfb, or run inside a graphical session.',
     );
   }
+  lastDisplayNote = `Display: none, so the browser was run under ${xvfb}`;
   return { command: xvfb, args: ['-a', '-s', `-screen 0 ${SCREEN}`, executable, ...args] };
+}
+
+// Chromium writes the port it really opened into the profile. If that file is
+// there after a timeout, the browser started and chose a port, and the failure
+// is between it and us rather than in the browser itself — which is a wholly
+// different thing to go looking for.
+function devToolsPortNote(profileDir, port) {
+  let contents;
+  try {
+    contents = fs.readFileSync(path.join(profileDir, 'DevToolsActivePort'), 'utf8');
+  } catch {
+    return 'DevToolsActivePort: not written, so the browser never got as far as listening';
+  }
+  const opened = contents.split('\n')[0].trim();
+  return opened === String(port)
+    ? `DevToolsActivePort: ${opened}, so the browser did listen and only the connection failed`
+    : `DevToolsActivePort: ${opened || 'empty'}, which is not the port ${port} it was given`;
 }
 
 // A browser already using this profile is one we must join rather than
@@ -148,12 +173,15 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   ];
 
   const { command, args } = buildCommand(found.executable, browserArgs);
+  const displayNote = lastDisplayNote;
   log('browser.spawn', { executable: found.executable, name: found.name, port, profileDir });
 
   // Detached, so the browser leads a process group of its own. That is the
   // only handle that reaches all of it: with no display the command above is
   // xvfb-run, and the browser is that shell's child rather than ours.
-  const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'], detached: true });
+  // Both output streams are captured: under xvfb-run the browser's stderr
+  // arrives on stdout, so listening to stderr alone hears nothing.
+  const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   const startup = watchChildStartup(child);
   child.unref();
 
@@ -176,6 +204,7 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
       port,
       timeoutMs: STARTUP_TIMEOUT_MS,
       state: startup,
+      context: [displayNote, devToolsPortNote(profileDir, port)],
     });
   }
   startup.unref();

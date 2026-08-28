@@ -106,35 +106,44 @@ function requireBrowserUser(name, getuid = process.getuid) {
 
 // Keep the browser's own explanation of a startup failure. This used to be
 // discarded, after which every quick exit was guessed to be a profile clash —
-// including Chromium's very explicit refusal to run as root. The stream is
-// drained for the child's lifetime so a noisy browser cannot block on a full
-// pipe, but only its bounded tail is retained.
+// including Chromium's very explicit refusal to run as root.
+//
+// Both streams are kept, not just stderr, because on a machine with no display
+// the process we spawn is xvfb-run — and Debian's xvfb-run runs its command as
+// `"$@" 2>&1`, folding everything the browser says into stdout. Watching
+// stderr alone there is watching a stream that is empty by construction, which
+// is why headless Ubuntu reported timeouts with no browser output at all.
+//
+// The streams are drained for the child's lifetime so a noisy browser cannot
+// block on a full pipe, but only their bounded tail is retained.
 function watchChildStartup(child, limit = 8192) {
   const state = {
-    exited: false, closed: false, code: null, signal: null, error: null, stderr: '',
+    exited: false, closed: false, code: null, signal: null, error: null, output: '',
   };
-  if (child.stderr) {
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk) => {
-      state.stderr = (state.stderr + chunk).slice(-limit);
+  const streams = [child.stdout, child.stderr].filter(Boolean);
+  for (const stream of streams) {
+    stream.setEncoding('utf8');
+    stream.on('data', (chunk) => {
+      state.output = (state.output + chunk).slice(-limit);
     });
-    // Keep the pipe referenced until startup finishes, or Node can leave
-    // before its final data events. Once the browser is ready it may outlive
-    // the reader, so the launcher releases this handle explicitly.
-    state.unref = () => {
-      if (typeof child.stderr.unref === 'function') child.stderr.unref();
-    };
   }
+  // Keep the pipes referenced until startup finishes, or Node can leave before
+  // their final data events. Once the browser is ready it may outlive the
+  // reader, so the launcher releases these handles explicitly.
+  state.unref = () => {
+    for (const stream of streams) {
+      if (typeof stream.unref === 'function') stream.unref();
+    }
+  };
   child.once('error', (err) => { state.error = err; state.exited = true; });
   child.once('exit', (code, signal) => {
     state.exited = true;
     state.code = code;
     state.signal = signal;
   });
-  // exit can precede the last stderr data event. Read the diagnosis only once
-  // close says all of the child's stdio has been drained.
+  // exit can precede the last data event. Read the diagnosis only once close
+  // says all of the child's stdio has been drained.
   child.once('close', () => { state.closed = true; });
-  if (!state.unref) state.unref = () => {};
   return state;
 }
 
@@ -147,17 +156,20 @@ function compactDiagnostic(value, limit = 1200) {
     .slice(-limit);
 }
 
-function browserStartupError({ name, executable, profileDir, port, timeoutMs, state }) {
+function browserStartupError({
+  name, executable, profileDir, port, timeoutMs, state, context = [],
+}) {
   let reason;
   if (state.error) reason = `could not be started: ${state.error.message}`;
   else if (state.exited && state.signal) reason = `was killed by ${state.signal} before it was ready`;
   else if (state.exited) reason = `exited with status ${state.code ?? 'unknown'} before it was ready`;
   else reason = `did not open debugging port ${port} within ${timeoutMs / 1000}s`;
 
-  const diagnostic = compactDiagnostic(state.stderr);
+  const diagnostic = compactDiagnostic(state.output);
+  const details = [`Executable: ${executable}`, `Profile: ${profileDir}`, ...context.filter(Boolean)];
   return new Error(
-    `${name} ${reason}. Executable: ${executable}. Profile: ${profileDir}.`
-    + (diagnostic ? ` Browser said: ${diagnostic}` : ''),
+    `${name} ${reason}. ${details.join('. ')}.`
+    + (diagnostic ? ` Browser said: ${diagnostic}` : ' The browser said nothing.'),
   );
 }
 

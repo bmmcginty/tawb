@@ -155,10 +155,17 @@ function portOpen(port) {
 // nothing but virtual pixels.
 const SCREEN = '1280x1024x24';
 
+// What the browser was given for a display, kept so a startup failure can say
+// whether it was a real one or a virtual one.
+let lastDisplayNote = null;
+
 // A headless browser fails the checks a real one passes, so with no display we
 // run under Xvfb — a real browser drawing to a virtual screen.
 function buildCommand(executable, args) {
-  if (process.env.DISPLAY) return { command: executable, args };
+  if (process.env.DISPLAY) {
+    lastDisplayNote = `Display: ${process.env.DISPLAY}`;
+    return { command: executable, args };
+  }
   const xvfb = which('xvfb-run');
   if (!xvfb) {
     throw new Error(
@@ -167,6 +174,7 @@ function buildCommand(executable, args) {
       + 'Install xvfb, or run inside a graphical session.',
     );
   }
+  lastDisplayNote = `Display: none, so the browser was run under ${xvfb}`;
   return { command: xvfb, args: ['-a', '-s', `-screen 0 ${SCREEN}`, executable, ...args] };
 }
 
@@ -483,14 +491,17 @@ async function launchFirefox({
   ];
 
   const { command, args: spawnArgs } = buildCommand(found.executable, args);
+  const displayNote = lastDisplayNote;
   log('firefox.spawn', { executable: found.executable, port, marionette: marionettePort, profileDir });
 
   // Detached, so the browser is not taken down by the terminal session ending
   // or the reader crashing. It is still killed explicitly on a clean exit
   // unless --keep-browser asked for it to stay, in which case the next session
   // rejoins it instead of waiting four seconds for a cold start.
+  // Both output streams are captured: under xvfb-run the browser's stderr
+  // arrives on stdout, so listening to stderr alone hears nothing.
   const child = spawn(command, spawnArgs, {
-    stdio: ['ignore', 'ignore', 'pipe'], detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'], detached: true,
   });
   const startup = watchChildStartup(child);
   child.unref();
@@ -513,6 +524,7 @@ async function launchFirefox({
       port,
       timeoutMs: STARTUP_TIMEOUT_MS,
       state: startup,
+      context: [displayNote],
     });
   }
   startup.unref();

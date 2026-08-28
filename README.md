@@ -78,6 +78,16 @@ Once you press alt-a or enter, you'll be prompted for a new binding.
 Type the new keystroke, and you'll be returned immediately to the actions list.
 When you're finished, down arrow to "exit keyboard wizard", press enter, and confirm your changes.
 
+## If the browser will not start
+
+TAWB starts an ordinary browser and attaches to it, so a failure here is
+usually about the browser rather than about TAWB. The error message names the
+browser, its profile directory, the display it was given, and whatever the
+browser itself printed; that last part is normally the answer.
+
+Do not run TAWB as root: browsers refuse to use their security sandbox as
+root, and TAWB will not disable the sandbox for them.
+
 ## Problems
 
 We'd like to hear about any issues you encounter.

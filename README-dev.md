@@ -49,6 +49,13 @@ sticky bars cover most of what is left, and the browser window came out
 620x373 in Chromium and 576x347 in Firefox. On a desktop-sized screen they
 open at 1050x917 and 1152x836 without being told to.
 
+Under `xvfb-run` the browser's stderr is not its own: Debian's wrapper runs
+its command as `"$@" 2>&1`, so everything the browser says arrives on stdout.
+Both streams are captured at launch for that reason — watching stderr alone on
+a machine with no display is watching a stream that is empty by construction,
+and that is why headless Ubuntu once reported startup timeouts with no
+explanation attached to them.
+
 Your profile persists between runs, so logins and cookies survive:
 
 ```

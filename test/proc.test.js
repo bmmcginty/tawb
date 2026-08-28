@@ -156,3 +156,46 @@ test('a browser timeout identifies its port and keeps diagnostics readable', () 
   });
   assert.match(err.message, /did not open debugging port 9333 within 45s/);
 });
+
+
+// xvfb-run runs its command as `"$@" 2>&1`. Everything the browser says
+// therefore arrives on stdout, so a launcher watching stderr alone hears
+// nothing at all — which is exactly what a machine with no display reported:
+// a timeout, and no browser output to explain it.
+
+test('what the browser says through xvfb-run is not lost with its stderr', async () => {
+  // Two shapes: a browser complaining on stderr, and the same complaint after
+  // xvfb-run's `2>&1` has folded it into stdout. Both have to reach the user.
+  const onStderr = spawn('sh', ['-c', 'printf "cannot open display\\n" >&2; exit 1'], {
+    stdio: ['ignore', 'pipe', 'pipe'], detached: true,
+  });
+  const merged = spawn('sh', ['-c', 'printf "cannot open display\\n" 2>&1; exit 1'], {
+    stdio: ['ignore', 'pipe', 'pipe'], detached: true,
+  });
+  const states = [onStderr, merged].map((child) => watchChildStartup(child));
+  await Promise.all([onStderr, merged].map(
+    (child) => new Promise((resolve) => child.once('close', resolve)),
+  ));
+  for (const state of states) {
+    const err = browserStartupError({
+      name: 'firefox', executable: '/usr/bin/firefox', profileDir: '/tmp/p',
+      port: 9000, timeoutMs: 45000, state,
+    });
+    assert.match(err.message, /Browser said: cannot open display/);
+  }
+});
+
+test('a startup failure says what display the browser was given', () => {
+  const err = browserStartupError({
+    name: 'google-chrome-stable',
+    executable: '/usr/bin/google-chrome-stable',
+    profileDir: '/home/someone/.local/share/tawb/profile',
+    port: 43291,
+    timeoutMs: 25000,
+    state: { exited: false, output: '' },
+    context: ['Display: none, so the browser was run under /usr/bin/xvfb-run', null],
+  });
+  assert.match(err.message, /Display: none, so the browser was run under \/usr\/bin\/xvfb-run/);
+  // A silent browser is a fact about the failure, not an absence to leave out.
+  assert.match(err.message, /The browser said nothing/);
+});
