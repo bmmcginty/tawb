@@ -176,6 +176,11 @@ class CdpBrowserContext {
     this.pagesBySession = new Map();
     this.initScripts = [];
     this.newPageHandlers = [];
+    // Tabs this reader opened for itself — the WebUI page one of the browser's
+    // own lists is read from. They are not the reader's tabs: they are not in
+    // the tab list, they are not announced as having opened, and they are
+    // closed as soon as the answer is in hand. See newInternalPage().
+    this.internalTargets = new Set();
   }
 
   // Only tabs that have finished being wired up. A tab is announced by the
@@ -183,7 +188,8 @@ class CdpBrowserContext {
   // and a page handed out in that moment answers wrongly about its own main
   // frame — which is a navigation to a frame id that is not there yet.
   pages() {
-    return [...this.pagesByTarget.values()].filter((page) => page.wired && !page.isClosed());
+    return [...this.pagesByTarget.values()].filter(
+      (page) => page.wired && !page.isClosed() && !this.internalTargets.has(page.targetId));
   }
 
   on(event, handler) {
@@ -224,15 +230,35 @@ class CdpBrowserContext {
   }
 
   announce(page) {
+    if (this.internalTargets.has(page.targetId)) return;
     for (const handler of [...this.newPageHandlers]) {
       try { handler(page); } catch { /* a handler must not break the session */ }
     }
   }
 
   async newPage() {
+    return this.#createPage({});
+  }
+
+  // A tab of our own, for asking the browser something only one of its own
+  // pages can answer.
+  //
+  // It is created in the background so the browser does not move to it, and
+  // its target is marked before the tab is waited for — which is soon enough,
+  // because a tab is announced only once it has been wired up, and wiring it
+  // costs several round trips after the response that names it. So the reader
+  // is never told a tab opened, and never finds one in the list that was not
+  // theirs.
+  async newInternalPage() {
+    return this.#createPage({ background: true, internal: true });
+  }
+
+  async #createPage({ background = false, internal = false }) {
     const { targetId } = await this.connection.browser.send('Target.createTarget', {
       url: 'about:blank',
+      ...(background ? { background: true } : {}),
     });
+    if (internal) this.internalTargets.add(targetId);
     const deadline = Date.now() + NEW_TAB_TIMEOUT_MS;
     for (;;) {
       // Every tab, wired or not, because this one is brand new by
@@ -248,6 +274,7 @@ class CdpBrowserContext {
   }
 
   async closePage(page) {
+    this.internalTargets.delete(page.targetId);
     await this.connection.browser
       .send('Target.closeTarget', { targetId: page.targetId })
       .catch(() => { /* already gone, which is what was wanted */ });
