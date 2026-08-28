@@ -53,8 +53,9 @@
 //                     Chromium has pages of its own for all three, and CDP can
 //                     attach to them: a background tab is opened on
 //                     chrome://bookmarks, chrome://history or
-//                     chrome://downloads, the page's own API is called, and
-//                     the tab is closed. Firefox has no such page and no such
+//                     chrome://downloads, the interface the browser implements
+//                     for that page is called through the binding the page's
+//                     own module publishes, and the tab is closed. Firefox has no such page and no such
 //                     protocol call; its answer comes from a privileged agent
 //                     installed while the browser starts, which calls
 //                     PlacesUtils and Downloads directly. Both return entries

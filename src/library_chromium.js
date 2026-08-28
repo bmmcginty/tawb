@@ -1,6 +1,6 @@
 'use strict';
 
-const { orderEntries } = require('./library');
+const { orderEntries, MAX_ENTRIES } = require('./library');
 
 // Chromium's bookmarks, history and downloads, asked for the way the browser's
 // own pages ask.
@@ -20,16 +20,19 @@ const { orderEntries } = require('./library');
 //               is granted it, so this is the same call an extension makes and
 //               the same one the page itself uses. Folder titles arrive
 //               already in the browser's own words.
-//   downloads   the page's Mojo handler — getDownloads() on the browser proxy
-//               the <downloads-manager> element holds. That is the interface
-//               the browser implements for this page; the page is only how we
-//               reach it.
-//   history     the query result that same machinery has already produced,
-//               read off <history-list>. The history page keeps its handler in
-//               a module of its own where nothing can reach it, so this is the
-//               one of the three where we read the page's model rather than
-//               calling the browser. It is still the browser's structured
-//               answer — url, title, visit time — and not scraped text.
+//   history     queryHistory() on the Mojo handler, reached through the
+//               BrowserProxy the history page's own module exports. It answers
+//               with the results, takes the number wanted, and says whether
+//               there are more.
+//   downloads   getDownloads() on the same kind of handler, from the downloads
+//               page's module. This one answers into the page rather than to
+//               the caller, and only with what has changed since it last
+//               spoke — so the list is read off the element that has been
+//               accumulating it, which by then is every download there is.
+//
+// In each case the interface is the browser's, implemented in C++ for its own
+// UI; the page is how we reach it, and its module is where the binding to that
+// interface is published.
 //
 // A tab used for this is internal: it is created in the background, kept out
 // of the tab list, never announced as a new tab, and closed when the answer is
@@ -41,18 +44,19 @@ const PAGES = {
   downloads: 'chrome://downloads/',
 };
 
-// The element each page builds itself around. A WebUI page's own elements are
-// defined by a module it fetches after the document exists, so the document
-// being there is not the page being there.
-const ELEMENTS = {
-  bookmarks: 'bookmarks-app',
-  history: 'history-app',
-  downloads: 'downloads-manager',
-};
-
 // How long to wait for a WebUI page to have its answer ready.
 const READY_TIMEOUT_MS = 8000;
 const POLL_MS = 100;
+
+// What has to be there before a page can be asked. A WebUI page's own script is
+// a module it fetches after the document exists, so the document being there is
+// not the page being there. Only the downloads list waits on an element, since
+// it is the element that accumulates the answer.
+const READY = {
+  bookmarks: () => !!(window.chrome && chrome.bookmarks),
+  history: () => !!document.querySelector('history-app'),
+  downloads: () => !!document.querySelector('downloads-manager'),
+};
 
 // ---------------------------------------------------------------------------
 // What runs in the WebUI page
@@ -86,47 +90,42 @@ function readBookmarks() {
   });
 }
 
-// The history page runs its query as it loads. Wait for the answer rather than
-// for a fixed time: an empty history and a history that has not arrived yet
-// look identical, and only one of them is worth reporting.
-function readHistory(deadline) {
-  const list = () => {
-    const app = document.querySelector('history-app');
-    const root = app && app.shadowRoot;
-    return root ? root.querySelector('history-list') : null;
-  };
-  return new Promise((resolve) => {
-    const tick = () => {
-      const found = list();
-      const data = found && found.historyData_;
-      if (Array.isArray(data) && (data.length || Date.now() > deadline)) {
-        resolve(data.map((entry) => ({
-          title: String(entry.title || ''),
-          url: String(entry.url || ''),
-          when: Number(entry.time) || null,
-        })));
-        return;
-      }
-      if (Date.now() > deadline) { resolve([]); return; }
-      setTimeout(tick, 100);
-    };
-    tick();
+// The history page publishes its browser proxy, so this is the query itself
+// rather than the answer to somebody else's: it takes the number of entries
+// wanted and hands them back.
+function readHistory(max) {
+  return import('chrome://history/history.js').then(({ BrowserProxyImpl }) => {
+    const handler = BrowserProxyImpl.getInstance().handler;
+    return handler.queryHistory('', max);
+  }).then((answer) => {
+    const results = (answer && answer.results && answer.results.value) || [];
+    return results.map((entry) => ({
+      title: String(entry.title || ''),
+      url: String(entry.url || ''),
+      when: Number(entry.time) || null,
+    }));
   });
 }
 
-// Downloads come back through the page rather than from the call: getDownloads
-// tells the browser to send them, and they arrive on the element. The states
-// are the browser's own enum, and where it has written a line of its own about
-// one — "Failed - Network error", a paused download's progress — that is
-// preferred, because it is in the reader's language and ours is not.
+// Downloads answer into the page rather than to the caller, and only with what
+// has changed since the handler last spoke — asking a second time reports an
+// empty insert, because the page already has them. So the call is made through
+// the page's own proxy and the answer is read off the element that has been
+// accumulating it since the page loaded.
+//
+// The states are the browser's own enum, and where it has written a line of its
+// own about one — "Failed - Network error", a paused download's progress —
+// that is preferred, because it is in the reader's language and ours is not.
 function readDownloads(deadline) {
   const STATES = {
     0: 'in progress', 1: 'cancelled', 2: 'complete', 3: 'paused',
     4: 'dangerous', 5: 'interrupted', 6: 'insecure',
   };
   const manager = document.querySelector('downloads-manager');
-  if (!manager || !manager.browserProxy_) return Promise.resolve([]);
-  return Promise.resolve(manager.browserProxy_.handler.getDownloads([])).then(() => new Promise((resolve) => {
+  if (!manager) return Promise.resolve([]);
+  return import('chrome://downloads/downloads.js')
+    .then(({ browserProxyFactory }) => browserProxyFactory.getInstance().handler.getDownloads([]))
+    .then(() => new Promise((resolve) => {
     const tick = () => {
       const items = manager.items_;
       if (Array.isArray(items) && (items.length || Date.now() > deadline)) {
@@ -153,22 +152,27 @@ function readDownloads(deadline) {
 
 const READERS = { bookmarks: readBookmarks, history: readHistory, downloads: readDownloads };
 
+// The one thing each reader has to be told, since a function sent into a page
+// is sent with a single argument: how many entries are wanted, or how long to
+// wait for them.
+const ARGUMENTS = {
+  bookmarks: () => null,
+  history: ({ max }) => max,
+  downloads: ({ timeout }) => Date.now() + timeout,
+};
+
 // ---------------------------------------------------------------------------
 
 // Opens the page that owns `kind`, asks it, and closes it again.
-async function readChromiumLibrary(context, kind, { timeout = READY_TIMEOUT_MS } = {}) {
+async function readChromiumLibrary(context, kind, { timeout = READY_TIMEOUT_MS, max = MAX_ENTRIES } = {}) {
   const url = PAGES[kind];
   if (!url) throw new Error(`Unknown list "${kind}".`);
 
   const page = await context.newInternalPage();
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(
-      (name) => !!document.querySelector(name),
-      ELEMENTS[kind],
-      { timeout, polling: POLL_MS },
-    );
-    const entries = await page.evaluate(READERS[kind], Date.now() + timeout);
+    await page.waitForFunction(READY[kind], undefined, { timeout, polling: POLL_MS });
+    const entries = await page.evaluate(READERS[kind], ARGUMENTS[kind]({ timeout, max }));
     return orderEntries(kind, entries);
   } finally {
     await context.closePage(page).catch(() => { /* the answer is already in hand */ });

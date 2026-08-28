@@ -744,20 +744,23 @@ Chrome has a page for each of the three, and they are ordinary tabs that CDP
 can attach to and run script in. A background tab is opened on the page that
 owns the list, the page's own API is called, and the tab is closed again.
 
-The three are not equally well served, and it is worth being precise:
+All three are calls into an interface the browser implements in C++ for its own
+UI. The page is how we reach it, and the page's own module — importable, since
+we are on that page — is where the binding to it is published:
 
 | List | What is called |
 | ---- | -------------- |
 | bookmarks | `chrome.bookmarks.getTree()` — the real extension API, which that WebUI is granted |
-| downloads | `getDownloads()` on the Mojo handler the `<downloads-manager>` element holds |
-| history   | the query result that machinery has already produced, read off `<history-list>` |
+| history   | `queryHistory(term, max)` on the handler from `BrowserProxyImpl`, exported by `chrome://history/history.js` |
+| downloads | `getDownloads()` on the handler from `browserProxyFactory`, exported by `chrome://downloads/downloads.js` |
 
-The first two are the browser implementing an interface and us calling it. The
-third is not: the history page keeps its handler in a module of its own where
-nothing can reach it, so that one reads the page's model rather than calling
-the browser. It is still the browser's structured answer — url, title, visit
-time — and not scraped text, but it is the one of the three that a Chrome
-release could rename out from under us.
+Two of the three answer the caller. Downloads does not: it answers *into* the
+page, and only with what has changed since the handler last spoke — ask a
+second time and the reply is an empty insert, because the page already has
+them. So the call is made and the list is read off the element that has been
+accumulating it since the page loaded, which by then is every download there
+is. That is the one place here that touches a page's own field rather than an
+interface.
 
 Folder names arrive already in the browser's own words, because the browser is
 the one saying them. There is nothing here to relabel.
