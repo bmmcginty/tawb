@@ -152,6 +152,15 @@ function watchNativeDialogs({
           // "Allow extension to run in private windows".
           toggles: read.toggles || [],
           defaultButton: defaultButton(read.buttons),
+          // Press a button, the way a screen reader's user activates the
+          // control they are on.
+          //
+          // Worth knowing if this is ever called by something other than a
+          // person: a press that lands within about half a second of the
+          // dialog appearing is discarded by Chromium's own protection
+          // against clickjacking, and discarded silently — the call still
+          // answers true and nothing happens. A reader taking the time to
+          // read the question is never near that window.
           press: (button) => a11y.press(button),
           // Tick or untick an option, and answer with what it is now. The
           // browser owns the state; this reads it back rather than assuming
@@ -163,12 +172,17 @@ function watchNativeDialogs({
           },
           // Whether the browser is still asking. A dialog answered elsewhere,
           // or a browser that has gone, is not something to press a button on.
+          // Whether the browser is still asking. Membership rather than
+          // "does the object still answer": a dismissed dialog goes on
+          // answering for a moment after it has gone from the window.
           stillOpen: async () => {
             try {
-              // Whatever it hangs off, a dialog that is gone has no role to
-              // answer with.
-              await a11y.roleOf(described);
-              return true;
+              const windows = await a11y.childrenOf(application);
+              const here = [...windows];
+              for (const window of windows.slice(0, MAX_CONTAINERS)) {
+                here.push(...await a11y.childrenOf(window).catch(() => []));
+              }
+              return pathsOf(here).includes(key);
             } catch {
               return false;
             }

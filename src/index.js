@@ -2384,6 +2384,9 @@ async function handleLibraryKey(chunk, state, page) {
 // that was. On Chrome's install prompt that is Cancel, not Add: the browser's
 // own idea of the safe answer is the one it would give if Enter were pressed
 // blind, and taking it over means keeping that rather than inventing one.
+// How long to let the browser act on a press before deciding whether it did.
+const PRESS_SETTLE_MS = 400;
+
 function toggleText(toggle) {
   return `[${toggle.checked ? 'x' : ' '}] ${toggle.name}`;
 }
@@ -2462,15 +2465,21 @@ async function answerNativeDialog(state, dialog) {
   });
 
   const token = state.keyReader.claim();
+  // Pressed, and then checked. A button that answers "yes, pressed" while the
+  // dialog stays where it is has not done anything — the browser can decline
+  // a press, and telling the reader their answer went in when it did not is
+  // worse than telling them nothing.
   const press = async (button, how) => {
-    let pressed = false;
     try {
-      pressed = await dialog.press(button);
+      await dialog.press(button);
     } catch (err) {
       log('native.press.failed', { button: button.name, error: String(err.message || err).slice(0, 120) });
+      return false;
     }
-    log('native.answered', { button: button.name, how, pressed });
-    return pressed;
+    await new Promise((resolve) => setTimeout(resolve, PRESS_SETTLE_MS));
+    const answered = !(await dialog.stillOpen().catch(() => false));
+    log('native.answered', { button: button.name, how, answered });
+    return answered;
   };
 
   try {
@@ -2494,7 +2503,7 @@ async function answerNativeDialog(state, dialog) {
         const pressed = await press(fallback, 'escape');
         closeNativeDialog(state, page, pressed
           ? `Pressed "${fallback.name}" — the browser's own answer.`
-          : `Could not press "${fallback.name}"; the browser may have closed the dialog itself.`);
+          : `Pressed "${fallback.name}", but the browser has not closed the dialog.`);
         return;
       }
 
@@ -2525,7 +2534,7 @@ async function answerNativeDialog(state, dialog) {
         const pressed = await press(button, 'chosen');
         closeNativeDialog(state, page, pressed
           ? `Pressed "${button.name}".`
-          : `Could not press "${button.name}"; the browser may have closed the dialog itself.`);
+          : `Pressed "${button.name}", but the browser has not closed the dialog.`);
         return;
       }
 

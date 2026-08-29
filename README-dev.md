@@ -1073,6 +1073,24 @@ synthetic keystrokes is a bad idea. Pressing Return at the window with xdotool
 dismisses the prompt and installs nothing, which looks from the outside
 exactly like an install that silently failed.
 
+A press is checked rather than trusted. The accessibility action answers "yes,
+pressed" whether or not anything happened, so after pressing, the dialog is
+looked for again: if it is still there, the reader is told the press did not
+take rather than told their answer went in. That is not hypothetical.
+Chromium discards input arriving within about half a second of a dialog
+appearing — its protection against clickjacking — and discards it silently,
+which is exactly what a test pressing the instant it hears will see, and what
+a reader reading the question never will.
+
+What else arrives this way, on Chromium: a site's permission request, with
+all four of the browser's own answers ("Allow while visiting the site",
+"Allow this time", "Never allow", "Close"), and a page's own `alert` box,
+which is a modal that stops the page's script until somebody answers it —
+before this, a page that had quietly stopped for no reason a reader could
+discover. Firefox's page dialogs do not appear, because the WebDriver session
+attached to it dismisses them before anything else sees them; its install
+doorhanger is not dismissed that way, which is the one this feature is for.
+
 One question at a time. The watch does not go looking for another while a
 reader is answering one, a dialog is offered once rather than once per poll,
 and one that goes away by itself — dismissed in the browser, or answered by

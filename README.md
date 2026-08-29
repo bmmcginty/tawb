@@ -140,7 +140,11 @@ private windows. An option like that appears as `[ ]` or `[x]`; press Enter on
 it to tick it, and the question stays up until you answer it.
 
 This is not only for extensions. Anything the browser draws in a window of its
-own rather than in the page comes through the same way.
+own rather than in the page comes through the same way — on Chrome and
+Chromium that includes a site's permission request ("wants to: Know your
+location", with all four of the browser's own answers) and a page's own
+`alert` box, which is a modal that stops the page until it is answered and
+which before this was simply a page that had quietly stopped.
 
 On Chrome and Chromium this needs a browser TAWB started itself, because
 describing its own windows is something Chrome is told to do at startup.
