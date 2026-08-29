@@ -1143,6 +1143,54 @@ never presses the button either. `ExtensionInstallForcelist` installs without
 any prompt at all, from a policy file under `/etc/chromium/policies/managed`
 that needs root, which is not answering the question, it is deleting it.
 
+## Attaching a file
+
+A file input is the one control that cannot be pressed. Pressing one asks the
+desktop for a chooser, and that chooser is not the browser's own window: it is
+the XDG portal's, in another process, so it is not even in the accessibility
+tree the browser publishes — the machinery above cannot see it. Worse, on a
+machine with no portal, which is a terminal with the browser under Xvfb,
+nothing appears at all. Chromium's log says so plainly: `components/dbus/xdg/
+request.cc — Request ended`. Before this, pressing a file input in tawb
+reported "no visible change", which was exactly true and completely useless.
+
+Both engines hand the chooser over instead, and that is the whole design:
+
+| | Chromium | Firefox |
+| --- | --- | --- |
+| hand the chooser over | `Page.setInterceptFileChooserDialog`, then `Page.fileChooserOpened {mode, backendNodeId}` | `input.fileDialogOpened {element, multiple}` — the dialog is suppressed by the WebDriver session anyway |
+| give an input its files | `DOM.setFileInputFiles` | `input.setFiles` |
+| cancel | `DOM.setFileInputFiles` with none | `input.setFiles` with none |
+
+Nothing is ever drawn, which is what makes this safe: a reader who escapes the
+prompt leaves no window anywhere, and the page simply gets no files, which is
+what cancelling a chooser has always meant.
+
+**Cancelling is not the same as walking away, and the difference is Firefox's.**
+Chromium tolerates a chooser that is never answered — the page goes on, and the
+next chooser still arrives. Firefox holds the dialog it did not draw until the
+session answers and raises no other meanwhile, so a reader who escaped would
+find that uploading had quietly stopped working in that tab. So both are
+answered explicitly, with an empty list, and the empty answer fires no `change`
+on the page. There is a second Firefox quirk behind it: asked again within
+about a second of a cancelled dialog it raises nothing at all, though the
+page's own click handler runs. That is the same class of machine-speed artefact
+as Chromium discarding a press that lands too soon after a dialog appears, and
+a reader typing a path is never near it.
+
+Armed per tab, as tabs are taken, for the reason the password prompt is: a
+chooser raised in a tab another reader is reading is not ours to answer — and
+an intercepted chooser we do not answer is one the browser has stopped drawing
+for them.
+
+Two routes end at the same prompt. The ordinary one needs no chooser at all:
+the reader pressed Enter on the input, so the element is already in hand and
+the files go straight to it. The handover is for the case with no control to
+press — the "Upload" button that clicks a hidden input, which is most of the
+upload widgets on the web. Note that tawb's own activation (`element.click()`,
+the element's default action) opens no chooser on either engine, because it
+carries no user activation; the handover fires for the real click behind `m`.
+
 ## When a site's certificate is refused
 
 A bad certificate — self-signed, expired, issued for another name — is not a

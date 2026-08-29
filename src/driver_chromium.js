@@ -280,6 +280,76 @@ async function openChromium({
     return true;
   };
 
+  // The browser's own file chooser, taken over.
+  //
+  // A file input is not a document either, and unlike an extension prompt it
+  // is not even the browser's own window: pressing one asks the desktop for a
+  // chooser through the XDG portal, so the dialog belongs to another process
+  // entirely and is nowhere in the browser's accessibility tree — and on a
+  // machine with no portal, which is a terminal under Xvfb, no dialog appears
+  // at all. Neither the reader nor this program could ever answer it.
+  //
+  // CDP hands it over instead. With interception on, the browser stops asking
+  // the desktop and tells us which input is asking and whether it takes one
+  // file or several; `DOM.setFileInputFiles` answers, and the page's own
+  // `change` fires exactly as it would have.
+  //
+  // Nothing can be left hanging by this, which is the point of doing it this
+  // way round: the dialog is never drawn, so a reader who escapes the prompt
+  // leaves no window anywhere and the page simply gets no files — which is
+  // what cancelling a chooser has always meant. Measured rather than assumed:
+  // a chooser left unanswered wedges nothing, the page goes on answering, and
+  // the next chooser still arrives.
+  //
+  // Per tab, like the password prompt and for the same reason: a chooser
+  // raised in a tab another reader is reading is not ours to answer.
+  const chooserSessions = new Map();
+  let answerFileChooser = null;
+
+  const armFileChooser = async (page) => {
+    if (!answerFileChooser || chooserSessions.has(page)) return false;
+    let session;
+    try {
+      session = await context.newCDPSession(page);
+    } catch {
+      return false;
+    }
+    chooserSessions.set(page, session);
+
+    session.on('Page.fileChooserOpened', (event) => {
+      if (!answerFileChooser) return;
+      const answer = (files) => session.send('DOM.setFileInputFiles', {
+        files, backendNodeId: event.backendNodeId,
+      });
+      answerFileChooser({
+        // What the input said it wanted, in the browser's own words.
+        multiple: event.mode === 'selectMultiple',
+        directory: event.mode === 'selectDirectory',
+        setFiles: (paths) => answer(paths),
+        // No files is a real answer, and the one a reader who escapes the
+        // prompt is giving. Chromium tolerates a chooser that is simply left,
+        // but Firefox holds it open and refuses the next one until it is
+        // answered — so both are answered, and the same way.
+        cancel: () => answer([]),
+      }, page).catch(() => {});
+    });
+
+    try {
+      await session.send('Page.enable');
+      await session.send('Page.setInterceptFileChooserDialog', { enabled: true });
+    } catch {
+      chooserSessions.delete(page);
+      await session.detach().catch(() => {});
+      return false;
+    }
+    page.once('close', () => {
+      chooserSessions.delete(page);
+      session.detach().catch(() => {});
+    });
+    log('files.armed', { url: String(page.url()).slice(0, 80) });
+    return true;
+  };
+
   // Dialogs the browser draws for itself: an extension asking for consent,
   // and anything else that is a window rather than a document. Neither
   // protocol has them; the browser's own accessibility interface does. See
@@ -310,6 +380,29 @@ async function openChromium({
     port,
     rejoined,
     readLibrary,
+
+    // Answer this browser's file choosers on the terminal. `handler` is given
+    // what the browser was about to ask for and the tab it was asked in, and
+    // hands back files — or hands back nothing, which is a cancelled chooser.
+    async attachFileChooser(handler) {
+      answerFileChooser = handler;
+      return true;
+    },
+
+    // One tab, armed because it is now this reader's.
+    async armFileChooser(page) {
+      return armFileChooser(page).catch(() => false);
+    },
+
+    // Give a file input its files directly, with no chooser in it at all.
+    // This is the ordinary case: the reader pressed Enter on the input, so
+    // the element is already in hand and there is nothing to intercept.
+    async setFiles(handle, paths) {
+      await handle.frame.session().send('DOM.setFileInputFiles', {
+        objectId: handle.objectId, files: paths,
+      });
+      return true;
+    },
 
     // Answer this browser's own dialogs on the terminal. `handler` is given
     // what the dialog says and the buttons it offers; answering presses one
@@ -465,6 +558,10 @@ async function openChromium({
       }
       authSessions.clear();
       if (nativeWatch) nativeWatch.stop();
+      for (const session of chooserSessions.values()) {
+        await session.detach().catch(() => {});
+      }
+      chooserSessions.clear();
       await browser.close().catch(() => {});
       // The accessibility bus, and the session bus under it if this session
       // started one. A name claimed here is released here, so a desktop that

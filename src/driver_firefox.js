@@ -551,6 +551,11 @@ async function openFirefox({
   // describe them to. See native_prompt.js.
   let a11y = null;
   let nativeWatch = null;
+  // Tabs whose file choosers are ours to answer, and whether the one listener
+  // that serves them all has been attached.
+  const armedChoosers = new Set();
+  let chooserListening = false;
+  let answerFileChooser = null;
 
   if (!endpoint) {
     const started = await launchFirefox({
@@ -759,6 +764,76 @@ async function openFirefox({
     port,
     rejoined: !child,
     session,
+
+    // Firefox's file chooser, taken over.
+    //
+    // The same problem as Chromium's and the same answer, reached by a
+    // different road. A file dialog opened while a WebDriver session is
+    // attached is never shown — that is the session's doing, not ours — and
+    // BiDi reports it as `input.fileDialogOpened`, naming the input that
+    // asked and whether it takes more than one file. `input.setFiles`
+    // answers it, and the page's own `change` fires as it would have.
+    //
+    // So nothing can be left hanging here either: there is no window to
+    // leave open, and a reader who escapes the prompt leaves an input with
+    // no files, which is what cancelling a chooser means.
+    //
+    // Subscribed per context rather than for the whole browser, because a
+    // chooser raised in a tab another reader is reading is not ours.
+    async attachFileChooser(handler) {
+      answerFileChooser = handler;
+      return true;
+    },
+
+    async armFileChooser(page) {
+      if (!answerFileChooser || armedChoosers.has(page)) return false;
+      const context = page.contextId;
+      try {
+        await session.send('session.subscribe', {
+          events: ['input.fileDialogOpened'], contexts: [context],
+        });
+      } catch {
+        return false;
+      }
+      armedChoosers.add(page);
+      if (!chooserListening) {
+        chooserListening = true;
+        session.on('input.fileDialogOpened', (event) => {
+          if (!answerFileChooser) return;
+          const asking = [...armedChoosers].find((open) => open.contextId === event.context);
+          if (!asking) return;
+          const answer = (files) => session.send('input.setFiles', {
+            context: event.context, element: event.element, files,
+          });
+          answerFileChooser({
+            multiple: !!event.multiple,
+            directory: false,
+            setFiles: (paths) => answer(paths),
+            // Cancelling is not the same as walking away here. Firefox holds
+            // the dialog it did not draw until the session answers, and
+            // refuses to raise another one meanwhile — so a reader who
+            // escaped the prompt would find that uploading had stopped
+            // working in that tab. An empty answer is what a cancelled
+            // chooser sends back, and the next one then arrives normally.
+            cancel: () => answer([]),
+          }, asking).catch(() => {});
+        });
+      }
+      log('files.armed', { context });
+      return true;
+    },
+
+    // Give a file input its files directly, for the ordinary case where the
+    // reader pressed Enter on the input and the element is already in hand.
+    async setFiles(handle, paths) {
+      if (!handle || !handle.sharedId) {
+        throw new Error('that control cannot be given files: the browser gave no reference to it');
+      }
+      await session.send('input.setFiles', {
+        context: handle.contextId, element: { sharedId: handle.sharedId }, files: paths,
+      });
+      return true;
+    },
 
     // Firefox's own dialogs, answered on the terminal.
     //

@@ -749,6 +749,10 @@ class Core {
     // is not stays with the browser's own dialog, because a challenge raised
     // in somebody else's tab is not ours to put in front of this reader.
     if (this.driver.armAuth) await this.driver.armAuth(page).catch(() => {});
+    // The same for a file chooser: an upload asked for in somebody else's tab
+    // is their business, and a chooser we intercept without answering is one
+    // the browser stops drawing for them.
+    if (this.driver.armFileChooser) await this.driver.armFileChooser(page).catch(() => {});
     page.setDefaultTimeout(OPERATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     this.page = page;
