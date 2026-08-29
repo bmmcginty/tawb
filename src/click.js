@@ -57,6 +57,32 @@ function clickThrough(el) {
   return node !== el;
 }
 
+// Whether pressing this would submit a form the browser filled in itself.
+//
+// A saved password is not in the page. Both engines fill the fields visually
+// and keep the value from page script until a person interacts with the page,
+// which is what stops a hostile page reading a credential the reader never
+// meant to give it. The catch is that it also applies to the submission: a
+// form sent by `element.click()` — no mouse, no key, no user activation —
+// arrives at the server with the fields empty, and neither the page nor the
+// reader is told. Measured directly: fields reporting `:autofill`, and
+// `username=&password=` at the other end.
+//
+// So a button that would send such a form is pressed as a person presses it
+// instead, at real coordinates. See core.activate.
+function submitsAutofilled(el) {
+  const form = el && (el.form || (el.closest && el.closest('form')));
+  if (!form || !form.elements) return false;
+  for (const field of form.elements) {
+    for (const selector of [':autofill', ':-webkit-autofill']) {
+      try {
+        if (field.matches(selector)) return true;
+      } catch { /* an engine that does not know this pseudo-class */ }
+    }
+  }
+  return false;
+}
+
 // Runs in the page before a real click: brings the element onto the screen
 // and reports whether a click there would actually reach it.
 //
@@ -166,4 +192,4 @@ function prepareRealClick(el) {
   return blocked || { ok: false, reason: 'could not be reached' };
 }
 
-module.exports = { clickThrough, prepareRealClick };
+module.exports = { clickThrough, prepareRealClick, submitsAutofilled };

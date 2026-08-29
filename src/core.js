@@ -3,11 +3,12 @@
 const { snapshotFrameTree } = require('./frames');
 const { armRenderedFrames, createLiveState, installLive, collect, INPUT_GRACE_MS } = require('./live');
 const { activateDomItem, domElementHandle } = require('./dom');
-const { clickThrough, prepareRealClick } = require('./click');
+const { clickThrough, prepareRealClick, submitsAutofilled } = require('./click');
 const { renderElementHandle } = require('./render_html');
 const { remapIndex } = require('./remap');
 const { claimTab } = require('./session');
 const { log } = require('./log');
+const { BUTTON_ROLES } = require('./aria');
 
 // The core: everything about a page that is not about a terminal.
 //
@@ -1183,6 +1184,32 @@ class Core {
     }
     const handle = await withTimeout(
       this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating element');
+
+    // A button that would send a form the browser filled in itself has to be
+    // pressed the way a person presses it. Without that activation the
+    // engines send the form with the remembered fields empty — see
+    // submitsAutofilled in click.js — and a reader signing in with a saved
+    // password would get a failed login and no reason for it.
+    if (BUTTON_ROLES.has(item.role) && this.canRealClick()) {
+      const remembered = await handle.evaluate(submitsAutofilled).catch(() => false);
+      if (remembered) {
+        const clicked = await this.realClickHandle(handle, page, item.frame || page)
+          .catch(() => null);
+        if (clicked && clicked.ok) return { how: 'real-click', status: null };
+        // It could not be pressed that way — covered by something, or off a
+        // screen it cannot be brought onto. Press it anyway, because a
+        // sign-in that might work beats none, and say what may be wrong with
+        // it rather than leaving the reader with an unexplained refusal.
+        const done = await this.activateHandle(handle, page);
+        const why = clicked && clicked.reason ? clicked.reason : 'could not be pressed that way';
+        return {
+          ...done,
+          status: `Pressed "${item.name}", but the browser only sends a remembered password `
+            + `when a person presses the button, and this one ${why}. `
+            + 'If the sign-in is refused, type the password in.',
+        };
+      }
+    }
     return this.activateHandle(handle, page);
   }
 
