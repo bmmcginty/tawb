@@ -1036,6 +1036,64 @@ Reading one drops the empty panels a views dialog nests — four of them, each
 answering with the name of what it wraps — so what comes back is the few lines
 the dialog actually says and the buttons it offers.
 
+### Answering one
+
+A dialog is offered to the reader as a buffer of its own, the way the
+browser's lists are: the lines it says, then the buttons it offers as lines to
+move to and press. Enter presses the one under the cursor. That shape is
+deliberate — a permission list is the reason the question is being asked, and
+a yes/no on the status line would put the answer in front of the reader before
+the question had been read.
+
+Escape presses whichever button the dialog itself has focused or marked
+default, and says which one it pressed. Chrome focuses **Cancel** on its
+install prompt and marks it the default, which is worth knowing twice over: it
+is the browser's own safe answer, and it is why driving these dialogs with
+synthetic keystrokes is a bad idea. Pressing Return at the window with xdotool
+dismisses the prompt and installs nothing, which looks from the outside
+exactly like an install that silently failed.
+
+One question at a time. The watch does not go looking for another while a
+reader is answering one, a dialog is offered once rather than once per poll,
+and one that goes away by itself — dismissed in the browser, or answered by
+somebody else — is forgotten rather than pressed.
+
+Finding one is a poll rather than an event: `GetChildren` on the application
+every half second, which is a single round trip on a unix socket, and nothing
+else is asked unless the answer changed. AT-SPI's event signals would be
+cheaper still, but applications emit them only when the registry says
+something is listening, and not depending on the registry daemon is worth more
+than the round trip.
+
+### Adding an extension, end to end
+
+The reader goes to the Chrome Web Store and presses "Add to Chrome" — an
+ordinary page button, activated the way any other is. The store calls
+`chrome.webstorePrivate.beginInstallWithManifest3`, Chrome raises its consent
+dialog, and that dialog arrives on the terminal with its own heading and its
+own permission list. Enter on "Add extension" presses Chrome's button; Chrome
+downloads the signed CRX and installs it.
+
+What that gets, and what the shortcuts do not: this is a real Web Store
+install. It survives a restart, `from_webstore` is true in the profile, and it
+updates like any other extension. `Extensions.loadUnpacked` over CDP works
+and raises no prompt at all, but it takes a directory, it is gone at the next
+launch, and it never asks the reader anything — which is the whole objection
+to it. The consent is not an obstacle in front of the feature, it *is* the
+feature.
+
+There is no way to make Chrome answer that dialog by itself, and this was
+checked before the accessibility route was built. The auto-confirm is
+`extensions::ScopedTestDialogAutoConfirm`, a process-global set by a C++
+scoped object in `extension_dialog_auto_confirm.cc`; it reads no switch, no
+environment variable, no preference and no policy, and the webstore path
+guards each branch of it with `CHECK_IS_TEST()`, so a release browser would
+abort rather than honour it. Chrome's own tests link the browser into the test
+binary and flip that global — there is no external client, and ChromeDriver
+never presses the button either. `ExtensionInstallForcelist` installs without
+any prompt at all, from a policy file under `/etc/chromium/policies/managed`
+that needs root, which is not answering the question, it is deleting it.
+
 ## When a site's certificate is refused
 
 A bad certificate — self-signed, expired, issued for another name — is not a

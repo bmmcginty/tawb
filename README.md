@@ -105,6 +105,44 @@ itself: Firefox will only answer these questions to privileged code, and the
 one moment such code can be installed is while the browser is starting up. A
 Firefox that was already running says so instead.
 
+## When the browser asks you something
+
+Some of what a browser puts in front of you is not a page. Adding an extension
+is the clearest case: you go to the Chrome Web Store, press **Add to Chrome**
+like anybody else, and Chrome asks you to confirm — in a window of its own,
+drawn outside the document, which nothing that reads a page can see.
+
+TAWB brings that question to the terminal. What appears is the dialog's own
+words, including the list of what the extension will be able to do:
+
+```
+Add "uBlock Origin Lite"?
+It can:
+Read and change all your data on all websites
+
+Cancel
+Add extension
+```
+
+Move to the answer you want with the arrow keys and press Enter, and TAWB
+presses that button in the browser. Escape presses whichever button the
+browser itself has ready — on an install prompt that is **Cancel**, which is
+Chrome's own safe answer, and the hint line always says which one it is. The
+browser does the installing; nothing is added behind your back, and nothing
+is decided for you.
+
+Afterwards Chrome's "has been added" confirmation arrives the same way, with
+its `Close` button, because a sighted user sees that too.
+
+This is not only for extensions. Anything the browser draws in a window of its
+own rather than in the page comes through the same way.
+
+It needs a browser TAWB started itself, since describing its windows is
+something a browser is told to do at startup — the same limit that applies to
+Firefox's lists above. On a desktop it uses the accessibility bus that is
+already running; with no desktop at all, TAWB provides one for the browser and
+takes it away again when you quit.
+
 ## Keys
 
 Pressing alt-shift-slash will bring you into a keyboard wizard.

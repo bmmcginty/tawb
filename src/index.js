@@ -220,7 +220,9 @@ function currentLine(state) {
 // the browser's own lists is open it is that list: the buffer on screen is no
 // longer the tab, and everything that reads lines has to agree about which.
 function activeBlocks(state) {
-  return state.library ? state.library.blocks : state.core.blocks;
+  if (state.library) return state.library.blocks;
+  if (state.dialog) return state.dialog.blocks;
+  return state.core.blocks;
 }
 
 function currentBlock(state) {
@@ -267,7 +269,7 @@ function syncCursor(state) {
   // page. With a list of bookmarks on screen, line 12 is the twelfth
   // bookmark, and telling the core the reader is standing on the page's
   // twelfth block would let a text patch land where they are not.
-  if (state.library) return;
+  if (state.library || state.dialog) return;
   const line = state.lines[state.cursor];
   state.core.at(line ? line.blockIndex : -1);
 }
@@ -484,6 +486,12 @@ function hintText(state) {
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
   if (state.mode === 'library') {
     return `${state.library.label} — type: filter  Enter: open  Esc: close`;
+  }
+  if (state.mode === 'dialog') {
+    const escape = state.dialog.defaultButton
+      ? `Esc: ${state.dialog.defaultButton.name}`
+      : 'Esc: leave it asking';
+    return `The browser is asking — Enter: press  ${escape}`;
   }
   if (state.mode === 'auth') {
     const { challenge, refused } = state.auth;
@@ -2351,6 +2359,168 @@ async function handleLibraryKey(chunk, state, page) {
   if (chunk >= ' ') showLibrary(state, page, lib.filter + chunk);
 }
 
+// ---------------------------------------------------------------------------
+// A dialog the browser drew for itself
+//
+// The browser asks things in windows of its own: an extension wanting
+// consent, a file to be chosen, permission for something. None of them are
+// documents, none of them are in either protocol, and a reader of a page
+// cannot see one however hard they look — which before this meant a browser
+// silently waiting for an answer nobody could give.
+//
+// It is the same move as the password prompt. The dialog's own words go on
+// the terminal, the reader answers there, and the answer presses the dialog's
+// own button. Nothing is bypassed and nothing is decided for them: what is on
+// screen is what Chrome's own confirmation says, including the list of what
+// an extension will be able to do, because that list is the reason the
+// question is being asked at all.
+//
+// It borrows the library's shape — a buffer of its own, with the choices as
+// lines to move to and press — so the question can be read at whatever pace
+// reading takes, on a braille display or by ear, before anything is answered.
+// ---------------------------------------------------------------------------
+
+// Escape presses the button the dialog itself has focused, and says which one
+// that was. On Chrome's install prompt that is Cancel, not Add: the browser's
+// own idea of the safe answer is the one it would give if Enter were pressed
+// blind, and taking it over means keeping that rather than inventing one.
+function dialogBlocks(dialog) {
+  const said = dialog.lines.map((text) => ({ text, item: null, button: null }));
+  const choices = dialog.buttons.map((button) => ({
+    text: button.name,
+    item: { role: 'button', name: button.name },
+    button,
+  }));
+  if (!choices.length) {
+    return [...said, { text: '(the browser offers nothing to press)', item: null, button: null }];
+  }
+  return [...said, { text: '', item: null, button: null }, ...choices];
+}
+
+function closeNativeDialog(state, page, note) {
+  const { place } = state.dialog;
+  state.dialog = null;
+  state.mode = 'browse';
+  state.core.live.refreshing = false;
+  state.title = place.title;
+  relayout(state);
+  state.cursor = Math.min(place.cursor, Math.max(state.lines.length - 1, 0));
+  state.col = place.col;
+  state.scroll = place.scroll;
+  clampCol(state);
+  clampScroll(state);
+  render(state, page, { force: true });
+  if (note) setStatus(state, note);
+}
+
+// Asks, and does not return until the dialog has been answered or the reader
+// has decided to leave it. The watcher awaits this: one question at a time is
+// the only number a single terminal can put to somebody.
+async function answerNativeDialog(state, dialog) {
+  if (!state.keyReader || state.mode === 'dialog') return;
+  const page = state.core.page;
+  // Hold live rebuilds for the same reason the library does: a refresh would
+  // replace a buffer that is no longer the page's.
+  state.core.live.refreshing = true;
+  const previousMode = state.mode;
+  state.mode = 'dialog';
+  state.dialog = {
+    ...dialog,
+    blocks: dialogBlocks(dialog),
+    place: {
+      cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title,
+    },
+  };
+  state.cursor = 0;
+  state.col = 0;
+  state.scroll = 0;
+  state.title = dialog.title || 'The browser is asking';
+  relayout(state);
+  render(state, page, { force: true });
+  drawHint(state, { force: true });
+  setStatus(state, 'The browser is asking. Move to an answer and press Enter.');
+  log('native.prompt', {
+    title: String(dialog.title || '').slice(0, 80),
+    buttons: dialog.buttons.map((button) => button.name).join(' / ').slice(0, 80),
+  });
+
+  const token = state.keyReader.claim();
+  const press = async (button, how) => {
+    let pressed = false;
+    try {
+      pressed = await dialog.press(button);
+    } catch (err) {
+      log('native.press.failed', { button: button.name, error: String(err.message || err).slice(0, 120) });
+    }
+    log('native.answered', { button: button.name, how, pressed });
+    return pressed;
+  };
+
+  try {
+    for (;;) {
+      const chunk = await state.keyReader.next(token);
+      // The keyboard has gone. The browser is left holding its question,
+      // which is the same thing that happens to a sighted user who walks
+      // away, and is better than answering it on their behalf.
+      if (chunk === EOF) {
+        closeNativeDialog(state, page, null);
+        return;
+      }
+      markInput(state);
+
+      if (keyIs(chunk, 'Escape', state)) {
+        const fallback = dialog.defaultButton;
+        if (!fallback) {
+          closeNativeDialog(state, page, 'Left the browser asking — it is still waiting for an answer.');
+          return;
+        }
+        const pressed = await press(fallback, 'escape');
+        closeNativeDialog(state, page, pressed
+          ? `Pressed "${fallback.name}" — the browser's own answer.`
+          : `Could not press "${fallback.name}"; the browser may have closed the dialog itself.`);
+        return;
+      }
+
+      if (chunk === '\r' || chunk === '\n') {
+        const block = currentBlock(state);
+        const button = block && block.button;
+        if (!button) {
+          setStatus(state, 'Move to one of the answers first.');
+          continue;
+        }
+        const pressed = await press(button, 'chosen');
+        closeNativeDialog(state, page, pressed
+          ? `Pressed "${button.name}".`
+          : `Could not press "${button.name}"; the browser may have closed the dialog itself.`);
+        return;
+      }
+
+      const last = state.lines.length - 1;
+      if (keyIs(chunk, 'ArrowDown', state)) { moveSelection(state, Math.min(state.cursor + 1, last), page); continue; }
+      if (keyIs(chunk, 'ArrowUp', state)) { moveSelection(state, Math.max(state.cursor - 1, 0), page); continue; }
+      if (keyIs(chunk, 'PageDown', state)) { moveScreen(state, 1, page); continue; }
+      if (keyIs(chunk, 'PageUp', state)) { moveScreen(state, -1, page); continue; }
+      if (keyIs(chunk, 'Home', state)) { moveSelection(state, 0, page); continue; }
+      if (keyIs(chunk, 'End', state)) { moveSelection(state, last, page); continue; }
+
+      // Every other key, including the ones that would do something on a
+      // page. A reader who presses `q` at a question the browser is holding
+      // open should be told why nothing happened rather than left wondering
+      // whether the terminal has stopped listening.
+      if (!chunk.startsWith(ESC)) {
+        setStatus(state, state.dialog.defaultButton
+          ? `Move to an answer and press Enter, or Escape for "${state.dialog.defaultButton.name}".`
+          : 'Move to an answer and press Enter, or Escape to leave the browser asking.');
+      }
+    }
+  } finally {
+    state.keyReader.release(token);
+    if (state.dialog) closeNativeDialog(state, page, null);
+    if (state.mode === 'dialog') state.mode = previousMode;
+    drawHint(state, { force: true });
+  }
+}
+
 async function handleTypeKey(chunk, state, page) {
   markInput(state);
   const t = state.typing;
@@ -2630,13 +2800,19 @@ async function main() {
     scroll: 0,
     statusMsg: '',
     // 'browse' | 'choose' | 'library' | 'type' | 'control' | 'address' | 'find'
-    // | 'auth' | 'keyboard'
+    // | 'auth' | 'dialog' | 'keyboard'
     mode: 'browse',
     typing: null,
     controlling: null,
     chooser: null,
     // One of the browser's own lists, while it is open. See openLibrary().
     library: null,
+    // A dialog the browser drew for itself, while the reader is answering it.
+    // See answerNativeDialog().
+    dialog: null,
+    // The watch that notices one. Null where the browser cannot describe its
+    // own windows, which is not an error — see driver.watchNativeDialogs.
+    nativeWatch: null,
     address: null,
     find: null,
     lastFind: null,
@@ -2667,6 +2843,19 @@ async function main() {
   });
   state.credentials = credentials;
   await driver.attachAuth((challenge, id) => credentials.answer(challenge, id)).catch(() => {});
+
+  // The browser's own dialogs, answered here too. An extension asking for
+  // consent is drawn in a window rather than a document — the same problem
+  // the password prompt has, and the same answer: the question is read out on
+  // the terminal and the reader's choice presses the browser's own button.
+  //
+  // Nothing is arranged if the browser cannot describe its windows. That is
+  // an ordinary state of affairs — a browser somebody else started, a machine
+  // with no D-Bus — and it costs a reader who never installs anything nothing
+  // at all.
+  state.nativeWatch = driver.watchNativeDialogs
+    ? await driver.watchNativeDialogs((dialog) => answerNativeDialog(state, dialog)).catch(() => null)
+    : null;
 
   // Claim whichever tab we ended up on, including one we just opened and one
   // in a browser we started: the session that joins later is the one that
@@ -2751,6 +2940,7 @@ async function main() {
   }
 
   clearInterval(counterTimer);
+  if (state.nativeWatch) state.nativeWatch.stop();
   keyReader.close();
   flushCounters({ refreshes: state.core.live.refreshes });
   log('exit', {});

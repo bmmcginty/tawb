@@ -62,6 +62,13 @@ const PROBE_TIMEOUT_MS = 1500;
 // taken.
 const BUTTON_ROLES = new Set(['push button', 'button', 'toggle button']);
 
+// The states a control can be in arrive as a pair of 32-bit words, one bit
+// per state, in the order the AT-SPI enumeration defines them. Only two
+// matter here, and both are about which button answers the dialog: the one
+// the dialog itself would press.
+const STATE_FOCUSED = 12;
+const STATE_IS_DEFAULT = 39;
+
 // Roles that hold no words of their own and only group what is inside them.
 // A dialog is mostly these, and reading them out would bury the two lines
 // that matter.
@@ -126,6 +133,18 @@ class Accessibility {
   async describeNode(node, timeout) {
     const [role, name] = await Promise.all([this.roleOf(node, timeout), this.nameOf(node, timeout)]);
     return { ...node, role, name };
+  }
+
+  // Which of a control's states are set. Chrome marks the button its own
+  // dialog would press — for an install prompt that is Cancel, not Add, which
+  // is worth knowing before deciding what Escape should mean.
+  async statesOf(node, timeout) {
+    const [words] = await this.#call(node, ACCESSIBLE, 'GetState', '', [], timeout);
+    const bit = (index) => {
+      const word = words[index < 32 ? 0 : 1] || 0;
+      return ((word >>> (index % 32)) & 1) === 1;
+    };
+    return { focused: bit(STATE_FOCUSED), isDefault: bit(STATE_IS_DEFAULT) };
   }
 
   // Press a control. `DoAction(0)` is its first action, which for a button is
@@ -264,6 +283,15 @@ class Accessibility {
     };
 
     await walk(root, 0, new Set());
+    // What the dialog would do if it were answered without being read: the
+    // button it has focused, or the one it calls its default.
+    for (const button of buttons) {
+      try {
+        Object.assign(button, await this.statesOf(button));
+      } catch {
+        // A button that went away with its dialog.
+      }
+    }
     return {
       role: root.role, name: root.name, lines, buttons, truncated: visited >= maxNodes,
     };
