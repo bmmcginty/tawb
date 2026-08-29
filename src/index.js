@@ -21,6 +21,7 @@ const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
 const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 const { entryLine, matches, KIND_LABELS } = require('./library');
+const { resolveAddress, DEFAULT_SEARCH } = require('./address');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -28,10 +29,14 @@ const path = require('node:path');
 // --connect <port|host:port|url> attaches to a browser that is already
 // running with --remote-debugging-port, rather than launching one.
 // --browser <name> chooses which engine to drive.
-function parseArgs(argv) {
+// --search <template> is where words typed in the address bar go looking. A
+// browser asks its own settings for that; neither protocol will tell us what
+// the reader chose there, so it is said here instead — or in TAWB_SEARCH,
+// since it is a preference rather than something to retype every launch.
+function parseArgs(argv, env = process.env) {
   const options = {
     url: null, connect: null, profile: null, engine: DEFAULT_ENGINE, keepBrowser: false,
-    keyboard: false, log: false,
+    keyboard: false, log: false, search: env.TAWB_SEARCH || DEFAULT_SEARCH,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -44,13 +49,20 @@ function parseArgs(argv) {
     else if (arg === '--log') { options.log = true; }
     else if (arg === '--browser') { options.engine = argv[i + 1] || DEFAULT_ENGINE; i += 1; }
     else if (arg.startsWith('--browser=')) { options.engine = arg.slice('--browser='.length); }
+    else if (arg === '--search') { options.search = argv[i + 1] || DEFAULT_SEARCH; i += 1; }
+    else if (arg.startsWith('--search=')) { options.search = arg.slice('--search='.length); }
     else if (!arg.startsWith('-') && !options.url) { options.url = arg; }
   }
   return options;
 }
 
 const ARGS = parseArgs(process.argv.slice(2));
-const START_URL = ARGS.url || 'https://www.google.com';
+// What is typed on the command line is read the same way as what is typed in
+// the address bar: `tawb wikipedia.org` is an address, `tawb -- braille dots`
+// is not one, and neither should have to carry a scheme to work.
+const START_URL = ARGS.url
+  ? (resolveAddress(ARGS.url, { search: ARGS.search }).url || ARGS.url)
+  : 'https://www.google.com';
 
 // Set by the entry point so the shutdown path can reach the browser from a
 // signal handler, which has no other way to get at it.
@@ -3008,15 +3020,23 @@ async function handleAddressKey(chunk, state, page) {
     state.mode = 'browse';
     drawHint(state);
     if (!target) { drawAddress(state, page, { force: true }); parkCursor(state); return; }
-    const typed = /^[a-zA-Z][\w+.-]*:/.test(target) ? target : `https://${target}`;
+    // An address bar takes an address when it is given one and searches when
+    // it is not — see address.js for which is which. Words are not an address
+    // with a scheme missing, and treating them as one is how a browser sends
+    // you nowhere.
+    const resolved = resolveAddress(target, { search: state.search || DEFAULT_SEARCH });
+    if (resolved.error) { drawAddress(state, page, { force: true }); parkCursor(state); return; }
     // https://user:password@host is deprecated for subresources in Chrome and
     // interrupted by a confirmation of its own in Firefox, so the pair is
     // taken out here and used to answer the challenge instead. It also keeps
     // the password out of the address this session then goes on holding.
-    const { url, username, password } = splitCredentials(typed);
+    const { url, username, password } = splitCredentials(resolved.url);
     if (username && state.credentials) {
       state.credentials.remember({ url }, { username, password: password || '' });
     }
+    // Say that a search happened. A reader who typed a host name with a typo
+    // in it is otherwise handed a results page with no account of why.
+    if (resolved.searched) setStatus(state, `Searching for "${resolved.words}"…`);
     await loadAddress(state, page, url);
     return;
   }
@@ -3104,6 +3124,8 @@ async function main() {
     credentials: null,
     sources,
     browserPort,
+    // Where words typed in the address bar go looking. See --search.
+    search: ARGS.search || DEFAULT_SEARCH,
     // The browser itself, which is what answers for its own bookmarks,
     // history and downloads. Each engine reaches them its own way; see
     // driver.js.

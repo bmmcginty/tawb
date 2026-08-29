@@ -524,6 +524,50 @@ keystrokes is a poor trade. `Ctrl+G` repeats the search, which is Firefox's
 key for it, and `/` or `?` with nothing typed repeats the last search in that
 direction — which is how you reverse one.
 
+## An address bar that is not an address bar
+
+Every graphical browser's address bar takes an address when it is given one
+and searches when it is not, and the second half is most of what it is used
+for. This one used to do only the first half: anything without a scheme had
+`https://` put in front of it, so three words became `https://three words` and
+a name that does not resolve. That is not a degraded address bar, it is a
+broken one.
+
+`address.js` is the guess a browser makes, and it is made from the text alone
+— no DNS lookup, nothing asked of the network first, because the reader is
+waiting on the keystroke and a browser does not ask either:
+
+| What was typed | Where it goes | Why |
+| -------------- | ------------- | --- |
+| `https://a.test/`, `about:blank`, `file:///tmp/x` | as typed | it already says |
+| `wikipedia.org`, `example.com:8443/x` | `https://` | a dotted host, and this is the web now |
+| `localhost:8080`, `127.0.0.1`, `printer.local`, `192.168.1.5` | `http://` | none of these normally has a certificate |
+| `myhost:3000` | `http://` | a host and a port and no dot is a development server, not a scheme called `myhost` |
+| `braille dots`, `braille` | the search engine | no host in it |
+
+The dotless-host-and-port rule is the one that needs care: written as "a name,
+a colon and digits" it also matches `example.com:8443`, which would send every
+explicit port over plaintext. The dot is excluded from that pattern so a
+dotted host falls through to the https rule instead.
+
+A search says it was a search — *Searching for "braille dots"…* — since a
+reader who mistyped a host name is otherwise handed a results page with no
+account of how they got there.
+
+**Which engine is a preference, not a discovery.** A browser asks its own
+settings; neither CDP nor BiDi will tell us what the reader chose there, and
+reading it out of the profile is the thing this project does not do. So it is
+said on the command line — `--search`, or `TAWB_SEARCH` — with `%s` for where
+the words go, and DuckDuckGo when nobody has said anything.
+
+The command line is read the same way, so `tawb wikipedia.org` is an address.
+
+`edb_server.js` had its own copy of these rules and now defers to this one.
+What it does with the answer still differs, deliberately: the terminal
+searches, and edbrowse offers a link to the search instead, because a page is
+somewhere a reader can leave and come back to and a redirect they did not ask
+for is one they cannot undo.
+
 ## Keys
 
 The named terminal keys are not assumed to have one universal escape
@@ -597,7 +641,7 @@ back-tab (`kcbt`) is asked for first and `\e[Z` is the fallback.
 | `/` / `?`| Find text forward / backward (empty repeats the last search)     |
 | `Ctrl+G` | Find the same text again                                        |
 | `m`      | Send a real click — trusted, carries user activation             |
-| `Ctrl+L` | Address bar (scrolls sideways for long URLs; `Esc` cancels)      |
+| `Ctrl+L` | Address bar — an address, or words to search for (`Esc` cancels)  |
 | `Alt+-` / `Alt++` | Back / forward in this tab's page history              |
 | `Alt+?`  | Open the keyboard binding wizard                               |
 | `\`      | Cycle view: AX → PAGE → INSPECT → SOURCE                         |

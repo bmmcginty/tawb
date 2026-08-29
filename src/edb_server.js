@@ -15,6 +15,7 @@ const {
 const { Core, ALL_SOURCES } = require('./core');
 const { Credentials, describeChallenge, normaliseChallenge } = require('./auth');
 const { log } = require('./log');
+const { resolveAddress, searchUrl } = require('./address');
 
 // Serving the live browser to edbrowse, over http on the loopback address.
 //
@@ -422,27 +423,19 @@ function linesToHtml(title, base, heading, lines, here = '') {
 // and it becomes something a browser can be sent to, or an admission that it
 // is not an address at all.
 //
-// Bare host with a dot: https, because that is the web now, and a site that
-// is still plaintext will redirect us there itself. localhost and the
-// loopback addresses get http, since they usually have no certificate.
-// Anything with no dot in it is not an address; say so, and offer to search
-// for it rather than quietly sending what was typed to a search engine.
+// Which of the two it is decided in address.js, since the terminal's own
+// address bar has to decide exactly the same thing and there is no reason for
+// two sets of rules. What differs is what happens to something that is not an
+// address: the terminal searches for it, the way a browser does, and here it
+// is offered as a link instead — a page is a place a reader can leave and come
+// back to, and a redirect they did not ask for is one they cannot undo.
 function normaliseTarget(text) {
-  const wanted = String(text || '').trim();
-  if (!wanted) return { error: 'nothing to open' };
-  // A scheme, and not a windows path or a bare host:port.
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(wanted) || /^(mailto|data|about|file):/i.test(wanted)) {
-    return { url: wanted };
-  }
-  const host = wanted.split(/[/?#]/)[0];
-  if (/^(localhost|127(\.\d{1,3}){3}|\[::1\])(:\d+)?$/i.test(host) || /\.local(:\d+)?$/i.test(host)) {
-    return { url: `http://${wanted}` };
-  }
-  if (/^[^\s@]+\.[a-z][a-z0-9-]{1,}(:\d+)?$/i.test(host)) return { url: `https://${wanted}` };
-  return { search: wanted };
+  const resolved = resolveAddress(text);
+  if (resolved.error) return { error: resolved.error };
+  if (resolved.searched) return { search: resolved.words };
+  return { url: resolved.url };
 }
 
-const SEARCH_URL = 'https://duckduckgo.com/html/?q=';
 
 // ---------------------------------------------------------------------------
 // Acting on the page
@@ -868,7 +861,7 @@ async function startEdbServer({
     if (target.search) {
       return ours(res, 'not an address',
         `<p>${escapeHtml(target.search)} is not a url — it has no host in it.</p>\n`
-        + `<p><a href="${openUrl(SEARCH_URL + encodeURIComponent(target.search), existing && existing.number)}">`
+        + `<p><a href="${openUrl(searchUrl(target.search), existing && existing.number)}">`
         + `search the web for it</a> — <a href="/t/${secret}/tabs">the tabs</a></p>`);
     }
     const wanted = target.url;

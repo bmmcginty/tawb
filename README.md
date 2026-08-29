@@ -79,6 +79,39 @@ If you need to perform an actual mouse click, press `m`.
 Go back a page by pressing `alt--` and forward by pressing `alt-+`.
 For a new tab, press Ctrl-t.
 
+## Going somewhere
+
+`Ctrl+L` opens the address bar. It takes an address when you give it one and
+searches when you do not, the same way a graphical browser's does:
+
+```
+Address: en.wikipedia.org/wiki/Braille    goes there
+Address: braille dots                     searches for it
+```
+
+You never have to type `https://`. A bare host name gets it, and the things
+that normally have no certificate — `localhost:8080`, `192.168.1.5`, a
+`.local` name on your own network, a bare `myhost:3000` — get `http` instead,
+which is the guess a browser makes too. Anything with a scheme already on it
+is taken exactly as typed, so `about:blank` and `file:///tmp/page.html` work.
+
+Anything else is words, and words are searched for. The status line says so —
+*Searching for "braille dots"…* — because a host name with a typo in it
+otherwise lands you on a results page with no account of why.
+
+Searches go to DuckDuckGo unless you say otherwise. Neither browser will tell
+us which engine you chose in its own settings, so it is said here instead:
+
+```
+npm start -- --search 'https://www.google.com/search?q=%s'
+export TAWB_SEARCH='https://html.duckduckgo.com/html/?q=%s'
+```
+
+`%s` is where your words go; a template without one has them added on the end.
+
+The same reading applies to what you type on the command line, so
+`npm start -- wikipedia.org` is an address and needs no scheme.
+
 ## Your bookmarks, history and downloads
 
 TAWB asks the browser for its own three lists, so they are the same bookmarks
