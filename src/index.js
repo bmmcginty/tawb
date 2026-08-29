@@ -20,7 +20,7 @@ const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
 const { Credentials, describeChallenge, splitCredentials } = require('./auth');
-const { entryLine, matches, KIND_LABELS } = require('./library');
+const { entryLine, matches, shortAddress, KIND_LABELS } = require('./library');
 const { resolveAddress, DEFAULT_SEARCH } = require('./address');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -502,6 +502,7 @@ function hintText(state) {
   if (state.mode === 'library') {
     return `${state.library.label} — type: filter  Enter: open  Esc: close`;
   }
+  if (state.mode === 'line') return `${state.line.label} — Enter: save  Esc: cancel`;
   if (state.mode === 'files') {
     const { chosen, multiple } = state.files;
     const done = multiple && chosen.length ? '  Enter on an empty line: done' : '';
@@ -1088,8 +1089,9 @@ async function runLiveRefresh(state, page) {
   // A password prompt is answered while the reading loop is stopped inside
   // the navigation that raised it. The ticker is not stopped, and a repaint
   // over a half-typed password would take the prompt off the screen with the
-  // reader still typing into it.
-  if (state.mode === 'auth') return;
+  // reader still typing into it. The same is true of every prompt that takes
+  // the keyboard for itself: a path being completed, a bookmark being named.
+  if (state.mode === 'auth' || state.mode === 'files' || state.mode === 'line') return;
 
   const cycle = Date.now();
   const wasNavigation = live.navigated;
@@ -1779,6 +1781,7 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'history-forward') return moveInHistory(state, page, 1);
 
   if (action === 'bookmarks') return openLibrary(state, page, 'bookmarks');
+  if (action === 'add-bookmark') return bookmarkPage(state, page);
   if (action === 'history') return openLibrary(state, page, 'history');
   if (action === 'downloads') return openLibrary(state, page, 'downloads');
 
@@ -2597,6 +2600,128 @@ async function askForFilePaths(state, { asking, multiple = false, accept = '' } 
   }
 }
 
+// ---------------------------------------------------------------------------
+// Asking for one line
+//
+// The same shape as the file prompt above, without the completion: a label, a
+// buffer with the usual editing keys, Enter for the answer and Escape for
+// none. It takes the keyboard the way that one does, because whatever asked
+// is waiting on the answer and nothing else should be reading keys meanwhile.
+// ---------------------------------------------------------------------------
+
+function drawLinePrompt(state) {
+  const cols = termSize().cols;
+  const { label, buffer } = state.line;
+  const text = `${label}: ${buffer.text}`;
+  writeLine(statusRow(), text.slice(0, cols));
+  moveCursor(statusRow(), Math.min(label.length + 2 + buffer.caret + 1, cols));
+}
+
+// Answers with the line, or null when the reader pressed Escape. An empty
+// line is an answer in its own right where the caller wants one; callers that
+// do not are the ones that check.
+async function askForLine(state, { label, initial = '', hint = '' } = {}) {
+  if (!state.keyReader) return null;
+  const previousMode = state.mode;
+  const previousStatus = state.statusMsg;
+  state.mode = 'line';
+  state.line = { label, buffer: { text: initial, caret: initial.length } };
+
+  const token = state.keyReader.claim();
+  drawHint(state, { force: true });
+  if (hint) setStatus(state, hint);
+  drawLinePrompt(state);
+
+  try {
+    for (;;) {
+      const chunk = await state.keyReader.next(token);
+      if (chunk === EOF) return null;
+      markInput(state);
+      const buffer = state.line.buffer;
+
+      if (keyIs(chunk, 'Escape', state)) return null;
+      if (chunk === '\r' || chunk === '\n') return buffer.text;
+
+      const editing = editAction(chunk, state.keys || FALLBACK_KEYMAP);
+      if (editing) applyBufferEdit(buffer, editing);
+      else if (keyIs(chunk, 'Ctrl+L', state)) {
+        buffer.text = '';
+        buffer.caret = 0;
+      } else if (!chunk.startsWith(ESC) && chunk >= ' ') {
+        buffer.text = buffer.text.slice(0, buffer.caret) + chunk + buffer.text.slice(buffer.caret);
+        buffer.caret += chunk.length;
+      }
+      drawLinePrompt(state);
+    }
+  } finally {
+    state.keyReader.release(token);
+    state.mode = previousMode;
+    state.line = null;
+    state.statusMsg = previousStatus;
+    drawHint(state, { force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Filing the page
+//
+// Ctrl+D, which is what every browser files a page with. The bookmark goes
+// into the browser's own tree — the same one Ctrl+O lists and the same one
+// the browser's own star writes to — because a bookmark a reader cannot see
+// in their browser is not a bookmark, it is a note in a second program.
+//
+// A browser offers the page's title as the name and lets you change it before
+// it is saved. So does this, with the title already in the buffer: Enter
+// accepts it, and Escape files nothing. That last part differs from a
+// graphical browser, where Escape dismisses the bubble and leaves the bookmark
+// saved — but Escape here has meant "leave this alone" everywhere else,
+// including on the browser's own dialogs, and a reader who cannot reopen a
+// bubble to undo it needs the key that backs out to back out.
+// ---------------------------------------------------------------------------
+
+async function bookmarkPage(state, page) {
+  if (typeof state.driver.saveBookmark !== 'function') {
+    setStatus(state, `${state.driver.name} cannot be asked to file a bookmark.`);
+    return;
+  }
+  const url = page.url();
+  if (!url || /^about:blank$/i.test(url)) {
+    setStatus(state, 'There is no page here to bookmark.');
+    return;
+  }
+
+  // The page's own title, which is what the browser would offer. A page that
+  // never titled itself is offered its address, since a bookmark with no name
+  // is one nobody will find again.
+  const suggested = (state.title || '').trim() || url;
+  const name = await askForLine(state, {
+    label: 'Bookmark',
+    initial: suggested,
+    hint: `Bookmark ${shortAddress(url)} — Enter: save  Esc: do not.`,
+  });
+  if (name === null) { setStatus(state, 'Not bookmarked.'); return; }
+
+  setStatus(state, 'Filing it…');
+  let saved;
+  try {
+    saved = await state.driver.saveBookmark({ url, title: name.trim() || suggested }, page);
+  } catch (err) {
+    const reason = String(err.message || err).split('\n')[0];
+    log('bookmark.error', { engine: state.driver.name, error: reason.slice(0, 200) });
+    setStatus(state, `Could not bookmark it: ${reason}`);
+    return;
+  }
+
+  const where = saved.folder ? ` in ${saved.folder}` : '';
+  log('bookmark.save', { engine: state.driver.name, existed: !!saved.existed });
+  setStatus(state, saved.existed
+    // A browser does not file a page twice; its star opens the editor instead.
+    // Saying which name it is already under is what tells the reader they are
+    // looking at the same page under a name they chose months ago.
+    ? `Already bookmarked as "${saved.title}"${where} — not filed again.`
+    : `Bookmarked "${saved.title}"${where}.`);
+}
+
 // Back to a question the reader stepped away from.
 //
 // The dialog is read again rather than replayed: while it was left alone the
@@ -3139,7 +3264,7 @@ async function main() {
     scroll: 0,
     statusMsg: '',
     // 'browse' | 'choose' | 'library' | 'type' | 'control' | 'address' | 'find'
-    // | 'auth' | 'dialog' | 'keyboard'
+    // | 'auth' | 'dialog' | 'line' | 'keyboard'
     mode: 'browse',
     typing: null,
     controlling: null,
@@ -3151,6 +3276,9 @@ async function main() {
     dialog: null,
     // A file the browser is waiting to be given. See askForFilePaths().
     files: null,
+    // One line being typed on the status line — a bookmark's name, so far.
+    // See askForLine().
+    line: null,
     // A question the browser asked that the reader stepped away from, kept so
     // Alt+Q can go back to it. See answerNativeDialog().
     pendingDialog: null,
@@ -3406,4 +3534,5 @@ module.exports = {
   navigate, navigateInterruptibly, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
   openLibrary, closeLibrary, showLibrary, handleLibraryKey,
+  askForLine, bookmarkPage, drawLinePrompt,
 };

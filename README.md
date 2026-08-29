@@ -125,6 +125,8 @@ and the same history you would see in the browser itself.
 two keys on Backspace and Enter long before browsers existed, so they become
 the alt keys of the same letters.)
 
+- `Ctrl-d` to bookmark the page you are on
+
 Each opens as an ordinary list you move through with the arrow and page keys.
 **Typing filters it**, rather than jumping: type `braille` and only the
 entries with that word in them remain, and every word you type has to appear
@@ -132,11 +134,25 @@ somewhere in the entry, in any order. Backspace takes a letter back. Press
 Enter to go to the entry you are standing on, or Escape to close the list and
 return to exactly where you were reading.
 
-On Chrome and Chromium this works with any browser, including one you attached
-to with `--connect`. On Firefox it works only with a browser TAWB started
-itself: Firefox will only answer these questions to privileged code, and the
-one moment such code can be installed is while the browser is starting up. A
-Firefox that was already running says so instead.
+`Ctrl-d` files the page you are reading, which is the same key every browser
+uses for it. The page's own title is offered as the name, already typed in:
+
+```
+Bookmark: Braille - Wikipedia
+```
+
+Press Enter to file it under that name, or edit it first — the usual editing
+keys work. Escape files nothing. It goes into the browser's own bookmarks, in
+the folder the browser's own star would use, and TAWB says which one that was.
+
+A page you have already bookmarked is not filed twice; you are told the name it
+is already under, which is what a browser does too.
+
+On Chrome and Chromium all of this works with any browser, including one you
+attached to with `--connect`. On Firefox it works only with a browser TAWB
+started itself: Firefox will only answer these questions to privileged code,
+and the one moment such code can be installed is while the browser is starting
+up. A Firefox that was already running says so instead.
 
 ## Passwords the browser remembers
 

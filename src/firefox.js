@@ -359,8 +359,9 @@ const PIERCE_CHILD_SCRIPT = `
 //
 // So the same road the shadow-root piercing takes is taken again. While we
 // legitimately hold the WebDriver session at startup — the one moment there is
-// to hold it — an agent is installed in the parent process that answers three
-// questions, and a function is handed to content windows that asks them. The
+// to hold it — an agent is installed in the parent process that answers the
+// three questions and files a bookmark, and a function is handed to content
+// windows that asks it. The
 // agent calls PlacesUtils and Downloads: the very APIs the Library and the
 // downloads panel are built on. Nothing is read out of a file, and nothing is
 // asked of Marionette after startup, which is what makes it possible at all —
@@ -368,7 +369,8 @@ const PIERCE_CHILD_SCRIPT = `
 // would take the reader's own session away.
 //
 // The function is gated on a secret. Unlike piercing, which returns a page its
-// own shadow roots, this returns the reader's browsing history, and it is
+// own shadow roots, this returns the reader's browsing history — and now
+// writes to their bookmarks — and it is
 // installed in every document there is — including hostile ones. The secret is
 // made fresh at every launch, never leaves this process and the closure in the
 // content process, and a call without it is refused before anything is asked.
@@ -399,7 +401,7 @@ const LIBRARY_PARENT_BODY = `
 
   // Newest first, and no further back than the reader can use. This is
   // nsINavHistoryService — the query the Library itself runs.
-  const history = function (max) {
+  const history = function ({ max }) {
     const service = PlacesUtils.history.QueryInterface(Ci.nsINavHistoryService);
     const query = service.getNewQuery();
     const options = service.getNewQueryOptions();
@@ -473,20 +475,52 @@ const LIBRARY_PARENT_BODY = `
     });
   };
 
-  const answer = { bookmarks, history, downloads };
+  // Filing a bookmark, which is the one thing here that writes. It goes
+  // through PlacesUtils like the reading does, because the bookmark tree is
+  // the browser's own and its file is not ours to write into.
+  //
+  // A browser does not make a second bookmark of a page you have already
+  // bookmarked; Firefox's own star opens the editor instead. So an existing
+  // one is reported rather than duplicated. New ones are filed in "Other
+  // bookmarks", which is where the star files one.
+  const save = async function ({ url, title }) {
+    const existing = await PlacesUtils.bookmarks.fetch({ url }).catch(() => null);
+    if (existing) {
+      const parent = await PlacesUtils.bookmarks.fetch(existing.parentGuid).catch(() => null);
+      return {
+        existed: true,
+        title: String(existing.title || ""),
+        folder: ROOTS[existing.parentGuid] || String((parent && parent.title) || ""),
+      };
+    }
+    const guid = PlacesUtils.bookmarks.unfiledGuid;
+    const made = await PlacesUtils.bookmarks.insert({ parentGuid: guid, url, title });
+    return {
+      existed: false,
+      title: String(made.title || title || ""),
+      folder: ROOTS[guid] || "Other bookmarks",
+    };
+  };
 
+  const answer = { bookmarks, history, downloads, save };
+
+  // The whole request is handed to whichever call it names, rather than the
+  // one argument the three readers used to share: filing a bookmark needs an
+  // address and a name, and a second message shape for it would be a second
+  // thing to keep in step.
   Services.ppmm.addMessageListener("tweb:library", function (message) {
-    const { id, token, kind, max } = message.data || {};
-    const reply = (data) => {
-      try { message.target.sendAsyncMessage("tweb:library:done", { id, ...data }); }
+    const data = message.data || {};
+    const { id, token, kind } = data;
+    const reply = (payload) => {
+      try { message.target.sendAsyncMessage("tweb:library:done", { id, ...payload }); }
       catch (e) { /* the process asking has gone */ }
     };
     if (token !== TOKEN) { reply({ error: "refused" }); return; }
     const ask = answer[kind];
     if (!ask) { reply({ error: "unknown list" }); return; }
     Promise.resolve()
-      .then(() => ask(max))
-      .then((entries) => reply({ entries }))
+      .then(() => ask(data))
+      .then((result) => reply({ result }))
       .catch((e) => reply({ error: String((e && e.message) || e) }));
   });
 `;
@@ -508,17 +542,23 @@ const LIBRARY_CHILD_BODY = `
     waiter(message.data);
   });
 
+  // Primitives only across this boundary. An object built in a content
+  // window is a content object, and handing one to the parent process is a
+  // question about Xrays nobody needs to answer to file a bookmark.
   const install = function (win) {
-    const ask = function (token, kind, max) {
+    const ask = function (token, kind, max, url, title) {
       return new win.Promise(function (resolve, reject) {
         if (token !== TOKEN) { reject(new win.Error("refused")); return; }
         const id = nextId++;
         waiting.set(id, function (data) {
           if (data.error) reject(new win.Error(String(data.error)));
-          else resolve(Cu.cloneInto(data.entries || [], win.wrappedJSObject));
+          else resolve(Cu.cloneInto(data.result === undefined ? [] : data.result,
+            win.wrappedJSObject));
         });
         Services.cpmm.sendAsyncMessage("tweb:library", {
           id, token, kind, max: Number(max) || 1000,
+          url: url === undefined ? null : String(url),
+          title: title === undefined ? null : String(title),
         });
       });
     };

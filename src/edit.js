@@ -19,8 +19,11 @@ const EDIT_ACTIONS = {
   'edit-kill-end': 'delete-line-forward',
 };
 
+// Asked of the editing keyboard rather than the browsing one, because they
+// share keys that mean different things: Ctrl+D deletes a character here and
+// files a bookmark out there. See EDITING_ACTIONS in keys.js.
 function editAction(key, keymap) {
-  return EDIT_ACTIONS[keymap.actionFor(key)] || null;
+  return EDIT_ACTIONS[keymap.editingActionFor(key)] || null;
 }
 
 function wordStart(text, caret) {

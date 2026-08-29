@@ -647,6 +647,7 @@ back-tab (`kcbt`) is asked for first and `\e[Z` is the fallback.
 | `\`      | Cycle view: AX → PAGE → INSPECT → SOURCE                         |
 | `Ctrl+T` | Open and follow a new tab                                        |
 | `Ctrl+O` | Bookmarks                                                        |
+| `Ctrl+D` | Bookmark this page                                              |
 | `Alt+H`  | History                                                          |
 | `Alt+J`  | Downloads                                                        |
 | `>` / `<`| Next / previous tab                                              |
@@ -826,12 +827,12 @@ document, so there is nothing for content to be pointed at.
 So the same road the shadow-root piercing takes is taken again. While we
 legitimately hold the WebDriver session at startup — the one moment there is to
 hold it — an agent is installed in the parent process that answers three
-questions, and a function is handed to content windows that asks them. The
-agent calls `PlacesUtils` and `Downloads`: the APIs the Library and the
-downloads panel are themselves built on. Nothing is asked of Marionette after
-startup, which is what makes any of it possible — Marionette shares one session
-slot with BiDi, so connecting to it later would take the reader's own session
-away.
+questions and files a bookmark, and a function is handed to content windows
+that asks it. The agent calls `PlacesUtils` and `Downloads`: the APIs the
+Library and the downloads panel are themselves built on. Nothing is asked of
+Marionette after startup, which is what makes any of it possible — Marionette
+shares one session slot with BiDi, so connecting to it later would take the
+reader's own session away.
 
 **The function is gated on a secret.** Unlike piercing, which returns a page its
 own shadow roots, this returns the reader's browsing history, and it is
@@ -881,6 +882,65 @@ list of bookmarks is not block twelve of the tab, and a text patch aimed there
 would land where they are not. Escape puts the reader back on the line, column
 and screen they left, because closing a list is not a navigation and must not
 read as one.
+
+### Filing one
+
+Reading those lists and writing to them are the same road travelled twice.
+`chrome.bookmarks.create` on a background `chrome://bookmarks` tab;
+`PlacesUtils.bookmarks.insert` in the privileged agent, which now answers a
+fourth question. Nothing goes near the file either browser keeps them in, for
+the reason nothing else here does: that schema is the browser's business, and a
+bookmark the browser does not know about is a note in a second program rather
+than a bookmark.
+
+Three things about it are policy rather than mechanism.
+
+**The reader names it before it is filed, not after.** A graphical browser
+saves on Ctrl+D and puts an editable bubble in front of you afterwards; Escape
+there dismisses the bubble and keeps the bookmark. Here the name is asked for
+first, with the page's title already in the buffer, so Enter is the same one
+keystroke — and Escape files nothing, because Escape has meant "leave this
+alone" on every other prompt in this program, including the browser's own
+dialogs, and a reader who cannot reopen a bubble to undo it needs the key that
+backs out to actually back out. A page that never titled itself is offered its
+address, since a bookmark with no name is one nobody finds again.
+
+**A page already filed is reported, not filed again.** Both browsers open an
+editor rather than making a duplicate, so the reader is told the name it is
+already under — which is usually the point, since a title they chose months ago
+is not the one the page has now. On Chromium the whole tree is already in hand
+from the folder lookup, so the question costs nothing; on Firefox it is
+`PlacesUtils.bookmarks.fetch({ url })`.
+
+**It says which folder.** New ones go where the browser's own star puts them —
+"Other bookmarks", `unfiledGuid` on Firefox and the id `2` that has meant the
+same thing in Chrome since before there was an extension API. An id is not a
+promise, so it is looked for and the last top-level folder taken when it is
+absent. Naming the folder back is the part a sighted user gets by glancing at
+the sidebar.
+
+One trap, met on the way: the Chromium half runs in the WebUI page, sent as its
+own source, so a constant declared beside it in `library_chromium.js` is a name
+the page has never heard of. The ReferenceError lands inside a `getTree`
+callback where it settles no promise, and the caller waits out a thirty-second
+protocol timeout instead of being told what happened. `readDownloads` already
+declares its state table inside itself for the same reason.
+
+### Ctrl+D belonged to something already
+
+Browsers file a bookmark with Ctrl+D and readline deletes the character under
+the cursor with it, and both are right. `keys.js` built one map from sequence
+to action, so the two could not both have the key: whichever was listed second
+would take it, silently, which is the thing that file exists to prevent — and
+what it would have taken is `edit-delete`, a binding this program documents.
+
+So `rebuild()` now builds a second map over the actions that mean something
+inside a field, and `editAction` asks that one. The set is the `edit-` prefixed
+actions plus the four browse movements editing shares on purpose — Home, End
+and the two arrows do the same thing in a field as on a line, and rebinding
+them once should still move both. Everything else is unchanged: the wizard
+still assigns against the flat map, so taking Ctrl+D for a third action still
+takes it from both.
 
 ## When something changes elsewhere
 

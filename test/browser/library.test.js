@@ -130,6 +130,43 @@ test('a file that was fetched is in the browser\'s downloads', async () => {
   assert.ok(download.state.length, 'a download with nothing said about its state');
 });
 
+// ---------------------------------------------------------------------------
+// Filing one
+// ---------------------------------------------------------------------------
+
+// The other half of the bookmark feature, and the only half that writes.
+// Chromium goes through chrome.bookmarks.create on a background
+// chrome://bookmarks tab; Firefox through PlacesUtils.bookmarks.insert in the
+// privileged agent. The proof is not what either call returned — it is that
+// asking the browser for its bookmarks afterwards finds the thing.
+test('a bookmark that was filed comes back in the browser\'s own list', async () => {
+  const url = `${origin}/page?filed`;
+  const saved = await driver.saveBookmark({ url, title: 'Filed by the reader' }, page);
+  assert.equal(saved.existed, false);
+  assert.equal(saved.title, 'Filed by the reader');
+  assert.ok(saved.folder, 'the browser did not say which folder it went in');
+
+  const entries = await driver.readLibrary('bookmarks', page);
+  const filed = entries.find((entry) => entry.url === url);
+  assert.ok(filed, `no bookmark for ${url} in ${entries.length} entries`);
+  assert.equal(filed.title, 'Filed by the reader');
+  assert.equal(filed.folder, saved.folder,
+    'the folder it was filed in is not the folder it is listed under');
+});
+
+// A browser does not make a second bookmark of a page you already bookmarked;
+// its star opens the editor instead. Neither does this, and the name it is
+// already filed under is what the reader is told.
+test('filing the same page twice reports the first one instead of duplicating it', async () => {
+  const url = `${origin}/page?filed`;
+  const again = await driver.saveBookmark({ url, title: 'A different name' }, page);
+  assert.equal(again.existed, true);
+  assert.equal(again.title, 'Filed by the reader');
+
+  const entries = await driver.readLibrary('bookmarks', page);
+  assert.equal(entries.filter((entry) => entry.url === url).length, 1);
+});
+
 test('an unknown list is refused rather than answered emptily', async () => {
   await assert.rejects(() => driver.readLibrary('passwords', page));
 });

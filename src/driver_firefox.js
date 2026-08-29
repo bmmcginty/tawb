@@ -755,6 +755,36 @@ async function openFirefox({
     );
   }
 
+  // The one call the privileged agent answers, whichever question is being
+  // asked of it. Everything it needs is a primitive, so nothing built in a
+  // content window has to cross into the parent process.
+  //
+  // A Firefox this session did not start never had the agent installed, and
+  // there is nothing to be done about that from outside: the one moment a
+  // privileged script can be installed is the moment the browser starts. What
+  // that costs the reader depends on what they asked for, so the caller says.
+  async function askAgent(kind, params, scope, verb) {
+    if (!libraryToken) {
+      throw new Error(
+        'this Firefox was already running when tawb attached to it, and its '
+        + `bookmarks, history and downloads can only be reached by a session `
+        + `that started it. Start Firefox through tawb to ${verb}.`);
+    }
+    const page = scope || browserContext.pages()[0];
+    if (!page) throw new Error('there is no tab to ask through');
+    return page.mainFrame().evaluate(
+      (arg) => {
+        const ask = window[Symbol.for('tweb.library')];
+        if (!ask) throw new Error('this browser has no reader agent installed');
+        return ask(arg.token, arg.kind, arg.max, arg.url, arg.title);
+      },
+      {
+        token: libraryToken, kind,
+        max: params.max || 0, url: params.url || null, title: params.title || null,
+      },
+    );
+  }
+
   return {
     name: 'firefox',
     browser: null,
@@ -869,23 +899,19 @@ async function openFirefox({
     // there is nothing to be done about that from outside: the one moment a
     // privileged script can be installed is the moment the browser starts.
     async readLibrary(kind, scope) {
-      if (!libraryToken) {
-        throw new Error(
-          'this Firefox was already running when tawb attached to it, and its '
-          + 'bookmarks, history and downloads can only be reached by a session '
-          + 'that started it. Start Firefox through tawb to read them.');
-      }
-      const page = scope || browserContext.pages()[0];
-      if (!page) throw new Error('there is no tab to ask through');
-      const entries = await page.mainFrame().evaluate(
-        (arg) => {
-          const ask = window[Symbol.for('tweb.library')];
-          if (!ask) throw new Error('this browser has no reader agent installed');
-          return ask(arg.token, arg.kind, arg.max);
-        },
-        { token: libraryToken, kind, max: MAX_ENTRIES },
-      );
+      const entries = await askAgent(kind, { max: MAX_ENTRIES }, scope, 'read them');
       return orderEntries(kind, entries);
+    },
+
+    // Filing one, through the same agent. Everything above says what it says
+    // about reading applies here too, with one difference worth stating: this
+    // writes. It goes through PlacesUtils rather than near the bookmark file,
+    // for the same reason nothing here parses a profile — the tree is the
+    // browser's own and its schema is the browser's business.
+    async saveBookmark(entry, scope) {
+      return askAgent('save', {
+        url: String(entry.url || ''), title: String(entry.title || ''),
+      }, scope, 'add to them');
     },
 
     // Which views this engine can offer.

@@ -64,6 +64,11 @@ const ACTIONS = [
   // as plain Ctrl+O and is kept; the other two become the Alt keys of the
   // same letters, which is as near as the terminal allows.
   ['bookmarks', 'Bookmarks', ['Ctrl+O']],
+  // Ctrl+D is what every browser files a page with, and it is one of the few
+  // browser keys a terminal has not already spent: Ctrl+D is end-of-input to a
+  // shell, but nothing is reading a line here, and the editing actions have
+  // their own Ctrl+D for the character under the cursor while typing.
+  ['add-bookmark', 'Bookmark this page', ['Ctrl+D']],
   ['history', 'History', ['Alt+H']],
   ['downloads', 'Downloads', ['Alt+J']],
   // A question the browser asked and the reader stepped away from. Escaping
@@ -106,6 +111,24 @@ const ACTIONS = [
   ['previous-paragraph', 'Previous paragraph', ['P']],
   ['close-popup', 'Close open popup', ['Escape']],
 ].map(([id, label, defaults]) => ({ id, label, defaults }));
+
+// Which actions mean anything while a field is being edited.
+//
+// Editing and browsing are different keyboards on the same keys, and Ctrl+D is
+// where that stops being a detail: browsers file a bookmark with it, readline
+// deletes the character under the cursor with it, and both are right. One flat
+// sequence-to-action map cannot hold both, and whichever was listed last would
+// silently take the key from the other — which is the thing this file exists to
+// prevent.
+//
+// So a second map is built over these ids alone, and it is the one consulted
+// while typing. The four that are not `edit-` prefixed are the browse
+// movements editing shares on purpose: Home and the arrows do the same thing in
+// a field as on a line, and rebinding them once should move both.
+const EDITING_ACTIONS = new Set([
+  'line-start', 'line-end', 'previous-character', 'next-character',
+  ...ACTIONS.map((action) => action.id).filter((id) => id.startsWith('edit-')),
+]);
 
 function configPath(env = process.env, home = os.homedir()) {
   const base = env.XDG_CONFIG_HOME || path.join(home, '.config');
@@ -207,14 +230,21 @@ class Keymap {
 
   rebuild() {
     this.sequenceActions = new Map();
+    this.editingActions = new Map();
     for (const action of this.actions) {
       for (const binding of action.bindings) {
-        for (const sequence of this.sequencesFor(binding)) this.sequenceActions.set(sequence, action.id);
+        for (const sequence of this.sequencesFor(binding)) {
+          this.sequenceActions.set(sequence, action.id);
+          if (EDITING_ACTIONS.has(action.id)) this.editingActions.set(sequence, action.id);
+        }
       }
     }
   }
 
   actionFor(sequence) { return this.sequenceActions.get(sequence) || null; }
+
+  // The same question asked from inside a field. See EDITING_ACTIONS.
+  editingActionFor(sequence) { return this.editingActions.get(sequence) || null; }
   isKey(sequence, name) { return this.sequencesFor(name).includes(sequence); }
 
   // Which other actions would lose a binding if this one took the key. The
@@ -272,4 +302,6 @@ class Keymap {
   }
 }
 
-module.exports = { ACTIONS, KEY_DEFINITIONS, Keymap, configPath, readTerminfo, rawSpec };
+module.exports = {
+  ACTIONS, EDITING_ACTIONS, KEY_DEFINITIONS, Keymap, configPath, readTerminfo, rawSpec,
+};

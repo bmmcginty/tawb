@@ -7,7 +7,7 @@ const { otherReadersOn } = require('./session');
 const { forgetBrowser, markKept } = require('./registry');
 const { killProcessGroup } = require('./proc');
 const { log } = require('./log');
-const { readChromiumLibrary } = require('./library_chromium');
+const { readChromiumLibrary, saveChromiumBookmark } = require('./library_chromium');
 const { armNativeDialogs } = require('./native_prompt');
 
 // What this browser calls itself on the accessibility bus. Only needed for a
@@ -369,6 +369,8 @@ async function openChromium({
   // so they are asked of the pages the browser answers them on. See
   // library_chromium.js.
   const readLibrary = (kind) => readChromiumLibrary(context, kind);
+  // Filing one goes the same road, through the page that owns the tree.
+  const saveBookmark = (entry) => saveChromiumBookmark(context, entry);
 
   return {
     name: 'chromium',
@@ -380,6 +382,7 @@ async function openChromium({
     port,
     rejoined,
     readLibrary,
+    saveBookmark,
 
     // Answer this browser's file choosers on the terminal. `handler` is given
     // what the browser was about to ask for and the tab it was asked in, and
