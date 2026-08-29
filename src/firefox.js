@@ -101,6 +101,29 @@ const MEDIA_PREFS = {
   'media.block-autoplay-until-in-foreground': false,
 };
 
+// The password manager, which the remote agent turns off and a reader needs
+// on.
+//
+// Firefox's automation preferences disable both halves of it — `signon.
+// autofillForms` and `signon.rememberSignons`, "so that tests that include
+// forms are not influenced by the presence of the persistent doorhanger
+// notification". That is right for a test suite and wrong for a person: it
+// means the browser never offers to remember a password and never fills one
+// in, silently, with nothing on screen to explain why.
+//
+// Setting them here is enough, because the agent applies its preferences only
+// where the user has none: `if (!Services.prefs.prefHasUserValue(k))`, in
+// remote/shared/RecommendedPreferences.sys.mjs. A value in user.js is a user
+// value.
+//
+// These are the browser's own defaults, not new behaviour: an ordinary
+// Firefox remembers passwords and fills them in. Autofill over plain http
+// stays off, as it is in an ordinary Firefox.
+const PASSWORD_PREFS = {
+  'signon.rememberSignons': true,
+  'signon.autofillForms': true,
+};
+
 // Firefox reads user.js at startup, so everything here has to be in the
 // profile before launch. Ours are rewritten every time rather than appended
 // to, so a stale port or a pref we have since changed does not survive.
@@ -731,7 +754,9 @@ async function launchFirefox({
   // out of reach of the pages the answering function is installed in.
   const libraryToken = crypto.randomUUID();
   const marionettePort = await freePort();
-  writeProfilePrefs(profileDir, { ...MEDIA_PREFS, 'marionette.port': marionettePort });
+  writeProfilePrefs(profileDir, {
+    ...MEDIA_PREFS, ...PASSWORD_PREFS, 'marionette.port': marionettePort,
+  });
 
   const args = [
     '--no-remote',
@@ -822,7 +847,7 @@ async function launchFirefox({
 
 module.exports = {
   launchFirefox, requireReachableProfile, clearAutomationFlag, releaseStrandedSession, findFirefox,
-  defaultProfileDir, writeProfilePrefs, MEDIA_PREFS, ACTIVE_KEYS, CLEAR_SCRIPT,
+  defaultProfileDir, writeProfilePrefs, MEDIA_PREFS, PASSWORD_PREFS, ACTIVE_KEYS, CLEAR_SCRIPT,
   PIERCE_PARENT_SCRIPT, PIERCE_CHILD_SCRIPT,
   libraryParentScript, libraryChildScript, FIREFOX_ROOT_LABELS,
 };

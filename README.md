@@ -105,6 +105,45 @@ itself: Firefox will only answer these questions to privileged code, and the
 one moment such code can be installed is while the browser is starting up. A
 Firefox that was already running says so instead.
 
+## Passwords the browser remembers
+
+TAWB never holds a password of yours. What it does is let you reach the
+browser's own password manager, which is where your passwords already are.
+
+Sign in to a site and the browser offers to remember it, in a window of its
+own that arrives on the terminal like any other question:
+
+```
+Save password?
+Passwords are saved to Password Manager on this device.
+Username: reader
+Password: ••••••••••••••
+
+Never
+No thanks
+Save
+```
+
+The password is shown masked because the browser masks it — that is its own
+dialog you are reading. Move to an answer and press Enter. Escape presses
+nothing and leaves the question open; `Alt+Q` goes back to it.
+
+Next time you visit, the fields say so:
+
+```
+Username[Username: filled by the browser]
+Password[Password: filled by the browser]
+```
+
+They read as empty otherwise, and they are not empty — both browsers fill a
+saved sign-in in a way that pages cannot read, which is what stops a hostile
+page stealing it. Press the sign-in button and it goes through with the
+remembered password; you do not need to type anything.
+
+Whether the browser fills a particular form is the browser's decision, not
+TAWB's. Chrome in particular reads the form and the words around it and will
+decline to fill one it has decided is a sign-up rather than a sign-in.
+
 ## Sending a file to a site
 
 Press Enter on a file control — "Choose file", "Your document", whatever the
