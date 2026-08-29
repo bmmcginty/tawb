@@ -974,6 +974,59 @@ immediately, measured at 300ms against 250ms over a page of 101 requests. It
 is armed per tab, as tabs are taken, because a browser can be shared with
 another reader and their passwords are not ours to ask for.
 
+## Reading the browser's own windows
+
+Not everything a browser puts in front of a person is a page. Chrome's "Add
+extension?" confirmation is a native dialog: no document, no frame, no target.
+Nothing in CDP describes it — `Target.getTargets({filter:[{}]})` with every
+type rather than the default subset, plus live `Target.targetCreated` across a
+whole install, shows nothing appearing. That is not a rule about browser UI:
+the omnibox popup turns up as `browser_ui:chrome://omnibox-popup.top-chrome/`.
+That particular dialog is simply not WebUI.
+
+It is, though, a dialog the browser already describes to assistive technology,
+because a blind person pressing "Add to Chrome" has to be able to answer it
+too. On Linux that description is AT-SPI, which is plain D-Bus method calls —
+`GetChildren`, the `Name` property, `GetRoleName`, and `DoAction` to press
+something. `src/dbus.js` is the client, hand-written like the other two
+protocols here; `src/atspi.js` is what is asked of it.
+
+Two things have to be true, and both are checked rather than assumed:
+
+- **The browser must have been started with platform accessibility on.**
+  `--force-renderer-accessibility` does it, and `basic` — the cheapest of its
+  three values — is enough. Without it AT-SPI shows the application and the
+  window frame and nothing inside either, because
+  `AXPlatformNodeAuraLinux::CreateAtkObject()` refuses to build a node for
+  anything that is not a top-level window unless `AXMode::kNativeAPIs` is set.
+  Nothing else turns it on. Not the `ACCESSIBILITY_ENABLED` environment
+  variable that `AtkUtilAuraLinux::ShouldEnableAccessibility()` reads; not
+  setting `ScreenReaderEnabled` on `org.a11y.Status`; not registering as an
+  AT-SPI event listener the way a screen reader does; not CDP's own
+  `Accessibility.enable`, which is about a renderer and not about the browser.
+  Chrome's remaining path is `DiscoverOrca()`, which scans `/proc` for an Orca
+  process — not something to imitate.
+- **There must be an accessibility bus.** That is at-spi2-core's bus launcher
+  running against a session bus, which a desktop already has and a bare
+  terminal does not. Its registry daemon is not needed: applications are found
+  by asking the bus what is connected to it and asking each of those for its
+  own tree, which a browser answers with `at-spi2-registryd` not running at
+  all.
+
+The application is identified by its process, not by its name: the bus knows
+the pid behind every connection, and a browser we started leads a process
+group of its own, so `GetConnectionUnixProcessID` and that group name it
+exactly. A desktop with three browsers open is the ordinary case, and reading
+somebody else's dialog would be worse than reading none. A browser reached
+with `--connect` has no pid of ours to match, so there the application name is
+all there is to go on.
+
+A dialog is a top-level of the application, beside the window rather than
+inside it, which is why finding one is a single `GetChildren` and not a search.
+Reading one drops the empty panels a views dialog nests — four of them, each
+answering with the name of what it wraps — so what comes back is the few lines
+the dialog actually says and the buttons it offers.
+
 ## When a site's certificate is refused
 
 A bad certificate — self-signed, expired, issued for another name — is not a
