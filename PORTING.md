@@ -152,6 +152,29 @@ its ordering assumption — the Nth frame element belongs to the Nth child
 context — is what BiDi forced on us; Chrome answers `DOM.describeNode` with
 the frame id directly and needs no such guess.
 
+**A third protocol, for what is not a document.** `dbus.js` (691 lines, most
+of it the wire format) and `atspi.js` (351) speak AT-SPI over D-Bus,
+which is how the browser's own windows are read — its extension consent
+dialog, a permission request, an `alert`. Nothing in CDP or BiDi describes
+those, and nothing ever will, since both protocols describe documents.
+
+It is a small, fixed surface: `org.freedesktop.DBus.ListNames` and
+`GetConnectionUnixProcessID` to find which connection is our browser,
+`org.a11y.atspi.Accessible.GetChildren`, its `Name` property, `GetRoleName`
+and `GetState` to read a dialog, and `org.a11y.atspi.Action.DoAction` to press
+a button. A port needs a D-Bus client and nothing else; the marshalling rules
+that matter are noted at the top of `dbus.js`.
+
+Two conditions belong in a port's notes rather than being rediscovered:
+Chromium describes nothing below a top-level window unless it was started
+with `--force-renderer-accessibility` (Firefox decides for itself), and a
+press landing within about half a second of a dialog appearing is silently
+discarded by Chromium's clickjacking protection.
+
+This layer is optional in a way the other two are not. A port that leaves it
+out loses native dialogs and nothing else — which is what running against a
+machine with no D-Bus already does.
+
 ### Layer 3: the reader
 
 Roughly 4,050 lines, and the internal split is the thing that decides how
