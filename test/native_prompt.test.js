@@ -50,6 +50,7 @@ function fakeApplication(windows = []) {
         lines: window.lines || [],
         buttons: window.buttons || [],
         toggles: window.toggles || [],
+        fields: window.fields || [],
         truncated: false,
       };
     },
@@ -125,10 +126,50 @@ test('a doorhanger inside the window is found as well as a dialog beside it', as
   }
 });
 
-test('the button the dialog would press itself is the one Escape gets', () => {
+test('the button the dialog itself has ready is reported, not pressed', () => {
+  // Reported only. Chrome's extension prompt focuses Cancel, which looks like
+  // a safe thing to press when a reader walks away — until the save-password
+  // prompt turns up, which focuses Save. Nothing is pressed that the reader
+  // did not choose; this is here because a dialog's own idea of its default
+  // is worth knowing, not because it is an answer.
   assert.equal(defaultButton(INSTALL_PROMPT.buttons).name, 'Cancel');
   assert.equal(defaultButton([{ name: 'OK', focused: true }]).name, 'OK');
   assert.equal(defaultButton([{ name: 'OK' }]), null);
+});
+
+test('a question can be read again, in case it has changed', async () => {
+  const { a11y, state } = fakeApplication([]);
+  const asked = [];
+  const watch = watchNativeDialogs({
+    a11y,
+    application: { bus: ':1.1', path: '/root' },
+    interval: 10,
+    onDialog: async (dialog) => { asked.push(dialog); },
+  });
+  try {
+    const prompt = {
+      path: '/dialog/save',
+      role: 'alert',
+      name: 'Save password?',
+      lines: ['Save password?'],
+      buttons: [{ name: 'Never' }, { name: 'Save', isDefault: true, focused: true }],
+      fields: [{ name: 'Username', value: 'reader' }],
+    };
+    state.windows.push(prompt);
+    await sleep(120);
+    assert.equal(asked.length, 1);
+    assert.deepEqual(asked[0].fields, [{ name: 'Username', value: 'reader' }]);
+
+    // The reader stepped away; meanwhile the browser changed what it says.
+    prompt.fields = [{ name: 'Username', value: 'someone else' }];
+    const again = await asked[0].reread();
+    assert.deepEqual(again.fields, [{ name: 'Username', value: 'someone else' }]);
+    // And it is still a question that can be answered and read again.
+    assert.equal(typeof again.press, 'function');
+    assert.equal(typeof again.reread, 'function');
+  } finally {
+    watch.stop();
+  }
 });
 
 test('nothing else is asked while a reader is answering', async () => {

@@ -496,10 +496,7 @@ function hintText(state) {
     return `Attach a file — Tab: complete  Enter: attach${done}  Esc: cancel`;
   }
   if (state.mode === 'dialog') {
-    const escape = state.dialog.defaultButton
-      ? `Esc: ${state.dialog.defaultButton.name}`
-      : 'Esc: leave it asking';
-    return `The browser is asking — Enter: press  ${escape}`;
+    return 'The browser is asking — Enter: press  Esc: leave it unanswered';
   }
   if (state.mode === 'auth') {
     const { challenge, refused } = state.auth;
@@ -1827,6 +1824,7 @@ async function handleBrowseKey(chunk, state, page) {
     return jumpTo(state, page, findQuickNav(state, spec.match, spec.direction), spec.label, spec.direction);
   }
 
+  if (action === 'browser-question') return reopenPendingDialog(state, page);
   if (action === 'activate') return activateCurrent(state, page);
 
   // An escape sequence nobody claimed is almost always a key this reader
@@ -2587,6 +2585,28 @@ async function askForFilePaths(state, { asking, multiple = false, accept = '' } 
   }
 }
 
+// Back to a question the reader stepped away from.
+//
+// The dialog is read again rather than replayed: while it was left alone the
+// browser may have closed it, or changed what it says — a save-password
+// prompt whose username the reader edited in the browser is not the prompt
+// they escaped from.
+async function reopenPendingDialog(state, page) {
+  const pending = state.pendingDialog;
+  if (!pending) {
+    setStatus(state, 'The browser is not asking anything.');
+    return;
+  }
+  const open = await pending.stillOpen().catch(() => false);
+  if (!open) {
+    state.pendingDialog = null;
+    setStatus(state, 'The browser is no longer asking that.');
+    return;
+  }
+  const again = await pending.reread().catch(() => null);
+  await answerNativeDialog(state, again || pending);
+}
+
 // What to say afterwards, which is the browser's business as much as ours:
 // the page has had its change event by now.
 function attachedNote(files, asking) {
@@ -2632,6 +2652,18 @@ function toggleText(toggle) {
 
 function dialogBlocks(dialog) {
   const said = dialog.lines.map((text) => ({ text, item: null, button: null, toggle: null }));
+  // What the dialog is about, when that lives in a control rather than in its
+  // words — the username and password a "Save password?" prompt is offering
+  // to keep. The browser masks the password itself, so what is shown here is
+  // what is on the screen a sighted user would be looking at.
+  const held = (dialog.fields || [])
+    .filter((field) => field.name || field.value)
+    .map((field) => ({
+      text: field.name && field.value ? `${field.name}: ${field.value}` : (field.value || field.name),
+      item: null,
+      button: null,
+      toggle: null,
+    }));
   // Options first, because they change what answering means: Firefox's
   // doorhanger offers "Allow extension to run in private windows", and that
   // is a decision made before the answer rather than after it.
@@ -2649,11 +2681,14 @@ function dialogBlocks(dialog) {
   }));
   const gap = { text: '', item: null, button: null, toggle: null };
   if (!choices.length && !options.length) {
-    return [...said, {
+    return [...said, ...held, {
       text: '(the browser offers nothing to press)', item: null, button: null, toggle: null,
     }];
   }
-  return [...said, gap, ...options, ...(options.length && choices.length ? [gap] : []), ...choices];
+  return [
+    ...said, ...held, gap,
+    ...options, ...(options.length && choices.length ? [gap] : []), ...choices,
+  ];
 }
 
 function closeNativeDialog(state, page, note) {
@@ -2703,6 +2738,7 @@ async function answerNativeDialog(state, dialog) {
     buttons: dialog.buttons.map((button) => button.name).join(' / ').slice(0, 80),
   });
 
+  state.pendingDialog = null;
   const token = state.keyReader.claim();
   // Pressed, and then checked. A button that answers "yes, pressed" while the
   // dialog stays where it is has not done anything — the browser can decline
@@ -2734,15 +2770,16 @@ async function answerNativeDialog(state, dialog) {
       markInput(state);
 
       if (keyIs(chunk, 'Escape', state)) {
-        const fallback = dialog.defaultButton;
-        if (!fallback) {
-          closeNativeDialog(state, page, 'Left the browser asking — it is still waiting for an answer.');
-          return;
-        }
-        const pressed = await press(fallback, 'escape');
-        closeNativeDialog(state, page, pressed
-          ? `Pressed "${fallback.name}" — the browser's own answer.`
-          : `Pressed "${fallback.name}", but the browser has not closed the dialog.`);
+        // Nothing is pressed. Escaping used to press whichever button the
+        // dialog had focused, on the grounds that it was the browser's own
+        // safe answer — and on Chrome's extension prompt it is, since that
+        // focuses Cancel. Then the password prompt turned up, which focuses
+        // Save: escaping would have saved a password the reader was trying to
+        // walk away from. A key that means "leave this alone" must leave it
+        // alone, so the question stays open and Alt+Q comes back to it.
+        state.pendingDialog = dialog;
+        closeNativeDialog(state, page,
+          'Left the browser asking — nothing was pressed. Alt+Q goes back to it.');
         return;
       }
 
@@ -2790,9 +2827,7 @@ async function answerNativeDialog(state, dialog) {
       // open should be told why nothing happened rather than left wondering
       // whether the terminal has stopped listening.
       if (!chunk.startsWith(ESC)) {
-        setStatus(state, state.dialog.defaultButton
-          ? `Move to an answer and press Enter, or Escape for "${state.dialog.defaultButton.name}".`
-          : 'Move to an answer and press Enter, or Escape to leave the browser asking.');
+        setStatus(state, 'Move to an answer and press Enter, or Escape to leave it unanswered.');
       }
     }
   } finally {
@@ -3094,6 +3129,9 @@ async function main() {
     dialog: null,
     // A file the browser is waiting to be given. See askForFilePaths().
     files: null,
+    // A question the browser asked that the reader stepped away from, kept so
+    // Alt+Q can go back to it. See answerNativeDialog().
+    pendingDialog: null,
     // The watch that notices one. Null where the browser cannot describe its
     // own windows, which is not an error — see driver.watchNativeDialogs.
     nativeWatch: null,

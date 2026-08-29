@@ -66,6 +66,10 @@ const ACTIONS = [
   ['bookmarks', 'Bookmarks', ['Ctrl+O']],
   ['history', 'History', ['Alt+H']],
   ['downloads', 'Downloads', ['Alt+J']],
+  // A question the browser asked and the reader stepped away from. Escaping
+  // one of those dialogs answers nothing — it is not this program's place to
+  // press a button nobody chose — so there has to be a way back to it.
+  ['browser-question', 'Answer the browser again', ['Alt+Q']],
   ['next-tab', 'Next tab', ['>']],
   ['previous-tab', 'Previous tab', ['<']],
   ['close-tab', 'Close tab', ['Shift+F4']],

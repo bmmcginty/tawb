@@ -1065,13 +1065,37 @@ deliberate — a permission list is the reason the question is being asked, and
 a yes/no on the status line would put the answer in front of the reader before
 the question had been read.
 
-Escape presses whichever button the dialog itself has focused or marked
-default, and says which one it pressed. Chrome focuses **Cancel** on its
-install prompt and marks it the default, which is worth knowing twice over: it
-is the browser's own safe answer, and it is why driving these dialogs with
-synthetic keystrokes is a bad idea. Pressing Return at the window with xdotool
-dismisses the prompt and installs nothing, which looks from the outside
-exactly like an install that silently failed.
+Escape presses nothing at all. It used to press whichever button the dialog
+had focused, on the grounds that this was the browser's own safe answer — and
+on Chrome's extension prompt it is, since that focuses Cancel. Then the
+save-password prompt arrived, which focuses **Save**: escaping would have
+saved a password the reader was trying to walk away from. A key that means
+"leave this alone" has to leave it alone, so the question stays open and
+`Alt+Q` goes back to it, re-read rather than replayed in case the browser has
+changed what it says.
+
+Which button a dialog has focused is still worth knowing, and it is still
+read — it is why driving these dialogs with synthetic keystrokes is a bad
+idea. Pressing Return at Chrome's install prompt with xdotool dismisses it and
+installs nothing, which from the outside looks exactly like an install that
+silently failed.
+
+A dialog is read for what it is *about*, not only for what it says. Chrome's
+"Save password?" holds the credential in two entries, so a reading that took
+only names said "Username" twice and never said whose password was being
+saved. Controls that hold a value are read through the Text interface, which
+is also how the password arrives already masked — the browser masks it, and
+what the reader hears is what is on the screen:
+
+```
+Save password?
+Passwords are saved to Password Manager on this device.
+Username: reader
+Password: ••••••••••••••
+Never
+No thanks
+Save
+```
 
 A press is checked rather than trusted. The accessibility action answers "yes,
 pressed" whether or not anything happened, so after pressing, the dialog is

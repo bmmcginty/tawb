@@ -141,53 +141,66 @@ function watchNativeDialogs({
         name: String(described.name || '').slice(0, 80),
         buttons: read.buttons.map((button) => button.name).join(' / ').slice(0, 80),
       });
-      try {
-        await onDialog({
-          node: described,
-          role: described.role,
-          title: described.name || read.lines[0] || '',
-          lines: read.lines,
-          buttons: read.buttons,
-          // Options the dialog offers alongside its answer, such as Firefox's
-          // "Allow extension to run in private windows".
-          toggles: read.toggles || [],
-          defaultButton: defaultButton(read.buttons),
-          // Press a button, the way a screen reader's user activates the
-          // control they are on.
-          //
-          // Worth knowing if this is ever called by something other than a
-          // person: a press that lands within about half a second of the
-          // dialog appearing is discarded by Chromium's own protection
-          // against clickjacking, and discarded silently — the call still
-          // answers true and nothing happens. A reader taking the time to
-          // read the question is never near that window.
-          press: (button) => a11y.press(button),
-          // Tick or untick an option, and answer with what it is now. The
-          // browser owns the state; this reads it back rather than assuming
-          // the press did what it looks like it did.
-          toggle: async (control) => {
-            await a11y.press(control);
-            const states = await a11y.statesOf(control).catch(() => null);
-            return states ? states.checked : null;
-          },
-          // Whether the browser is still asking. A dialog answered elsewhere,
-          // or a browser that has gone, is not something to press a button on.
-          // Whether the browser is still asking. Membership rather than
-          // "does the object still answer": a dismissed dialog goes on
-          // answering for a moment after it has gone from the window.
-          stillOpen: async () => {
-            try {
-              const windows = await a11y.childrenOf(application);
-              const here = [...windows];
-              for (const window of windows.slice(0, MAX_CONTAINERS)) {
-                here.push(...await a11y.childrenOf(window).catch(() => []));
-              }
-              return pathsOf(here).includes(key);
-            } catch {
-              return false;
+
+      // What a reader is handed: what the dialog says, what it offers, and
+      // the two things they can do about it. Built from a fresh reading each
+      // time, so that coming back to a question the reader stepped away from
+      // asks the browser what it says *now*.
+      const requestFor = (state) => ({
+        node: described,
+        role: described.role,
+        title: described.name || state.lines[0] || '',
+        lines: state.lines,
+        buttons: state.buttons,
+        // Options the dialog offers alongside its answer, such as Firefox's
+        // "Allow extension to run in private windows".
+        toggles: state.toggles || [],
+        // What the dialog is about, where that lives in a control rather than
+        // in its words: the username and masked password in a "Save
+        // password?" prompt.
+        fields: state.fields || [],
+        defaultButton: defaultButton(state.buttons),
+        // Press a button, the way a screen reader's user activates the
+        // control they are on.
+        //
+        // Worth knowing if this is ever called by something other than a
+        // person: a press that lands within about half a second of the dialog
+        // appearing is discarded by Chromium's own protection against
+        // clickjacking, and discarded silently — the call still answers true
+        // and nothing happens. A reader taking the time to read the question
+        // is never near that window.
+        press: (button) => a11y.press(button),
+        // Tick or untick an option, and answer with what it is now. The
+        // browser owns the state; this reads it back rather than assuming the
+        // press did what it looks like it did.
+        toggle: async (control) => {
+          await a11y.press(control);
+          const states = await a11y.statesOf(control).catch(() => null);
+          return states ? states.checked : null;
+        },
+        // The same question, read again. A dialog the reader stepped away
+        // from may have changed while they were gone, and replaying what it
+        // said a minute ago would be putting words in the browser's mouth.
+        reread: async () => requestFor(await a11y.read(described)),
+        // Whether the browser is still asking. Membership rather than "does
+        // the object still answer": a dismissed dialog goes on answering for
+        // a moment after it has gone from the window.
+        stillOpen: async () => {
+          try {
+            const windows = await a11y.childrenOf(application);
+            const here = [...windows];
+            for (const window of windows.slice(0, MAX_CONTAINERS)) {
+              here.push(...await a11y.childrenOf(window).catch(() => []));
             }
-          },
-        });
+            return pathsOf(here).includes(key);
+          } catch {
+            return false;
+          }
+        },
+      });
+
+      try {
+        await onDialog(requestFor(read));
       } catch (err) {
         log('native.dialog.error', { error: String(err.message || err).slice(0, 160) });
       }

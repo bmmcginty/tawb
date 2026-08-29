@@ -31,7 +31,8 @@ const TREE = {
     name: 'Add "uBlock Origin Lite"?',
     children: [
       [':1.1', '/dialog/heading'], [':1.1', '/dialog/perms'],
-      [':1.1', '/dialog/option'], [':1.1', '/dialog/buttons'],
+      [':1.1', '/dialog/option'], [':1.1', '/dialog/who'], [':1.1', '/dialog/secret'],
+      [':1.1', '/dialog/buttons'],
     ],
   },
   ':1.1|/dialog/heading': { role: 'heading', name: 'Add "uBlock Origin Lite"?', children: [] },
@@ -50,6 +51,12 @@ const TREE = {
   ':1.1|/dialog/check': { role: 'check box', name: 'Allow it in private windows', children: [] },
   ':1.1|/dialog/buttons': {
     role: 'panel', name: '', children: [[':1.1', '/dialog/cancel'], [':1.1', '/dialog/add']],
+  },
+  // What a "Save password?" prompt is actually about: two entries holding the
+  // credential, the password already masked by the browser itself.
+  ':1.1|/dialog/who': { role: 'entry', name: 'Username', value: 'reader', children: [] },
+  ':1.1|/dialog/secret': {
+    role: 'password text', name: 'Password', value: '••••••••', children: [],
   },
   ':1.1|/dialog/cancel': { role: 'push button', name: 'Cancel', children: [] },
   ':1.1|/dialog/add': { role: 'push button', name: 'Add extension', children: [] },
@@ -79,6 +86,7 @@ function fakeBus({ pids = { ':1.1': 4242, ':1.7': 99 }, gone = new Set() } = {})
         assert.deepEqual(body, ['org.a11y.atspi.Accessible', 'Name']);
         return [node.name];
       }
+      if (member === 'GetText') return [node.value || ''];
       if (member === 'DoAction') {
         pressed.push(key);
         return [true];
@@ -133,6 +141,15 @@ test('a dialog reads as the lines it says and the buttons it offers', async () =
   assert.deepEqual(read.toggles.map((toggle) => toggle.name), ['Allow it in private windows']);
   assert.equal(read.lines.filter((line) => /private windows/.test(line)).length, 0);
   assert.equal(read.truncated, false);
+
+  // A control that holds a value is read for the value, not just the label —
+  // otherwise a save-password prompt says "Username" twice and never says
+  // whose password it is about to keep. The password arrives already masked,
+  // because the browser masks it.
+  assert.deepEqual(read.fields.map((field) => `${field.name}: ${field.value}`), [
+    'Username: reader',
+    'Password: ••••••••',
+  ]);
 
   const add = read.buttons.find((button) => button.name === 'Add extension');
   assert.equal(await a11y.press(add), true);

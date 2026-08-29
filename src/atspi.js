@@ -46,6 +46,7 @@ const fs = require('node:fs');
 const ROOT_PATH = '/org/a11y/atspi/accessible/root';
 const ACCESSIBLE = 'org.a11y.atspi.Accessible';
 const ACTION = 'org.a11y.atspi.Action';
+const TEXT = 'org.a11y.atspi.Text';
 const PROPERTIES = 'org.freedesktop.DBus.Properties';
 
 // A dialog is not deep, and a page behind it can be. Both limits are here to
@@ -67,6 +68,14 @@ const BUTTON_ROLES = new Set(['push button', 'button', 'toggle button']);
 // cannot see it should be able to tick it before answering, exactly as a
 // sighted user can.
 const TOGGLE_ROLES = new Set(['check box', 'check menu item']);
+
+// Controls that hold a value rather than a label. Chrome's "Save password?"
+// is the case that matters: the username and password it is about to save
+// are in two entries, and a dialog read without them says "Username" twice
+// and never says whose password it is saving. The browser masks the password
+// itself — the entry answers with bullets — so what a reader hears is what a
+// sighted user sees.
+const VALUE_ROLES = new Set(['entry', 'password text', 'text', 'spin button']);
 
 // The states a control can be in arrive as a pair of 32-bit words, one bit
 // per state, in the order the AT-SPI enumeration defines them. Only two
@@ -156,6 +165,12 @@ class Accessibility {
       focused: bit(STATE_FOCUSED),
       isDefault: bit(STATE_IS_DEFAULT),
     };
+  }
+
+  // What a control holds, as opposed to what it is called.
+  async valueOf(node, timeout) {
+    const [text] = await this.#call(node, TEXT, 'GetText', 'ii', [0, -1], timeout);
+    return typeof text === 'string' ? text : '';
   }
 
   // Press a control. `DoAction(0)` is its first action, which for a button is
@@ -266,6 +281,7 @@ class Accessibility {
     const lines = [];
     const buttons = [];
     const toggles = [];
+    const fields = [];
     let visited = 0;
 
     const walk = async (current, depth, seen) => {
@@ -274,7 +290,17 @@ class Accessibility {
       const name = String(current.name || '').trim();
       if (BUTTON_ROLES.has(current.role) && name) buttons.push({ ...current, name });
       else if (TOGGLE_ROLES.has(current.role) && name) toggles.push({ ...current, name });
-      else if (name && !seen.has(name) && !SILENT_ROLES.has(current.role)) lines.push(name);
+      else if (VALUE_ROLES.has(current.role)) {
+        const value = await this.valueOf(current).catch(() => '');
+        if (name || value) fields.push({ ...current, name, value });
+      // A line already said by something this is inside of. A views dialog
+      // nests a panel whose name is everything below it, so its children
+      // repeat it whole or in pieces — the sentence about where passwords are
+      // saved arrives three times, once entire and twice in fragments.
+      } else if (name && !SILENT_ROLES.has(current.role)
+        && ![...seen].some((said) => said === name || said.includes(name))) {
+        lines.push(name);
+      }
       const nowSeen = name ? new Set([...seen, name]) : seen;
       if (depth >= maxDepth) return;
       let children;
@@ -307,13 +333,16 @@ class Accessibility {
     // A control's own words are not also a line. Firefox wraps its option in
     // a list item that answers with the same name as the check box inside it,
     // which would otherwise be read out once as prose and once as a control.
-    const controlNames = new Set([...buttons, ...toggles].map((control) => control.name));
+    const controlNames = new Set(
+      [...buttons, ...toggles, ...fields].map((control) => control.name).filter(Boolean),
+    );
     return {
       role: root.role,
       name: root.name,
       lines: lines.filter((line) => !controlNames.has(line)),
       buttons,
       toggles,
+      fields,
       truncated: visited >= maxNodes,
     };
   }
