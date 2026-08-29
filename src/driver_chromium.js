@@ -40,12 +40,17 @@ async function openChromium({
   let owned = false;
   let port = null;
   let rejoined = false;
+  // Where this browser describes its own windows, if it describes them at
+  // all. Everything native — an extension's consent dialog, and whatever else
+  // is drawn outside a document — is read through this. See atspi.js.
+  let a11y = null;
 
   if (connect) {
-    const connected = await connectToBrowser(connect);
+    const connected = await connectToBrowser(connect, { log });
     ({ browser, context } = connected);
     port = connected.port;
     rejoined = true;
+    a11y = connected.a11y;
   } else {
     const started = await launchOwnBrowser({ profileDir: profile || defaultProfileDir(), log });
     ({ browser, context } = started);
@@ -53,6 +58,7 @@ async function openChromium({
     owned = !!started.owned;
     port = started.port;
     rejoined = !!started.rejoined;
+    a11y = started.a11y;
   }
 
   // The session that answers for a document. A cross-origin frame is its own
@@ -431,6 +437,10 @@ async function openChromium({
       }
       authSessions.clear();
       await browser.close().catch(() => {});
+      // The accessibility bus, and the session bus under it if this session
+      // started one. A name claimed here is released here, so a desktop that
+      // later starts a real accessibility bus finds it free.
+      if (a11y) await a11y.close().catch(() => {});
       // Only tear down a browser we started; one the user was already running
       // is theirs to keep. --keep-browser leaves even ours running, so the
       // next session rejoins it in 50ms instead of cold-starting in four

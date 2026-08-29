@@ -13,6 +13,7 @@ const {
   startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir,
 } = require('./proc');
 const { recordBrowser, sweepStrandedBrowsers } = require('./registry');
+const { openAccessibilityBus } = require('./a11y_bus');
 
 // Getting hold of a browser to read.
 //
@@ -172,14 +173,30 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   // by the out-of-memory kill that a pile of them causes — is finally reaped.
   sweepStrandedBrowsers({ log });
 
+  // Somewhere for the browser to describe its own windows to, and the flag
+  // that makes it describe them. A native dialog — an extension asking for
+  // consent, a file picker — is not a document and is in neither protocol;
+  // the browser's own accessibility interface is what has it. See atspi.js
+  // for what that buys and a11y_bus.js for where the bus comes from.
+  //
+  // The flag is passed only when there is a bus to answer on, because
+  // accessibility that nothing is reading is renderer work nobody wants.
+  const a11y = await openAccessibilityBus({ log });
+  if (!a11y.available) log('a11y.unavailable', { reason: a11y.reason });
+
   const running = await findRunningBrowser(profileDir);
   if (running) {
     log('browser.rejoin', { port: running, profileDir });
     const browser = await cdpBrowser.connect(`http://127.0.0.1:${running}`);
     const context = browser.contexts()[0];
     if (context) {
-      // Not ours to shut down: another session may still be reading it.
-      return { browser, context, child: null, owned: false, port: running, rejoined: true };
+      // Not ours to shut down: another session may still be reading it. Its
+      // accessibility, too, is whatever the session that started it set up —
+      // which may be nothing, and is why the bus is handed over rather than
+      // promised.
+      return {
+        browser, context, child: null, owned: false, port: running, rejoined: true, a11y,
+      };
     }
     await browser.close().catch(() => {});
   }
@@ -191,6 +208,12 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
     `--remote-debugging-port=${port}`,
     '--no-first-run',
     '--no-default-browser-check',
+    // `basic` is the cheapest of the three values this takes, and it is
+    // enough: with it the browser's own windows are described, without it
+    // AT-SPI shows the application and the window frame and nothing inside
+    // either. Nothing else turns this on — not the environment variable, not
+    // the bus property, not CDP's Accessibility.enable.
+    ...(a11y.available ? ['--force-renderer-accessibility=basic'] : []),
     'about:blank',
   ];
 
@@ -203,7 +226,14 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   // xvfb-run, and the browser is that shell's child rather than ours.
   // Both output streams are captured: under xvfb-run the browser's stderr
   // arrives on stdout, so listening to stderr alone hears nothing.
-  const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  const child = spawn(command, args, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
+    // Only ever an addition: the bus this session started, for a machine that
+    // had none. Where the desktop has one already this is empty and the
+    // browser inherits the environment it would have had anyway.
+    env: { ...process.env, ...a11y.env },
+  });
   const startup = watchChildStartup(child);
   child.unref();
 
@@ -220,6 +250,7 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
 
   if (!ready) {
     killProcessGroup(child.pid);
+    await a11y.close();
     throw browserStartupError({
       name: found.name,
       executable: found.executable,
@@ -239,14 +270,21 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   const context = browser.contexts()[0];
   if (!context) throw new Error('Browser started but exposed no context');
 
-  return { browser, context, child, owned: true, port, executable: found.executable };
+  return { browser, context, child, owned: true, port, executable: found.executable, a11y };
 }
 
-async function connectToBrowser(endpoint) {
+async function connectToBrowser(endpoint, { log = () => {} } = {}) {
   const browser = await cdpBrowser.connect(endpoint);
   const contexts = browser.contexts();
   if (contexts.length === 0) throw new Error(`No browser context available at ${endpoint}`);
-  return { browser, context: contexts[0], child: null, owned: false, port: portOfEndpoint(endpoint) };
+  // A browser that was already running was started by somebody else, so
+  // whether it describes its windows is their decision and not ours: the flag
+  // is a startup one. The bus is still opened, because a desktop's browser is
+  // routinely started with accessibility on and then this works anyway.
+  const a11y = await openAccessibilityBus({ log });
+  return {
+    browser, context: contexts[0], child: null, owned: false, port: portOfEndpoint(endpoint), a11y,
+  };
 }
 
 // Normalises the various things someone might reasonably pass: a port, a

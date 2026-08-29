@@ -475,6 +475,7 @@ class DbusConnection {
     this.socket = socket;
     this.pending = new Map();
     this.signalHandlers = [];
+    this.callHandlers = [];
     this.nextSerial = 1;
     this.closed = false;
     this.name = null;
@@ -520,6 +521,10 @@ class DbusConnection {
       }
       return;
     }
+    if (message.type === MESSAGE_METHOD_CALL) {
+      this.#answer(message);
+      return;
+    }
     const waiter = this.pending.get(message.replySerial);
     if (!waiter) return;
     this.pending.delete(message.replySerial);
@@ -534,6 +539,68 @@ class DbusConnection {
   onSignal(handler) {
     this.signalHandlers.push(handler);
     return this;
+  }
+
+  // Answering calls, rather than making them.
+  //
+  // This is here for one purpose: a machine with no desktop has no
+  // accessibility bus, and the service that would provide one is a daemon
+  // that lives in a different place on every distribution. Owning the name
+  // ourselves is a name request and one method to answer — see a11y_bus.js —
+  // which is less to go wrong than finding somebody else's binary.
+  onMethodCall(handler) {
+    this.callHandlers.push(handler);
+    return this;
+  }
+
+  #answer(message) {
+    const reply = (signature = '', body = []) => this.#send({
+      type: MESSAGE_METHOD_RETURN,
+      destination: message.sender,
+      replySerial: message.serial,
+      signature,
+      body,
+    });
+    const fail = (name, text) => this.#send({
+      type: MESSAGE_ERROR,
+      destination: message.sender,
+      replySerial: message.serial,
+      errorName: name,
+      signature: 's',
+      body: [text],
+    });
+    for (const handler of [...this.callHandlers]) {
+      try {
+        if (handler(message, { reply, fail }) === true) return;
+      } catch (err) {
+        fail('org.freedesktop.DBus.Error.Failed', String(err.message || err));
+        return;
+      }
+    }
+    fail('org.freedesktop.DBus.Error.UnknownMethod', `${message.iface}.${message.member} is not here`);
+  }
+
+  #send(message) {
+    const serial = this.nextSerial;
+    this.nextSerial += 1;
+    try {
+      this.socket.write(encodeMessage({ ...message, serial }));
+    } catch { /* the connection is gone, and so is whoever was asking */ }
+  }
+
+  // Claim a name on the bus. Answers with what the bus decided: 1 is
+  // "yours", 3 is "somebody else already has it", and the difference is the
+  // whole question when the point is not to disturb a service that exists.
+  async requestName(name, flags = 0) {
+    const [outcome] = await this.call({
+      destination: 'org.freedesktop.DBus',
+      path: '/org/freedesktop/DBus',
+      iface: 'org.freedesktop.DBus',
+      member: 'RequestName',
+      signature: 'su',
+      body: [name, flags],
+    });
+    return outcome;
   }
 
   call({

@@ -1006,12 +1006,21 @@ Two things have to be true, and both are checked rather than assumed:
   `Accessibility.enable`, which is about a renderer and not about the browser.
   Chrome's remaining path is `DiscoverOrca()`, which scans `/proc` for an Orca
   process — not something to imitate.
-- **There must be an accessibility bus.** That is at-spi2-core's bus launcher
-  running against a session bus, which a desktop already has and a bare
-  terminal does not. Its registry daemon is not needed: applications are found
-  by asking the bus what is connected to it and asking each of those for its
-  own tree, which a browser answers with `at-spi2-registryd` not running at
-  all.
+- **There must be an accessibility bus.** A desktop has one, run by
+  at-spi2-core, and it is used exactly as it is. A bare terminal — which is
+  where this program is most at home, with the browser under Xvfb — has
+  neither it nor the session bus it would live on, so one is provided:
+  `org.a11y.Bus` is claimed *only if nobody owns it*, and what it hands out is
+  the session bus itself, since an accessibility bus is an ordinary bus and
+  the separate one a desktop runs is for isolation rather than for a different
+  protocol. With no session bus at all, `dbus-daemon` is started for the
+  browser and taken down with it. The name is released when the session ends.
+  Verified against a browser with at-spi2-core's daemons not running at all,
+  which registered with ours and described its windows through it.
+
+  at-spi2-registryd is not needed either way: applications are found by asking
+  the bus what is connected to it and asking each of those for its own tree,
+  and identified by pid rather than by the registry's desktop listing.
 
 The application is identified by its process, not by its name: the bus knows
 the pid behind every connection, and a browser we started leads a process
