@@ -19,19 +19,39 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function fakeApplication(windows = []) {
   const pressed = [];
   const state = { windows, pressed };
+  // Windows, and whatever each of them holds. Chromium puts a dialog beside
+  // the window and Firefox puts it inside one, so both are modelled.
+  const all = () => state.windows.flatMap((window) => [window, ...(window.children || [])]);
   const a11y = {
-    async childrenOf() {
+    async childrenOf(node) {
       if (state.fail) throw new Error('the browser has gone');
-      return state.windows.map((window) => ({ bus: ':1.1', path: window.path }));
+      if (node.path === '/root') {
+        return state.windows.map((window) => ({ bus: ':1.1', path: window.path }));
+      }
+      const window = all().find((each) => each.path === node.path);
+      return (window && window.children ? window.children : []).map(
+        (child) => ({ bus: ':1.1', path: child.path }),
+      );
     },
     async describeNode(node) {
-      const window = state.windows.find((each) => each.path === node.path);
+      const window = all().find((each) => each.path === node.path);
       if (!window) throw new Error('gone');
       return { ...node, role: window.role, name: window.name };
     },
+    // What a dialog still being there looks like: it answers for itself.
+    async roleOf(node) {
+      const window = all().find((each) => each.path === node.path);
+      if (!window) throw new Error('gone');
+      return window.role;
+    },
     async read(node) {
-      const window = state.windows.find((each) => each.path === node.path);
-      return { lines: window.lines || [], buttons: window.buttons || [], truncated: false };
+      const window = all().find((each) => each.path === node.path);
+      return {
+        lines: window.lines || [],
+        buttons: window.buttons || [],
+        toggles: window.toggles || [],
+        truncated: false,
+      };
     },
     async press(button) {
       pressed.push(button.name);
@@ -71,6 +91,35 @@ test('the browser asking something reaches the reader once, with its own words',
     // A window is not a question: the frame that was already there raised
     // nothing.
     assert.equal(asked.length, 1);
+  } finally {
+    watch.stop();
+  }
+});
+
+test('a doorhanger inside the window is found as well as a dialog beside it', async () => {
+  // Firefox hangs its install prompt off the browser window; Chromium hangs
+  // its confirmation off the application. Both have to be noticed, and
+  // neither is worth a search of a whole browser's chrome to find.
+  const window = { path: '/window', role: 'frame', name: 'Add-ons', children: [] };
+  const { a11y, state } = fakeApplication([window]);
+  const asked = [];
+  const watch = watchNativeDialogs({
+    a11y,
+    application: { bus: ':1.1', path: '/root' },
+    interval: 10,
+    onDialog: async (dialog) => { asked.push(dialog.title); },
+  });
+  try {
+    window.children.push({
+      path: '/window/doorhanger',
+      role: 'alert',
+      name: '',
+      lines: ['Add uBlock Origin', 'Required permissions:', '• Access your data for all websites'],
+      buttons: [{ name: 'Cancel' }, { name: 'Add' }],
+    });
+    await sleep(120);
+    // Unnamed in the tree, so the first thing it says is what it is called.
+    assert.deepEqual(asked, ['Add uBlock Origin']);
   } finally {
     watch.stop();
   }

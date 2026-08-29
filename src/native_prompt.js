@@ -21,15 +21,28 @@
 // owed the question and the choice. A file picker or a permission prompt
 // arriving the same way would be handled the same way.
 
+const { openAccessibility } = require('./atspi');
+
 // What counts as a question rather than a window. `alert` is what Chromium's
 // own confirmations answer with; `dialog` and `file chooser` are what the
 // other things a browser raises answer with.
 const DIALOG_ROLES = new Set(['alert', 'dialog', 'file chooser']);
 
-// How often to look. One `GetChildren` on the application, which is a single
-// round trip over a unix socket — the reply is compared against the last one
-// and nothing else is asked unless it changed.
+// How often to look. A `GetChildren` on the application and one on each window
+// it has open, which is a handful of round trips on a unix socket — each reply
+// is compared against the last one and nothing else is asked unless something
+// new appeared.
 const POLL_MS = 500;
+
+// Where the two engines put a dialog, which is not the same place.
+//
+// Chromium's install confirmation is a child of the application, beside the
+// window rather than inside it. Firefox's doorhanger is a child of the window
+// itself. So both the application and its windows are watched, and a dialog is
+// whatever turns up in either — which is one level of looking, not a search of
+// a tree with a whole browser's chrome in it.
+const MAX_CONTAINERS = 8;
+const MAX_CHILDREN = 80;
 
 // How many times in a row the application can fail to answer before this
 // gives up on it. A browser that has quit is the ordinary reason.
@@ -69,9 +82,9 @@ function watchNativeDialogs({
 
   const tick = async () => {
     if (stopped) return;
-    let children;
+    let windows;
     try {
-      children = await a11y.childrenOf(application);
+      windows = await a11y.childrenOf(application);
       failures = 0;
     } catch (err) {
       failures += 1;
@@ -82,6 +95,18 @@ function watchNativeDialogs({
       }
       schedule();
       return;
+    }
+
+    // Everything one level inside the application and one level inside each
+    // of its windows. Chromium puts a dialog in the first place, Firefox in
+    // the second.
+    const children = [...windows];
+    for (const window of windows.slice(0, MAX_CONTAINERS)) {
+      try {
+        children.push(...(await a11y.childrenOf(window)).slice(0, MAX_CHILDREN));
+      } catch {
+        // A window that closed while we were asking.
+      }
     }
 
     const present = new Set(pathsOf(children));
@@ -123,14 +148,27 @@ function watchNativeDialogs({
           title: described.name || read.lines[0] || '',
           lines: read.lines,
           buttons: read.buttons,
+          // Options the dialog offers alongside its answer, such as Firefox's
+          // "Allow extension to run in private windows".
+          toggles: read.toggles || [],
           defaultButton: defaultButton(read.buttons),
           press: (button) => a11y.press(button),
+          // Tick or untick an option, and answer with what it is now. The
+          // browser owns the state; this reads it back rather than assuming
+          // the press did what it looks like it did.
+          toggle: async (control) => {
+            await a11y.press(control);
+            const states = await a11y.statesOf(control).catch(() => null);
+            return states ? states.checked : null;
+          },
           // Whether the browser is still asking. A dialog answered elsewhere,
           // or a browser that has gone, is not something to press a button on.
           stillOpen: async () => {
             try {
-              const now = await a11y.childrenOf(application);
-              return pathsOf(now).includes(key);
+              // Whatever it hangs off, a dialog that is gone has no role to
+              // answer with.
+              await a11y.roleOf(described);
+              return true;
             } catch {
               return false;
             }
@@ -160,4 +198,45 @@ function watchNativeDialogs({
   };
 }
 
-module.exports = { watchNativeDialogs, defaultButton, DIALOG_ROLES, POLL_MS };
+// Everything a driver has to do to have its browser's dialogs answered here.
+//
+// Both engines want the same three things — the accessibility bus this
+// browser is on, which application on it is ours, and a watch — and both can
+// fail to have any of them for ordinary reasons: a browser somebody else
+// started, a machine with no D-Bus, an engine that was not asked to describe
+// its windows. None of those is an error. They mean this browser has no
+// native dialogs to offer, and a reader who never meets one never notices.
+async function armNativeDialogs({
+  bus, pid = null, names = [], onDialog, log = () => {},
+}) {
+  if (!bus || !bus.available) {
+    log('native.unavailable', { reason: (bus && bus.reason) || 'no accessibility bus' });
+    return null;
+  }
+  let a11y;
+  try {
+    a11y = await openAccessibility({ address: bus.address, log });
+  } catch (err) {
+    log('native.unavailable', { reason: String(err.message || err).slice(0, 160) });
+    return null;
+  }
+  const application = await a11y.applicationFor({ pid, names }).catch(() => null);
+  if (!application) {
+    log('native.unavailable', { reason: 'the browser is not describing its windows' });
+    a11y.close();
+    return null;
+  }
+  log('native.armed', { application: application.name, bus: application.bus });
+  const watch = watchNativeDialogs({ a11y, application, onDialog, log });
+  return {
+    application,
+    stop() {
+      watch.stop();
+      a11y.close();
+    },
+  };
+}
+
+module.exports = {
+  watchNativeDialogs, armNativeDialogs, defaultButton, DIALOG_ROLES, POLL_MS,
+};

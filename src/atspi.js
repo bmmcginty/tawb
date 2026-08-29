@@ -62,10 +62,17 @@ const PROBE_TIMEOUT_MS = 1500;
 // taken.
 const BUTTON_ROLES = new Set(['push button', 'button', 'toggle button']);
 
+// Options a dialog offers alongside its answer. Firefox's install doorhanger
+// has one — "Allow extension to run in private windows" — and a reader who
+// cannot see it should be able to tick it before answering, exactly as a
+// sighted user can.
+const TOGGLE_ROLES = new Set(['check box', 'check menu item']);
+
 // The states a control can be in arrive as a pair of 32-bit words, one bit
 // per state, in the order the AT-SPI enumeration defines them. Only two
 // matter here, and both are about which button answers the dialog: the one
 // the dialog itself would press.
+const STATE_CHECKED = 4;
 const STATE_FOCUSED = 12;
 const STATE_IS_DEFAULT = 39;
 
@@ -144,7 +151,11 @@ class Accessibility {
       const word = words[index < 32 ? 0 : 1] || 0;
       return ((word >>> (index % 32)) & 1) === 1;
     };
-    return { focused: bit(STATE_FOCUSED), isDefault: bit(STATE_IS_DEFAULT) };
+    return {
+      checked: bit(STATE_CHECKED),
+      focused: bit(STATE_FOCUSED),
+      isDefault: bit(STATE_IS_DEFAULT),
+    };
   }
 
   // Press a control. `DoAction(0)` is its first action, which for a button is
@@ -254,14 +265,15 @@ class Accessibility {
     const root = node.role ? node : await this.describeNode(node);
     const lines = [];
     const buttons = [];
+    const toggles = [];
     let visited = 0;
 
     const walk = async (current, depth, seen) => {
       if (visited >= maxNodes) return;
       visited += 1;
       const name = String(current.name || '').trim();
-      const isButton = BUTTON_ROLES.has(current.role);
-      if (isButton && name) buttons.push({ ...current, name });
+      if (BUTTON_ROLES.has(current.role) && name) buttons.push({ ...current, name });
+      else if (TOGGLE_ROLES.has(current.role) && name) toggles.push({ ...current, name });
       else if (name && !seen.has(name) && !SILENT_ROLES.has(current.role)) lines.push(name);
       const nowSeen = name ? new Set([...seen, name]) : seen;
       if (depth >= maxDepth) return;
@@ -285,15 +297,24 @@ class Accessibility {
     await walk(root, 0, new Set());
     // What the dialog would do if it were answered without being read: the
     // button it has focused, or the one it calls its default.
-    for (const button of buttons) {
+    for (const control of [...buttons, ...toggles]) {
       try {
-        Object.assign(button, await this.statesOf(button));
+        Object.assign(control, await this.statesOf(control));
       } catch {
-        // A button that went away with its dialog.
+        // A control that went away with its dialog.
       }
     }
+    // A control's own words are not also a line. Firefox wraps its option in
+    // a list item that answers with the same name as the check box inside it,
+    // which would otherwise be read out once as prose and once as a control.
+    const controlNames = new Set([...buttons, ...toggles].map((control) => control.name));
     return {
-      role: root.role, name: root.name, lines, buttons, truncated: visited >= maxNodes,
+      role: root.role,
+      name: root.name,
+      lines: lines.filter((line) => !controlNames.has(line)),
+      buttons,
+      toggles,
+      truncated: visited >= maxNodes,
     };
   }
 }
@@ -326,5 +347,5 @@ async function openAccessibility({
 }
 
 module.exports = {
-  openAccessibility, Accessibility, processGroupOf, nodeOf, BUTTON_ROLES,
+  openAccessibility, Accessibility, processGroupOf, nodeOf, BUTTON_ROLES, TOGGLE_ROLES,
 };

@@ -131,17 +131,23 @@ Chrome's own safe answer, and the hint line always says which one it is. The
 browser does the installing; nothing is added behind your back, and nothing
 is decided for you.
 
-Afterwards Chrome's "has been added" confirmation arrives the same way, with
-its `Close` button, because a sighted user sees that too.
+Afterwards the browser's "has been added" confirmation arrives the same way,
+with its own button, because a sighted user sees that too.
+
+Firefox works the same, from addons.mozilla.org. Its panel says more — the
+permissions, whether the add-on collects data, and an option to allow it in
+private windows. An option like that appears as `[ ]` or `[x]`; press Enter on
+it to tick it, and the question stays up until you answer it.
 
 This is not only for extensions. Anything the browser draws in a window of its
 own rather than in the page comes through the same way.
 
-It needs a browser TAWB started itself, since describing its windows is
-something a browser is told to do at startup — the same limit that applies to
-Firefox's lists above. On a desktop it uses the accessibility bus that is
-already running; with no desktop at all, TAWB provides one for the browser and
-takes it away again when you quit.
+On Chrome and Chromium this needs a browser TAWB started itself, because
+describing its own windows is something Chrome is told to do at startup.
+Firefox decides that for itself, so there it works with `--connect` too. On a
+desktop TAWB uses the accessibility bus that is already running; with no
+desktop at all it provides one for the browser and takes it away again when
+you quit.
 
 ## Keys
 

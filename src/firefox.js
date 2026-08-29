@@ -14,6 +14,7 @@ const {
   startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir,
 } = require('./proc');
 const { recordBrowser, sweepStrandedBrowsers } = require('./registry');
+const { openAccessibilityBus } = require('./a11y_bus');
 
 // Getting hold of a Firefox that is not pretending to be a robot.
 //
@@ -701,6 +702,13 @@ async function launchFirefox({
   // correctness fix as much as a speed one — and it is the whole of the
   // startup difference against Chromium, which has been quietly rejoining a
   // running browser in 50ms while Firefox cold-started every time.
+  // Somewhere for the browser to describe its own windows to. Firefox needs
+  // no flag for this — unlike Chromium it turns accessibility on by itself
+  // when there is a bus saying it is wanted — so this is only about there
+  // being a bus at all. See a11y_bus.js and native_prompt.js.
+  const a11y = await openAccessibilityBus({ log });
+  if (!a11y.available) log('a11y.unavailable', { reason: a11y.reason });
+
   const running = await runningEndpoint(profileDir);
   if (running) {
     const record = readEndpointRecord(profileDir) || {};
@@ -714,6 +722,7 @@ async function launchFirefox({
       profileDir,
       cleared: null,
       rejoined: true,
+      a11y,
     };
   }
 
@@ -746,7 +755,11 @@ async function launchFirefox({
   // Both output streams are captured: under xvfb-run the browser's stderr
   // arrives on stdout, so listening to stderr alone hears nothing.
   const child = spawn(command, spawnArgs, {
-    stdio: ['ignore', 'pipe', 'pipe'], detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
+    // Only ever an addition: the bus this session started, for a machine that
+    // had none of its own.
+    env: { ...process.env, ...a11y.env },
   });
   const startup = watchChildStartup(child);
   child.unref();
@@ -803,6 +816,7 @@ async function launchFirefox({
     profileDir,
     cleared,
     rejoined: false,
+    a11y,
   };
 }
 

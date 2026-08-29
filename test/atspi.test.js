@@ -29,7 +29,10 @@ const TREE = {
   ':1.1|/dialog/panel': {
     role: 'panel',
     name: 'Add "uBlock Origin Lite"?',
-    children: [[':1.1', '/dialog/heading'], [':1.1', '/dialog/perms'], [':1.1', '/dialog/buttons']],
+    children: [
+      [':1.1', '/dialog/heading'], [':1.1', '/dialog/perms'],
+      [':1.1', '/dialog/option'], [':1.1', '/dialog/buttons'],
+    ],
   },
   ':1.1|/dialog/heading': { role: 'heading', name: 'Add "uBlock Origin Lite"?', children: [] },
   ':1.1|/dialog/perms': {
@@ -39,6 +42,12 @@ const TREE = {
   ':1.1|/dialog/perms/one': {
     role: 'static', name: 'Read and change all your data on all websites', children: [],
   },
+  // Firefox's option, wrapped in a list item that answers with the same name
+  // as the check box inside it.
+  ':1.1|/dialog/option': {
+    role: 'list item', name: 'Allow it in private windows', children: [[':1.1', '/dialog/check']],
+  },
+  ':1.1|/dialog/check': { role: 'check box', name: 'Allow it in private windows', children: [] },
   ':1.1|/dialog/buttons': {
     role: 'panel', name: '', children: [[':1.1', '/dialog/cancel'], [':1.1', '/dialog/add']],
   },
@@ -119,6 +128,10 @@ test('a dialog reads as the lines it says and the buttons it offers', async () =
     'Read and change all your data on all websites',
   ]);
   assert.deepEqual(read.buttons.map((button) => button.name), ['Cancel', 'Add extension']);
+  // An option the dialog offers is a control to answer with, not prose — and
+  // it is not read out twice because its wrapper repeats its name.
+  assert.deepEqual(read.toggles.map((toggle) => toggle.name), ['Allow it in private windows']);
+  assert.equal(read.lines.filter((line) => /private windows/.test(line)).length, 0);
   assert.equal(read.truncated, false);
 
   const add = read.buttons.find((button) => button.name === 'Add extension');

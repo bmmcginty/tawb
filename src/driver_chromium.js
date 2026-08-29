@@ -8,8 +8,7 @@ const { forgetBrowser, markKept } = require('./registry');
 const { killProcessGroup } = require('./proc');
 const { log } = require('./log');
 const { readChromiumLibrary } = require('./library_chromium');
-const { openAccessibility } = require('./atspi');
-const { watchNativeDialogs } = require('./native_prompt');
+const { armNativeDialogs } = require('./native_prompt');
 
 // What this browser calls itself on the accessibility bus. Only needed for a
 // browser reached with --connect, where there is no process of ours to match
@@ -290,36 +289,10 @@ async function openChromium({
   // silent about being unavailable: a browser started by somebody else, or a
   // machine with no bus, simply has no native dialogs to offer, and a reader
   // who never adds an extension never notices.
-  let accessibility = null;
   let nativeWatch = null;
-  const armNativeDialogs = async (handler) => {
-    if (!a11y || !a11y.available) {
-      log('native.unavailable', { reason: (a11y && a11y.reason) || 'no accessibility bus' });
-      return null;
-    }
-    try {
-      accessibility = await openAccessibility({ address: a11y.address, log });
-    } catch (err) {
-      log('native.unavailable', { reason: String(err.message || err).slice(0, 160) });
-      return null;
-    }
-    const application = await accessibility
-      .applicationFor({ pid: child ? child.pid : null, names: BROWSER_NAMES })
-      .catch(() => null);
-    if (!application) {
-      // A browser that was not started with accessibility on answers on the
-      // bus for nothing, which is exactly what --connect gets.
-      log('native.unavailable', { reason: 'the browser is not describing its windows' });
-      accessibility.close();
-      accessibility = null;
-      return null;
-    }
-    log('native.armed', { application: application.name, bus: application.bus });
-    nativeWatch = watchNativeDialogs({
-      a11y: accessibility, application, onDialog: handler, log,
-    });
-    return nativeWatch;
-  };
+  const armNative = (handler) => armNativeDialogs({
+    bus: a11y, pid: child ? child.pid : null, names: BROWSER_NAMES, onDialog: handler, log,
+  });
 
   // The browser's own bookmarks, history and downloads. Not in the protocol —
   // CDP describes documents, and a record of where you have been is not one —
@@ -342,7 +315,8 @@ async function openChromium({
     // what the dialog says and the buttons it offers; answering presses one
     // of them. Null means this browser has none to offer.
     async watchNativeDialogs(handler) {
-      return armNativeDialogs(handler).catch(() => null);
+      nativeWatch = await armNative(handler).catch(() => null);
+      return nativeWatch;
     },
 
     // A tab's identity as the browser knows it — the only name for a tab that
@@ -491,7 +465,6 @@ async function openChromium({
       }
       authSessions.clear();
       if (nativeWatch) nativeWatch.stop();
-      if (accessibility) accessibility.close();
       await browser.close().catch(() => {});
       // The accessibility bus, and the session bus under it if this session
       // started one. A name claimed here is released here, so a desktop that

@@ -2384,17 +2384,34 @@ async function handleLibraryKey(chunk, state, page) {
 // that was. On Chrome's install prompt that is Cancel, not Add: the browser's
 // own idea of the safe answer is the one it would give if Enter were pressed
 // blind, and taking it over means keeping that rather than inventing one.
+function toggleText(toggle) {
+  return `[${toggle.checked ? 'x' : ' '}] ${toggle.name}`;
+}
+
 function dialogBlocks(dialog) {
-  const said = dialog.lines.map((text) => ({ text, item: null, button: null }));
+  const said = dialog.lines.map((text) => ({ text, item: null, button: null, toggle: null }));
+  // Options first, because they change what answering means: Firefox's
+  // doorhanger offers "Allow extension to run in private windows", and that
+  // is a decision made before the answer rather than after it.
+  const options = (dialog.toggles || []).map((toggle) => ({
+    text: toggleText(toggle),
+    item: { role: 'checkbox', name: toggle.name },
+    button: null,
+    toggle,
+  }));
   const choices = dialog.buttons.map((button) => ({
     text: button.name,
     item: { role: 'button', name: button.name },
     button,
+    toggle: null,
   }));
-  if (!choices.length) {
-    return [...said, { text: '(the browser offers nothing to press)', item: null, button: null }];
+  const gap = { text: '', item: null, button: null, toggle: null };
+  if (!choices.length && !options.length) {
+    return [...said, {
+      text: '(the browser offers nothing to press)', item: null, button: null, toggle: null,
+    }];
   }
-  return [...said, { text: '', item: null, button: null }, ...choices];
+  return [...said, gap, ...options, ...(options.length && choices.length ? [gap] : []), ...choices];
 }
 
 function closeNativeDialog(state, page, note) {
@@ -2483,6 +2500,23 @@ async function answerNativeDialog(state, dialog) {
 
       if (chunk === '\r' || chunk === '\n') {
         const block = currentBlock(state);
+        // An option is ticked in place and the dialog stays up: it is part of
+        // the question, not an answer to it.
+        if (block && block.toggle) {
+          const now = await dialog.toggle(block.toggle).catch(() => null);
+          if (now == null) {
+            setStatus(state, `Could not change "${block.toggle.name}".`);
+            continue;
+          }
+          block.toggle.checked = now;
+          block.text = toggleText(block.toggle);
+          const at = state.cursor;
+          relayout(state);
+          state.cursor = Math.min(at, Math.max(state.lines.length - 1, 0));
+          render(state, page, { force: true });
+          setStatus(state, `${block.toggle.name}: ${now ? 'yes' : 'no'}.`);
+          continue;
+        }
         const button = block && block.button;
         if (!button) {
           setStatus(state, 'Move to one of the answers first.');

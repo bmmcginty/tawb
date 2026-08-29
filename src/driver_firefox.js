@@ -10,6 +10,7 @@ const { forgetBrowser, markKept } = require('./registry');
 const { extractAxItems } = require('./ax_own');
 const { readDocument } = require('./frames');
 const { orderEntries, MAX_ENTRIES } = require('./library');
+const { armNativeDialogs } = require('./native_prompt');
 
 // Firefox, driven over WebDriver BiDi.
 //
@@ -532,6 +533,11 @@ async function readWebdriverFlag(page) {
   }
 }
 
+// What Firefox calls itself on the accessibility bus. Only needed for a
+// browser reached with --connect, where there is no process of ours to
+// recognise it by.
+const BROWSER_NAMES = ['Firefox', 'Mozilla Firefox', 'firefox'];
+
 async function openFirefox({
   profile = null, connect = null, keepBrowser = false, broker = true, log = () => {},
 } = {}) {
@@ -541,6 +547,10 @@ async function openFirefox({
   let marionettePort = null;
 
   let libraryToken = null;
+  // Where this Firefox describes its own windows, if there is a bus for it to
+  // describe them to. See native_prompt.js.
+  let a11y = null;
+  let nativeWatch = null;
 
   if (!endpoint) {
     const started = await launchFirefox({
@@ -551,6 +561,7 @@ async function openFirefox({
     cleared = started.cleared;
     marionettePort = started.marionettePort;
     libraryToken = started.libraryToken;
+    a11y = started.a11y;
   } else {
     marionettePort = (readEndpointRecord(profile || defaultProfileDir()) || {}).marionettePort;
   }
@@ -748,6 +759,28 @@ async function openFirefox({
     port,
     rejoined: !child,
     session,
+
+    // Firefox's own dialogs, answered on the terminal.
+    //
+    // Its install doorhanger is the one that matters: the reader presses "Add
+    // to Firefox" on addons.mozilla.org, Firefox raises the panel listing what
+    // the add-on will be allowed to do, and that panel is chrome rather than a
+    // document — invisible to everything that reads a page. It is in the
+    // accessibility tree, though, with its permissions, its "run in private
+    // windows" option and its two buttons, so it is read and answered exactly
+    // as Chromium's is. The one difference is where it hangs: Firefox puts it
+    // inside the browser window, Chromium beside it, and native_prompt.js
+    // watches both places.
+    //
+    // Unlike Chromium, Firefox needs no flag for this. It turns accessibility
+    // on by itself when a bus says it is wanted, which means this works for a
+    // browser reached with --connect too.
+    async watchNativeDialogs(handler) {
+      nativeWatch = await armNativeDialogs({
+        bus: a11y, pid: child ? child.pid : null, names: BROWSER_NAMES, onDialog: handler, log,
+      }).catch(() => null);
+      return nativeWatch;
+    },
 
     // The browser's own bookmarks, history and downloads.
     //
@@ -1013,6 +1046,10 @@ async function openFirefox({
       // dialog to answer because we took it away. Cancelling loads the 401's
       // own body, exactly as escaping the prompt does.
       await cancelPendingAuth();
+      if (nativeWatch) nativeWatch.stop();
+      // The accessibility bus, and the session bus under it if this session
+      // started one. A name claimed there is released here.
+      if (a11y) await a11y.close().catch(() => {});
       // End the session but leave the browser: Firefox serves one BiDi session
       // at a time and does not release it just because the socket went away,
       // so a session left hanging locks out the next reader entirely.

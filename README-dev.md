@@ -1036,6 +1036,26 @@ Reading one drops the empty panels a views dialog nests — four of them, each
 answering with the name of what it wraps — so what comes back is the few lines
 the dialog actually says and the buttons it offers.
 
+### Where each engine puts one
+
+Chromium hangs its confirmation off the application, beside the window rather
+than inside it. Firefox hangs its install doorhanger off the browser window.
+So both places are watched — the application's children, and each window's —
+which is one level of looking rather than a search of a tree with a whole
+browser's chrome in it.
+
+The two engines also differ on how accessibility gets turned on. Chromium
+needs the startup flag and will describe nothing without it. Firefox turns it
+on by itself as soon as a bus says it is wanted, so nothing is passed to it at
+all — and that means Firefox's dialogs can be answered even in a browser
+reached with `--connect`, which Chromium's cannot.
+
+A dialog is more than lines and buttons where the engine offers more. Firefox's
+doorhanger carries "Allow extension to run in private windows"; that arrives as
+a check box, is shown as `[ ]` or `[x]`, and Enter on it ticks it and leaves the
+question up, because it is part of the question rather than an answer to it.
+Its state is read back from the browser afterwards rather than assumed.
+
 ### Answering one
 
 A dialog is offered to the reader as a buffer of its own, the way the
@@ -1081,6 +1101,17 @@ and raises no prompt at all, but it takes a directory, it is gone at the next
 launch, and it never asks the reader anything — which is the whole objection
 to it. The consent is not an obstacle in front of the feature, it *is* the
 feature.
+
+Firefox reaches the same place by its own road. The reader presses "Add to
+Firefox" on addons.mozilla.org, the page calls
+`navigator.mozAddonManager.createInstall(...).install()`, and Firefox raises
+the panel it would raise for anybody — permissions, data collection, the
+private-windows option, Cancel and Add. Answering it installs the signed
+`.xpi` into the profile. Note what is *not* used: `AddonManager
+.installTemporaryAddon()` works from the privileged agent already installed at
+startup and raises no prompt at all, and it is the wrong answer for the same
+reason `Extensions.loadUnpacked` is — a temporary add-on is gone at the next
+launch, and nobody was asked.
 
 There is no way to make Chrome answer that dialog by itself, and this was
 checked before the accessibility route was built. The auto-confirm is
