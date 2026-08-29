@@ -105,6 +105,34 @@ itself: Firefox will only answer these questions to privileged code, and the
 one moment such code can be installed is while the browser is starting up. A
 Firefox that was already running says so instead.
 
+## Sending a file to a site
+
+Press Enter on a file control — "Choose file", "Your document", whatever the
+page calls it — and TAWB asks you for a path on the status line:
+
+```
+File: ~/docs/rep
+```
+
+**Tab completes it**, the way a shell does: as far as the names agree, with a
+`/` when it is a directory so the next Tab carries on inside it, and a list of
+what matched when there is more than one. `~` works, and a bare name is taken
+from the directory you started TAWB in. Enter attaches the file and tells you
+what it attached and how big it was; Escape attaches nothing. If the page
+takes several files it keeps asking until you press Enter on an empty line.
+
+A file that does not exist, or cannot be read, is refused there and then —
+before the browser is given it, because a browser handed a bad path says
+nothing and the page ends up with a file that is not there.
+
+Some pages have no file control to press: an "Upload" button that opens the
+chooser itself, which is most drag-and-drop upload boxes. Press `m` on the
+button — the real click — and the same prompt appears, because the browser
+hands the chooser to TAWB instead of asking the desktop for it.
+
+Nothing is ever opened on a screen you cannot see. Escaping the prompt leaves
+the page with no file, which is exactly what cancelling a file dialog does.
+
 ## When the browser asks you something
 
 Some of what a browser puts in front of you is not a page. Adding an extension

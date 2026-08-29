@@ -21,6 +21,9 @@ const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
 const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 const { entryLine, matches, KIND_LABELS } = require('./library');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 // --connect <port|host:port|url> attaches to a browser that is already
 // running with --remote-debugging-port, rather than launching one.
@@ -486,6 +489,11 @@ function hintText(state) {
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
   if (state.mode === 'library') {
     return `${state.library.label} — type: filter  Enter: open  Esc: close`;
+  }
+  if (state.mode === 'files') {
+    const { chosen, multiple } = state.files;
+    const done = multiple && chosen.length ? '  Enter on an empty line: done' : '';
+    return `Attach a file — Tab: complete  Enter: attach${done}  Esc: cancel`;
   }
   if (state.mode === 'dialog') {
     const escape = state.dialog.defaultButton
@@ -1882,6 +1890,32 @@ async function activateCurrent(state, page) {
       return;
     }
 
+    // A file input is pressed by naming a file, not by pressing it. Nothing
+    // is clicked here: a click would ask the desktop for a chooser that
+    // neither the reader nor this program can reach, and on a machine with no
+    // portal it would do nothing whatsoever — which is what it used to do.
+    if (item.file) {
+      const handle = await withTimeout(
+        state.core.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating the file control');
+      const files = await askForFilePaths(state, {
+        asking: item.name, multiple: !!item.file.multiple, accept: item.file.accept || '',
+      });
+      if (!files || !files.length) {
+        setStatus(state, `Nothing attached to "${item.name}".`);
+        return;
+      }
+      await withTimeout(
+        state.driver.setFiles(handle, files.map((file) => file.path)),
+        ACTION_TIMEOUT_MS, 'Attaching the file');
+      log('files.attached', {
+        control: String(item.name).slice(0, 60), files: files.length, engine: state.driver.name,
+      });
+      await refresh(state, page, { anchor });
+      repaintList(state, page, screen);
+      setStatus(state, attachedNote(files, item.name));
+      return;
+    }
+
     if (FIELD_ROLES.has(item.role) && !item.nativeControl) {
       // A native select is a list of choices, not a field to type into. It
       // came through here as a combobox and landed the reader in typing mode
@@ -2357,6 +2391,211 @@ async function handleLibraryKey(chunk, state, page) {
   }
   if (chunk.startsWith(ESC)) return; // an escape sequence this list has no use for
   if (chunk >= ' ') showLibrary(state, page, lib.filter + chunk);
+}
+
+// ---------------------------------------------------------------------------
+// Attaching a file
+//
+// A file input is the one control whose activation is not a press. Pressing
+// it asks the desktop for a chooser, and that chooser is not the browser's
+// own window: it belongs to the XDG portal, in another process, outside even
+// the accessibility tree the browser publishes — and on a machine with no
+// portal, which is a terminal with the browser under Xvfb, no chooser appears
+// at all. Before this, pressing a file input reported "no visible change",
+// which was exactly true and completely useless.
+//
+// So the browser hands it over instead — `Page.setInterceptFileChooserDialog`
+// on Chromium, `input.fileDialogOpened` on Firefox, where a WebDriver session
+// suppresses the dialog anyway — and the question is asked here, where a
+// terminal is better at it than any dialog: a path, with completion, on a
+// machine whose filesystem the reader already knows.
+//
+// Escaping is safe by construction. No dialog was ever drawn, so there is
+// nothing left open anywhere; the input simply gets no files, which is what
+// cancelling a chooser has always meant.
+// ---------------------------------------------------------------------------
+
+// `~` is the reader's own shorthand and the shell would have expanded it.
+// Anything relative is relative to where tawb was started, which is the
+// directory the reader was standing in when they typed the command.
+function expandPath(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return '';
+  const home = os.homedir();
+  if (trimmed === '~') return home;
+  if (trimmed.startsWith('~/')) return path.join(home, trimmed.slice(2));
+  return path.resolve(trimmed);
+}
+
+// What the reader has typed so far, completed as far as it can go without
+// guessing. A directory completes with its separator, so the next Tab carries
+// on inside it.
+function completePath(text) {
+  const typed = String(text || '');
+  const expanded = expandPath(typed || '.');
+  const endsInSeparator = typed.endsWith('/');
+  const dir = endsInSeparator ? expanded : path.dirname(expanded);
+  const prefix = endsInSeparator ? '' : path.basename(expanded);
+
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return { text: typed, note: `${dir} is not a directory anybody can read.` };
+  }
+  const matching = entries
+    .filter((entry) => entry.name.startsWith(prefix))
+    .map((entry) => entry.name + (entry.isDirectory() ? '/' : ''));
+  if (!matching.length) return { text: typed, note: `Nothing in ${dir} starts with "${prefix}".` };
+
+  // The longest prefix they all share, which is as far as completing can go
+  // without choosing for the reader.
+  let common = matching[0];
+  for (const name of matching.slice(1)) {
+    let at = 0;
+    while (at < common.length && at < name.length && common[at] === name[at]) at += 1;
+    common = common.slice(0, at);
+  }
+  const base = typed.slice(0, typed.length - prefix.length);
+  const completed = base + common;
+  if (matching.length === 1) return { text: completed, note: null };
+  return {
+    text: completed,
+    note: `${matching.length} match: ${matching.slice(0, 6).join('  ')}${matching.length > 6 ? ' …' : ''}`,
+  };
+}
+
+function fileSize(bytes) {
+  if (bytes >= 1 << 20) return `${(bytes / (1 << 20)).toFixed(1)}MB`;
+  if (bytes >= 1 << 10) return `${(bytes / (1 << 10)).toFixed(1)}KB`;
+  return `${bytes} bytes`;
+}
+
+// A path the browser can actually be given, or why not. The engines answer a
+// bad path with nothing useful — Chromium accepts it silently and the page
+// gets a file that is not there — so it is checked here first.
+function fileToAttach(text) {
+  const full = expandPath(text);
+  if (!full) return { error: 'no file named' };
+  let stat;
+  try {
+    stat = fs.statSync(full);
+  } catch {
+    return { error: `there is no ${full}` };
+  }
+  if (stat.isDirectory()) return { error: `${full} is a directory` };
+  try {
+    fs.accessSync(full, fs.constants.R_OK);
+  } catch {
+    return { error: `${full} cannot be read` };
+  }
+  return { path: full, size: stat.size, name: path.basename(full) };
+}
+
+function filePromptText(state) {
+  const { label, buffer } = state.files;
+  return { text: `${label}: ${buffer.text}`, caretCol: label.length + 2 + buffer.caret + 1 };
+}
+
+function drawFilePrompt(state) {
+  const cols = termSize().cols;
+  const { text, caretCol } = filePromptText(state);
+  writeLine(statusRow(), text.slice(0, cols));
+  moveCursor(statusRow(), Math.min(caretCol, cols));
+}
+
+// Asks for a path, and does not return until there is one or the reader has
+// said no. Like the password prompt, this takes the keyboard for itself:
+// whatever asked for a file is waiting on the answer.
+async function askForFilePaths(state, { asking, multiple = false, accept = '' } = {}) {
+  if (!state.keyReader) return null;
+  const previousMode = state.mode;
+  const previousStatus = state.statusMsg;
+  const chosen = [];
+  state.mode = 'files';
+  state.files = {
+    asking, multiple, accept, chosen, label: 'File', buffer: { text: '', caret: 0 },
+  };
+  log('files.prompt', { asking: String(asking || '').slice(0, 60), multiple, accept: accept.slice(0, 40) });
+
+  const token = state.keyReader.claim();
+  drawHint(state, { force: true });
+  setStatus(state, accept
+    ? `${asking || 'This page'} asks for a file (${accept}). Tab completes, Esc cancels.`
+    : `${asking || 'This page'} asks for a file. Tab completes, Esc cancels.`);
+  drawFilePrompt(state);
+
+  try {
+    for (;;) {
+      const chunk = await state.keyReader.next(token);
+      // No keyboard, no answer. The chooser is left unanswered, which is a
+      // chooser cancelled — nothing is open anywhere to be left behind.
+      if (chunk === EOF) return chosen.length ? chosen : null;
+      markInput(state);
+      const buffer = state.files.buffer;
+
+      if (keyIs(chunk, 'Escape', state)) return chosen.length ? chosen : null;
+
+      if (chunk === '\t') {
+        const { text, note } = completePath(buffer.text);
+        buffer.text = text;
+        buffer.caret = text.length;
+        if (note) setStatus(state, note);
+        drawFilePrompt(state);
+        continue;
+      }
+
+      if (chunk === '\r' || chunk === '\n') {
+        if (!buffer.text.trim()) {
+          // Enter on an empty prompt finishes a list of files, or cancels
+          // when there is nothing in it yet.
+          return chosen.length ? chosen : null;
+        }
+        const file = fileToAttach(buffer.text);
+        if (file.error) {
+          setStatus(state, `Not attached: ${file.error}.`);
+          drawFilePrompt(state);
+          continue;
+        }
+        chosen.push(file);
+        if (!multiple) return chosen;
+        buffer.text = '';
+        buffer.caret = 0;
+        setStatus(state, `${chosen.length} file${chosen.length === 1 ? '' : 's'} so far`
+          + ` — another path, or Enter on an empty line to finish.`);
+        drawFilePrompt(state);
+        continue;
+      }
+
+      const editing = editAction(chunk, state.keys || FALLBACK_KEYMAP);
+      if (editing) applyBufferEdit(buffer, editing);
+      else if (keyIs(chunk, 'Ctrl+L', state)) {
+        buffer.text = '';
+        buffer.caret = 0;
+      } else if (!chunk.startsWith(ESC) && chunk >= ' ') {
+        buffer.text = buffer.text.slice(0, buffer.caret) + chunk + buffer.text.slice(buffer.caret);
+        buffer.caret += chunk.length;
+      }
+      drawFilePrompt(state);
+    }
+  } finally {
+    state.keyReader.release(token);
+    state.mode = previousMode;
+    state.files = null;
+    state.statusMsg = previousStatus;
+    drawHint(state, { force: true });
+  }
+}
+
+// What to say afterwards, which is the browser's business as much as ours:
+// the page has had its change event by now.
+function attachedNote(files, asking) {
+  if (!files || !files.length) return `Nothing attached to "${asking}".`;
+  if (files.length === 1) {
+    return `Attached ${files[0].name} (${fileSize(files[0].size)}) to "${asking}".`;
+  }
+  return `Attached ${files.length} files to "${asking}": `
+    + files.map((file) => file.name).join(', ');
 }
 
 // ---------------------------------------------------------------------------
@@ -2853,6 +3092,8 @@ async function main() {
     // A dialog the browser drew for itself, while the reader is answering it.
     // See answerNativeDialog().
     dialog: null,
+    // A file the browser is waiting to be given. See askForFilePaths().
+    files: null,
     // The watch that notices one. Null where the browser cannot describe its
     // own windows, which is not an error — see driver.watchNativeDialogs.
     nativeWatch: null,
@@ -2886,6 +3127,35 @@ async function main() {
   });
   state.credentials = credentials;
   await driver.attachAuth((challenge, id) => credentials.answer(challenge, id)).catch(() => {});
+
+  // A file chooser the browser was about to ask the desktop for. It never
+  // gets that far: the browser hands it over, the reader names a file here,
+  // and the input is given it. Escaping leaves the input with no files, which
+  // is a cancelled chooser and leaves nothing open anywhere.
+  //
+  // This is the path for a chooser raised by something other than the input
+  // itself — the "Upload" button that clicks a hidden input, which is most of
+  // the upload widgets on the web and has no control a reader could find.
+  if (driver.attachFileChooser) {
+    await driver.attachFileChooser(async (request) => {
+      const files = await askForFilePaths(state, {
+        asking: 'The page', multiple: !!request.multiple,
+      });
+      if (!files || !files.length) {
+        // Told, rather than left: Firefox holds a chooser it has not been
+        // answered about and will raise no other until it is.
+        await request.cancel().catch(() => {});
+        setStatus(state, 'No file given to the page.');
+        return;
+      }
+      await request.setFiles(files.map((file) => file.path)).catch((err) => {
+        setStatus(state, `The browser refused the file: ${String(err.message || err).split('\n')[0]}`);
+        throw err;
+      });
+      log('files.given', { files: files.length, engine: driver.name });
+      setStatus(state, attachedNote(files, 'the page'));
+    }).catch(() => {});
+  }
 
   // The browser's own dialogs, answered here too. An extension asking for
   // consent is drawn in a window rather than a document — the same problem
@@ -3063,6 +3333,7 @@ module.exports = {
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
   itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,
   clickAsHuman, reportAfterAction,
+  expandPath, completePath, fileToAttach, fileSize, attachedNote,
   anchorFor, restoreAnchor, capturePlace, restorePlace, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
   screenBefore, repaintList, visibleRowsNow,

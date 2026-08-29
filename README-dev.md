@@ -1183,6 +1183,26 @@ chooser raised in a tab another reader is reading is not ours to answer — and
 an intercepted chooser we do not answer is one the browser has stopped drawing
 for them.
 
+### The prompt
+
+What the reader gets is a path, on the status line, with Tab completion — and
+a terminal is better at that than any file dialog: this is a person who knows
+their own filesystem and has a keyboard. Completion goes as far as the
+candidates agree and no further, a directory completes with its separator so
+the next Tab carries on inside it, and an ambiguous prefix lists what it
+matched rather than choosing. `~` is expanded, and a relative path is relative
+to where tawb was started, which is where the reader was standing when they
+typed the command.
+
+A path that will not work is refused here rather than passed on, because the
+engines are no help about it: Chromium accepts a path that does not exist
+without complaint and the page ends up with a file that is not there. So it
+must exist, not be a directory, and be readable.
+
+An input marked `multiple` asks until an empty line, and says how many it has
+so far. What the reader is told afterwards is the file's name and size, since
+"attached" on its own does not say whether the right thing was attached.
+
 Two routes end at the same prompt. The ordinary one needs no chooser at all:
 the reader pressed Enter on the input, so the element is already in hand and
 the files go straight to it. The handover is for the case with no control to

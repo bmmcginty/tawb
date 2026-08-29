@@ -616,6 +616,13 @@ function extractAxItems(options) {
       const name = accessibleName(el);
       if (name) {
         const item = { role, name, axIndex: register(el) };
+        // A file input arrives here as a button, because that is what it is
+        // to a reader. What it also is, is the one control whose activation
+        // needs a filename rather than a press — so it is marked, along with
+        // what it says it will take.
+        if (tag === 'input' && (el.getAttribute('type') || '').toLowerCase() === 'file') {
+          item.file = { multiple: !!el.multiple, accept: el.getAttribute('accept') || '' };
+        }
         if (role === 'heading') {
           item.level = el.getAttribute('aria-level')
             || (/^h[1-6]$/.test(tag) ? tag[1] : undefined);
