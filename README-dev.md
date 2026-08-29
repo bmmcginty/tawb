@@ -1167,6 +1167,53 @@ never presses the button either. `ExtensionInstallForcelist` installs without
 any prompt at all, from a policy file under `/etc/chromium/policies/managed`
 that needs root, which is not answering the question, it is deleting it.
 
+## Passwords the browser remembers
+
+The browser's own password manager is the one worth using: it is where the
+reader's passwords already are, it is encrypted with the profile, and nothing
+here ever holds a password of theirs. Three things had to be dealt with.
+
+**Firefox has it turned off.** The remote agent's recommended preferences set
+`signon.autofillForms` and `signon.rememberSignons` to false — "so that tests
+that include forms are not influenced by the presence of the persistent
+doorhanger notification", which is right for a test suite and wrong for a
+person: the browser never offers to remember a password and never fills one
+in, with nothing on screen to explain why. Setting them in `user.js` is
+enough, because the agent applies its preferences only where the user has
+none (`if (!Services.prefs.prefHasUserValue(k))`, in
+remote/shared/RecommendedPreferences.sys.mjs). These are Firefox's own
+defaults, not new behaviour. Autofill over plain http stays off, as it is in
+an ordinary Firefox.
+
+**A filled field reads as empty.** Both engines fill a saved sign-in visually
+and keep the value from page script until a person interacts with the page —
+which is what stops a hostile page reading a credential the reader never meant
+to give it. So the DOM says the field is empty, and a reader would type a
+password they did not need to type. `:autofill` is what a page is allowed to
+know, and both engines answer it, so a field the browser filled reads as
+`[Password: filled by the browser]`.
+
+**And a filled form will not send itself.** The same protection applies to
+submission: a form sent by `element.click()` — no mouse, no key, no user
+activation — arrives at the server with those fields empty, and neither the
+page nor the reader is told. Measured directly: fields reporting `:autofill`,
+and `username=&password=` at the other end. So a button that would send a form
+holding an autofilled field is pressed the way a person presses it, at real
+coordinates, and the credentials arrive. Where that press cannot be placed —
+covered, or off a screen it cannot be brought onto — the default action is
+used anyway and the reader is told the password may not have gone with it,
+which beats an unexplained refusal.
+
+Which sign-ins Chrome actually fills is Chrome's own business: its classifier
+reads the form and the words around it, and it will decline to fill a form it
+has decided is a sign-up. tawb reports what the browser did rather than
+second-guessing it.
+
+The prompts themselves need nothing of their own. "Save password?" is a native
+dialog like any other, so it arrives through the machinery above with its
+buttons and — since it holds the credential in two entries — the username and
+the masked password it is about to keep.
+
 ## Attaching a file
 
 A file input is the one control that cannot be pressed. Pressing one asks the

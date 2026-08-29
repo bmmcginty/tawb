@@ -485,6 +485,18 @@ function extractAxItems(options) {
     return undefined;
   };
 
+  // Whether the browser filled this in itself. Both engines answer the
+  // standard pseudo-class; Chromium also answers the older prefixed one, and
+  // an engine that knows neither throws rather than answering false.
+  const autofilledOf = (el) => {
+    for (const selector of [':autofill', ':-webkit-autofill']) {
+      try {
+        if (el.matches(selector)) return true;
+      } catch { /* an engine that does not know this pseudo-class */ }
+    }
+    return undefined;
+  };
+
   const register = (el) => {
     nodes.push(el);
     return nodes.length - 1;
@@ -646,6 +658,14 @@ function extractAxItems(options) {
         role,
         name: accessibleName(el),
         value: valueOf(el, role),
+        // A field the browser filled in from its own password manager. The
+        // value is deliberately not readable — Chromium keeps an autofilled
+        // credential from page script until the person interacts with the
+        // page, which is what stops a hostile page reading it — so the field
+        // looks empty here and is not. `:autofill` is how a page is allowed
+        // to know, and it is the only thing that tells a reader their sign-in
+        // is already filled in rather than waiting for them.
+        autofilled: autofilledOf(el),
         expanded: expandedOf(el),
         controls: opensPopup(el),
         axIndex: register(el),

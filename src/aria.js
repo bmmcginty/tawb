@@ -49,7 +49,15 @@ function renderLine(item) {
   }
   if (LINK_ROLES.has(role)) return `{${name}${expansion(item)}}`;
   if (BUTTON_ROLES.has(role)) return `[*${name}${expansion(item)}]`;
-  if (FIELD_ROLES.has(role)) return `[${value ? name + ': ' + value : name}${expansion(item)}]`;
+  if (FIELD_ROLES.has(role)) {
+    // A field the browser filled from its password manager reads as empty:
+    // the value is kept from page script until the person interacts with the
+    // page. Saying so is the difference between a reader signing in with one
+    // keystroke and a reader typing a password they did not need to type.
+    const filled = item.autofilled ? 'filled by the browser' : '';
+    const inside = value || filled ? `${name}: ${value || filled}` : name;
+    return `[${inside}${expansion(item)}]`;
+  }
   if (role === 'img') return `(image) ${name}`;
   // A player says where it has got to, which is the one thing about it that
   // is not on the page in words.
