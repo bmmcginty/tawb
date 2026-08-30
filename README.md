@@ -1,314 +1,331 @@
-# tawb
+# TAWB
 
-Welcome to TAWB.
-TAWB lets a blind user read and operate websites in a text-based terminal using a screen reader or braille display.
+TAWB (pronounced “taub”) is a terminal interface to the modern web. It opens a
+real Chrome, Chromium, or Firefox browser, then presents each page as a linear,
+keyboard-driven list of headings, links, controls, and text.
 
-TAWB (pronounced taub) is an interface to Chrome and Firefox via the terminal.
-This project is designed to provide an experience as close as possible to a GUI browser.
-Webpages are rendered in a linearized format.
-Email git@bmcginty.us with any questions or problems.
+It is intended primarily for blind Linux users who already use a terminal with
+a screen reader or braille display. The terminal cursor marks the current
+reading position, so TAWB does not provide speech itself: Orca, Speakup, a
+terminal screen reader, or a braille setup can read it in the usual way.
 
-## Quickstart
+Unlike traditional text browsers, TAWB does not attempt to implement today's
+web platform. The installed browser handles JavaScript, cookies, media,
+authentication, extensions, and the rest of the modern browser environment.
+TAWB supplies a text interface to what that browser loads.
 
-Install xvfb, node, and either Chrome or Firefox.
-e.g.
-$$
+## Why use TAWB?
 
-Start by running
-`npm start -- https://example.com`
-or you can directly run
-`node src/index.js`
-Chrome will be run by default.
-If you don't have Chrome installed, use `npm run Firefox`.
+TAWB is useful when you want:
 
-By default, you'll end up in the body of a webpage.
-If you don't specify a URL on the command line, you'll be sent to `https://www.google.com/`.
+- a terminal-first way to read and operate JavaScript-heavy websites;
+- one predictable line of content at a time, with no visual layout to decode;
+- keyboard navigation by heading, link, button, field, paragraph, or text;
+- access through a screen reader, braille display, the Linux console, or SSH;
+- alternatives when a site's accessibility information is incomplete or
+  incorrect;
+- browser features such as persistent logins, password filling, bookmarks,
+  history, downloads, tabs, file uploads, and extension dialogs;
+- key bindings you can change without rebuilding your browser, screen reader,
+  desktop, or accessibility libraries.
 
-- Arrow keys or `j`/`k`: move
-- `Enter`: activate
-- `Ctrl+L`: enter an address
-- `Tab`: next interactive control
-- `Alt+-`: back
-- `q`: quit
-- `Alt+?`: keyboard help/configuration
+The last point is central to the project. TAWB reads pages through browser
+control protocols and page content rather than requiring the entire desktop
+accessibility stack to define the reading experience. It still uses Linux
+AT-SPI when available for browser-owned windows, such as permission and
+extension-installation dialogs, but ordinary page reading and navigation do
+not depend on that route alone.
 
-TAWB does not create a diagnostic log by default. If you are investigating a
-problem, add `--log`:
+## Requirements
 
-```
-npm start -- --log https://example.com
-```
+TAWB currently targets Linux. You need:
 
-The log is written to your home directory with a name such as
-`~/.tawb.20260827140509.1234.log`.
+- a current Node.js release and npm;
+- Chrome, Chromium, Firefox, Firefox ESR, or LibreWolf;
+- a terminal that reports its key sequences correctly through `$TERM`;
+- `xvfb-run` if no graphical `$DISPLAY` is available.
 
-To configure your key bindings, use alt-shift-slash (or alt-questionmark).
+On Debian and Ubuntu, `xvfb-run` is supplied by the `xvfb` package. Package
+names for Node.js and browsers vary by distribution.
 
-## Purpose
+TAWB has no npm runtime dependencies. It controls the browser directly using
+Chrome DevTools Protocol or WebDriver BiDi.
 
-Browsers and OS's have accessibility APIs, ARIA handlers, etc.
-Layers on top of layers, with no  escape hatches.
-I want to provide a browser interface as separated from these APIs as possible.
-If a site is broken from a accessibility prospective, we should be easily able to work around it.
+## Quick start
 
-## Usage
+Clone the repository and start with Chromium, the default engine:
 
-In order to allow for a smooth reading experience, Tawb freezes it's view of the webpage,
-unless you're sitting still on the webpage for more than two and a half seconds.
-Use the refresh key (r by default) to refresh your view of the webpage.
-If you're trying to use a site that's giving you problems,
-you can switch "views" (using \ by default).
-
-- ax: a view using ARIA and accessible content
-- page: a view using the pages underlying HTML
-- inspect: a view of the webpage's HTML, marked up for easy navigation
-- source: raw HTML
-
-You can move around in each of these views using the navigation keys below, as well as those found in the keyboard wizard.
-
-These bindings are configurable; see Keys below.
-You can move by link, form field, heading, and text block.
-- h for headings
-- l for links
-- tab for form fields and links (anything you can normally "tab to")
-- n for blocks of text
-- p for paragraphs
-Press enter to edit a field, and Enter or Escape to exit that field.
-Press enter to activate something like a link.
-If you need to perform an actual mouse click, press `m`.
-Go back a page by pressing `alt--` and forward by pressing `alt-+`.
-For a new tab, press Ctrl-t.
-
-## Going somewhere
-
-`Ctrl+L` opens the address bar. It takes an address when you give it one and
-searches when you do not, the same way a graphical browser's does:
-
-```
-Address: en.wikipedia.org/wiki/Braille    goes there
-Address: braille dots                     searches for it
+```sh
+git clone https://github.com/bmmcginty/tawb.git
+cd tawb
+npm start -- https://example.com
 ```
 
-You never have to type `https://`. A bare host name gets it, and the things
-that normally have no certificate — `localhost:8080`, `192.168.1.5`, a
-`.local` name on your own network, a bare `myhost:3000` — get `http` instead,
-which is the guess a browser makes too. Anything with a scheme already on it
-is taken exactly as typed, so `about:blank` and `file:///tmp/page.html` work.
+Use Firefox instead:
 
-Anything else is words, and words are searched for. The status line says so —
-*Searching for "braille dots"…* — because a host name with a typo in it
-otherwise lands you on a results page with no account of why.
-
-Searches go to DuckDuckGo unless you say otherwise. Neither browser will tell
-us which engine you chose in its own settings, so it is said here instead:
-
+```sh
+npm start -- --browser firefox https://example.com
+# Equivalent shorthand:
+npm run firefox -- https://example.com
 ```
+
+You may omit the scheme or enter search terms:
+
+```sh
+npm start -- wikipedia.org
+npm start -- "linux braille displays"
+```
+
+With no address, TAWB opens Google. Searches entered in the address bar use
+DuckDuckGo by default; see [Search configuration](#search-configuration) to
+change that.
+
+TAWB starts an ordinary, visible browser. If `$DISPLAY` is unset, it runs the
+browser on a 1280×1024 virtual X display using `xvfb-run`. It does not use the
+browser's headless mode because some sites treat headless or automation-launched
+browsers differently.
+
+## First steps
+
+When a page opens, the terminal contains the page title, the current view and
+address, a short key reminder, and the page itself. Start with these keys:
+
+| Key | Action |
+| --- | --- |
+| `↓` / `↑` or `j` / `k` | Read the next or previous line |
+| `Tab` / `Shift+Tab` | Move to the next or previous control |
+| `Enter` | Follow a link, press a button, or edit a field |
+| `Ctrl+L` | Enter an address or search terms |
+| `/` / `?` | Find text forward or backward |
+| `Alt+-` / `Alt++` | Go back or forward |
+| `Ctrl+T` | Open a new tab |
+| `>` / `<` | Move between tabs |
+| `\` | Switch to another page view |
+| `r` | Refresh TAWB's view of the page |
+| `Alt+?` | Open keyboard help and change bindings |
+| `q` | Quit |
+
+Useful single-letter navigation keys are `h` for headings, `l` for links, `b`
+for buttons, `f` for form fields, `p` for paragraphs, and `n` for non-link
+text. Uppercase moves backward where available.
+
+Press `Enter` on a text field to edit it. Press `Enter` again to submit or
+`Escape` to stop editing. Press `m` when a site requires a real pointer click,
+for example to grant user activation to a media control or open a file chooser.
+
+All browse and editing bindings are configurable. Press `Alt+?`, select an
+action, and replace or add a key. TAWB stores the result in
+`$XDG_CONFIG_HOME/tawb/keys.json`, or `~/.config/tawb/keys.json` when
+`XDG_CONFIG_HOME` is not set.
+
+## Four ways to read a page
+
+Press backslash (`\`) to cycle through four views:
+
+| View | Purpose |
+| --- | --- |
+| `AX` | A semantic accessibility view and the best default for most pages |
+| `PAGE` | Visible page content derived from the DOM, useful when accessibility markup is wrong |
+| `INSPECT` | Semantic items alongside the elements that produced them |
+| `SOURCE` | The page's live HTML, including shadow DOM where the browser exposes it |
+
+These alternatives are an escape hatch. If a control is missing from the AX
+view, it may still be available in PAGE or SOURCE. INSPECT can reveal whether
+a misleading name or role came from the site. Switching views attempts to keep
+you on the same element rather than the same line number.
+
+This does not make every inaccessible website accessible automatically. It
+does make failures inspectable and often provides another route to the
+content or control.
+
+## Live pages
+
+TAWB briefly freezes its page buffer while you navigate. About 2.5 seconds
+after you stop pressing keys, updates resume. This prevents advertisements,
+feeds, clocks, and other live content from moving the current line while it is
+being read.
+
+ARIA live announcements are delivered immediately. Simple text changes that
+do not reflow the page may also be updated in place. Press `r` for an immediate
+refresh, or `L` to disable or enable automatic updates.
+
+At the end of a feed, press Down again. TAWB scrolls the browser, waits for
+more content, and adds any newly loaded items.
+
+## Browser data and prompts
+
+TAWB uses a persistent browser profile, so cookies and logins survive between
+runs. It also exposes the browser's own data rather than maintaining separate
+copies:
+
+| Key | Browser feature |
+| --- | --- |
+| `Ctrl+O` | Bookmarks |
+| `Ctrl+D` | Bookmark the current page |
+| `Alt+H` | History |
+| `Alt+J` | Downloads |
+
+Typing in one of these lists filters it. Press `Enter` to open the selected
+entry or `Escape` to return to the page.
+
+The browser's password manager remains responsible for saved credentials.
+TAWB can present its save-password prompt and identifies fields the browser
+has filled. Password values are not copied into TAWB.
+
+Browser-owned questions—such as extension installation, site permissions, and
+JavaScript alerts—are shown in the terminal when the browser and Linux
+accessibility bus expose them. Move to an answer and press `Enter`. `Escape`
+leaves the question unanswered; `Alt+Q` returns to it later.
+
+Pressing `Enter` on a file control opens a terminal path prompt. `Tab` completes
+file names, `Enter` attaches the file, and `Escape` cancels.
+
+## Common options
+
+### Keep or select a profile
+
+TAWB creates its default profile under the XDG data directory, normally
+`~/.local/share/tawb/`. Choose another profile with:
+
+```sh
+npm start -- --profile ~/browser-profiles/tawb https://example.com
+```
+
+Chrome and Firefox use separate default profile directories. Snap-packaged
+browsers can access only paths allowed by Snap confinement; TAWB chooses a
+reachable default automatically.
+
+Leave a browser running for a faster next start:
+
+```sh
+npm start -- --keep-browser https://example.com
+```
+
+### Attach to an existing browser
+
+For Chromium, start the browser with a remote debugging port, then attach:
+
+```sh
+chromium --remote-debugging-port=9222
+npm start -- --connect 9222
+```
+
+Attaching has limitations. In particular, Chromium's native dialogs may be
+unavailable unless accessibility was enabled when the browser started, and
+Firefox cannot provide its bookmarks, history, and downloads agent to an
+already-running instance.
+
+### Search configuration
+
+Set a search URL template with `%s` where the encoded query belongs:
+
+```sh
 npm start -- --search 'https://www.google.com/search?q=%s'
 export TAWB_SEARCH='https://html.duckduckgo.com/html/?q=%s'
 ```
 
-`%s` is where your words go; a template without one has them added on the end.
+### Diagnostic logging
 
-The same reading applies to what you type on the command line, so
-`npm start -- wikipedia.org` is an address and needs no scheme.
+TAWB does not create a diagnostic log by default. Add `--log` when
+investigating a problem:
 
-## Your bookmarks, history and downloads
-
-TAWB asks the browser for its own three lists, so they are the same bookmarks
-and the same history you would see in the browser itself.
-
-- `Ctrl-o` for bookmarks
-- `alt-h` for history
-- `alt-j` for downloads
-
-(Browsers use Ctrl-h and Ctrl-j for the last two, but a terminal spent those
-two keys on Backspace and Enter long before browsers existed, so they become
-the alt keys of the same letters.)
-
-- `Ctrl-d` to bookmark the page you are on
-
-Each opens as an ordinary list you move through with the arrow and page keys.
-**Typing filters it**, rather than jumping: type `braille` and only the
-entries with that word in them remain, and every word you type has to appear
-somewhere in the entry, in any order. Backspace takes a letter back. Press
-Enter to go to the entry you are standing on, or Escape to close the list and
-return to exactly where you were reading.
-
-`Ctrl-d` files the page you are reading, which is the same key every browser
-uses for it. The page's own title is offered as the name, already typed in:
-
-```
-Bookmark: Braille - Wikipedia
+```sh
+npm start -- --log https://example.com
 ```
 
-Press Enter to file it under that name, or edit it first — the usual editing
-keys work. Escape files nothing. It goes into the browser's own bookmarks, in
-the folder the browser's own star would use, and TAWB says which one that was.
+The log is written to your home directory with a name such as
+`~/.tawb.20260827140509.1234.log`. Logs may contain addresses and other
+browsing details; inspect them before sharing.
 
-A page you have already bookmarked is not filed twice; you are told the name it
-is already under, which is what a browser does too.
+If a browser is unusually slow to create its profile, increase the startup
+timeout:
 
-On Chrome and Chromium all of this works with any browser, including one you
-attached to with `--connect`. On Firefox it works only with a browser TAWB
-started itself: Firefox will only answer these questions to privileged code,
-and the one moment such code can be installed is while the browser is starting
-up. A Firefox that was already running says so instead.
-
-## Passwords the browser remembers
-
-TAWB never holds a password of yours. What it does is let you reach the
-browser's own password manager, which is where your passwords already are.
-
-Sign in to a site and the browser offers to remember it, in a window of its
-own that arrives on the terminal like any other question:
-
-```
-Save password?
-Passwords are saved to Password Manager on this device.
-Username: reader
-Password: ••••••••••••••
-
-Never
-No thanks
-Save
+```sh
+TAWB_BROWSER_TIMEOUT=120 npm start -- https://example.com
 ```
 
-The password is shown masked because the browser masks it — that is its own
-dialog you are reading. Move to an answer and press Enter. Escape presses
-nothing and leaves the question open; `Alt+Q` goes back to it.
+Do not run TAWB as root. Modern browsers require their security sandbox and
+normally refuse this mode of operation as root.
 
-Next time you visit, the fields say so:
+## Comparison with alternatives
 
-```
-Username[Username: filled by the browser]
-Password[Password: filled by the browser]
-```
+### Lynx, ELinks, and w3m
 
-They read as empty otherwise, and they are not empty — both browsers fill a
-saved sign-in in a way that pages cannot read, which is what stops a hostile
-page stealing it. Press the sign-in button and it goes through with the
-remembered password; you do not need to type anything.
+Traditional text browsers are smaller, faster, easy to use over slow SSH
+connections, and excellent for documents and simple forms. They can run
+without a graphical browser or virtual display.
 
-Whether the browser fills a particular form is the browser's decision, not
-TAWB's. Chrome in particular reads the form and the words around it and will
-decline to fill one it has decided is a sign-up rather than a sign-in.
+TAWB is much heavier because a complete desktop browser runs behind it. In
+return, the browser—not TAWB—implements modern JavaScript and web APIs. Sites
+that require client-side rendering, browser storage, complex authentication,
+media controls, or modern component frameworks are therefore more likely to
+work.
 
-## Sending a file to a site
+### edbrowse
 
-Press Enter on a file control — "Choose file", "Your document", whatever the
-page calls it — and TAWB asks you for a path on the status line:
+edbrowse combines a line-oriented browser with an editor and is especially
+powerful for users who prefer command-driven workflows. It is mature, compact,
+and does not require a full graphical browser for every task.
 
-```
-File: ~/docs/rep
-```
+TAWB instead offers immediate cursor navigation in a full-screen terminal and
+delegates current web-platform behavior to Chrome or Firefox. It will consume
+more memory and CPU, but avoids having to reproduce every browser API as sites
+adopt it. An experimental edbrowse backend is also present for users interested
+in combining the approaches; its integration details are documented in
+`README-dev.md`.
 
-**Tab completes it**, the way a shell does: as far as the names agree, with a
-`/` when it is a directory so the next Tab carries on inside it, and a list of
-what matched when there is more than one. `~` works, and a bare name is taken
-from the directory you started TAWB in. Enter attaches the file and tells you
-what it attached and how big it was; Escape attaches nothing. If the page
-takes several files it keeps asking until you press Enter on an empty line.
+### A graphical browser with Orca or another screen reader
 
-A file that does not exist, or cannot be read, is refused there and then —
-before the browser is given it, because a browser handed a bad path says
-nothing and the page ends up with a file that is not there.
+A conventional browser and desktop screen reader provide the most integrated
+and widely tested experience, including browser chrome, desktop dialogs, and
+platform accessibility conventions. TAWB is not a replacement for every part
+of that stack.
 
-Some pages have no file control to press: an "Upload" button that opens the
-chooser itself, which is most drag-and-drop upload boxes. Press `m` on the
-button — the real click — and the same prompt appears, because the browser
-hands the chooser to TAWB instead of asking the desktop for it.
+TAWB's advantage is control: a terminal-native linear buffer, configurable
+bindings, low dependence on desktop UI conventions for page reading, and
+multiple views when the site's accessibility tree fails. Its disadvantages are
+a younger and less polished interface, fewer browser-chrome features, and the
+need to understand terminal key behavior.
 
-Nothing is ever opened on a screen you cannot see. Escaping the prompt leaves
-the page with no file, which is exactly what cancelling a file dialog does.
+### Browser-backed terminal interfaces and automation tools
 
-## When the browser asks you something
+Projects such as Browsh also use a real browser, often aiming to reproduce the
+visual page in character cells. TAWB instead presents semantic lines designed
+for speech, braille, and direct keyboard navigation; it is not a visual text
+rendering of the page.
 
-Some of what a browser puts in front of you is not a page. Adding an extension
-is the clearest case: you go to the Chrome Web Store, press **Add to Chrome**
-like anybody else, and Chrome asks you to confirm — in a window of its own,
-drawn outside the document, which nothing that reads a page can see.
+Many automation tools launch a special headless or instrumented browser. That
+is convenient for testing, but some bot-detection systems reject it. TAWB
+starts a normal headed browser and attaches to it. This improves compatibility,
+but requires a display or Xvfb and uses roughly the resources of an ordinary
+browser.
 
-TAWB brings that question to the terminal. What appears is the dialog's own
-words, including the list of what the extension will be able to do:
+## Limitations
 
-```
-Add "uBlock Origin Lite"?
-It can:
-Read and change all your data on all websites
+Before choosing TAWB, be aware that:
 
-Cancel
-Add extension
-```
+- it is Linux-focused and currently distributed as source rather than as a
+  system package;
+- it uses substantially more memory and CPU than a traditional text browser;
+- a graphical display or Xvfb is required even though the user interface is in
+  the terminal;
+- no alternative view can recover information that a site never provides or
+  make every custom control operable;
+- CAPTCHAs, bot protection, canvas-only applications, drag-and-drop interfaces,
+  and browser-specific UI can still be difficult;
+- native browser dialogs depend partly on Linux D-Bus and AT-SPI availability;
+- terminal emulators disagree about some modified and function-key sequences,
+  although bindings can be changed in the keyboard wizard;
+- Firefox and Chromium expose different browser internals, so a few profile and
+  attached-browser features differ between engines.
 
-Move to the answer you want with the arrow keys and press Enter, and TAWB
-presses that button in the browser. Escape presses whichever button the
-browser itself has ready — on an install prompt that is **Cancel**, which is
-Chrome's own safe answer, and the hint line always says which one it is. The
-browser does the installing; nothing is added behind your back, and nothing
-is decided for you.
+For implementation details, design decisions, tests, and the edbrowse backend,
+see `README-dev.md` and `PORTING.md`.
 
-Afterwards the browser's "has been added" confirmation arrives the same way,
-with its own button, because a sighted user sees that too.
+## Getting help
 
-Firefox works the same, from addons.mozilla.org. Its panel says more — the
-permissions, whether the add-on collects data, and an option to allow it in
-private windows. An option like that appears as `[ ]` or `[x]`; press Enter on
-it to tick it, and the question stays up until you answer it.
+Report public issues at https://github.com/bmmcginty/tawb/issues or email
+`git@bmcginty.us`.
 
-This is not only for extensions. Anything the browser draws in a window of its
-own rather than in the page comes through the same way — on Chrome and
-Chromium that includes a site's permission request ("wants to: Know your
-location", with all four of the browser's own answers) and a page's own
-`alert` box, which is a modal that stops the page until it is answered and
-which before this was simply a page that had quietly stopped.
-
-On Chrome and Chromium this needs a browser TAWB started itself, because
-describing its own windows is something Chrome is told to do at startup.
-Firefox decides that for itself, so there it works with `--connect` too. On a
-desktop TAWB uses the accessibility bus that is already running; with no
-desktop at all it provides one for the browser and takes it away again when
-you quit.
-
-## Keys
-
-Pressing alt-shift-slash will bring you into a keyboard wizard.
-From here, press your arrow keys to move up and down the list of actions.
-Press enter to replace all bindings for the action you're on, or press alt-a to add a binding.
-Once you press alt-a or enter, you'll be prompted for a new binding.
-Type the new keystroke, and you'll be returned immediately to the actions list.
-When you're finished, down arrow to "exit keyboard wizard", press enter, and confirm your changes.
-
-## If the browser will not start
-
-TAWB starts an ordinary browser and attaches to it, so a failure here is
-usually about the browser rather than about TAWB. The error message names the
-browser, its profile directory, the display it was given, and whatever the
-browser itself printed; that last part is normally the answer.
-
-Two cases are worth knowing about:
-
-- **A Snap browser.** Ubuntu ships Firefox (and Chromium) as Snap packages,
-  and a Snap can only open non-hidden directories under your home directory.
-  TAWB gives such a browser a profile inside its snap directory, for example
-  `~/snap/firefox/common/tawb/firefox-profile`. If you pass `--profile`
-  yourself, it has to be somewhere the Snap can reach, or the browser will sit
-  there showing an error you cannot see.
-- **A slow first launch.** A browser creating a profile for the first time on
-  a slow machine can take longer than TAWB waits (25s for Chrome, 45s for
-  Firefox). Set `TAWB_BROWSER_TIMEOUT` to a number of seconds to wait longer:
-  `TAWB_BROWSER_TIMEOUT=120 npm start -- https://example.com`. If that makes
-  it work, the browser was only slow.
-
-Do not run TAWB as root: browsers refuse to use their security sandbox as
-root, and TAWB will not disable the sandbox for them.
-
-## Problems
-
-We'd like to hear about any issues you encounter.
-This is especially true for captchas/bot protection.
-File an issue at
-https://github.com/bmmcginty/tawb/issues
-or email
-git@bmcginty.us.
-You're welcome to email if you have a problem URL you want kept private, or don't want linked with a Github username.
-(Specifics of emailed bug reports will be kept strictly confidential, and the author of this project will not make judgement calls on anyone else's browsing habits.)
+Private problem URLs are welcome by email. The maintainer will keep the details
+of emailed reports confidential and will not judge anyone's browsing habits.
