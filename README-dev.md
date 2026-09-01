@@ -398,6 +398,29 @@ untouched while reading, because a repainted row is re-read by a screen
 reader whether or not it now says anything different. A page with no title
 of its own leaves the row empty rather than repeating the address below it.
 
+**The status line says where the link under the cursor goes.** Arrow onto a
+link and its target appears there; step off it and the last message comes
+back. This is exactly what a graphical browser does, and where it does it: the
+address bar goes on saying where you *are* and the corner of the window says
+where the thing under the pointer would *take* you. Two questions, two places,
+and row 2 is not one of them — it is the tab's own address and nothing else.
+
+The target is the resolved address rather than the attribute, so `href="../b"`
+reads as somewhere the browser could actually be sent, and an element that
+merely says `role="link"` has no target to show and changes nothing. A message
+wins while it is news — anything that calls `setStatus` writes over the target
+whatever the cursor is standing on — and the next move brings back whichever
+of the two the new line calls for.
+
+It is the one thing outside the reading area that an arrow key touches, and it
+costs nothing on the keystrokes that do not change it: the row is written only
+when its text is actually different, and the cursor goes straight back to the
+reader's own line, which is where a screen reader follows it. The find, sign-in
+and path prompts are drawn on this row and own it while they are up. `SOURCE`
+is left out of this deliberately — its lines *are* the markup, so the href is
+already in the text under the cursor and saying it again below would say
+nothing new.
+
 ## Four views of a page
 
 Backslash (`\`) cycles between them. The current one is shown at the start

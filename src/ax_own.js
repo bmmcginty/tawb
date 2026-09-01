@@ -639,6 +639,15 @@ function extractAxItems(options) {
           item.level = el.getAttribute('aria-level')
             || (/^h[1-6]$/.test(tag) ? tag[1] : undefined);
         }
+        // Where a link goes. A sighted person is told this the moment the
+        // pointer or the keyboard focus lands on one, without asking for it
+        // and without leaving the page, and the reader is told it the same
+        // way — on the address line, as they arrow over it. The property
+        // rather than the attribute, because that is the address already
+        // resolved: `href="../b"` is somewhere the browser could be sent
+        // only once it has been read against the page it sits on. An element
+        // that merely says role="link" has no href at all and says nothing.
+        if (role === 'link' && typeof el.href === 'string' && el.href) item.href = el.href;
         const checked = el.getAttribute('aria-checked');
         if (checked === 'true' || el.checked === true) item.checked = true;
         // A menu button is an atomic role, and whether its menu is open is

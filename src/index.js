@@ -437,6 +437,22 @@ async function navigateInterruptibly(state, page, url) {
   }
 }
 
+// The link the reader is standing on, and where it goes. See drawStatus,
+// which is what says it.
+//
+// Only ever the page's own buffer: with one of the browser's own lists open
+// the lines on screen are bookmarks or history entries rather than links on
+// the page, and the status row is still the page's to talk about.
+function linkTarget(state) {
+  if (state.library || state.dialog) return null;
+  const item = itemUnderCursor(state);
+  if (!item || !LINK_ROLES.has(item.role)) return null;
+  return item.href || null;
+}
+
+// The address row is the tab's own address and nothing else. Where the link
+// under the cursor goes is a different question and belongs on the status
+// line, which is where a graphical browser answers it — see drawStatus.
 function addressText(state, page) {
   if (state.mode === 'address') return state.address.text;
   return page.url();
@@ -562,10 +578,43 @@ function statusRow() {
   return termSize().rows;
 }
 
+// The one place the status row is written, so that what is on it is always
+// known — drawStatus below will not repaint a row that already says what it
+// is about to say.
+function writeStatusRow(state, text) {
+  const rendered = String(text || '').slice(0, termSize().cols);
+  state.drawn.status = rendered;
+  writeLine(statusRow(), rendered);
+}
+
 function setStatus(state, msg) {
   state.statusMsg = msg;
-  writeLine(statusRow(), msg.slice(0, termSize().cols));
+  writeStatusRow(state, msg);
   parkCursor(state);
+}
+
+// Where the link under the cursor goes, said as the reader arrives on it.
+//
+// This is what a graphical browser does, and it does it in the status bar
+// rather than the address bar: the address bar goes on saying where you are,
+// and the corner of the window says where the thing under the pointer would
+// take you. The reader gets the same two answers in the same two places.
+//
+// A message wins while it is news — setStatus writes it whatever the cursor
+// is standing on — and the next move brings the link target back, or the
+// message back, whichever the new line calls for. Nothing is written when the
+// row already says it, which is most keystrokes and is what keeps a screen
+// reader from re-reading and a braille display from re-flashing a row that
+// did not change.
+//
+// Browse mode only: the find prompt, the sign-in prompt, the path prompt and
+// the one-line prompt are all drawn on this row and own it while they are up.
+function drawStatus(state) {
+  if (state.mode !== 'browse') return;
+  const wanted = linkTarget(state) || state.statusMsg;
+  const rendered = String(wanted || '').slice(0, termSize().cols);
+  if (rendered === state.drawn.status) return;
+  writeStatusRow(state, rendered);
 }
 
 // Puts the terminal cursor back where the reader is.
@@ -596,7 +645,7 @@ function render(state, page, { force = false } = {}) {
   drawAddress(state, page, { force });
   drawHint(state, { force });
   drawList(state);
-  if (state.statusMsg) writeLine(statusRow(), state.statusMsg.slice(0, termSize().cols));
+  if (state.statusMsg) writeStatusRow(state, state.statusMsg);
   parkCursor(state);
 }
 
@@ -652,7 +701,13 @@ function moveSelection(state, newCursor, page, newCol = 0) {
 
   const scrolledBy = state.scroll - oldScroll;
 
-  // Nothing outside the list area is touched here: no banner, no status.
+  // Where the new line goes, if it goes anywhere. This is the one thing
+  // outside the list area a move touches — the banner is left alone — and it
+  // costs nothing on the keystrokes that do not change it. Drawn before the
+  // cursor is placed, since reaching the status row means moving the cursor
+  // there and back.
+  drawStatus(state);
+
   if (scrolledBy === 0) {
     moveCursor(lineRow(state, target), cursorCol(state));
   } else if (Math.abs(scrolledBy) === 1) {
@@ -681,6 +736,7 @@ function moveScreen(state, direction, page, height = viewportHeight()) {
   state.col = 0;
   clampCol(state);
   syncCursor(state);
+  drawStatus(state);
   drawList(state);
   parkCursor(state);
 }
@@ -834,7 +890,7 @@ function authPromptText(state) {
 function drawAuthPrompt(state) {
   const cols = termSize().cols;
   const { text, caretCol } = authPromptText(state);
-  writeLine(statusRow(), text.slice(0, cols));
+  writeStatusRow(state, text);
   moveCursor(statusRow(), Math.min(caretCol, cols));
 }
 
@@ -910,7 +966,7 @@ async function askForPassword(state, challenge, { refused = false } = {}) {
     state.auth = null;
     state.statusMsg = previousStatus;
     drawHint(state, { force: true });
-    writeLine(statusRow(), `Signing in to ${describeChallenge(asked)}…`.slice(0, termSize().cols));
+    writeStatusRow(state, `Signing in to ${describeChallenge(asked)}…`);
   }
 }
 
@@ -920,7 +976,7 @@ function findPrompt(state) {
 
 function drawFind(state) {
   const cols = termSize().cols;
-  writeLine(statusRow(), findPrompt(state).slice(0, cols));
+  writeStatusRow(state, findPrompt(state));
   moveCursor(statusRow(), Math.min(state.find.caret + 2, cols));
 }
 
@@ -2513,7 +2569,7 @@ function filePromptText(state) {
 function drawFilePrompt(state) {
   const cols = termSize().cols;
   const { text, caretCol } = filePromptText(state);
-  writeLine(statusRow(), text.slice(0, cols));
+  writeStatusRow(state, text);
   moveCursor(statusRow(), Math.min(caretCol, cols));
 }
 
@@ -2613,7 +2669,7 @@ function drawLinePrompt(state) {
   const cols = termSize().cols;
   const { label, buffer } = state.line;
   const text = `${label}: ${buffer.text}`;
-  writeLine(statusRow(), text.slice(0, cols));
+  writeStatusRow(state, text);
   moveCursor(statusRow(), Math.min(label.length + 2 + buffer.caret + 1, cols));
 }
 
@@ -3290,7 +3346,7 @@ async function main() {
     lastFind: null,
     auth: null,
     title: '',
-    drawn: { title: null, address: null, hint: null },
+    drawn: { title: null, address: null, hint: null, status: null },
     statusHeldUntil: 0,
     loadingMore: false,
     historyPlaces: new WeakMap(),
@@ -3517,9 +3573,11 @@ if (require.main === module) {
 module.exports = {
   handleBrowseKey, handleTypeKey, handleControlKey, handleAddressKey, handleFindKey,
   findText, runSearch,
-  render, drawList, drawAddress, drawHint, patchEditedLine, moveSelection, moveScreen,
+  render, drawList, drawAddress, drawHint, drawStatus, setStatus,
+  patchEditedLine, moveSelection, moveScreen,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
-  itemUnderCursor, findQuickNav, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,
+  itemUnderCursor, linkTarget,
+  findQuickNav, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,
   clickAsHuman, reportAfterAction,
   expandPath, completePath, fileToAttach, fileSize, attachedNote,
   anchorFor, restoreAnchor, capturePlace, restorePlace, jumpToChange, activateCurrent, ALL_SOURCES,

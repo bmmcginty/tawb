@@ -127,7 +127,10 @@ function extractVisible() {
     }
     if (shown && ((tag === 'a' && el.getAttribute('href') != null) || explicitRole === 'link')) {
       const text = own || label;
-      if (text) emit({ kind: 'link', text, index: register(), block: true });
+      // The resolved target, for the address line to show while the reader
+      // stands on it — see ax_own.js. A div wearing role="link" has none.
+      const href = typeof el.href === 'string' && el.href ? el.href : undefined;
+      if (text) emit({ kind: 'link', text, href, index: register(), block: true });
       return;
     }
     if (shown && (tag === 'input' || tag === 'textarea' || tag === 'select')) {
@@ -241,6 +244,7 @@ async function snapshotRenderBlocks(target) {
       role: ROLE_BY_KIND[entry.kind] || 'text',
       name: entry.text,
       level: entry.level,
+      href: entry.href,
       renderIndex: entry.index,
       frame,
     },

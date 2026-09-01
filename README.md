@@ -88,7 +88,9 @@ browsers differently.
 ## First steps
 
 When a page opens, the terminal contains the page title, the current view and
-address, a short key reminder, and the page itself. Start with these keys:
+address, a short key reminder, and the page itself. Moving onto a link shows
+where that link goes on the status line at the bottom, the way a graphical
+browser shows it in the corner of the window. Start with these keys:
 
 | Key | Action |
 | --- | --- |
