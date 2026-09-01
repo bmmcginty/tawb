@@ -90,7 +90,8 @@ browsers differently.
 When a page opens, the terminal contains the page title, the current view and
 address, a short key reminder, and the page itself. Moving onto a link shows
 where that link goes on the status line at the bottom, the way a graphical
-browser shows it in the corner of the window. Start with these keys:
+browser shows it in the corner of the window; `u` turns that off and on again
+if you would rather not hear an address on every link. Start with these keys:
 
 | Key | Action |
 | --- | --- |
@@ -224,6 +225,16 @@ Set a search URL template with `%s` where the encoded query belongs:
 ```sh
 npm start -- --search 'https://www.google.com/search?q=%s'
 export TAWB_SEARCH='https://html.duckduckgo.com/html/?q=%s'
+```
+
+### Link addresses
+
+The status line says where the link under the cursor goes. `u` switches that
+off and on while reading. To start with it off every time:
+
+```sh
+npm start -- --no-link-address
+export TAWB_LINK_ADDRESS=off
 ```
 
 ### Diagnostic logging

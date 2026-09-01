@@ -11,7 +11,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { linkTarget, drawStatus, drawAddress, moveSelection } = require('../src/index');
+const {
+  linkTarget, drawStatus, drawAddress, moveSelection, handleBrowseKey,
+} = require('../src/index');
 
 const PAGE = { url: () => 'https://example.test/index.html' };
 const LINK = { role: 'link', name: 'About', href: 'https://example.test/about' };
@@ -25,6 +27,7 @@ function pageOf(...items) {
     col: 0,
     statusMsg: '',
     drawn: {},
+    linkAddress: true,
     core: { at() {}, source: 'ax', blocks: items.map((item) => ({ item })) },
   };
 }
@@ -35,6 +38,13 @@ function capturingTerminal(fn) {
   process.stdout.write = (text) => { chunks.push(String(text)); return true; };
   try { fn(); } finally { process.stdout.write = write; }
   return chunks.join('');
+}
+
+async function capturingTerminalAsync(fn) {
+  const write = process.stdout.write;
+  const chunks = [];
+  process.stdout.write = (text) => { chunks.push(String(text)); return true; };
+  try { await fn(() => chunks.join('')); } finally { process.stdout.write = write; }
 }
 
 test('standing on a link is standing somewhere that goes somewhere', () => {
@@ -100,4 +110,41 @@ test('the address row goes on saying where the reader is', () => {
   const drawn = capturingTerminal(() => drawAddress(state, PAGE));
   assert.ok(drawn.includes('[AX] https://example.test/index.html'), drawn);
   assert.ok(!drawn.includes('/about'), drawn);
+});
+
+test('a reader who does not want the row to speak can switch it off', () => {
+  // Most of the lines on some pages are links, and a sentence spoken on every
+  // one of them is a great deal of speech to sit through.
+  const state = pageOf(LINK);
+  state.linkAddress = false;
+  assert.equal(linkTarget(state), null);
+
+  state.statusMsg = 'Loaded https://example.test/index.html';
+  state.drawn.status = state.statusMsg;
+  assert.equal(capturingTerminal(() => drawStatus(state)), '');
+});
+
+test('the switch says which way it went, and takes effect at once', async () => {
+  const state = pageOf(LINK);
+  state.linkAddress = true;
+  state.keys = { actionFor: () => 'toggle-link-address' };
+  state.core.markInput = () => {};
+
+  let off = '';
+  await capturingTerminalAsync(async (seen) => {
+    await handleBrowseKey('u', state, PAGE);
+    off = seen();
+  });
+  assert.equal(state.linkAddress, false);
+  assert.ok(off.includes('Link addresses off.'), off);
+  assert.equal(linkTarget(state), null);
+
+  let on = '';
+  await capturingTerminalAsync(async (seen) => {
+    await handleBrowseKey('u', state, PAGE);
+    on = seen();
+  });
+  assert.equal(state.linkAddress, true);
+  assert.ok(on.includes('Link addresses on.'), on);
+  assert.equal(linkTarget(state), 'https://example.test/about');
 });

@@ -82,6 +82,12 @@ const ACTIONS = [
   ['previous-change', 'Previous changed area', ['C']],
   ['where', 'Report position', ['=']],
   ['toggle-live', 'Toggle live updates', ['L']],
+  // Whether the status row says where the link under the cursor goes. A
+  // graphical browser has no switch for this because its status bar costs
+  // nothing to ignore; a row that speaks costs a sentence every time the
+  // cursor lands on a link, which is a great deal of speech on a page that
+  // is mostly links. `u` for the address it shows.
+  ['toggle-link-address', 'Toggle link addresses', ['u']],
   ['real-click', 'Real click', ['m']],
   ['find-forward', 'Find forward', ['/']],
   ['find-backward', 'Find backward', ['?']],

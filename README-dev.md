@@ -412,6 +412,16 @@ wins while it is news — anything that calls `setStatus` writes over the target
 whatever the cursor is standing on — and the next move brings back whichever
 of the two the new line calls for.
 
+`u` switches the whole thing off, and `--no-link-address` or
+`TAWB_LINK_ADDRESS=off` starts it that way. A graphical browser has no such
+switch because its status bar costs nothing to ignore, but a row that is
+*spoken* costs a sentence every time the cursor lands on a link, and on a page
+that is mostly links that is a great deal of speech to sit through for
+something the reader may not have wanted. Switched off, the row goes back to
+holding the last message, which is what it held before any of this existed.
+Like the search template it is a preference rather than something to retype
+every launch, so it can be said once in the environment.
+
 It is the one thing outside the reading area that an arrow key touches, and it
 costs nothing on the keystrokes that do not change it: the row is written only
 when its text is actually different, and the cursor goes straight back to the

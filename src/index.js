@@ -33,10 +33,17 @@ const path = require('node:path');
 // browser asks its own settings for that; neither protocol will tell us what
 // the reader chose there, so it is said here instead — or in TAWB_SEARCH,
 // since it is a preference rather than something to retype every launch.
+// --no-link-address starts with the status row quiet about where the link
+// under the cursor goes. `u` turns it back on for the rest of the session;
+// TAWB_LINK_ADDRESS=off says it once and for good, for the same reason
+// TAWB_SEARCH exists.
+const OFF = new Set(['off', 'no', 'false', '0']);
+
 function parseArgs(argv, env = process.env) {
   const options = {
     url: null, connect: null, profile: null, engine: DEFAULT_ENGINE, keepBrowser: false,
     keyboard: false, log: false, search: env.TAWB_SEARCH || DEFAULT_SEARCH,
+    linkAddress: !OFF.has(String(env.TAWB_LINK_ADDRESS || '').toLowerCase()),
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -47,6 +54,8 @@ function parseArgs(argv, env = process.env) {
     else if (arg === '--keep-browser') { options.keepBrowser = true; }
     else if (arg === '--keyboard') { options.keyboard = true; }
     else if (arg === '--log') { options.log = true; }
+    else if (arg === '--link-address') { options.linkAddress = true; }
+    else if (arg === '--no-link-address') { options.linkAddress = false; }
     else if (arg === '--browser') { options.engine = argv[i + 1] || DEFAULT_ENGINE; i += 1; }
     else if (arg.startsWith('--browser=')) { options.engine = arg.slice('--browser='.length); }
     else if (arg === '--search') { options.search = argv[i + 1] || DEFAULT_SEARCH; i += 1; }
@@ -440,10 +449,15 @@ async function navigateInterruptibly(state, page, url) {
 // The link the reader is standing on, and where it goes. See drawStatus,
 // which is what says it.
 //
+// Nothing at all when the reader has switched it off: a row that speaks costs
+// a sentence on every link, which is most of the lines on some pages, and the
+// address is still a keystroke away on the page itself.
+//
 // Only ever the page's own buffer: with one of the browser's own lists open
 // the lines on screen are bookmarks or history entries rather than links on
 // the page, and the status row is still the page's to talk about.
 function linkTarget(state) {
+  if (!state.linkAddress) return null;
   if (state.library || state.dialog) return null;
   const item = itemUnderCursor(state);
   if (!item || !LINK_ROLES.has(item.role)) return null;
@@ -1864,6 +1878,16 @@ async function handleBrowseKey(chunk, state, page) {
     setStatus(state, state.core.live.enabled
       ? 'Live updates on.'
       : 'Live updates off — press r to refresh manually.');
+    return;
+  }
+
+  // A row that speaks is not always wanted. Turning it off leaves the last
+  // message standing, which is what the row said before any of this existed.
+  if (action === 'toggle-link-address') {
+    state.linkAddress = !state.linkAddress;
+    setStatus(state, state.linkAddress
+      ? 'Link addresses on.'
+      : 'Link addresses off.');
     return;
   }
 
@@ -3347,6 +3371,7 @@ async function main() {
     auth: null,
     title: '',
     drawn: { title: null, address: null, hint: null, status: null },
+    linkAddress: ARGS.linkAddress,
     statusHeldUntil: 0,
     loadingMore: false,
     historyPlaces: new WeakMap(),
