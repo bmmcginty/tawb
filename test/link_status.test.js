@@ -12,7 +12,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const {
-  linkTarget, drawStatus, drawAddress, moveSelection, handleBrowseKey,
+  linkTarget, shortTarget, drawStatus, drawAddress, moveSelection, handleBrowseKey,
 } = require('../src/index');
 
 const PAGE = { url: () => 'https://example.test/index.html' };
@@ -48,7 +48,7 @@ async function capturingTerminalAsync(fn) {
 }
 
 test('standing on a link is standing somewhere that goes somewhere', () => {
-  assert.equal(linkTarget(pageOf(LINK)), 'https://example.test/about');
+  assert.equal(linkTarget(pageOf(LINK), PAGE), 'https://example.test/about');
 });
 
 test('anything else goes nowhere', () => {
@@ -57,17 +57,17 @@ test('anything else goes nowhere', () => {
   for (const item of [{ role: 'text', name: 'some prose' },
     { role: 'heading', name: 'Contents', level: '2' },
     { role: 'button', name: 'Play' }]) {
-    assert.equal(linkTarget(pageOf(item)), null);
+    assert.equal(linkTarget(pageOf(item), PAGE), null);
   }
   // role="link" on a div is a link to the reader and has no target at all.
-  assert.equal(linkTarget(pageOf({ role: 'link', name: 'Menu' })), null);
+  assert.equal(linkTarget(pageOf({ role: 'link', name: 'Menu' }), PAGE), null);
 });
 
 test('one of the browser\'s own lists is not the page talking', () => {
   // The lines on screen are bookmarks, not links on the page.
   const state = pageOf({ role: 'text', name: 'unused' });
   state.library = { blocks: [{ item: { role: 'link', name: 'A bookmark', href: 'https://saved.test/' } }] };
-  assert.equal(linkTarget(state), null);
+  assert.equal(linkTarget(state, PAGE), null);
 });
 
 test('arrowing onto a link says where it goes, and off it gives the message back', () => {
@@ -117,7 +117,7 @@ test('a reader who does not want the row to speak can switch it off', () => {
   // one of them is a great deal of speech to sit through.
   const state = pageOf(LINK);
   state.linkAddress = false;
-  assert.equal(linkTarget(state), null);
+  assert.equal(linkTarget(state, PAGE), null);
 
   state.statusMsg = 'Loaded https://example.test/index.html';
   state.drawn.status = state.statusMsg;
@@ -137,7 +137,7 @@ test('the switch says which way it went, and takes effect at once', async () => 
   });
   assert.equal(state.linkAddress, false);
   assert.ok(off.includes('Link addresses off.'), off);
-  assert.equal(linkTarget(state), null);
+  assert.equal(linkTarget(state, PAGE), null);
 
   let on = '';
   await capturingTerminalAsync(async (seen) => {
@@ -146,5 +146,49 @@ test('the switch says which way it went, and takes effect at once', async () => 
   });
   assert.equal(state.linkAddress, true);
   assert.ok(on.includes('Link addresses on.'), on);
-  assert.equal(linkTarget(state), 'https://example.test/about');
+  assert.equal(linkTarget(state, PAGE), 'https://example.test/about');
+});
+
+// Said the way a person standing on the page would say it.
+const HERE = 'https://example.test/a/b/c';
+
+test('a link that stays on the site is said as its path alone', () => {
+  assert.equal(shortTarget('https://example.test/b', HERE), '/b');
+  assert.equal(shortTarget('https://example.test/a/b/d?q=1', HERE), '/a/b/d?q=1');
+  // The site's front page is a path too, and an empty one is not an address.
+  assert.equal(shortTarget('https://example.test/', HERE), '/');
+  assert.equal(shortTarget('https://example.test', HERE), '/');
+});
+
+test('a link that leaves the site keeps its host, which is the news', () => {
+  assert.equal(shortTarget('https://other.test/b', HERE), 'https://other.test/b');
+  // A different scheme or port is a different place, whatever the name says.
+  assert.equal(shortTarget('http://example.test/b', HERE), 'http://example.test/b');
+  assert.equal(shortTarget('https://example.test:8443/b', HERE), 'https://example.test:8443/b');
+  assert.equal(shortTarget('mailto:someone@example.test', HERE), 'mailto:someone@example.test');
+});
+
+test('a link into this same page is said as the fragment alone', () => {
+  assert.equal(shortTarget('https://example.test/a/b/c#notes', HERE), '#notes');
+  // No fragment either: it goes where the reader already is.
+  assert.equal(shortTarget('https://example.test/a/b/c', HERE), '/a/b/c');
+});
+
+test('an address that will not parse is handed back untouched', () => {
+  assert.equal(shortTarget('not an address', HERE), 'not an address');
+  assert.equal(shortTarget('https://example.test/b', 'about:blank'), 'https://example.test/b');
+});
+
+test('the short form is off until it is asked for, and is a switch', async () => {
+  // A graphical browser shows the whole address, so that is what this does
+  // until the reader says otherwise.
+  const state = pageOf(LINK);
+  assert.equal(linkTarget(state, PAGE), 'https://example.test/about');
+
+  state.keys = { actionFor: () => 'toggle-short-links' };
+  state.core.markInput = () => {};
+  await capturingTerminalAsync(async () => { await handleBrowseKey('U', state, PAGE); });
+
+  assert.equal(state.shortLinks, true);
+  assert.equal(linkTarget(state, PAGE), '/about');
 });

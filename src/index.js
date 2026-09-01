@@ -37,13 +37,18 @@ const path = require('node:path');
 // under the cursor goes. `u` turns it back on for the rest of the session;
 // TAWB_LINK_ADDRESS=off says it once and for good, for the same reason
 // TAWB_SEARCH exists.
+// --short-links says a link that stays on this site as its path alone. Off by
+// default, because a graphical browser's status bar shows the whole address
+// and this is meant to read like one.
 const OFF = new Set(['off', 'no', 'false', '0']);
+const ON = new Set(['on', 'yes', 'true', '1']);
 
 function parseArgs(argv, env = process.env) {
   const options = {
     url: null, connect: null, profile: null, engine: DEFAULT_ENGINE, keepBrowser: false,
     keyboard: false, log: false, search: env.TAWB_SEARCH || DEFAULT_SEARCH,
     linkAddress: !OFF.has(String(env.TAWB_LINK_ADDRESS || '').toLowerCase()),
+    shortLinks: ON.has(String(env.TAWB_SHORT_LINKS || '').toLowerCase()),
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -56,6 +61,8 @@ function parseArgs(argv, env = process.env) {
     else if (arg === '--log') { options.log = true; }
     else if (arg === '--link-address') { options.linkAddress = true; }
     else if (arg === '--no-link-address') { options.linkAddress = false; }
+    else if (arg === '--short-links') { options.shortLinks = true; }
+    else if (arg === '--no-short-links') { options.shortLinks = false; }
     else if (arg === '--browser') { options.engine = argv[i + 1] || DEFAULT_ENGINE; i += 1; }
     else if (arg.startsWith('--browser=')) { options.engine = arg.slice('--browser='.length); }
     else if (arg === '--search') { options.search = argv[i + 1] || DEFAULT_SEARCH; i += 1; }
@@ -456,12 +463,42 @@ async function navigateInterruptibly(state, page, url) {
 // Only ever the page's own buffer: with one of the browser's own lists open
 // the lines on screen are bookmarks or history entries rather than links on
 // the page, and the status row is still the page's to talk about.
-function linkTarget(state) {
+function linkTarget(state, page) {
   if (!state.linkAddress) return null;
   if (state.library || state.dialog) return null;
   const item = itemUnderCursor(state);
   if (!item || !LINK_ROLES.has(item.role)) return null;
-  return item.href || null;
+  if (!item.href) return null;
+  return state.shortLinks ? shortTarget(item.href, pageUrl(page)) : item.href;
+}
+
+// The same address, said the way a person would say it to someone already
+// standing on the page: a link from /a/b/c to /b is "/b", because the host is
+// the one they are on and repeating it says nothing. A link that leaves the
+// site is said in full — that it leaves is the most important thing about it,
+// and it is the host that carries that news.
+//
+// Same page, different fragment, is shorter still: "#notes" rather than the
+// path the reader is already standing in. Anything that will not parse is
+// handed back untouched rather than guessed at.
+function shortTarget(href, here) {
+  let link;
+  let page;
+  try {
+    link = new URL(href);
+    page = new URL(here);
+  } catch { return href; }
+  if (link.origin === 'null' || link.origin !== page.origin) return href;
+  if (link.pathname === page.pathname && link.search === page.search) {
+    return link.hash || `${link.pathname}${link.search}` || '/';
+  }
+  return `${link.pathname}${link.search}${link.hash}` || '/';
+}
+
+function pageUrl(page) {
+  try {
+    return page && typeof page.url === 'function' ? page.url() : '';
+  } catch { return ''; }
 }
 
 // The address row is the tab's own address and nothing else. Where the link
@@ -623,9 +660,9 @@ function setStatus(state, msg) {
 //
 // Browse mode only: the find prompt, the sign-in prompt, the path prompt and
 // the one-line prompt are all drawn on this row and own it while they are up.
-function drawStatus(state) {
+function drawStatus(state, page) {
   if (state.mode !== 'browse') return;
-  const wanted = linkTarget(state) || state.statusMsg;
+  const wanted = linkTarget(state, page) || state.statusMsg;
   const rendered = String(wanted || '').slice(0, termSize().cols);
   if (rendered === state.drawn.status) return;
   writeStatusRow(state, rendered);
@@ -720,7 +757,7 @@ function moveSelection(state, newCursor, page, newCol = 0) {
   // costs nothing on the keystrokes that do not change it. Drawn before the
   // cursor is placed, since reaching the status row means moving the cursor
   // there and back.
-  drawStatus(state);
+  drawStatus(state, page);
 
   if (scrolledBy === 0) {
     moveCursor(lineRow(state, target), cursorCol(state));
@@ -750,7 +787,7 @@ function moveScreen(state, direction, page, height = viewportHeight()) {
   state.col = 0;
   clampCol(state);
   syncCursor(state);
-  drawStatus(state);
+  drawStatus(state, page);
   drawList(state);
   parkCursor(state);
 }
@@ -1888,6 +1925,16 @@ async function handleBrowseKey(chunk, state, page) {
     setStatus(state, state.linkAddress
       ? 'Link addresses on.'
       : 'Link addresses off.');
+    return;
+  }
+
+  // The host is news only when it changes. Saying it on every link of a site
+  // the reader is already reading is a sentence of nothing, over and over.
+  if (action === 'toggle-short-links') {
+    state.shortLinks = !state.shortLinks;
+    setStatus(state, state.shortLinks
+      ? 'Short link addresses on — links on this site say their path alone.'
+      : 'Short link addresses off — links say their full address.');
     return;
   }
 
@@ -3372,6 +3419,7 @@ async function main() {
     title: '',
     drawn: { title: null, address: null, hint: null, status: null },
     linkAddress: ARGS.linkAddress,
+    shortLinks: ARGS.shortLinks,
     statusHeldUntil: 0,
     loadingMore: false,
     historyPlaces: new WeakMap(),
@@ -3601,7 +3649,7 @@ module.exports = {
   render, drawList, drawAddress, drawHint, drawStatus, setStatus,
   patchEditedLine, moveSelection, moveScreen,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
-  itemUnderCursor, linkTarget,
+  itemUnderCursor, linkTarget, shortTarget,
   findQuickNav, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,
   clickAsHuman, reportAfterAction,
   expandPath, completePath, fileToAttach, fileSize, attachedNote,

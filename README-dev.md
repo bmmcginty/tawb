@@ -422,6 +422,18 @@ holding the last message, which is what it held before any of this existed.
 Like the search template it is a preference rather than something to retype
 every launch, so it can be said once in the environment.
 
+`U` shortens a link that stays on this site to its path alone, and starts that
+way under `--short-links` or `TAWB_SHORT_LINKS=on`. The host is news only when
+it changes: repeating `https://example.com` on every link of a page from
+example.com is a sentence of nothing, spoken over and over, and a link into
+this same page is shorter still — `#notes` rather than the path the reader is
+already standing in. A link that *leaves* the site keeps its full address,
+because leaving is the most important thing about it and the host is what
+carries that news. It is off by default because a graphical browser's status
+bar shows the whole address, and this row is meant to read like one. Anything
+that will not parse as an address — `mailto:`, or a href the browser could not
+resolve — is handed back untouched rather than guessed at.
+
 It is the one thing outside the reading area that an arrow key touches, and it
 costs nothing on the keystrokes that do not change it: the row is written only
 when its text is actually different, and the cursor goes straight back to the

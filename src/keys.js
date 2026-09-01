@@ -88,6 +88,10 @@ const ACTIONS = [
   // cursor lands on a link, which is a great deal of speech on a page that
   // is mostly links. `u` for the address it shows.
   ['toggle-link-address', 'Toggle link addresses', ['u']],
+  // Whether a link that stays on this site is said in full or as the path
+  // alone. Uppercase of the switch that turns the row on, because it is the
+  // same row said a shorter way.
+  ['toggle-short-links', 'Toggle short link addresses', ['U']],
   ['real-click', 'Real click', ['m']],
   ['find-forward', 'Find forward', ['/']],
   ['find-backward', 'Find backward', ['?']],

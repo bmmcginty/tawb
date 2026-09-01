@@ -237,6 +237,16 @@ npm start -- --no-link-address
 export TAWB_LINK_ADDRESS=off
 ```
 
+`U` shortens a link that stays on the site you are reading to its path alone,
+so a link from `/a/b/c` to `/b` is announced as `/b` rather than repeating the
+host every time. Links that leave the site keep their full address. To start
+with the short form every time:
+
+```sh
+npm start -- --short-links
+export TAWB_SHORT_LINKS=on
+```
+
 ### Diagnostic logging
 
 TAWB does not create a diagnostic log by default. Add `--log` when
