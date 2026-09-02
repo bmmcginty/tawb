@@ -306,15 +306,42 @@ const MODIFIERS = {
   Shift: { bit: 8, key: 'Shift', code: 'ShiftLeft', keyCode: 16 },
 };
 
-// The physical key a printable character sits on, for the pages that read
-// event.code. Beyond the ASCII keyboard there is no honest answer and an
-// empty string is what Playwright reports too.
+// The physical key and Windows virtual-key code for every printable ASCII
+// character. CDP asks for both even though `text` is what the key inserts.
+// ASCII character codes are not virtual-key codes: 39 is ArrowRight rather
+// than Quote and 46 is Delete rather than Period, so using charCodeAt made an
+// apostrophe move the caret and a full stop delete instead of inserting.
+//
+// This is the conventional US-keyboard mapping used by browser automation.
+// Shifted and unshifted characters share a physical key; `key` and `text`
+// still carry the character the terminal actually produced. Beyond ASCII
+// there is no honest physical-key answer, so code is empty and keyCode is zero.
+const CHARACTER_KEYS = new Map();
+for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+  const definition = { code: `Key${letter}`, keyCode: letter.charCodeAt(0) };
+  CHARACTER_KEYS.set(letter, definition);
+  CHARACTER_KEYS.set(letter.toLowerCase(), definition);
+}
+for (const [characters, code, keyCode] of [
+  ['`~', 'Backquote', 192],
+  ['1!', 'Digit1', 49], ['2@', 'Digit2', 50], ['3#', 'Digit3', 51],
+  ['4$', 'Digit4', 52], ['5%', 'Digit5', 53], ['6^', 'Digit6', 54],
+  ['7&', 'Digit7', 55], ['8*', 'Digit8', 56], ['9(', 'Digit9', 57],
+  ['0)', 'Digit0', 48], ['-_', 'Minus', 189], ['=+', 'Equal', 187],
+  ['[{', 'BracketLeft', 219], [']}', 'BracketRight', 221],
+  ['\\|', 'Backslash', 220], [';:', 'Semicolon', 186], ["'\"", 'Quote', 222],
+  [',<', 'Comma', 188], ['.>', 'Period', 190], ['/?', 'Slash', 191],
+  [' ', 'Space', 32],
+]) {
+  for (const character of characters) CHARACTER_KEYS.set(character, { code, keyCode });
+}
+
+function keyForCharacter(character) {
+  return CHARACTER_KEYS.get(character) || { code: '', keyCode: 0 };
+}
+
 function codeForCharacter(character) {
-  if (character >= 'a' && character <= 'z') return `Key${character.toUpperCase()}`;
-  if (character >= 'A' && character <= 'Z') return `Key${character}`;
-  if (character >= '0' && character <= '9') return `Digit${character}`;
-  if (character === ' ') return 'Space';
-  return '';
+  return keyForCharacter(character).code;
 }
 
 // Typing, through the browser's own input pipeline.
@@ -336,10 +363,11 @@ class CdpKeyboard {
     // Spread rather than split: a character outside the basic plane is two
     // code units and one keystroke.
     for (const character of String(text)) {
+      const definition = keyForCharacter(character);
       const common = {
         key: character,
-        code: codeForCharacter(character),
-        windowsVirtualKeyCode: character.toUpperCase().charCodeAt(0) || 0,
+        code: definition.code,
+        windowsVirtualKeyCode: definition.keyCode,
       };
       // text on the keyDown is what makes the browser insert the character
       // and raise keypress and input alongside it.
@@ -362,7 +390,7 @@ class CdpKeyboard {
     const definition = KEYS[target]
       || (MODIFIERS[target] && { ...MODIFIERS[target] })
       || ([...target].length === 1
-        ? { key: target, code: codeForCharacter(target), keyCode: target.toUpperCase().charCodeAt(0), text: target }
+        ? { key: target, ...keyForCharacter(target), text: target }
         : null);
     if (!definition) throw new Error(`the Chromium driver has no key named "${key}"`);
 
@@ -779,6 +807,6 @@ class CdpPage {
 
 module.exports = {
   CdpPage, CdpFrame, CdpHandle, CdpKeyboard,
-  asFunctionDeclaration, codeForCharacter, toCallArgument,
+  asFunctionDeclaration, codeForCharacter, keyForCharacter, toCallArgument,
   KEYS, MODIFIERS, LIFECYCLE, CONTEXT_WAIT_MS,
 };

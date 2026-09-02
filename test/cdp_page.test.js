@@ -16,7 +16,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { CdpPage, CdpHandle, CdpKeyboard } = require('../src/cdp_page');
+const {
+  CdpPage, CdpHandle, CdpKeyboard, keyForCharacter,
+} = require('../src/cdp_page');
 
 // Enough of a session to be told apart from another one.
 function fakeSession(sessionId) {
@@ -144,6 +146,41 @@ test('a quad in an out-of-process frame is moved into tab coordinates', async ()
   const handle = new CdpHandle(frame, 'OBJECT');
 
   assert.deepStrictEqual(await handle.clickPoint(), { x: 115, y: 75 });
+});
+
+test('printable ASCII uses browser key codes rather than character codes', async () => {
+  for (let codePoint = 0x20; codePoint <= 0x7e; codePoint += 1) {
+    const character = String.fromCharCode(codePoint);
+    const definition = keyForCharacter(character);
+    assert.notEqual(definition.code, '', `${JSON.stringify(character)} has no physical key`);
+    assert.notEqual(definition.keyCode, 0, `${JSON.stringify(character)} has no virtual-key code`);
+  }
+
+  assert.deepStrictEqual(keyForCharacter("'"), { code: 'Quote', keyCode: 222 });
+  assert.deepStrictEqual(keyForCharacter('.'), { code: 'Period', keyCode: 190 });
+  assert.deepStrictEqual(keyForCharacter('?'), { code: 'Slash', keyCode: 191 });
+  assert.deepStrictEqual(keyForCharacter('é'), { code: '', keyCode: 0 });
+});
+
+test('Chromium typing sends punctuation with its physical key identity', async () => {
+  const sent = [];
+  const keyboard = new CdpKeyboard({
+    session: { send: async (method, params) => sent.push({ method, params }) },
+  });
+
+  await keyboard.type("'.");
+
+  const downs = sent.filter((event) => event.params.type === 'keyDown');
+  assert.deepStrictEqual(downs.map((event) => event.params), [
+    {
+      key: "'", code: 'Quote', windowsVirtualKeyCode: 222,
+      type: 'keyDown', text: "'", unmodifiedText: "'",
+    },
+    {
+      key: '.', code: 'Period', windowsVirtualKeyCode: 190,
+      type: 'keyDown', text: '.', unmodifiedText: '.',
+    },
+  ]);
 });
 
 test('non-text keys use Chromium raw key-down events', async () => {

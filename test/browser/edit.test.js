@@ -18,7 +18,7 @@ test.after(async () => {
   fs.rmSync(profile, { recursive: true, force: true });
 });
 
-test('readline editing keys operate a browser text field', async () => {
+test('typing and readline editing operate a browser text field', async () => {
   driver = await openDriver({ engine: ENGINE, profile, log: () => {} });
   const page = driver.context.pages()[0] || await driver.context.newPage();
   await page.goto('data:text/html,<input value="alpha beta gamma">');
@@ -34,4 +34,14 @@ test('readline editing keys operate a browser text field', async () => {
   assert.equal(await page.evaluate(() => document.querySelector('input').value), 'alpha gamma');
   await sendFieldEdit(page.keyboard, 'delete-line-forward');
   assert.equal(await page.evaluate(() => document.querySelector('input').value), 'alpha ');
+
+  await page.evaluate(() => {
+    const field = document.querySelector('input');
+    field.value = '';
+    field.focus();
+  });
+  const printableAscii = Array.from({ length: 95 }, (_, index) =>
+    String.fromCharCode(0x20 + index)).join('');
+  await page.keyboard.type(printableAscii);
+  assert.equal(await page.evaluate(() => document.querySelector('input').value), printableAscii);
 });
