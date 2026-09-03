@@ -91,7 +91,13 @@ function describeElement(el) {
 // nearest entry above it in document order. Landing just before where the
 // reader was is a much smaller move than landing wherever the text happened
 // to match first.
-function locateElement({ el, arrayName }) {
+function locateElement(subject, directArrayName = null) {
+  // Called either against a page with { el, arrayName }, or directly against
+  // an element handle with the array name as its one argument. The latter is
+  // required by the protocol clients: a handle nested inside an ordinary
+  // object cannot be serialised as a remote object reference.
+  const el = directArrayName ? subject : subject.el;
+  const arrayName = directArrayName || subject.arrayName;
   const nodes = window[Symbol.for(arrayName)];
   if (!nodes || !nodes.length || !el) return null;
 
@@ -239,13 +245,31 @@ function refineToText(state, from, place) {
   return { line: from, col: 0, exact: false };
 }
 
+// Finds the block produced by one exact element in the current view. This is
+// stricter than place restoration: focus is an explicit browser destination,
+// and if that destination is absent from a view, moving to a nearby ancestor
+// would claim the page focused somewhere it did not.
+async function exactBlockForElement(state, page, handle, frame = null) {
+  if (!handle) return -1;
+  const arrayName = NODE_ARRAY[state.source];
+  const key = INDEX_KEY[state.source];
+  if (!arrayName || !key) return -1;
+
+  const found = await handle.evaluate(locateElement, arrayName);
+  if (!found || !found.exact) return -1;
+
+  const expectedFrame = frame && typeof frame.mainFrame === 'function' ? frame.mainFrame() : frame;
+  return state.blocks.findIndex((block) => block.item
+    && block.item[key] === found.index
+    && (!expectedFrame || !block.item.frame || block.item.frame === expectedFrame));
+}
+
 async function locateByElement(state, page, place) {
   if (!place.handle) return null;
   const arrayName = NODE_ARRAY[state.source];
   if (!arrayName) return null;
 
-  const target = place.frame || page;
-  const found = await target.evaluate(locateElement, { el: place.handle, arrayName });
+  const found = await place.handle.evaluate(locateElement, arrayName);
   if (!found) return null;
 
   const key = INDEX_KEY[state.source];
@@ -356,6 +380,6 @@ async function restorePlace(state, page, place) {
 }
 
 module.exports = {
-  capturePlace, restorePlace, describeElement, locateElement, hasElement,
+  capturePlace, restorePlace, exactBlockForElement, describeElement, locateElement, hasElement,
   NODE_ARRAY, INDEX_KEY,
 };

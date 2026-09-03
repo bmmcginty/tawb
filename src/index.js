@@ -14,7 +14,8 @@ const { layoutLines } = require('./layout');
 const { normaliseEndpoint } = require('./browser');
 const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
 const { claimedTargets, releaseTab } = require('./session');
-const { capturePlace, restorePlace } = require('./place');
+const { capturePlace, restorePlace, exactBlockForElement } = require('./place');
+const { armActivationFocus, focusedByActivation, cancelActivationFocus } = require('./focus');
 const { Keymap } = require('./keys');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
@@ -2004,6 +2005,42 @@ async function jumpToFragment(state, page, hash) {
   return true;
 }
 
+// Arm focus observation against the element Enter is about to activate. The
+// before-and-after observation window, rather than document.activeElement at
+// some unrelated time, ties a destination to this particular action.
+async function watchActivationFocus(state, page, item) {
+  const scope = item.frame || page;
+  let handle = null;
+  try {
+    handle = await withTimeout(
+      state.core.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating focused control');
+    return await armActivationFocus(scope, handle);
+  } finally {
+    if (handle) await handle.dispose().catch(() => {});
+  }
+}
+
+// Move only to an exact element represented in this view. Focus is the page's
+// explicit keyboard destination; guessing at a nearby line would turn that
+// useful signal into an unexplained jump.
+async function followActivationFocus(state, page, focused) {
+  if (!focused || !focused.handle) return null;
+  try {
+    const block = await exactBlockForElement({
+      source: state.core.source,
+      blocks: state.core.blocks,
+      lines: state.lines,
+    }, page, focused.handle, focused.frame);
+    const line = lineForBlock(state, block);
+    if (line < 0) return null;
+    const item = state.core.blocks[block] && state.core.blocks[block].item;
+    moveSelection(state, line, page, 0);
+    return item && item.name ? item.name : state.core.blocks[block].text;
+  } finally {
+    await focused.handle.dispose().catch(() => {});
+  }
+}
+
 async function activateCurrent(state, page) {
   const item = itemUnderCursor(state);
   if (!item || item.role === 'text') {
@@ -2017,6 +2054,7 @@ async function activateCurrent(state, page) {
   const anchor = anchorFor(state);
   const screen = screenBefore(state);
   const fragment = LINK_ROLES.has(item.role) ? await state.core.fragmentOf(item, page) : null;
+  let focused = null;
 
   try {
     setStatus(state, `Activating "${item.name}"...`);
@@ -2082,7 +2120,17 @@ async function activateCurrent(state, page) {
       return;
     }
 
-    const done = await state.core.activate(item, page);
+    const focusWatch = await watchActivationFocus(state, page, item).catch(() => null);
+    let done;
+    try {
+      done = await state.core.activate(item, page);
+    } catch (err) {
+      if (focusWatch) await cancelActivationFocus(focusWatch).catch(() => {});
+      throw err;
+    }
+    focused = focusWatch
+      ? await focusedByActivation(focusWatch).catch(() => null)
+      : null;
     state.statusMsg = done.status || `Activated: ${item.name}`;
     // If this control says it opens something, follow it: the thing it opens
     // is very often rendered at the end of the document rather than here.
@@ -2102,16 +2150,21 @@ async function activateCurrent(state, page) {
   if (fragment) {
     await refresh(state, page, { anchor });
     repaintList(state, page, screen);
-    const jumped = await jumpToFragment(state, page, fragment);
-    log('activate.fragment', { hash: fragment.slice(0, 60), jumped });
-    setStatus(state, jumped
-      ? `Moved to ${fragment}.`
-      : `"${item.name}" points at ${fragment}, which is not in this view.`);
+    const focusName = await followActivationFocus(state, page, focused);
+    const jumped = focusName || await jumpToFragment(state, page, fragment);
+    log('activate.fragment', { hash: fragment.slice(0, 60), jumped: !!jumped, focused: !!focusName });
+    setStatus(state, focusName
+      ? `Focus moved to "${focusName}".`
+      : (jumped
+        ? `Moved to ${fragment}.`
+        : `"${item.name}" points at ${fragment}, which is not in this view.`));
     return;
   }
 
-  await reportAfterAction(state, page, { previousTexts, previousUrl, anchor, screen });
-  moveToPopup(state, page, item);
+  const followed = await reportAfterAction(state, page, {
+    previousTexts, previousUrl, anchor, screen, focused,
+  });
+  if (!followed) moveToPopup(state, page, item);
 }
 
 // A control that opened something takes the reader to it. Without this the
@@ -2129,10 +2182,18 @@ function moveToPopup(state, page, item) {
 // What happened after something was pressed: a different page, a part of this
 // one rewritten, or nothing at all. Nothing here moves the reader unless the
 // page did — a rebuilt buffer keeps their place by content.
-async function reportAfterAction(state, page, { previousTexts, previousUrl, anchor, screen = null }) {
+async function reportAfterAction(
+  state, page, { previousTexts, previousUrl, anchor, screen = null, focused = null },
+) {
   const navigated = page.url() !== previousUrl;
   await refresh(state, page, navigated ? { resetCursor: true } : { anchor });
 
+  // A handle belongs to the old document after navigation and cannot be a
+  // destination in the new one. Disposal is still owed even though it cannot
+  // be followed.
+  const focusName = navigated
+    ? (focused && focused.handle ? await focused.handle.dispose().catch(() => {}) : null)
+    : await followActivationFocus(state, page, focused);
   const regions = navigated ? [] : noteChanges(state, previousTexts);
   // A different page is a different screen, so there is nothing to compare
   // against and everything to draw. Staying on the same one usually rewrites
@@ -2141,11 +2202,14 @@ async function reportAfterAction(state, page, { previousTexts, previousUrl, anch
   else repaintList(state, page, screen);
 
   if (navigated) setStatus(state, state.statusMsg);
-  else if (regions.length) {
+  else if (focusName) {
+    setStatus(state, `${state.statusMsg} — focus moved to "${focusName}".`);
+  } else if (regions.length) {
     setStatus(state, `${state.statusMsg} — ${regions.length} area${regions.length === 1 ? '' : 's'} changed, press c to jump.`);
   } else {
     setStatus(state, `${state.statusMsg} — no visible change.`);
   }
+  return !!focusName;
 }
 
 // ---------------------------------------------------------------------------
