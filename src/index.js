@@ -563,7 +563,7 @@ function drawAddress(state, page, { force = false, edit = false } = {}) {
 
 function hintText(state) {
   if (state.mode === 'address') return 'Address — Enter: go  Esc: cancel';
-  if (state.mode === 'type') return 'Typing — Esc: stop  Enter: submit';
+  if (state.mode === 'type') return 'Typing — Tab: next control  Esc: stop  Enter: submit';
   if (state.mode === 'control') return 'Control — arrows adjust  Home/End  Esc: stop';
   if (state.mode === 'find') return 'Find — Enter: search  Esc: cancel';
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
@@ -2109,15 +2109,29 @@ async function activateCurrent(state, page) {
 
       const handle = await withTimeout(
         state.core.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating field');
-      await withTimeout(handle.evaluate((el) => el.focus()), ACTION_TIMEOUT_MS, 'Focusing field');
-      const info = await readFieldState(handle);
-      state.mode = 'type';
-      state.typing = { handle, item, text: info.text, caret: info.caret, drawn: null };
-      drawHint(state);
-      state.typing.drawn = typingText(state).text;
-      writeLine(lineRow(state, state.cursor), state.typing.drawn);
-      setStatus(state, `Typing into "${item.name}" — Esc to stop, Enter to submit.`);
-      return;
+      const editable = await handle.evaluate((el) => {
+        const tag = el && el.tagName;
+        return !!el && !el.disabled && !el.readOnly
+          && (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable);
+      });
+
+      // ARIA also calls select-only widgets comboboxes and listboxes. A div or
+      // button carrying that role has no text caret to enter: pressing it is
+      // how its choices open. Fall through to ordinary activation rather than
+      // putting the reader in a typing mode that can never change it.
+      if (!editable) {
+        await handle.dispose().catch(() => {});
+      } else {
+        await withTimeout(handle.evaluate((el) => el.focus()), ACTION_TIMEOUT_MS, 'Focusing field');
+        const info = await readFieldState(handle);
+        state.mode = 'type';
+        state.typing = { handle, item, text: info.text, caret: info.caret, drawn: null };
+        drawHint(state);
+        state.typing.drawn = typingText(state).text;
+        writeLine(lineRow(state, state.cursor), state.typing.drawn);
+        setStatus(state, `Typing into "${item.name}" — Esc to stop, Enter to submit.`);
+        return;
+      }
     }
 
     const focusWatch = await watchActivationFocus(state, page, item).catch(() => null);
@@ -3183,6 +3197,30 @@ async function handleTypeKey(chunk, state, page) {
     await refresh(state, page, { anchor: anchorFor(state) });
     repaintList(state, page, screen);
     setStatus(state, `Stopped typing into "${t.item.name}".`);
+    return;
+  }
+
+  if (keyIs(chunk, 'Tab', state) || keyIs(chunk, 'Shift+Tab', state)) {
+    const direction = keyIs(chunk, 'Shift+Tab', state) ? -1 : 1;
+    const screen = screenBefore(state);
+    const anchor = anchorFor(state);
+    state.mode = 'browse';
+    state.typing = null;
+    await t.handle.dispose().catch(() => {});
+    await refresh(state, page, { anchor });
+    repaintList(state, page, screen);
+
+    const action = direction > 0 ? 'next-focusable' : 'previous-focusable';
+    const spec = QUICK_ACTIONS[action];
+    const found = findQuickNav(state, spec.match, direction);
+    if (!found) {
+      setStatus(state, `No ${direction > 0 ? 'next' : 'previous'} control.`);
+      return;
+    }
+    moveSelection(state, found.line, page, found.col);
+    const block = currentBlock(state);
+    const name = block && block.item ? block.item.name : spec.label;
+    setStatus(state, `${direction > 0 ? 'Next' : 'Previous'} control: ${name}.`);
     return;
   }
 

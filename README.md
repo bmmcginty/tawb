@@ -112,9 +112,12 @@ Useful single-letter navigation keys are `h` for headings, `l` for links, `b`
 for buttons, `f` for form fields, `p` for paragraphs, and `n` for non-link
 text. Uppercase moves backward where available.
 
-Press `Enter` on a text field to edit it. Press `Enter` again to submit or
-`Escape` to stop editing. Press `m` when a site requires a real pointer click,
-for example to grant user activation to a media control or open a file chooser.
+Press `Enter` on a text field to edit it. While editing, `Tab` or `Shift+Tab`
+leaves the field and moves to the next or previous control. Press `Enter` again
+to submit or `Escape` to stop editing. Pressing `Enter` on a native select opens
+its choices; select-only ARIA comboboxes are activated rather than treated as
+text fields. Press `m` when a site requires a real pointer click, for example to
+grant user activation to a media control or open a file chooser.
 
 All browse and editing bindings are configurable. Press `Alt+?`, select an
 action, and replace or add a key. TAWB stores the result in
