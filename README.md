@@ -104,7 +104,8 @@ if you would rather not hear an address on every link. Start with these keys:
 | `Ctrl+T` | Open a new tab |
 | `>` / `<` | Move between tabs |
 | `\` | Switch to another page view |
-| `r` | Refresh TAWB's view of the page |
+| `r` | Rescan TAWB's view without reloading the page |
+| `F5` | Reload the page in the browser |
 | `Alt+?` | Open keyboard help and change bindings |
 | `q` | Quit |
 

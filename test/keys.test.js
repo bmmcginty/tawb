@@ -33,6 +33,8 @@ test('terminfo key sequences are added to the portable fallbacks', () => {
   assert.equal(keys.actionFor('\x14'), 'new-tab');
   assert.equal(keys.nameForSequence('\x1b[999~'), 'PageDown');
   assert.equal(keys.nameForSequence('\x1b[1;3D'), 'Alt+ArrowLeft');
+  assert.equal(keys.actionFor('\x1b[15~'), 'reload-page');
+  assert.equal(keys.nameForSequence('\x1b[15~'), 'F5');
 });
 
 test('replacing and adding bindings resolves conflicts', () => {

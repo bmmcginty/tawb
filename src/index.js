@@ -1830,6 +1830,21 @@ async function handleBrowseKey(chunk, state, page) {
     return;
   }
 
+  if (action === 'reload-page') {
+    const anchor = anchorFor(state);
+    const screen = screenBefore(state);
+    setStatus(state, `Reloading ${page.url()}…`);
+    try {
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await refresh(state, page, { anchor });
+      repaintList(state, page, screen);
+      setStatus(state, `Reloaded ${page.url()}.`);
+    } catch (err) {
+      setStatus(state, `Could not reload the page: ${String(err.message || err).split('\n')[0]}`);
+    }
+    return;
+  }
+
   // Cycle views, keeping the reader on the same content.
   //
   // The place is taken before the switch and put back after it, by element

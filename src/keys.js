@@ -20,6 +20,7 @@ const KEY_DEFINITIONS = {
   PageDown: { cap: 'knp', sequences: ['\x1b[6~'] },
   Home: { cap: 'khome', sequences: ['\x1b[H', '\x1bOH', '\x1b[1~'] },
   End: { cap: 'kend', sequences: ['\x1b[F', '\x1bOF', '\x1b[4~'] },
+  F5: { cap: 'kf5', sequences: ['\x1b[15~', '\x1b[[E'] },
   'Shift+F4': { cap: 'kf16', sequences: ['\x1b[1;2S', '\x1bO2S', '\x1b[14;2~', '\x1b[26~'] },
   // Tab is a control character rather than an escape sequence, so it is named
   // here only to be displayed as Tab instead of Ctrl+I. Shift+Tab has no such
@@ -96,7 +97,8 @@ const ACTIONS = [
   ['find-forward', 'Find forward', ['/']],
   ['find-backward', 'Find backward', ['?']],
   ['repeat-find', 'Repeat find', ['Ctrl+G']],
-  ['refresh', 'Refresh', ['r']],
+  ['refresh', 'Rescan page view', ['r']],
+  ['reload-page', 'Reload page', ['F5']],
   ['cycle-view', 'Cycle view', ['\\']],
   ['keyboard-wizard', 'Keyboard wizard', ['Alt+?']],
   ['next-heading', 'Next heading', ['h']],

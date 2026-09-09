@@ -707,6 +707,18 @@ class CdpPage {
     await this.session.send('Page.stopLoading', {}, { timeout: 2000 });
   }
 
+  async reload({ waitUntil = 'load', timeout = this.navigationTimeout } = {}) {
+    const settled = this.#awaitLifecycle(LIFECYCLE[waitUntil] || 'load', timeout);
+    try {
+      await this.session.send('Page.reload');
+    } catch (err) {
+      settled.cancel();
+      throw err;
+    }
+    await settled.promise;
+    return null;
+  }
+
   async goBack({ waitUntil = 'load', timeout = this.navigationTimeout } = {}) {
     const history = await this.session.send('Page.getNavigationHistory');
     const previous = history.entries[history.currentIndex - 1];

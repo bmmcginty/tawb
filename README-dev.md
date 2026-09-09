@@ -698,7 +698,8 @@ back-tab (`kcbt`) is asked for first and `\e[Z` is the fallback.
 | `>` / `<`| Next / previous tab                                              |
 | `Shift+F4`| Close this tab (never the last one)                              |
 | `c` / `C`| Jump to the next / previous area that changed                    |
-| `r`      | Refresh now                                                      |
+| `r`      | Rescan the current view without reloading the page                |
+| `F5`     | Reload the page in the browser                                   |
 | `L`      | Turn live updating on or off                                     |
 | `=`      | Say where you are (line, column, what kind of thing it is)       |
 | `q`      | Quit                                                             |

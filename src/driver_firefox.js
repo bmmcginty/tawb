@@ -395,6 +395,19 @@ class FirefoxPage {
     }
   }
 
+  async reload({ waitUntil = 'complete' } = {}) {
+    const wait = waitUntil === 'domcontentloaded' ? 'interactive' : 'complete';
+    try {
+      const result = await this.session.send('browsingContext.reload', {
+        context: this.contextId, wait,
+      });
+      if (result && result.url) this.setUrl(result.url);
+    } finally {
+      this._loading = false;
+    }
+    return null;
+  }
+
   // Waits for a navigation that an action may have started.
   //
   // Doing nothing here was a real bug rather than a missing nicety: activation
