@@ -65,6 +65,11 @@ const { openAccessibilityBus } = require('./a11y_bus');
 
 const CANDIDATES = ['firefox', 'firefox-esr', 'librewolf'];
 const STARTUP_TIMEOUT_MS = 45000;
+// Firefox can expose its BiDi port before Marionette is ready to create and
+// run a privileged session, especially on a cold start on a slower machine.
+// Give every Marionette operation the same full minute rather than imposing
+// three different, shorter limits at different points in startup and recovery.
+const MARIONETTE_TIMEOUT_MS = 60000;
 
 // Both agents publish their own key, and either one being true is enough to
 // give the browser away.
@@ -609,7 +614,7 @@ const PIERCE_PARENT_SCRIPT = `
 // params]`. We need three commands and then we are done with it.
 // ---------------------------------------------------------------------------
 
-function marionetteCommand(port, commands, { timeout = 20000 } = {}) {
+function marionetteCommand(port, commands, { timeout = MARIONETTE_TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const socket = net.connect(port, '127.0.0.1');
     let buffer = Buffer.alloc(0);
@@ -720,7 +725,7 @@ async function clearAutomationFlag({ port, stopAfter = false, libraryToken = nul
 // This must only be used against a session whose owner is gone. Marionette
 // cannot tell whose session it is deleting, so knocking while another reader
 // is alive would take the page out from under them.
-function releaseStrandedSession(port, { timeout = 8000 } = {}) {
+function releaseStrandedSession(port, { timeout = MARIONETTE_TIMEOUT_MS } = {}) {
   return new Promise((resolve) => {
     const socket = net.connect(port, '127.0.0.1');
     let settled = false;
@@ -860,7 +865,7 @@ async function launchFirefox({
 
   let cleared = null;
   const clearStarted = Date.now();
-  if (await waitForEndpoint(marionettePort, Date.now() + 15000)) {
+  if (await waitForEndpoint(marionettePort, Date.now() + MARIONETTE_TIMEOUT_MS)) {
     try {
       cleared = await clearAutomationFlag({ port: marionettePort, libraryToken });
       log('firefox.automation.cleared', { ...cleared, portMs, clearMs: Date.now() - clearStarted });
@@ -889,5 +894,5 @@ module.exports = {
   launchFirefox, requireReachableProfile, clearAutomationFlag, releaseStrandedSession, findFirefox,
   defaultProfileDir, writeProfilePrefs, MEDIA_PREFS, PASSWORD_PREFS, ACTIVE_KEYS, CLEAR_SCRIPT,
   PIERCE_PARENT_SCRIPT, PIERCE_CHILD_SCRIPT,
-  libraryParentScript, libraryChildScript, FIREFOX_ROOT_LABELS,
+  libraryParentScript, libraryChildScript, FIREFOX_ROOT_LABELS, MARIONETTE_TIMEOUT_MS,
 };
