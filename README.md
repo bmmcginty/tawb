@@ -189,6 +189,23 @@ file names, `Enter` attaches the file, and `Escape` cancels.
 
 ## Common options
 
+### Defaults for every run
+
+Put command-line options in `$XDG_CONFIG_HOME/tawb/settings`, or
+`~/.config/tawb/settings` when `XDG_CONFIG_HOME` is not set. The file accepts
+the same option syntax as the command line, including quotes, escapes, blank
+lines, and comments beginning with `#`. For example, this selects Firefox and
+leaves it running so later sessions can rejoin it quickly:
+
+```text
+--browser firefox
+--keep-browser
+```
+
+Command-line options are applied after these defaults and therefore take
+precedence. Use `--no-keep-browser` for a single run that should close a browser
+even when the settings file contains `--keep-browser`.
+
 ### Keep or select a profile
 
 TAWB creates its default profile under the XDG data directory, normally

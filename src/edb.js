@@ -5,6 +5,7 @@ const { openDriver, DEFAULT_ENGINE } = require('./driver');
 const { normaliseEndpoint } = require('./browser');
 const { startEdbServer } = require('./edb_server');
 const { log, timed, enableLog } = require('./log');
+const { readSettings } = require('./settings');
 
 // The edbrowse side of tweb: a browser, and an http origin that serves it.
 //
@@ -35,6 +36,7 @@ function parseArgs(argv) {
     else if (arg === '--profile') { options.profile = argv[i + 1] || null; i += 1; }
     else if (arg.startsWith('--profile=')) options.profile = arg.slice('--profile='.length);
     else if (arg === '--keep-browser') options.keepBrowser = true;
+    else if (arg === '--no-keep-browser') options.keepBrowser = false;
     else if (arg === '--log') options.log = true;
     else if (arg === '--port') { options.port = Number(argv[i + 1] || 0); i += 1; }
     else if (arg.startsWith('--port=')) options.port = Number(arg.slice('--port='.length));
@@ -44,7 +46,7 @@ function parseArgs(argv) {
 }
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = parseArgs([...readSettings(), ...process.argv.slice(2)]);
   const logPath = args.log ? enableLog() : null;
   log('edb.start', { engine: args.engine, logPath });
 

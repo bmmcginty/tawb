@@ -23,6 +23,7 @@ const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
 const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 const { entryLine, matches, shortAddress, KIND_LABELS } = require('./library');
 const { resolveAddress, DEFAULT_SEARCH } = require('./address');
+const { readSettings } = require('./settings');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -41,6 +42,9 @@ const path = require('node:path');
 // --short-links says a link that stays on this site as its path alone. Off by
 // default, because a graphical browser's status bar shows the whole address
 // and this is meant to read like one.
+// Options in the settings file are read first, so an explicit command-line
+// option can replace them. --no-keep-browser provides that escape hatch for
+// the otherwise one-way --keep-browser switch.
 const OFF = new Set(['off', 'no', 'false', '0']);
 const ON = new Set(['on', 'yes', 'true', '1']);
 
@@ -58,6 +62,7 @@ function parseArgs(argv, env = process.env) {
     else if (arg === '--profile') { options.profile = argv[i + 1] || null; i += 1; }
     else if (arg.startsWith('--profile=')) { options.profile = arg.slice('--profile='.length); }
     else if (arg === '--keep-browser') { options.keepBrowser = true; }
+    else if (arg === '--no-keep-browser') { options.keepBrowser = false; }
     else if (arg === '--keyboard') { options.keyboard = true; }
     else if (arg === '--log') { options.log = true; }
     else if (arg === '--link-address') { options.linkAddress = true; }
@@ -73,7 +78,7 @@ function parseArgs(argv, env = process.env) {
   return options;
 }
 
-const ARGS = parseArgs(process.argv.slice(2));
+const ARGS = parseArgs([...readSettings(), ...process.argv.slice(2)]);
 // What is typed on the command line is read the same way as what is typed in
 // the address bar: `tawb wikipedia.org` is an address, `tawb -- braille dots`
 // is not one, and neither should have to carry a scheme to work.
