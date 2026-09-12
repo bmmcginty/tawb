@@ -154,12 +154,28 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
   let sessionAddress = sessionBusAddress();
   let daemon = null;
   const env = {};
+  const startOwnBus = async () => {
+    const started = await startSessionBus({ log });
+    sessionAddress = started.address;
+    daemon = started.child;
+    // Override an exported address too. A stale DBUS_SESSION_BUS_ADDRESS is
+    // indistinguishable from a desktop bus until connecting to it fails, and
+    // passing that stale value through would leave Firefox describing no
+    // permission prompts at all.
+    env.DBUS_SESSION_BUS_ADDRESS = sessionAddress;
+    // AT-SPI clients can use the accessibility bus directly. This also avoids
+    // relying on a toolkit to discover our service through a session bus that
+    // exists only for this browser.
+    env.AT_SPI_BUS_ADDRESS = sessionAddress;
+    // Firefox's GTK accessibility bridge does not start merely because an
+    // isolated bus answers ScreenReaderEnabled. This is the standard GTK
+    // startup signal; without it Firefox never registers an AT-SPI tree and
+    // microphone permission doorhangers remain invisible to the reader.
+    env.GNOME_ACCESSIBILITY = '1';
+  };
   if (!sessionAddress) {
     try {
-      const started = await startSessionBus({ log });
-      sessionAddress = started.address;
-      daemon = started.child;
-      env.DBUS_SESSION_BUS_ADDRESS = sessionAddress;
+      await startOwnBus();
     } catch (err) {
       return { ...idle, reason: String(err.message || err) };
     }
@@ -176,32 +192,55 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
   try {
     session = await connect(sessionAddress);
   } catch (err) {
-    await stop(null);
-    return { ...idle, reason: String(err.message || err) };
+    // Login shells can retain DBUS_SESSION_BUS_ADDRESS after their desktop
+    // session has ended. Treat an address that cannot be reached the same as
+    // no address, and give the browser a private bus instead.
+    if (daemon) {
+      await stop(null);
+      return { ...idle, reason: String(err.message || err) };
+    }
+    log('a11y.bus.unreachable', {
+      address: sessionAddress, error: String(err.message || err).slice(0, 160),
+    });
+    try {
+      await startOwnBus();
+      session = await connect(sessionAddress);
+    } catch (fallbackError) {
+      await stop(null);
+      return { ...idle, reason: String(fallbackError.message || fallbackError) };
+    }
   }
 
   // Somebody else's accessibility bus, which is the desktop case: use it and
-  // hold nothing of our own.
-  try {
-    const [address] = await session.call({
-      destination: A11Y_NAME, path: A11Y_PATH, iface: A11Y_INTERFACE, member: 'GetAddress',
-    });
-    session.close();
-    log('a11y.bus.found', { address });
-    return {
-      available: true,
-      address,
-      env,
-      reason: null,
-      close: async () => { await stop(null); },
-    };
-  } catch {
-    // Nobody is answering for it, so we will.
+  // hold nothing of our own. Do not ask a private bus first: its standard
+  // service directories may contain an AT-SPI launcher inherited from the
+  // machine, and activating that launcher can hand back the dead desktop
+  // socket that made us start a private bus in the first place.
+  if (!daemon) {
+    try {
+      const [address] = await session.call({
+        destination: A11Y_NAME, path: A11Y_PATH, iface: A11Y_INTERFACE, member: 'GetAddress',
+      });
+      session.close();
+      log('a11y.bus.found', { address });
+      return {
+        available: true,
+        address,
+        env,
+        reason: null,
+        close: async () => { await stop(null); },
+      };
+    } catch {
+      // Nobody is answering for it, so we will.
+    }
   }
 
   let owned;
   try {
-    owned = await session.requestName(A11Y_NAME);
+    // Do not queue behind an accessibility service that appeared between the
+    // probe above and this request. A queued owner could unexpectedly replace
+    // the desktop service later.
+    owned = await session.requestName(A11Y_NAME, 4); // DBUS_NAME_FLAG_DO_NOT_QUEUE
   } catch (err) {
     await stop(session);
     return { ...idle, reason: String(err.message || err) };

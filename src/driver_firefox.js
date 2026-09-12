@@ -890,9 +890,9 @@ async function openFirefox({
     // inside the browser window, Chromium beside it, and native_prompt.js
     // watches both places.
     //
-    // Unlike Chromium, Firefox needs no flag for this. It turns accessibility
-    // on by itself when a bus says it is wanted, which means this works for a
-    // browser reached with --connect too.
+    // Unlike Chromium, Firefox needs no command-line flag for this. A browser
+    // we start receives the GTK accessibility signal with its bus; a browser
+    // reached with --connect must already be publishing its accessibility tree.
     async watchNativeDialogs(handler) {
       nativeWatch = await armNativeDialogs({
         bus: a11y, pid: child ? child.pid : null, names: BROWSER_NAMES, onDialog: handler, log,

@@ -771,9 +771,9 @@ async function launchFirefox({
   // startup difference against Chromium, which has been quietly rejoining a
   // running browser in 50ms while Firefox cold-started every time.
   // Somewhere for the browser to describe its own windows to. Firefox needs
-  // no flag for this — unlike Chromium it turns accessibility on by itself
-  // when there is a bus saying it is wanted — so this is only about there
-  // being a bus at all. See a11y_bus.js and native_prompt.js.
+  // no command-line flag for this, but a private headless bus also gives its
+  // GTK bridge the standard GNOME_ACCESSIBILITY startup signal; otherwise no
+  // AT-SPI tree is registered. See a11y_bus.js and native_prompt.js.
   const a11y = await openAccessibilityBus({ log });
   if (!a11y.available) log('a11y.unavailable', { reason: a11y.reason });
 

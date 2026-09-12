@@ -13,7 +13,7 @@ const assert = require('node:assert');
 
 const { connect } = require('../src/dbus');
 const {
-  startSessionBus, serveAccessibilityBus, sessionBusAddress, A11Y_NAME,
+  openAccessibilityBus, startSessionBus, serveAccessibilityBus, sessionBusAddress, A11Y_NAME,
 } = require('../src/a11y_bus');
 
 // dbus-daemon is not a dependency of this program, it is a thing a machine
@@ -88,6 +88,31 @@ test('the accessibility bus we serve answers what a browser asks it', async (t) 
     if (client) client.close();
     if (server) server.close();
     started.child.kill('SIGTERM');
+  }
+});
+
+test('an unreachable exported bus is replaced with a private accessibility bus', async (t) => {
+  const before = process.env.DBUS_SESSION_BUS_ADDRESS;
+  process.env.DBUS_SESSION_BUS_ADDRESS = 'unix:path=/tmp/tawb-session-bus-that-does-not-exist';
+  let bus;
+  try {
+    bus = await openAccessibilityBus();
+    if (!bus.available && /dbus-daemon could not be started/.test(bus.reason || '')) {
+      t.skip(bus.reason);
+      return;
+    }
+    assert.equal(bus.available, true, bus.reason);
+    assert.match(bus.address, /^unix:/);
+    assert.equal(bus.env.DBUS_SESSION_BUS_ADDRESS, bus.address);
+    assert.equal(bus.env.AT_SPI_BUS_ADDRESS, bus.address);
+    assert.equal(bus.env.GNOME_ACCESSIBILITY, '1');
+
+    const client = await connect(bus.address);
+    client.close();
+  } finally {
+    if (bus) await bus.close();
+    if (before === undefined) delete process.env.DBUS_SESSION_BUS_ADDRESS;
+    else process.env.DBUS_SESSION_BUS_ADDRESS = before;
   }
 });
 

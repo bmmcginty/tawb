@@ -25,6 +25,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
+const fs = require('node:fs');
 
 const { tempDir } = require('../tmpdir');
 const { openDriver } = require('../../src/driver');
@@ -39,10 +40,10 @@ const PAGE = `<!doctype html><meta charset="utf-8"><title>asking</title>
   setTimeout(() => { alert(${JSON.stringify(MESSAGE)}); window.answered = true; }, 300);
 </script>`;
 
-async function serve() {
+async function serve(content = PAGE) {
   const server = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-    res.end(PAGE);
+    res.end(content);
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   return { server, url: `http://127.0.0.1:${server.address().port}/` };
@@ -57,6 +58,46 @@ const waitFor = async (condition, ms = 15000, each = null) => {
   }
   return false;
 };
+
+test('a Firefox microphone permission doorhanger reaches the reader', async (t) => {
+  if (ENGINE !== 'firefox') {
+    t.skip('this is Firefox browser chrome');
+    return;
+  }
+  // Supply a virtual device so the test reaches permission checking on
+  // machines without audio hardware. Firefox still asks before opening it.
+  fs.writeFileSync(
+    `${profile}/user.js`, 'user_pref("media.navigator.streams.fake", true);\n',
+  );
+  const asking = `<!doctype html><meta charset="utf-8"><title>microphone</title>
+    <button id="ask">Join</button>
+    <script>ask.onclick = () => navigator.mediaDevices.getUserMedia({ audio: true });</script>`;
+  const { server, url } = await serve(asking);
+  const driver = await openDriver({ engine: ENGINE, profile, broker: false, log: () => {} });
+  let watch = null;
+  try {
+    const dialogs = [];
+    watch = await driver.watchNativeDialogs(async (dialog) => {
+      dialogs.push(dialog);
+      const block = dialog.buttons.find((button) => /^block$/i.test(button.name));
+      if (block) await dialog.press(block);
+    });
+    assert.ok(watch, 'Firefox exposed no accessibility tree');
+
+    const page = driver.context.pages()[0] || await driver.context.newPage();
+    await page.goto(url);
+    await page.evaluate(() => document.querySelector('#ask').click());
+    assert.ok(await waitFor(() => dialogs.length > 0), 'the microphone prompt was never noticed');
+
+    const dialog = dialogs[0];
+    assert.ok(dialog.lines.some((line) => /use your microphone/i.test(line)));
+    assert.deepEqual(dialog.buttons.map((button) => button.name), ['Block', 'Allow']);
+  } finally {
+    if (watch) watch.stop();
+    await driver.close();
+    server.close();
+  }
+});
 
 test('the browser asking something in a window of its own reaches the reader', async (t) => {
   if (ENGINE !== 'chromium') {
