@@ -17,9 +17,10 @@ const { CdpError } = require('./cdp');
 // **A frame is not always answered by the tab's session.** A cross-origin
 // iframe in Chrome is a separate process and a separate target, with a
 // session of its own. This is the one piece of Playwright's Chromium support
-// that was genuinely load-bearing, and it is handled here by auto-attaching
-// to those targets and letting each frame say which session answers for it.
-// A same-process frame is answered by the tab's own session.
+// that was genuinely load-bearing, and it is handled here by discovering and
+// explicitly attaching to those targets, then letting each frame say which
+// session answers for it. A same-process frame is answered by the tab's own
+// session.
 //
 // **Input coordinates are always the top-level viewport's.** A tab session's
 // DOM.getContentQuads already reports those coordinates, including for its

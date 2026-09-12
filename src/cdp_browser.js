@@ -6,16 +6,17 @@ const { CdpPage, asFunctionDeclaration } = require('./cdp_page');
 // Getting from a debugging port to a list of tabs, and keeping that list
 // right while the reader uses the browser.
 //
-// The browser is auto-attached to in flat mode, which means every target it
-// has — and every one it opens from now on — arrives as a session on the one
-// socket. Filtering those to `type: 'page'` is what "a tab" means here;
-// workers, extension backgrounds and the browser's own DevTools windows are
-// targets too and are left alone.
+// The browser is auto-attached to in flat mode for page targets, which means
+// every tab it has — and every one it opens from now on — arrives as a session
+// on the one socket.
 //
-// Each tab is then auto-attached to in turn, which is how out-of-process
-// iframes are reached: a cross-origin frame in Chrome is a target of its own,
-// and without this it would be a document nothing could evaluate in. That is
-// the piece of Playwright's Chromium support that actually mattered.
+// Out-of-process iframes are discovered and explicitly attached instead of
+// recursively auto-attached from their page. Chromium's recursive
+// Target.setAutoAttach does more than its target filter says: it asks Blink to
+// report every child worker before filtering the resulting targets. That
+// changes worker startup in a way Cloudflare detects even when workers are
+// excluded and never attached. Browser-level discovery has no renderer-side
+// effect, and the explicit iframe session goes through the same wiring below.
 
 const NEW_TAB_TIMEOUT_MS = 10000;
 
@@ -26,12 +27,6 @@ async function enableSession(session) {
   await session.send('Page.enable');
   await session.send('Runtime.enable');
   await session.send('Page.setLifecycleEventsEnabled', { enabled: true });
-  // Playwright pauses newly attached renderers until their listeners, frame
-  // tree and init scripts are in place. Running immediately loses the race on
-  // popups whose own script changes the document before attachment finishes.
-  await session.send('Target.setAutoAttach', {
-    autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
-  });
 }
 
 // Wire one session into a page: its documents, its execution contexts, and
@@ -48,6 +43,7 @@ async function wireSession(browserContext, page, session, { root }) {
 
   session.on('Page.frameAttached', ({ frameId, parentFrameId }) => {
     page.ensureFrame(frameId, parentFrameId || null);
+    browserContext.attachDiscoveredFrames().catch(() => {});
   });
   session.on('Page.frameNavigated', ({ frame }) => {
     const known = page.ensureFrame(frame.id, frame.parentId || null);
@@ -83,33 +79,6 @@ async function wireSession(browserContext, page, session, { root }) {
     });
   }
 
-  session.on('Target.attachedToTarget', (params) => {
-    const info = params.targetInfo || {};
-    const child = session.connection.sessionFor(params.sessionId, info.targetId);
-    if (info.type !== 'iframe') {
-      // Auto-attach includes workers and other auxiliary targets. Playwright
-      // either owns those explicitly or detaches them; this implementation
-      // has no surface for them, so do not leave an attachment accumulating.
-      child.detach().catch(() => {});
-      return;
-    }
-    wireSession(browserContext, page, child, { root: false })
-      .catch(() => { /* the frame went away while we were attaching to it */ });
-  });
-
-  // In flat mode a sub-target's detachment is announced to its parent. This
-  // is the only word we get that a cross-origin iframe's process has gone,
-  // and without it the document it was answering for stays in the frame list
-  // for ever, unreadable.
-  session.on('Target.detachedFromTarget', ({ sessionId }) => {
-    for (const wired of page.sessions) {
-      if (wired.sessionId === sessionId) {
-        page.dropSession(wired);
-        return;
-      }
-    }
-  });
-
   await enableSession(session);
 
   // Anything the context is meant to install in every document. Applied per
@@ -137,11 +106,17 @@ async function wireSession(browserContext, page, session, { root }) {
   // are same-process and answered by it, which walking up the parent chain
   // works out on its own.
   record(tree.frameTree, root ? null : session);
+  // Discovery and Page.frameAttached are independent event streams. Whichever
+  // one arrived second now has enough information to attach this frame. Do not
+  // await here: an iframe's own attachment is still the promise recorded by
+  // attachDiscoveredFrames, and waiting on that promise from inside itself
+  // would deadlock.
+  browserContext.attachDiscoveredFrames().catch(() => {});
 
   if (root) await seedLoadState(page);
 
-  // Paired with waitForDebuggerOnStart above. This is deliberately last: no
-  // page script runs before all of the state needed to observe it is ready.
+  // Top-level pages still arrive paused from the browser's auto-attacher. An
+  // explicitly attached iframe was never paused, so this is harmless there.
   await session.send('Runtime.runIfWaitingForDebugger');
 }
 
@@ -176,6 +151,11 @@ class CdpBrowserContext {
     this.pagesBySession = new Map();
     this.initScripts = [];
     this.newPageHandlers = [];
+    // Browser-level discovery reports OOPIF targets without touching the
+    // renderer that created them. Target ids are frame ids, and parentFrameId
+    // assigns each one to a page without guessing from its URL.
+    this.discoveredFrames = new Map();
+    this.frameAttachments = new Map();
     // Tabs this reader opened for itself — the WebUI page one of the browser's
     // own lists is read from. They are not the reader's tabs: they are not in
     // the tab list, they are not announced as having opened, and they are
@@ -200,6 +180,73 @@ class CdpBrowserContext {
 
   pageForTarget(targetId) {
     return this.pagesByTarget.get(targetId) || null;
+  }
+
+  pageForFrame(info) {
+    for (const page of this.pagesByTarget.values()) {
+      if (page.frameById(info.targetId)
+        || (info.parentFrameId && page.frameById(info.parentFrameId))) return page;
+    }
+    return null;
+  }
+
+  discoverFrame(info) {
+    if (!info || info.type !== 'iframe' || !info.targetId) return Promise.resolve();
+    this.discoveredFrames.set(info.targetId, {
+      ...(this.discoveredFrames.get(info.targetId) || {}), ...info,
+    });
+    return this.attachDiscoveredFrames();
+  }
+
+  forgetDiscoveredFrame(targetId) {
+    this.discoveredFrames.delete(targetId);
+  }
+
+  // Attach every discovered OOPIF whose parent page is known. Discovery can
+  // beat Page.frameAttached or vice versa, so both paths call this and an
+  // unmatched target simply waits for the other event.
+  async attachDiscoveredFrames() {
+    const pending = [];
+    for (const [targetId, info] of this.discoveredFrames) {
+      const inFlight = this.frameAttachments.get(targetId);
+      if (inFlight) {
+        pending.push(inFlight);
+        continue;
+      }
+      const page = this.pageForFrame(info);
+      if (!page) continue;
+      const known = page.frameById(targetId);
+      if (known && known.ownTarget()) {
+        this.discoveredFrames.delete(targetId);
+        continue;
+      }
+      page.ensureFrame(targetId, info.parentFrameId || null);
+      const attaching = this.connection.attach(targetId)
+        .then((session) => wireSession(this, page, session, { root: false }))
+        // A short-lived frame can disappear between discovery and attachment.
+        // It contributed no document, so there is nothing stale to retain.
+        .catch(() => {})
+        .finally(() => {
+          this.frameAttachments.delete(targetId);
+          this.discoveredFrames.delete(targetId);
+          // Attaching this frame may have supplied the parent of a nested one.
+          this.attachDiscoveredFrames().catch(() => {});
+        });
+      this.frameAttachments.set(targetId, attaching);
+      pending.push(attaching);
+    }
+    await Promise.all(pending);
+  }
+
+  dropFrameSession(sessionId) {
+    for (const page of this.pagesByTarget.values()) {
+      for (const session of page.sessions) {
+        if (session.sessionId !== sessionId || session === page.session) continue;
+        page.dropSession(session);
+        return true;
+      }
+    }
+    return false;
   }
 
   async adopt(sessionId, targetId) {
@@ -349,6 +396,9 @@ async function attachToBrowser(connection) {
 
   root.on('Target.attachedToTarget', (params) => {
     const info = params.targetInfo || {};
+    // Explicit iframe attachment raises this event on the browser session too.
+    // discoverFrame owns that session and wires it after attachToTarget replies.
+    if (info.type === 'iframe') return;
     if (info.type !== 'page') {
       connection.sessionFor(params.sessionId, info.targetId).detach().catch(() => {});
       return;
@@ -368,10 +418,22 @@ async function attachToBrowser(connection) {
     attached.push(ready);
   });
 
-  root.on('Target.detachedFromTarget', (params) => context.forget(params.sessionId));
+  root.on('Target.detachedFromTarget', (params) => {
+    if (!context.forget(params.sessionId)) context.dropFrameSession(params.sessionId);
+  });
+  root.on('Target.targetCreated', ({ targetInfo }) => {
+    context.discoverFrame(targetInfo).catch(() => {});
+  });
+  root.on('Target.targetInfoChanged', ({ targetInfo }) => {
+    context.discoverFrame(targetInfo).catch(() => {});
+  });
+  root.on('Target.targetDestroyed', ({ targetId }) => context.forgetDiscoveredFrame(targetId));
 
   await root.send('Target.setAutoAttach', {
     autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
+    // Page targets are the tabs. Asking for everything would attach workers
+    // and browser UI that this driver immediately discards.
+    filter: [{ type: 'page' }],
   });
 
   // Auto-attach reports the targets that already exist, but it does so as
@@ -380,6 +442,14 @@ async function attachToBrowser(connection) {
   // makes pages() answer correctly on the first call.
   await Promise.all(attached);
   settled = true;
+
+  // Unlike recursive auto-attachment, discovery creates no renderer-side
+  // worker plumbing. Existing iframe targets are announced while this command
+  // is in flight; new ones arrive through the listeners above.
+  await root.send('Target.setDiscoverTargets', {
+    discover: true, filter: [{ type: 'iframe' }],
+  });
+  await context.attachDiscoveredFrames();
 
   return browser;
 }
