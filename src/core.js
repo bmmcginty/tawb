@@ -219,8 +219,9 @@ function withTimeout(promise, ms, label) {
 
 // Reads the field's live text + caret straight from the DOM. Real
 // <input>/<textarea> elements expose selectionStart, which is the source of
-// truth (handles autoformatting, IME, etc.). contenteditable/custom widgets
-// don't, so we fall back to textContent and track the caret locally.
+// truth (handles autoformatting, IME, etc.). An HTML editing host instead has
+// a DOM Selection whose endpoint can be inside any nested text node, so its
+// rendered tree is flattened while recording where that endpoint falls.
 //
 // Takes an ElementHandle, not a Locator: a locator re-resolves by role+name
 // on every call, and a field's accessible name can change while you type
@@ -235,6 +236,58 @@ async function readFieldState(handle) {
         native: true,
       };
     }
+
+    if (el && el.isContentEditable) {
+      const selection = el.ownerDocument.getSelection();
+      const pointNode = selection && selection.focusNode && el.contains(selection.focusNode)
+        ? selection.focusNode : null;
+      const pointOffset = pointNode ? selection.focusOffset : 0;
+      let text = '';
+      let caret = null;
+
+      const appendBreak = () => {
+        if (text && !text.endsWith('\n')) text += '\n';
+      };
+      const walk = (node, root = false) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          if (node === pointNode) {
+            caret = text.length + Math.min(Math.max(pointOffset, 0), node.data.length);
+          }
+          text += node.data;
+          return;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        if (node.tagName === 'BR') {
+          if (node === pointNode) caret = text.length;
+          text += '\n';
+          return;
+        }
+
+        const display = root ? '' : getComputedStyle(node).display;
+        const block = !root && (display === 'block' || display === 'flex'
+          || display === 'grid' || display === 'list-item' || display.startsWith('table'));
+        if (block) appendBreak();
+        const children = Array.from(node.childNodes);
+        for (let i = 0; i <= children.length; i += 1) {
+          if (node === pointNode && pointOffset === i) caret = text.length;
+          if (i < children.length) walk(children[i]);
+        }
+        if (block && text && !text.endsWith('\n')) text += '\n';
+      };
+
+      walk(el, true);
+      // A block's closing boundary separates it from a following block; it is
+      // not part of the editor's value when that block is the final child.
+      if (text.endsWith('\n') && (!el.lastChild || el.lastChild.tagName !== 'BR')) {
+        text = text.slice(0, -1);
+      }
+      return {
+        text,
+        caret: caret == null ? text.length : Math.min(caret, text.length),
+        native: true,
+      };
+    }
+
     const text = el.textContent || '';
     return { text, caret: text.length, native: false };
   });

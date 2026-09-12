@@ -281,10 +281,19 @@ function extractAxItems(options) {
     return undefined;
   };
 
+  // contenteditable is inherited. Only the outer element whose parent is not
+  // editable is an editing host; treating every descendant as a field would
+  // turn one rich-text editor into a field per span and paragraph.
+  const editingHost = (el) => !!el.isContentEditable
+    && !(el.parentElement && el.parentElement.isContentEditable);
+
   const roleOf = (el) => {
     const explicit = clean(el.getAttribute('role')).split(' ')[0];
     if (explicit) return explicit;
     const tag = el.tagName.toLowerCase();
+    // HTML gives an editing host textbox behaviour without requiring an ARIA
+    // role. ARIA may refine that role when the author supplied one, above.
+    if (editingHost(el)) return 'textbox';
     if (tag === 'input') {
       const type = (el.getAttribute('type') || 'text').toLowerCase();
       return Object.prototype.hasOwnProperty.call(INPUT_ROLES, type)
@@ -677,6 +686,7 @@ function extractAxItems(options) {
         autofilled: autofilledOf(el),
         expanded: expandedOf(el),
         controls: opensPopup(el),
+        editable: editingHost(el) ? 'content' : undefined,
         axIndex: register(el),
       }, el));
 

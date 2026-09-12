@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>contenteditable test</title>
+<h1>Editors</h1>
+<div id="message" contenteditable aria-label="Message">alpha <strong>beta</strong> <span contenteditable="false">fixed</span> gamma</div>
+<div id="notes" contenteditable="plaintext-only" aria-label="Notes">plain notes</div>
+<p id="ordinary">This is ordinary page text, not an editor.</p>
+<output id="events">0 input events</output>
+<script>
+  let inputs = 0;
+  for (const editor of document.querySelectorAll('[contenteditable]')) {
+    editor.addEventListener('input', () => {
+      inputs += 1;
+      events.textContent = `${inputs} input events`;
+    });
+  }
+</script>

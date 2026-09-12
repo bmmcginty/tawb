@@ -133,8 +133,17 @@ function extractVisible() {
       if (text) emit({ kind: 'link', text, href, index: register(), block: true });
       return;
     }
-    if (shown && (tag === 'input' || tag === 'textarea' || tag === 'select')) {
-      emit({ kind: 'field', text: labelFor(el), value: el.value || '', index: register(), block: true });
+    const editingHost = el.isContentEditable
+      && !(el.parentElement && el.parentElement.isContentEditable);
+    if (shown && (tag === 'input' || tag === 'textarea' || tag === 'select' || editingHost)) {
+      emit({
+        kind: 'field',
+        text: labelFor(el),
+        value: editingHost ? own : (el.value || ''),
+        editable: editingHost ? 'content' : undefined,
+        index: register(),
+        block: true,
+      });
       return;
     }
     if (shown && /^h[1-6]$/.test(tag)) {
@@ -245,6 +254,7 @@ async function snapshotRenderBlocks(target) {
       name: entry.text,
       level: entry.level,
       href: entry.href,
+      editable: entry.editable,
       renderIndex: entry.index,
       frame,
     },
