@@ -78,6 +78,21 @@ function parseArgs(argv, env = process.env) {
   return options;
 }
 
+// npm runs package scripts from the package directory, but preserves the
+// directory where the person invoked it as INIT_CWD. Restore that directory
+// before opening the browser so relative upload paths and the browser process
+// belong to where TAWB was launched, not where its source happens to live.
+function restoreInvocationDirectory(env = process.env, chdir = process.chdir) {
+  const invokedFrom = env.INIT_CWD;
+  if (!invokedFrom || !path.isAbsolute(invokedFrom)) return false;
+  try {
+    chdir(invokedFrom);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const ARGS = parseArgs([...readSettings(), ...process.argv.slice(2)]);
 // What is typed on the command line is read the same way as what is typed in
 // the address bar: `tawb wikipedia.org` is an address, `tawb -- braille dots`
@@ -3777,6 +3792,8 @@ async function shutdown(code, driver) {
 }
 
 if (require.main === module) {
+  restoreInvocationDirectory();
+
   // Set as soon as the driver exists, so a crash during startup still tidies
   // up whatever was already opened.
   let openDriverRef = null;
@@ -3819,7 +3836,7 @@ module.exports = {
   restoreHistoryPlace, acknowledgeHistoryNavigation, traversePageHistory, moveInHistory,
   switchToTab, focusAddressBar, openNewTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
-  renderRow, parseArgs, onExternalNavigation, readTitle, drawTitle,
+  renderRow, parseArgs, restoreInvocationDirectory, onExternalNavigation, readTitle, drawTitle,
   navigate, navigateInterruptibly, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
   openLibrary, closeLibrary, showLibrary, handleLibraryKey,

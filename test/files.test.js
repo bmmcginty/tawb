@@ -15,8 +15,11 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
-const { expandPath, completePath, fileToAttach, fileSize, attachedNote } = require('../src/index');
+const {
+  expandPath, completePath, fileToAttach, fileSize, attachedNote, restoreInvocationDirectory,
+} = require('../src/index');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tawb-files-'));
 fs.writeFileSync(path.join(dir, 'report.txt'), 'a report\n');
@@ -25,6 +28,28 @@ fs.writeFileSync(path.join(dir, 'photo.jpg'), 'not really a photo');
 fs.mkdirSync(path.join(dir, 'archive'));
 
 test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+test('npm launch restores the directory where the reader invoked tawb', () => {
+  const changed = [];
+  assert.equal(restoreInvocationDirectory(
+    { INIT_CWD: dir }, (target) => changed.push(target)), true);
+  assert.deepEqual(changed, [dir]);
+  assert.equal(restoreInvocationDirectory({ INIT_CWD: 'relative' }, () => {}), false);
+  assert.equal(restoreInvocationDirectory({ INIT_CWD: dir }, () => { throw new Error('gone'); }), false);
+
+  // The real process path, in a child so changing directory cannot interfere
+  // with other tests: relative upload names resolve from INIT_CWD afterwards.
+  const entry = path.join(__dirname, '..', 'src', 'index.js');
+  const resolved = execFileSync(process.execPath, [
+    '-e',
+    `const tawb = require(${JSON.stringify(entry)}); tawb.restoreInvocationDirectory(); process.stdout.write(tawb.expandPath('upload.txt'));`,
+  ], {
+    cwd: path.join(__dirname, '..'),
+    env: { ...process.env, INIT_CWD: dir },
+    encoding: 'utf8',
+  });
+  assert.equal(resolved, path.join(dir, 'upload.txt'));
+});
 
 test('a path is read the way the reader typed it', () => {
   assert.equal(expandPath('~'), os.homedir());

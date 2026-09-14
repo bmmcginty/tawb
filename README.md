@@ -58,22 +58,29 @@ Clone the repository and start with Chromium, the default engine:
 ```sh
 git clone https://github.com/bmmcginty/tawb.git
 cd tawb
-npm start -- https://example.com
+npm link
+cd /where/you/keep/files
+tawb https://example.com
 ```
+
+The `tawb` command keeps the directory where it was invoked as its working
+directory, so relative paths in an upload prompt begin there rather than in the
+source checkout. `npm start -- https://example.com` remains available when
+working in the checkout.
 
 Use Firefox instead:
 
 ```sh
-npm start -- --browser firefox https://example.com
-# Equivalent shorthand:
+tawb --browser firefox https://example.com
+# From the source checkout:
 npm run firefox -- https://example.com
 ```
 
 You may omit the scheme or enter search terms:
 
 ```sh
-npm start -- wikipedia.org
-npm start -- "linux braille displays"
+tawb wikipedia.org
+tawb "linux braille displays"
 ```
 
 With no address, TAWB opens Google. Searches entered in the address bar use
