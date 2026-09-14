@@ -151,6 +151,29 @@ const EDITING_ACTIONS = new Set([
   ...ACTIONS.map((action) => action.id).filter((id) => id.startsWith('edit-')),
 ]);
 
+// Which keyboards an action belongs to. An `edit-` action exists only while a
+// field is being edited. Every other action exists only while a page is being
+// read. The four movements named in EDITING_ACTIONS above belong to both, on
+// purpose.
+//
+// Sharing a key across the two keyboards is not a clash and must not be
+// reported as one. Ctrl+D files a bookmark while reading and deletes a
+// character while typing; Alt+D downloads a link while reading and deletes the
+// next word while typing. Neither pair can be pressed in the other's mode, so
+// neither pair takes anything from the other. The wizard asks about a key only
+// when the two actions could actually be reached by the same press.
+function keyboardsFor(id) {
+  const keyboards = [];
+  if (!id.startsWith('edit-')) keyboards.push('browse');
+  if (EDITING_ACTIONS.has(id)) keyboards.push('edit');
+  return keyboards;
+}
+
+function sharesKeyboard(id, otherId) {
+  const keyboards = keyboardsFor(otherId);
+  return keyboardsFor(id).some((keyboard) => keyboards.includes(keyboard));
+}
+
 function configPath(env = process.env, home = os.homedir()) {
   const base = env.XDG_CONFIG_HOME || path.join(home, '.config');
   return path.join(base, 'tawb', 'keys.json');
@@ -249,17 +272,33 @@ class Keymap {
     }
   }
 
+  // Each action is written into the map of every keyboard it belongs to, and
+  // into no other. An `edit-` action never reaches the browsing map, so a key
+  // it shares with a browsing action resolves to the browsing action while
+  // reading and to the `edit-` action while typing, whichever order the two
+  // happen to appear in ACTIONS.
   rebuild() {
     this.sequenceActions = new Map();
     this.editingActions = new Map();
     for (const action of this.actions) {
+      const keyboards = keyboardsFor(action.id);
       for (const binding of action.bindings) {
         for (const sequence of this.sequencesFor(binding)) {
-          this.sequenceActions.set(sequence, action.id);
-          if (EDITING_ACTIONS.has(action.id)) this.editingActions.set(sequence, action.id);
+          if (keyboards.includes('browse')) this.sequenceActions.set(sequence, action.id);
+          if (keyboards.includes('edit')) this.editingActions.set(sequence, action.id);
         }
       }
     }
+  }
+
+  // The sequence maps an action can be found in, which are the maps to search
+  // when asking what else already holds one of its keys.
+  mapsFor(id) {
+    const keyboards = keyboardsFor(id);
+    const maps = [];
+    if (keyboards.includes('browse')) maps.push(this.sequenceActions);
+    if (keyboards.includes('edit')) maps.push(this.editingActions);
+    return maps;
   }
 
   actionFor(sequence) { return this.sequenceActions.get(sequence) || null; }
@@ -271,11 +310,19 @@ class Keymap {
   // Which other actions would lose a binding if this one took the key. The
   // wizard asks before taking a key away from something the reader is still
   // using, so it has to know what it would be taking it from.
+  //
+  // Only the keyboards this action belongs to are searched. An action that is
+  // reachable solely while editing loses nothing to a browsing action taking
+  // the same key, so it is not named as a clash and the reader is not asked
+  // about it.
   conflicts(id, spec) {
     const owners = new Set();
+    const maps = this.mapsFor(id);
     for (const sequence of this.sequencesFor(spec)) {
-      const owner = this.sequenceActions.get(sequence);
-      if (owner && owner !== id) owners.add(owner);
+      for (const map of maps) {
+        const owner = map.get(sequence);
+        if (owner && owner !== id) owners.add(owner);
+      }
     }
     return [...owners].map((owner) => this.byId.get(owner));
   }
@@ -288,6 +335,10 @@ class Keymap {
     let displaced = null;
     for (const other of this.actions) {
       if (other === action) continue;
+      // A key is only taken from an action that shares a keyboard with this
+      // one. Alt+D given to a browsing action leaves the editing action that
+      // also answers Alt+D exactly where it was.
+      if (!sharesKeyboard(action.id, other.id)) continue;
       const kept = other.bindings.filter((item) =>
         !this.sequencesFor(item).some((candidate) => sequences.has(candidate)));
       if (kept.length !== other.bindings.length) displaced = other;

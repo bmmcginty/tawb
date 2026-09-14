@@ -55,6 +55,66 @@ test('replacing and adding bindings resolves conflicts', () => {
   assert.deepEqual(keys.byId.get('next-screen').bindings, []);
 });
 
+// Browsing and editing are two keyboards on the same keys. A key they share
+// costs neither of them anything, because neither action can be reached while
+// the other keyboard is the one in use.
+test('a key shared between the browsing and editing keyboards is not a conflict', () => {
+  const keys = new Keymap({ terminfo: {}, load: false });
+
+  // Alt+D downloads a link while reading and deletes the next word while
+  // typing. Neither action is a clash for the other.
+  assert.deepEqual(keys.conflicts('download-link', 'Alt+D'), []);
+  assert.deepEqual(keys.conflicts('edit-delete-word', 'Alt+D'), []);
+
+  // Ctrl+A belongs to an editing action alone, so a browsing action may take
+  // Ctrl+A without the editing action being named or losing the key.
+  assert.deepEqual(keys.conflicts('downloads', 'Ctrl+A'), []);
+  const result = keys.assign('downloads', '\x01');
+  assert.equal(result.binding, 'Ctrl+A');
+  assert.equal(result.displaced, null);
+  assert.deepEqual(keys.byId.get('edit-line-start').bindings, ['Ctrl+A']);
+  assert.equal(keys.actionFor('\x01'), 'downloads');
+  assert.equal(keys.editingActionFor('\x01'), 'edit-line-start');
+
+  // Two actions on the same keyboard still take the key from each other.
+  assert.deepEqual(
+    keys.conflicts('download-link', 'h').map((action) => action.id), ['next-heading']);
+  // line-start is one of the four movements a field shares with a line, so
+  // line-start belongs to both keyboards and is answered a clash from both:
+  // the downloads action just given Ctrl+A on the browsing keyboard, and
+  // edit-line-start which has always held Ctrl+A on the editing keyboard.
+  assert.deepEqual(
+    keys.conflicts('line-start', 'Ctrl+A').map((action) => action.id).sort(),
+    ['downloads', 'edit-line-start']);
+});
+
+test('the wizard does not ask about a key held only by the other keyboard', async () => {
+  const directory = tempDir('tweb-wizard-keyboards-');
+  const file = path.join(directory, 'keys.json');
+  const keymap = new Keymap({ terminfo: {}, file, load: false });
+  const output = new PassThrough();
+  output.rows = 12;
+  output.columns = 200;
+  const writes = [];
+  const write = output.write.bind(output);
+  output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
+
+  // Quit is the first row. Replace its binding with Ctrl+A, which only
+  // edit-line-start holds, then use the new binding to leave and save.
+  const queued = ['\r', '\x01', '\x01', 'y'];
+  const reader = { next: () => Promise.resolve(queued.shift()) };
+
+  const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
+
+  assert.equal(saved, true);
+  assert.equal(writes.join('').includes('is assigned to'), false,
+    'no clash was reported for a key the other keyboard holds');
+  assert.deepEqual(keymap.byId.get('quit').bindings, ['Ctrl+A']);
+  assert.deepEqual(keymap.byId.get('edit-line-start').bindings, ['Ctrl+A']);
+  assert.equal(keymap.actionFor('\x01'), 'quit');
+  assert.equal(keymap.editingActionFor('\x01'), 'edit-line-start');
+});
+
 test('bindings are saved atomically and loaded over defaults', () => {
   const directory = tempDir('tweb-keys-');
   const file = path.join(directory, 'keys.json');

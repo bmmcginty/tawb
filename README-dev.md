@@ -635,10 +635,23 @@ browse-mode and editing action with its bindings. Move with the
 arrow or page keys, press `Enter` to replace an action's binding, or `Alt+A`
 to add another. The next complete keystroke is recorded. `Esc` cancels a
 capture, and `Backspace` during replacement leaves the action unbound. A new
-binding is removed from any other browse action that used it, so one key never
-silently performs two actions. While a binding or confirmation answer is being
-read, the terminal cursor moves from the selected row to that prompt, marking
-where the next key will take effect.
+binding is removed from any other action on the same keyboard, so one key never
+silently performs two actions in the same mode.
+
+Browsing and editing are two keyboards on the same keys, and the wizard treats
+the two keyboards separately. An action prefixed `edit-` is reachable only
+while a field is being edited. Every other action is reachable only while a
+page is being read. The four movements a field shares with a line — start of
+line, end of line, previous character, next character — belong to both
+keyboards. A key already held on the other keyboard is therefore not a clash:
+the wizard binds it without a question, and the other action keeps it. `Ctrl+D`
+files a bookmark while reading and deletes a character while typing, and
+`Alt+D` downloads the link under the cursor while reading and deletes the next
+word while typing, for exactly this reason.
+
+While a binding or confirmation answer is being read, the terminal cursor moves
+from the selected row to that prompt, marking where the next key will take
+effect.
 
 Choose `Exit keyboard wizard` at the bottom to leave. The wizard then accepts
 only `y` or `n` at its save prompt and ignores every other key. Saved bindings
