@@ -31,6 +31,7 @@ test('terminfo key sequences are added to the portable fallbacks', () => {
   assert.equal(keys.actionFor('\x1b[1;3D'), null);
   assert.equal(keys.actionFor('\x1b?'), 'keyboard-wizard');
   assert.equal(keys.actionFor('\x14'), 'new-tab');
+  assert.equal(keys.actionFor('d'), 'download-link');
   assert.equal(keys.nameForSequence('\x1b[999~'), 'PageDown');
   assert.equal(keys.nameForSequence('\x1b[1;3D'), 'Alt+ArrowLeft');
   assert.equal(keys.actionFor('\x1b[15~'), 'reload-page');

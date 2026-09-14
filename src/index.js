@@ -1912,6 +1912,7 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'add-bookmark') return bookmarkPage(state, page);
   if (action === 'history') return openLibrary(state, page, 'history');
   if (action === 'downloads') return openLibrary(state, page, 'downloads');
+  if (action === 'download-link') return downloadCurrentLink(state, page);
 
   if (action === 'new-tab') return openNewTab(state);
   if (action === 'next-tab') return cycleTab(state, 1);
@@ -2888,6 +2889,41 @@ async function askForLine(state, { label, initial = '', hint = '' } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Downloading the link under the cursor
+//
+// This is a browser action, not a Node fetch. The browser already owns the
+// request's cookies, proxy, certificate decisions, filename rules and download
+// history; reproducing any one of those here would make a different download.
+// Both engines expose the ordinary Alt-click gesture through their real input
+// protocol, which starts the download without taking the current tab away.
+// ---------------------------------------------------------------------------
+
+async function downloadCurrentLink(state, page) {
+  const item = itemUnderCursor(state);
+  if (!item || !LINK_ROLES.has(item.role)) {
+    setStatus(state, 'Move to a link before downloading.');
+    return;
+  }
+
+  setStatus(state, `Downloading "${item.name}"…`);
+  try {
+    const result = await state.core.downloadLink(item, page);
+    if (!result.ok) {
+      setStatus(state, `Could not download "${item.name}": ${result.reason}.`);
+      return;
+    }
+    log('link.download', {
+      name: String(item.name || '').slice(0, 80), href: String(item.href || '').slice(0, 160),
+    });
+    setStatus(state, `Added "${item.name}" to downloads.`);
+  } catch (err) {
+    const reason = String(err.message || err).split('\n')[0];
+    log('link.download.error', { name: String(item.name || '').slice(0, 80), error: reason.slice(0, 160) });
+    setStatus(state, `Could not download "${item.name}": ${reason}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Filing the page
 //
 // Ctrl+D, which is what every browser files a page with. The bookmark goes
@@ -3787,5 +3823,5 @@ module.exports = {
   navigate, navigateInterruptibly, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
   openLibrary, closeLibrary, showLibrary, handleLibraryKey,
-  askForLine, bookmarkPage, drawLinePrompt,
+  askForLine, bookmarkPage, downloadCurrentLink, drawLinePrompt,
 };

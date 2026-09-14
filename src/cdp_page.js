@@ -148,10 +148,10 @@ class CdpHandle {
 
   // A click the browser accounts a person's: real input dispatched above
   // content, so the events are trusted and carry user activation.
-  async click() {
+  async click(modifiers = 0) {
     const at = await this.clickPoint();
     if (!at) throw new Error('that element has no box on screen to click');
-    await this.frame.pageObject.clickAt(at.x, at.y);
+    await this.frame.pageObject.clickAt(at.x, at.y, this.frame.pageObject.session, modifiers);
   }
 
   async dispose() {
@@ -793,8 +793,8 @@ class CdpPage {
   // bare press and release with no movement before it is not what a mouse
   // produces, and the places this matters are precisely where something is
   // watching how the click was made.
-  async clickAt(x, y, session = this.session) {
-    const at = { x: Math.round(x), y: Math.round(y) };
+  async clickAt(x, y, session = this.session, modifiers = 0) {
+    const at = { x: Math.round(x), y: Math.round(y), modifiers };
     await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at, buttons: 0 });
     await session.send('Input.dispatchMouseEvent', {
       type: 'mousePressed', ...at, button: 'left', buttons: 1, clickCount: 1,

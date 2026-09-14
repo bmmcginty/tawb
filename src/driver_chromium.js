@@ -532,6 +532,13 @@ async function openChromium({
       await handle.click();
     },
 
+    // Chromium's native save-target gesture. It keeps the current tab in
+    // place and gives the request to the browser's ordinary download manager,
+    // retaining its cookies, proxy, filename handling and downloads history.
+    async downloadLink(scope, handle) {
+      await handle.click(1); // CDP's Alt modifier bit
+    },
+
     // A real click at a point inside a frame's own viewport, for a document
     // whose contents could not be read even after piercing. Dispatched on
     // that frame's own session, so the coordinates are its own.

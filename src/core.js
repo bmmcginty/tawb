@@ -8,7 +8,7 @@ const { renderElementHandle } = require('./render_html');
 const { remapIndex } = require('./remap');
 const { claimTab } = require('./session');
 const { log } = require('./log');
-const { BUTTON_ROLES } = require('./aria');
+const { BUTTON_ROLES, LINK_ROLES } = require('./aria');
 
 // The core: everything about a page that is not about a terminal.
 //
@@ -1305,6 +1305,36 @@ class Core {
 
   canRealClick() {
     return typeof this.driver.realClick === 'function';
+  }
+
+  // Give a link to the browser's own download manager without navigating the
+  // tab away from the page. Both engines implement this as their native
+  // Alt-click gesture, so cookies, proxy settings, filename selection and the
+  // downloads list remain the browser's rather than being reimplemented here.
+  async downloadLink(item, page = this.page) {
+    if (!item || !LINK_ROLES.has(item.role)) {
+      return { ok: false, reason: 'this line is not a link' };
+    }
+    if (typeof this.driver.downloadLink !== 'function') {
+      return { ok: false, reason: 'this browser cannot download a link directly' };
+    }
+    const handle = await withTimeout(
+      this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating download link');
+    try {
+      const ready = await withTimeout(
+        handle.evaluate(prepareRealClick), ACTION_TIMEOUT_MS, 'Bringing the link on screen');
+      if (!ready || !ready.ok) {
+        return { ok: false, reason: ready ? ready.reason : 'could not be found on the page' };
+      }
+      await withTimeout(
+        this.driver.downloadLink(item.frame || page, handle),
+        ACTION_TIMEOUT_MS,
+        'Starting download',
+      );
+      return { ok: true };
+    } finally {
+      await handle.dispose().catch(() => {});
+    }
   }
 
   // A click the browser accounts a person's, at real coordinates, carrying

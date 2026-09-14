@@ -67,6 +67,9 @@
 //                     content, so the events are trusted and carry user
 //                     activation. Both drivers perform the pointer actions
 //                     themselves, the same road their keyboards take.
+//   downloadLink()    the same real pointer action with Alt held, which asks
+//                     the browser's own download manager to save the target
+//                     without navigating the current tab.
 //
 // A driver is a plain object, not a class hierarchy. It holds the browser it
 // opened and answers those questions.

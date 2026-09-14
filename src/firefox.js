@@ -129,6 +129,13 @@ const PASSWORD_PREFS = {
   'signon.autofillForms': true,
 };
 
+// Alt-click is Firefox's browser-native save-target gesture, but a preference
+// can turn it into an ordinary click. TAWB uses that gesture for its explicit
+// download-link action, so the profile must leave its documented meaning on.
+const DOWNLOAD_PREFS = {
+  'browser.altClickSave': true,
+};
+
 // Firefox reads user.js at startup, so everything here has to be in the
 // profile before launch. Ours are rewritten every time rather than appended
 // to, so a stale port or a pref we have since changed does not survive.
@@ -800,7 +807,7 @@ async function launchFirefox({
   const libraryToken = crypto.randomUUID();
   const marionettePort = await freePort();
   writeProfilePrefs(profileDir, {
-    ...MEDIA_PREFS, ...PASSWORD_PREFS, 'marionette.port': marionettePort,
+    ...MEDIA_PREFS, ...PASSWORD_PREFS, ...DOWNLOAD_PREFS, 'marionette.port': marionettePort,
   });
 
   const args = [

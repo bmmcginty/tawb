@@ -1104,6 +1104,44 @@ async function openFirefox({
       }
     },
 
+    // Firefox's native Alt-click save gesture. Keyboard and pointer sources
+    // advance together in BiDi ticks, so Alt is down before the pointer moves
+    // and remains down until after its release produces the click.
+    async downloadLink(scope, handle) {
+      if (!handle || !handle.sharedId) {
+        throw new Error('this line carries no element reference to download');
+      }
+      const context = scope && scope.contextId ? scope.contextId : page.contextId;
+      const target = { type: 'element', element: { sharedId: handle.sharedId } };
+      try {
+        await session.send('input.performActions', {
+          context,
+          actions: [
+            {
+              type: 'key', id: 'tweb-download-key', actions: [
+                { type: 'keyDown', value: WEBDRIVER_KEYS.Alt },
+                { type: 'pause' }, { type: 'pause' }, { type: 'pause' },
+                { type: 'keyUp', value: WEBDRIVER_KEYS.Alt },
+              ],
+            },
+            {
+              type: 'pointer', id: 'tweb-download-mouse',
+              parameters: { pointerType: 'mouse' },
+              actions: [
+                { type: 'pause' },
+                { type: 'pointerMove', x: 0, y: 0, origin: target },
+                { type: 'pointerDown', button: 0 },
+                { type: 'pointerUp', button: 0 },
+                { type: 'pause' },
+              ],
+            },
+          ],
+        });
+      } finally {
+        await session.send('input.releaseActions', { context }).catch(() => {});
+      }
+    },
+
     // A real click at a point inside a frame's own viewport, for a document
     // whose contents we cannot see.
     //

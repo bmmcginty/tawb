@@ -72,6 +72,9 @@ const ACTIONS = [
   ['add-bookmark', 'Bookmark this page', ['Ctrl+D']],
   ['history', 'History', ['Alt+H']],
   ['downloads', 'Downloads', ['Alt+J']],
+  // Alt-click is both browsers' native "download this link" gesture. `d` is
+  // the terminal-reader convention and leaves Alt+J as the downloads list.
+  ['download-link', 'Download link under the cursor', ['d']],
   // A question the browser asked and the reader stepped away from. Escaping
   // one of those dialogs answers nothing — it is not this program's place to
   // press a button nobody chose — so there has to be a way back to it.
