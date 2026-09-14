@@ -72,9 +72,15 @@ const ACTIONS = [
   ['add-bookmark', 'Bookmark this page', ['Ctrl+D']],
   ['history', 'History', ['Alt+H']],
   ['downloads', 'Downloads', ['Alt+J']],
-  // Alt-click is both browsers' native "download this link" gesture. `d` is
-  // the terminal-reader convention and leaves Alt+J as the downloads list.
-  ['download-link', 'Download link under the cursor', ['d']],
+  // Alt-click is both browsers' native "download this link" gesture, and the
+  // letter is the one every browser files a download under. Unmodified letters
+  // are reserved for moving through the page — h, l, f, b, n, p and their
+  // capitals are all movement, and a command sharing that space is a command
+  // pressed by accident while reading. Alt+D is delete-next-word while a field
+  // is being edited, which costs nothing: the editing keyboard is a separate
+  // map, the same way Ctrl+D files a bookmark here and deletes a character
+  // there.
+  ['download-link', 'Download link under the cursor', ['Alt+D']],
   // A question the browser asked and the reader stepped away from. Escaping
   // one of those dialogs answers nothing — it is not this program's place to
   // press a button nobody chose — so there has to be a way back to it.

@@ -31,7 +31,11 @@ test('terminfo key sequences are added to the portable fallbacks', () => {
   assert.equal(keys.actionFor('\x1b[1;3D'), null);
   assert.equal(keys.actionFor('\x1b?'), 'keyboard-wizard');
   assert.equal(keys.actionFor('\x14'), 'new-tab');
-  assert.equal(keys.actionFor('d'), 'download-link');
+  assert.equal(keys.actionFor('\x1bd'), 'download-link');
+  // Browsing and editing are separate keyboards on the same key, the way
+  // Ctrl+D already is: Alt+D downloads a link while reading a page and
+  // deletes the next word while a field is being edited.
+  assert.equal(keys.editingActionFor('\x1bd'), 'edit-delete-word');
   assert.equal(keys.nameForSequence('\x1b[999~'), 'PageDown');
   assert.equal(keys.nameForSequence('\x1b[1;3D'), 'Alt+ArrowLeft');
   assert.equal(keys.actionFor('\x1b[15~'), 'reload-page');

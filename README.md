@@ -178,14 +178,16 @@ copies:
 | --- | --- |
 | `Ctrl+O` | Bookmarks |
 | `Ctrl+D` | Bookmark the current page |
-| `d` | Download the link under the cursor |
 | `Alt+H` | History |
 | `Alt+J` | Downloads |
+| `Alt+D` | Download the link under the cursor |
 
 Typing in one of these lists filters it. Press `Enter` to open the selected
-entry or `Escape` to return to the page. The `d` action uses the browser's own
-download manager, so authenticated requests, filenames, and download history
-behave as they do for an Alt-click in the graphical browser.
+entry or `Escape` to return to the page. The `Alt+D` action uses the browser's
+own download manager, so authenticated requests, filenames, and download
+history behave as they do for an Alt-click in the graphical browser. Plain
+letters are reserved for moving through the page, so every command that acts on
+something carries `Alt` or `Ctrl`.
 
 The browser's password manager remains responsible for saved credentials.
 TAWB can present its save-password prompt and identifies fields the browser
