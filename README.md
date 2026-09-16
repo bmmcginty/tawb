@@ -122,9 +122,12 @@ text. Uppercase moves backward where available.
 
 Press `Enter` on a text field or an HTML `contenteditable` region to edit it.
 TAWB follows the browser's caret through nested rich text as you type, move, or
-delete. While editing, `Tab` or `Shift+Tab` leaves the field and moves to the
-next or previous control. Press `Enter` again to submit or `Escape` to stop
-editing. Pressing `Enter` on a native select opens its choices; select-only ARIA
+delete. While editing, `Tab` or `Shift+Tab` moves to the next or previous
+control and continues editing automatically when that control is another text
+field. Buttons, links, and select-only controls remain in forms mode without
+being activated; press `Enter` to activate one or keep moving with `Tab`.
+Press `Escape` to return to browsing. Pressing `Enter` on a native select opens
+its choices; select-only ARIA
 comboboxes are activated rather than treated as text fields. Press `m` when a
 site requires a real pointer click, for example to grant user activation to a
 media control or open a file chooser.

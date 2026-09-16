@@ -9,7 +9,7 @@ const { openDriver } = require('../../src/driver');
 const { Core } = require('../../src/core');
 const { layoutLines } = require('../../src/layout');
 const { Keymap } = require('../../src/keys');
-const { activateCurrent, handleTypeKey } = require('../../src/index');
+const { activateCurrent, handleTypeKey, handleFormsKey } = require('../../src/index');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
 const profile = tempDir('tweb-forms-');
@@ -48,11 +48,12 @@ test('an invalid ARIA role does not erase a submit button', async () => {
   assert.equal(await page.evaluate(() => window.submitted), 2);
 });
 
-test('Tab leaves editing for the next control and comboboxes open', async () => {
+test('Tab keeps typing between fields, then leaves editing for a combobox', async () => {
   driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
   const page = driver.context.pages()[0] || await driver.context.newPage();
   await page.goto('data:text/html,' + encodeURIComponent(`
     <input aria-label="First field">
+    <input aria-label="Second field">
     <button role="combobox" aria-label="Choices" aria-expanded="false"
       aria-controls="choices" onclick="this.setAttribute('aria-expanded', 'true'); choices.hidden = false">
       Choose
@@ -91,11 +92,21 @@ test('Tab leaves editing for the next control and comboboxes open', async () => 
     assert.equal(state.mode, 'type');
 
     await handleTypeKey('\t', state, page);
-    assert.equal(state.mode, 'browse');
+    assert.equal(state.mode, 'type');
+    assert.equal(state.core.blocks[state.lines[state.cursor].blockIndex].item.name, 'Second field');
+
+    await handleTypeKey('\t', state, page);
+    assert.equal(state.mode, 'forms');
     assert.equal(state.core.blocks[state.lines[state.cursor].blockIndex].item.name, 'Choices');
 
-    await activateCurrent(state, page);
-    assert.equal(state.mode, 'browse', 'a select-only combobox was mistaken for a text field');
+    await handleFormsKey('\x1b[Z', state, page);
+    assert.equal(state.mode, 'type');
+    assert.equal(state.core.blocks[state.lines[state.cursor].blockIndex].item.name, 'Second field');
+    await handleTypeKey('\t', state, page);
+    assert.equal(state.mode, 'forms');
+
+    await handleFormsKey('\r', state, page);
+    assert.equal(state.mode, 'forms', 'a select-only combobox left forms mode');
     assert.equal(await page.evaluate(
       () => document.querySelector('[role=combobox]').getAttribute('aria-expanded')), 'true');
 

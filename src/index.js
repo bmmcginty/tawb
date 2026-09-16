@@ -584,6 +584,7 @@ function drawAddress(state, page, { force = false, edit = false } = {}) {
 function hintText(state) {
   if (state.mode === 'address') return 'Address — Enter: go  Esc: cancel';
   if (state.mode === 'type') return 'Typing — Tab: next control  Esc: stop  Enter: submit';
+  if (state.mode === 'forms') return 'Forms — Tab: next control  Enter: activate  Esc: browse';
   if (state.mode === 'control') return 'Control — arrows adjust  Home/End  Esc: stop';
   if (state.mode === 'find') return 'Find — Enter: search  Esc: cancel';
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
@@ -2077,6 +2078,29 @@ async function followActivationFocus(state, page, focused) {
   }
 }
 
+async function beginTyping(state, page, item) {
+  const handle = await withTimeout(
+    state.core.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating field');
+  const editable = await handle.evaluate((el) => {
+    const tag = el && el.tagName;
+    return !!el && !el.disabled && !el.readOnly
+      && (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable);
+  });
+  if (!editable) {
+    await handle.dispose().catch(() => {});
+    return false;
+  }
+
+  await withTimeout(handle.evaluate((el) => el.focus()), ACTION_TIMEOUT_MS, 'Focusing field');
+  const info = await readFieldState(handle);
+  state.mode = 'type';
+  state.typing = { handle, item, text: info.text, caret: info.caret, drawn: null };
+  drawHint(state);
+  state.typing.drawn = typingText(state).text;
+  writeLine(lineRow(state, state.cursor), state.typing.drawn);
+  return true;
+}
+
 async function activateCurrent(state, page) {
   const item = itemUnderCursor(state);
   if (!item || item.role === 'text') {
@@ -2139,28 +2163,11 @@ async function activateCurrent(state, page) {
         return;
       }
 
-      const handle = await withTimeout(
-        state.core.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating field');
-      const editable = await handle.evaluate((el) => {
-        const tag = el && el.tagName;
-        return !!el && !el.disabled && !el.readOnly
-          && (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable);
-      });
-
       // ARIA also calls select-only widgets comboboxes and listboxes. A div or
       // button carrying that role has no text caret to enter: pressing it is
       // how its choices open. Fall through to ordinary activation rather than
       // putting the reader in a typing mode that can never change it.
-      if (!editable) {
-        await handle.dispose().catch(() => {});
-      } else {
-        await withTimeout(handle.evaluate((el) => el.focus()), ACTION_TIMEOUT_MS, 'Focusing field');
-        const info = await readFieldState(handle);
-        state.mode = 'type';
-        state.typing = { handle, item, text: info.text, caret: info.caret, drawn: null };
-        drawHint(state);
-        state.typing.drawn = typingText(state).text;
-        writeLine(lineRow(state, state.cursor), state.typing.drawn);
+      if (await beginTyping(state, page, item)) {
         setStatus(state, `Typing into "${item.name}" — Esc to stop, Enter to submit.`);
         return;
       }
@@ -3286,7 +3293,17 @@ async function handleTypeKey(chunk, state, page) {
     }
     moveSelection(state, found.line, page, found.col);
     const block = currentBlock(state);
-    const name = block && block.item ? block.item.name : spec.label;
+    const item = block && block.item;
+    const name = item ? item.name : spec.label;
+    // Tab between editable fields stays in typing mode. Buttons, links and
+    // select-only widgets stay in forms mode: they are not activated merely
+    // by receiving focus, but Tab can continue through the form from them.
+    if (item && FIELD_ROLES.has(item.role) && await beginTyping(state, page, item)) {
+      setStatus(state, `Typing into "${name}" — Tab: next control, Esc: stop, Enter: submit.`);
+      return;
+    }
+    state.mode = 'forms';
+    drawHint(state);
     setStatus(state, `${direction > 0 ? 'Next' : 'Previous'} control: ${name}.`);
     return;
   }
@@ -3339,6 +3356,43 @@ async function handleTypeKey(chunk, state, page) {
     finalCol: caretCol,
   });
   t.drawn = text;
+}
+
+async function handleFormsKey(chunk, state, page) {
+  markInput(state);
+  if (keyIs(chunk, 'Escape', state)) {
+    state.mode = 'browse';
+    drawHint(state);
+    setStatus(state, 'Left forms mode.');
+    return;
+  }
+  if (chunk === '\r' || chunk === '\n') {
+    await activateCurrent(state, page);
+    return;
+  }
+  if (!keyIs(chunk, 'Tab', state) && !keyIs(chunk, 'Shift+Tab', state)) return;
+
+  const direction = keyIs(chunk, 'Shift+Tab', state) ? -1 : 1;
+  const screen = screenBefore(state);
+  const anchor = anchorFor(state);
+  await refresh(state, page, { anchor });
+  repaintList(state, page, screen);
+  const spec = QUICK_ACTIONS[direction > 0 ? 'next-focusable' : 'previous-focusable'];
+  const found = findQuickNav(state, spec.match, direction);
+  if (!found) {
+    setStatus(state, `No ${direction > 0 ? 'next' : 'previous'} control.`);
+    return;
+  }
+  moveSelection(state, found.line, page, found.col);
+  const block = currentBlock(state);
+  const item = block && block.item;
+  const name = item ? item.name : spec.label;
+  if (item && FIELD_ROLES.has(item.role) && await beginTyping(state, page, item)) {
+    setStatus(state, `Typing into "${name}" — Tab: next control, Esc: stop, Enter: submit.`);
+    return;
+  }
+  state.mode = 'forms';
+  setStatus(state, `${direction > 0 ? 'Next' : 'Previous'} control: ${name}.`);
 }
 
 async function handleControlKey(chunk, state, page) {
@@ -3720,6 +3774,7 @@ async function main() {
     if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
     else if (state.mode === 'library') result = await handleLibraryKey(chunk, state, current);
     else if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
+    else if (state.mode === 'forms') result = await handleFormsKey(chunk, state, current);
     else if (state.mode === 'control') result = await handleControlKey(chunk, state, current);
     else if (state.mode === 'address') result = await handleAddressKey(chunk, state, current);
     else if (state.mode === 'find') result = await handleFindKey(chunk, state, current);
@@ -3815,7 +3870,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  handleBrowseKey, handleTypeKey, handleControlKey, handleAddressKey, handleFindKey,
+  handleBrowseKey, handleTypeKey, handleFormsKey, handleControlKey, handleAddressKey, handleFindKey,
   findText, runSearch,
   render, drawList, drawAddress, drawHint, drawStatus, setStatus,
   patchEditedLine, moveSelection, moveScreen,
