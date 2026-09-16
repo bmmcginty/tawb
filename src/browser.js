@@ -10,7 +10,7 @@ const {
 } = require('./endpoint');
 const {
   killProcessGroup, requireBrowserUser, watchChildStartup, browserStartupError,
-  startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir,
+  startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir, xvfbDisplayOption,
 } = require('./proc');
 const { recordBrowser, sweepStrandedBrowsers } = require('./registry');
 const { openAccessibilityBus } = require('./a11y_bus');
@@ -110,7 +110,10 @@ function buildCommand(executable, args) {
     );
   }
   lastDisplayNote = `Display: none, so the browser was run under ${xvfb}`;
-  return { command: xvfb, args: ['-a', '-s', `-screen 0 ${SCREEN}`, executable, ...args] };
+  // Which display-picking option this xvfb-run understands. See proc.js:
+  // two browsers starting at once must not both be handed the same display.
+  const display = xvfbDisplayOption(xvfb);
+  return { command: xvfb, args: [display, '-s', `-screen 0 ${SCREEN}`, executable, ...args] };
 }
 
 // A Snap-packaged browser can only reach a profile inside its own data area.

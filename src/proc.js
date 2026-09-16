@@ -1,5 +1,6 @@
 'use strict';
 
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -263,8 +264,45 @@ function snapProfileDir(snapName, leaf, home = os.homedir()) {
   return path.join(home, 'snap', snapName, 'common', 'tawb', leaf);
 }
 
+// ---------------------------------------------------------------------------
+// Which display a browser started under Xvfb gets
+//
+// xvfb-run has two ways of choosing a display number and only one of them is
+// safe when two browsers start at once.
+//
+// `-a` picks the number itself: it scans for the first `/tmp/.X<n>-lock` that
+// does not exist, and then starts Xvfb on that number. Nothing is written
+// between the looking and the starting, so two xvfb-run invocations running at
+// the same time both find the same number free and both try to claim it. One X
+// server starts and the rest fail. A browser behind a failed X server has no
+// display at all, and what that looks like from here is a browser that
+// connects and then drops, or one whose window never takes a keystroke.
+//
+// `-d` does not pick a number. It runs `Xvfb -displayfd`, where the X server
+// finds a free display itself and reports which one it took. Two servers
+// starting at once cannot choose the same number because neither is choosing.
+// Six concurrent `-a` launches on this machine all took :102 and five of the
+// six X servers failed; six concurrent `-d` launches took :0 through :5.
+//
+// `-d` is the newer option, so an xvfb-run that does not offer it is asked
+// rather than assumed, and falls back to the racy `-a` it does offer.
+const displayOptions = new Map();
+
+function xvfbDisplayOption(xvfb) {
+  if (displayOptions.has(xvfb)) return displayOptions.get(xvfb);
+  let option = '-a';
+  try {
+    const help = execFileSync(xvfb, ['--help'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000,
+    });
+    if (help.includes('--auto-display')) option = '-d';
+  } catch { /* an xvfb-run that will not describe itself keeps the old option */ }
+  displayOptions.set(xvfb, option);
+  return option;
+}
+
 module.exports = {
   processAlive, killProcessGroup, processesUsing, anyProcessUsing,
   requireBrowserUser, watchChildStartup, compactDiagnostic, browserStartupError,
-  startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir,
+  startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir, xvfbDisplayOption,
 };

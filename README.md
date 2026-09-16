@@ -92,6 +92,11 @@ browser on a 1280×1024 virtual X display using `xvfb-run`. It does not use the
 browser's headless mode because some sites treat headless or automation-launched
 browsers differently.
 
+Each browser is given a display of its own. Where `xvfb-run` offers
+`--auto-display`, TAWB uses it, so that the X server picks its own display
+number and two browsers starting at the same moment cannot be handed the same
+one. An older `xvfb-run` without that option falls back to `--auto-servernum`.
+
 ## First steps
 
 When a page opens, the terminal contains the page title, the current view and

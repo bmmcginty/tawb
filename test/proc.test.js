@@ -15,10 +15,13 @@ const { spawn } = require('node:child_process');
 const {
   processAlive, killProcessGroup, processesUsing, anyProcessUsing,
   requireBrowserUser, watchChildStartup, compactDiagnostic, browserStartupError,
-  startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir,
+  startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir, xvfbDisplayOption,
 } = require('../src/proc');
 const path = require('node:path');
 const os = require('node:os');
+const fs = require('node:fs');
+
+const { tempDir, removeTempDir } = require('./tmpdir');
 
 // A shell holding a long-running child, in a process group of its own. Resolves
 // once the grandchild has announced its pid, so both are known to be running.
@@ -312,4 +315,42 @@ test('a snap firefox is refused an unreachable profile instead of timing out', (
       '/home/someone/.local/share/tawb/firefox-profile',
     ),
   );
+});
+
+// ---------------------------------------------------------------------------
+// Which display option a browser under Xvfb is launched with
+//
+// `-a` makes xvfb-run choose the display number by scanning for a lock file
+// that is not there, which two launches at once both succeed at and then
+// collide over. `-d` makes the X server choose and report its own, which two
+// launches at once cannot collide over. So `-d` is used wherever xvfb-run
+// offers it, and the option an installed xvfb-run offers is asked rather than
+// assumed — which is what these stand-ins check.
+
+// An xvfb-run that answers --help however the test wants it answered.
+function fakeXvfbRun(dir, name, body) {
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  return file;
+}
+
+test('an xvfb-run offering --auto-display is used with the option that cannot collide', () => {
+  const dir = tempDir('tweb-xvfb-');
+  const xvfb = fakeXvfbRun(dir, 'xvfb-run-new', 'echo "-a --auto-servernum"; echo "-d --auto-display"');
+  assert.equal(xvfbDisplayOption(xvfb), '-d');
+  removeTempDir(dir);
+});
+
+test('an older xvfb-run keeps the only option it has', () => {
+  const dir = tempDir('tweb-xvfb-');
+  const xvfb = fakeXvfbRun(dir, 'xvfb-run-old', 'echo "-a --auto-servernum"');
+  assert.equal(xvfbDisplayOption(xvfb), '-a');
+  removeTempDir(dir);
+});
+
+test('an xvfb-run that will not describe itself is not assumed to be the newer one', () => {
+  const dir = tempDir('tweb-xvfb-');
+  const xvfb = fakeXvfbRun(dir, 'xvfb-run-mute', 'exit 1');
+  assert.equal(xvfbDisplayOption(xvfb), '-a');
+  removeTempDir(dir);
 });
