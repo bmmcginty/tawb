@@ -29,7 +29,7 @@ test.after(async () => {
   fs.rmSync(profile, { recursive: true, force: true });
 });
 
-test('d adds the link under the cursor to browser downloads', async () => {
+test('Alt+D adds the link under the cursor to browser downloads', async () => {
   server = http.createServer((request, response) => {
     if (request.url === '/manual.txt') {
       response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
@@ -71,7 +71,9 @@ test('d adds the link under the cursor to browser downloads', async () => {
   const write = process.stdout.write;
   process.stdout.write = () => true;
   try {
-    await handleBrowseKey('d', state, page);
+    // Alt+D, as an escape and the letter. Unmodified letters belong to
+    // moving through the page, so the download action does not have one.
+    await handleBrowseKey('\x1bd', state, page);
   } finally {
     process.stdout.write = write;
   }
