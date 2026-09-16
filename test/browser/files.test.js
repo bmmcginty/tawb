@@ -30,12 +30,16 @@ const http = require('node:http');
 
 const { tempDir } = require('../tmpdir');
 const { openDriver } = require('../../src/driver');
+const { Core } = require('../../src/core');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
 const profile = tempDir('tweb-files-');
 
 const PAGE = `<!doctype html><meta charset="utf-8"><title>upload</title>
 <input type="file" id="plain">
+<table><thead><tr><th>Human-narrated audio file</th></tr></thead><tbody><tr><td>
+<input type="file" id="unnamed" name="toc_set-0-soundfile">
+</td></tr></tbody></table>
 <input type="file" id="hidden" style="display:none">
 <button id="button" style="width:200px;height:50px">Upload a document</button>
 <script>
@@ -95,6 +99,25 @@ const waitFor = async (condition, ms = 10000) => {
   }
   return false;
 };
+
+test('an unlabelled file input remains an upload control in AX and PAGE views', async () => {
+  const { driver, url } = await browser();
+  const page = await driver.context.newPage();
+  try {
+    await page.goto(url);
+    for (const source of ['ax', 'render']) {
+      const core = new Core({ driver, page, source });
+      await core.rescan();
+      const upload = core.blocks.find((block) => block.item
+        && block.item.name === 'toc_set-0-soundfile');
+      assert.ok(upload, `${source} omitted the unlabelled file input`);
+      assert.deepEqual(upload.item.file, { multiple: false, accept: '' });
+      assert.equal(upload.item.role, 'button');
+    }
+  } finally {
+    await page.close().catch(() => {});
+  }
+});
 
 test('a file input the reader activated is given its file directly', async () => {
   const { driver, url, file } = await browser();

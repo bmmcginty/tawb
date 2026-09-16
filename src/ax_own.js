@@ -634,14 +634,22 @@ function extractAxItems(options) {
     }
 
     if (shown && ATOMIC.has(role)) {
-      const name = accessibleName(el);
+      const fileInput = tag === 'input'
+        && (el.getAttribute('type') || '').toLowerCase() === 'file';
+      // Browsers draw their own "Choose file" label even when the author did
+      // not give the input an accessible name. Our DOM-derived tree cannot
+      // see that native label, but dropping the control leaves no way to
+      // upload at all. Prefer its form name when present so repeated upload
+      // rows can still be told apart.
+      const name = accessibleName(el) || (fileInput
+        ? (clean(el.getAttribute('name')) || 'Choose file') : '');
       if (name) {
         const item = { role, name, axIndex: register(el) };
         // A file input arrives here as a button, because that is what it is
         // to a reader. What it also is, is the one control whose activation
         // needs a filename rather than a press — so it is marked, along with
         // what it says it will take.
-        if (tag === 'input' && (el.getAttribute('type') || '').toLowerCase() === 'file') {
+        if (fileInput) {
           item.file = { multiple: !!el.multiple, accept: el.getAttribute('accept') || '' };
         }
         if (role === 'heading') {

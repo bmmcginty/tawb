@@ -113,6 +113,20 @@ function extractVisible() {
 
     // Interactive and atomic elements: emit whole, do not descend.
     //
+    // A file input is presented by the browser as a button, not a text field.
+    // Keep that distinction and its upload metadata in this fallback view so
+    // pressing it opens the same terminal path prompt as the AX view.
+    if (shown && tag === 'input' && el.type === 'file') {
+      emit({
+        kind: 'button',
+        text: labelFor(el),
+        file: { multiple: !!el.multiple, accept: el.getAttribute('accept') || '' },
+        index: register(),
+        block: true,
+      });
+      return;
+    }
+    //
     // A control is named by whatever names it — its own text, its value, or
     // the label it carries. A play button is an icon and a label and nothing
     // else, so a view that only looks at text drops it entirely: on a
@@ -255,6 +269,7 @@ async function snapshotRenderBlocks(target) {
       level: entry.level,
       href: entry.href,
       editable: entry.editable,
+      file: entry.file,
       renderIndex: entry.index,
       frame,
     },
