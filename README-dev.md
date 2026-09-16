@@ -883,27 +883,26 @@ Firefox has no equivalent page. Places lives in the parent process behind APIs
 only privileged code may call, and the Library is a chrome window rather than a
 document, so there is nothing for content to be pointed at.
 
-So the same road the shadow-root piercing takes is taken again. While we
-legitimately hold the WebDriver session at startup — the one moment there is to
-hold it — an agent is installed in the parent process that answers three
-questions and files a bookmark, and a function is handed to content windows
-that asks it. The agent calls `PlacesUtils` and `Downloads`: the APIs the
-Library and the downloads panel are themselves built on. Nothing is asked of
-Marionette after startup, which is what makes any of it possible — Marionette
-shares one session slot with BiDi, so connecting to it later would take the
-reader's own session away.
+While we legitimately hold the WebDriver session in chrome context at startup,
+an agent is installed in the parent process. It calls `PlacesUtils` and
+`Downloads`, the APIs the Library and downloads panel are themselves built on,
+and answers TAWB over an ephemeral loopback-only raw TCP socket. The endpoint
+is recorded beside Firefox's BiDi endpoint.
 
-**The function is gated on a secret.** Unlike piercing, which returns a page its
-own shadow roots, this returns the reader's browsing history, and it is
-installed in every document there is — including hostile ones. The secret is
-made fresh at every launch, and lives only in this process and in the closure
-inside the content process. A page cannot read a closure, so a page cannot
-obtain it; a call without it is refused before anything is asked.
+The socket uses Firefox's own DevTools transport: decimal byte length, colon,
+then JSON. This is also the security boundary. A webpage can issue HTTP and
+open WebSockets to loopback, but cannot open raw TCP; both start with a `GET` or
+`POST` request line that the packet reader rejects before dispatch. Local
+programs acting as the user need no secret. Requests are limited to the four
+known operations and their arguments are bounded.
 
-The consequence is that **this only works for a Firefox tawb started**. A
-browser reached with `--connect` was already running when we arrived, and the
-one moment a privileged script can be installed has passed. It says so rather
-than answering emptily.
+The listener belongs to the parent process and is anchored there, so it
+survives the Marionette installer, BiDi sessions, brokers, and a TAWB process
+leaving a browser under `--keep-browser`. No function, token, or property is
+installed in content windows. An arbitrary Firefox reached with `--connect`
+still has no agent, because the one opportunity to install privileged code was
+its TAWB startup; a Firefox TAWB kept retains both the agent and its recorded
+endpoint.
 
 Firefox stores its own five folders under internal names — `toolbar`,
 `unfiled` — and shows them under translated ones, so those four are relabelled

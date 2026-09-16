@@ -2,7 +2,6 @@
 
 const { spawn } = require('child_process');
 const fs = require('fs');
-const crypto = require('crypto');
 const net = require('net');
 const os = require('os');
 const path = require('path');
@@ -364,29 +363,21 @@ const PIERCE_CHILD_SCRIPT = `
 // ---------------------------------------------------------------------------
 // The browser's own lists: bookmarks, history and downloads
 //
-// BiDi does not answer for these and no content page can: Places lives in the
-// parent process, behind APIs only privileged code may call, and Firefox has
-// no equivalent of chrome://history that content could be pointed at. The
-// browser's own Library window is chrome, not a document.
+// BiDi does not answer for these and no content page should: Places lives in
+// the parent process, behind APIs only privileged code may call, and Firefox
+// has no equivalent of chrome://history that content can safely be pointed at.
 //
-// So the same road the shadow-root piercing takes is taken again. While we
-// legitimately hold the WebDriver session at startup — the one moment there is
-// to hold it — an agent is installed in the parent process that answers the
-// three questions and files a bookmark, and a function is handed to content
-// windows that asks it. The
-// agent calls PlacesUtils and Downloads: the very APIs the Library and the
-// downloads panel are built on. Nothing is read out of a file, and nothing is
-// asked of Marionette after startup, which is what makes it possible at all —
-// Marionette shares one session slot with BiDi, so connecting to it later
-// would take the reader's own session away.
+// While we legitimately hold Marionette in chrome context at startup, an
+// agent is installed in the parent process. It listens on a loopback-only raw
+// TCP socket and calls PlacesUtils and Downloads directly. Raw TCP is the
+// security boundary: webpages can issue HTTP requests and open WebSockets,
+// but cannot speak arbitrary TCP. Firefox's own length-prefixed DevTools
+// transport rejects both HTTP and WebSocket handshakes before dispatching a
+// command. Local programs acting as the user need no second secret.
 //
-// The function is gated on a secret. Unlike piercing, which returns a page its
-// own shadow roots, this returns the reader's browsing history — and now
-// writes to their bookmarks — and it is
-// installed in every document there is — including hostile ones. The secret is
-// made fresh at every launch, never leaves this process and the closure in the
-// content process, and a call without it is refused before anything is asked.
-// A page cannot read a closure, so a page cannot obtain it.
+// The listener belongs to Firefox rather than this process. It therefore
+// survives BiDi sessions, brokers and --keep-browser reconnects, and vanishes
+// with the browser. No function or capability is installed in page context.
 // ---------------------------------------------------------------------------
 
 // Firefox's own folders are stored under internal names and shown to everyone
@@ -409,7 +400,6 @@ const LIBRARY_PARENT_BODY = `
   const { Downloads } = ChromeUtils.importESModule(
     "resource://gre/modules/Downloads.sys.mjs");
   const ROOTS = __ROOTS__;
-  const TOKEN = __TOKEN__;
 
   // Newest first, and no further back than the reader can use. This is
   // nsINavHistoryService — the query the Library itself runs.
@@ -515,97 +505,65 @@ const LIBRARY_PARENT_BODY = `
   };
 
   const answer = { bookmarks, history, downloads, save };
+  const { require: devtoolsRequire } = ChromeUtils.importESModule(
+    "resource://devtools/shared/loader/Loader.sys.mjs");
+  const { DebuggerTransport } = devtoolsRequire(
+    "resource://devtools/shared/transport/transport.js");
+  const clients = new Set();
+  const server = Cc["@mozilla.org/network/server-socket;1"]
+    .createInstance(Ci.nsIServerSocket);
 
-  // The whole request is handed to whichever call it names, rather than the
-  // one argument the three readers used to share: filing a bookmark needs an
-  // address and a name, and a second message shape for it would be a second
-  // thing to keep in step.
-  Services.ppmm.addMessageListener("tweb:library", function (message) {
-    const data = message.data || {};
-    const { id, token, kind } = data;
-    const reply = (payload) => {
-      try { message.target.sendAsyncMessage("tweb:library:done", { id, ...payload }); }
-      catch (e) { /* the process asking has gone */ }
-    };
-    if (token !== TOKEN) { reply({ error: "refused" }); return; }
-    const ask = answer[kind];
-    if (!ask) { reply({ error: "unknown list" }); return; }
-    Promise.resolve()
-      .then(() => ask(data))
-      .then((result) => reply({ result }))
-      .catch((e) => reply({ error: String((e && e.message) || e) }));
-  });
-`;
-
-// Hands each content window a function that asks the parent. The answer is
-// resolved into a promise built from the page's own Promise constructor, so
-// what content receives is an ordinary page-side promise of ordinary page-side
-// objects, and nothing privileged crosses the boundary.
-const LIBRARY_CHILD_BODY = `
-  const TOKEN = __TOKEN__;
-  let nextId = 1;
-  const waiting = new Map();
-
-  Services.cpmm.addMessageListener("tweb:library:done", function (message) {
-    const { id } = message.data || {};
-    const waiter = waiting.get(id);
-    if (!waiter) return;
-    waiting.delete(id);
-    waiter(message.data);
-  });
-
-  // Primitives only across this boundary. An object built in a content
-  // window is a content object, and handing one to the parent process is a
-  // question about Xrays nobody needs to answer to file a bookmark.
-  const install = function (win) {
-    const ask = function (token, kind, max, url, title) {
-      return new win.Promise(function (resolve, reject) {
-        if (token !== TOKEN) { reject(new win.Error("refused")); return; }
-        const id = nextId++;
-        waiting.set(id, function (data) {
-          if (data.error) reject(new win.Error(String(data.error)));
-          else resolve(Cu.cloneInto(data.result === undefined ? [] : data.result,
-            win.wrappedJSObject));
-        });
-        Services.cpmm.sendAsyncMessage("tweb:library", {
-          id, token, kind, max: Number(max) || 1000,
-          url: url === undefined ? null : String(url),
-          title: title === undefined ? null : String(title),
-        });
-      });
-    };
-    // Under a symbol, like everything else this program leaves on a page: a
-    // string property is listed by getOwnPropertyNames and by Object.keys, and
-    // this one is installed in every document there is.
-    win.wrappedJSObject[Symbol.for("tweb.library")] =
-      Cu.exportFunction(ask, win.wrappedJSObject);
+  // An ephemeral loopback port. A normal page cannot open raw TCP, and the
+  // DevTools packet reader rejects the GET line of HTTP and WebSocket before
+  // it can become an object below.
+  server.init(-1, true, -1);
+  const listener = {
+    QueryInterface: ChromeUtils.generateQI(["nsIServerSocketListener"]),
+    onSocketAccepted(_server, socket) {
+      const input = socket.openInputStream(0, 0, 0);
+      const output = socket.openOutputStream(0, 0, 0);
+      const transport = new DebuggerTransport(input, output);
+      clients.add(transport);
+      transport.hooks = {
+        async onPacket(packet) {
+          const data = packet && typeof packet === "object" ? packet : {};
+          const kind = String(data.kind || "");
+          const ask = answer[kind];
+          if (!ask) {
+            transport.send({ error: "unknown list" });
+            return;
+          }
+          const request = {
+            max: Math.max(1, Math.min(5000, Number(data.max) || 1000)),
+            url: data.url == null ? null : String(data.url).slice(0, 10000),
+            title: data.title == null ? null : String(data.title).slice(0, 1000),
+          };
+          try {
+            transport.send({ result: await ask(request) });
+          } catch (e) {
+            transport.send({ error: String((e && e.message) || e) });
+          }
+        },
+        onBulkPacket() { transport.close(); },
+        onTransportClosed() { clients.delete(transport); },
+      };
+      transport.ready();
+    },
+    onStopListening() {},
   };
+  server.asyncListen(listener);
+
+  // The message manager outlives the Marionette sandbox and holds this
+  // closure, which in turn holds the server, listener and active transports.
+  Services.ppmm.addMessageListener("tweb:library-agent-keepalive", function () {
+    return server.port;
+  });
 `;
 
-// The token is a per-launch secret. It is interpolated into both scripts, and
-// into nothing that is ever written down.
-function libraryChildScript(token) {
-  return `
-  if (!globalThis.__twebLibraryInstalled) {
-    globalThis.__twebLibraryInstalled = true;
-    ${LIBRARY_CHILD_BODY.replace('__TOKEN__', JSON.stringify(token))}
-    Services.obs.addObserver(function (win) {
-      try { install(win); } catch (e) { /* a window we cannot reach */ }
-    }, 'content-document-global-created');
-  }
-`;
-}
-
-function libraryParentScript(token) {
-  const parent = LIBRARY_PARENT_BODY
-    .replace('__TOKEN__', JSON.stringify(token))
-    .replace('__ROOTS__', JSON.stringify(FIREFOX_ROOT_LABELS));
-  const childUrl = `data:text/javascript,${encodeURIComponent(libraryChildScript(token))}`;
-  return `
-  ${parent}
-  Services.ppmm.loadProcessScript(${JSON.stringify(childUrl)}, true);
-  return true;
-`;
+function libraryParentScript() {
+  const parent = LIBRARY_PARENT_BODY.replace(
+    '__ROOTS__', JSON.stringify(FIREFOX_ROOT_LABELS));
+  return `${parent}\nreturn server.port;`;
 }
 
 // Loads the above into every content process, present and future.
@@ -689,8 +647,9 @@ function marionetteCommand(port, commands, { timeout = MARIONETTE_TIMEOUT_MS } =
 // Disconnecting from it deletes the session it just created, which is also how
 // the BiDi session that follows is able to start at all — the two share one
 // slot.
-async function clearAutomationFlag({ port, stopAfter = false, libraryToken = null } = {}) {
+async function clearAutomationFlag({ port, stopAfter = false } = {}) {
   let installFault = null;
+  let libraryPort = null;
   return marionetteCommand(port, async (send) => {
     await send('WebDriver:NewSession', {});
     await send('Marionette:SetContext', { value: 'chrome' });
@@ -700,16 +659,17 @@ async function clearAutomationFlag({ port, stopAfter = false, libraryToken = nul
     // connection.
     await send('WebDriver:ExecuteScript', { script: PIERCE_PARENT_SCRIPT, args: [] })
       .catch(() => { /* an older Firefox without ppmm; piercing is simply absent */ });
-    if (libraryToken) {
-      await send('WebDriver:ExecuteScript', {
-        script: libraryParentScript(libraryToken), args: [],
-      }).catch((err) => {
-        // Not fatal: the reader works without its lists. But a browser that
-        // silently has none is a browser nobody can debug, so say what
-        // happened where the rest of the startup account goes.
-        installFault = String((err && err.message) || err).slice(0, 300);
-      });
-    }
+    await send('WebDriver:ExecuteScript', {
+      script: libraryParentScript(), args: [],
+    }).then((installed) => {
+      const value = installed && installed.value;
+      if (Number.isInteger(value) && value > 0) libraryPort = value;
+    }).catch((err) => {
+      // Not fatal: the reader works without its lists. But a browser that
+      // silently has none is a browser nobody can debug, so say what
+      // happened where the rest of the startup account goes.
+      installFault = String((err && err.message) || err).slice(0, 300);
+    });
     if (stopAfter) {
       send('WebDriver:ExecuteScript', {
         script: `const { Marionette } = ChromeUtils.importESModule(
@@ -718,7 +678,7 @@ async function clearAutomationFlag({ port, stopAfter = false, libraryToken = nul
       }).catch(() => {});
       await new Promise((r) => setTimeout(r, 300));
     }
-    const value = (result && result.value) || {};
+    const value = { ...((result && result.value) || {}), libraryPort };
     return installFault ? { ...value, libraryFault: installFault } : value;
   });
 }
@@ -797,14 +757,12 @@ async function launchFirefox({
       profileDir,
       cleared: null,
       rejoined: true,
+      libraryPort: record.libraryPort || null,
       a11y,
     };
   }
 
   const port = await freePort();
-  // A secret for this launch alone, which is what keeps the reader's history
-  // out of reach of the pages the answering function is installed in.
-  const libraryToken = crypto.randomUUID();
   const marionettePort = await freePort();
   writeProfilePrefs(profileDir, {
     ...MEDIA_PREFS, ...PASSWORD_PREFS, ...DOWNLOAD_PREFS, 'marionette.port': marionettePort,
@@ -874,7 +832,12 @@ async function launchFirefox({
   const clearStarted = Date.now();
   if (await waitForEndpoint(marionettePort, Date.now() + MARIONETTE_TIMEOUT_MS)) {
     try {
-      cleared = await clearAutomationFlag({ port: marionettePort, libraryToken });
+      cleared = await clearAutomationFlag({ port: marionettePort });
+      if (cleared.libraryPort) {
+        writeEndpointRecord(profileDir, {
+          ...(readEndpointRecord(profileDir) || {}), libraryPort: cleared.libraryPort,
+        });
+      }
       log('firefox.automation.cleared', { ...cleared, portMs, clearMs: Date.now() - clearStarted });
     } catch (err) {
       log('firefox.automation.error', { error: String(err.message || err).slice(0, 200) });
@@ -887,7 +850,7 @@ async function launchFirefox({
     child,
     port,
     marionettePort,
-    libraryToken,
+    libraryPort: cleared && cleared.libraryPort ? cleared.libraryPort : null,
     endpoint: `ws://127.0.0.1:${port}/session`,
     executable: found.executable,
     profileDir,
@@ -901,5 +864,5 @@ module.exports = {
   launchFirefox, requireReachableProfile, clearAutomationFlag, releaseStrandedSession, findFirefox,
   defaultProfileDir, writeProfilePrefs, MEDIA_PREFS, PASSWORD_PREFS, ACTIVE_KEYS, CLEAR_SCRIPT,
   PIERCE_PARENT_SCRIPT, PIERCE_CHILD_SCRIPT,
-  libraryParentScript, libraryChildScript, FIREFOX_ROOT_LABELS, MARIONETTE_TIMEOUT_MS,
+  libraryParentScript, FIREFOX_ROOT_LABELS, MARIONETTE_TIMEOUT_MS,
 };

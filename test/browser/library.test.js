@@ -23,6 +23,8 @@ const http = require('node:http');
 
 const { tempDir } = require('../tmpdir');
 const { openDriver } = require('../../src/driver');
+const { readEndpointRecord } = require('../../src/endpoint');
+const { askFirefoxLibrary } = require('../../src/firefox_library');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
 const profile = tempDir('tweb-library-');
@@ -69,6 +71,17 @@ test.after(async () => {
   if (driver) await driver.close().catch(() => {});
   if (server) server.close();
   for (const file of fetched) fs.rmSync(file, { force: true });
+});
+
+test('Firefox library access stays out of page context', {
+  skip: ENGINE !== 'firefox',
+}, async () => {
+  const record = readEndpointRecord(profile);
+  assert.ok(record && record.libraryPort, 'the parent agent endpoint was not recorded');
+  const entries = await askFirefoxLibrary(record.libraryPort, { kind: 'history', max: 5000 });
+  assert.ok(entries.some((entry) => entry.url.startsWith(`${origin}/page`)));
+  assert.equal(await page.evaluate(
+    () => typeof window[Symbol.for('tweb.library')]), 'undefined');
 });
 
 test('a page that was visited is in the browser\'s history', async () => {

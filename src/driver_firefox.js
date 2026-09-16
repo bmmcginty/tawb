@@ -11,6 +11,7 @@ const { extractAxItems } = require('./ax_own');
 const { readDocument } = require('./frames');
 const { orderEntries, MAX_ENTRIES } = require('./library');
 const { armNativeDialogs } = require('./native_prompt');
+const { askFirefoxLibrary } = require('./firefox_library');
 
 // Firefox, driven over WebDriver BiDi.
 //
@@ -559,7 +560,7 @@ async function openFirefox({
   let cleared = null;
   let marionettePort = null;
 
-  let libraryToken = null;
+  let libraryPort = null;
   // Where this Firefox describes its own windows, if there is a bus for it to
   // describe them to. See native_prompt.js.
   let a11y = null;
@@ -578,10 +579,12 @@ async function openFirefox({
     endpoint = started.endpoint;
     cleared = started.cleared;
     marionettePort = started.marionettePort;
-    libraryToken = started.libraryToken;
+    libraryPort = started.libraryPort;
     a11y = started.a11y;
   } else {
-    marionettePort = (readEndpointRecord(profile || defaultProfileDir()) || {}).marionettePort;
+    const record = readEndpointRecord(profile || defaultProfileDir()) || {};
+    marionettePort = record.marionettePort;
+    libraryPort = record.libraryPort;
   }
 
   // The port the remote agent is serving on, which is how per-browser state
@@ -768,34 +771,22 @@ async function openFirefox({
     );
   }
 
-  // The one call the privileged agent answers, whichever question is being
-  // asked of it. Everything it needs is a primitive, so nothing built in a
-  // content window has to cross into the parent process.
-  //
-  // A Firefox this session did not start never had the agent installed, and
-  // there is nothing to be done about that from outside: the one moment a
-  // privileged script can be installed is the moment the browser starts. What
-  // that costs the reader depends on what they asked for, so the caller says.
-  async function askAgent(kind, params, scope, verb) {
-    if (!libraryToken) {
+  // The one call the privileged parent-process agent answers, whichever
+  // question is being asked of it. It is reached over a loopback raw socket,
+  // never through a page, so hostile content receives neither a function nor
+  // a capability it can invoke.
+  async function askAgent(kind, params, _scope, verb) {
+    if (!libraryPort) {
       throw new Error(
-        'this Firefox was already running when tawb attached to it, and its '
-        + `bookmarks, history and downloads can only be reached by a session `
-        + `that started it. Start Firefox through tawb to ${verb}.`);
+        'this Firefox has no library agent endpoint; restart it through tawb '
+        + `to ${verb}.`);
     }
-    const page = scope || browserContext.pages()[0];
-    if (!page) throw new Error('there is no tab to ask through');
-    return page.mainFrame().evaluate(
-      (arg) => {
-        const ask = window[Symbol.for('tweb.library')];
-        if (!ask) throw new Error('this browser has no reader agent installed');
-        return ask(arg.token, arg.kind, arg.max, arg.url, arg.title);
-      },
-      {
-        token: libraryToken, kind,
-        max: params.max || 0, url: params.url || null, title: params.title || null,
-      },
-    );
+    return askFirefoxLibrary(libraryPort, {
+      kind,
+      max: params.max || 0,
+      url: params.url || null,
+      title: params.title || null,
+    });
   }
 
   return {
@@ -905,12 +896,8 @@ async function openFirefox({
     // BiDi does not answer for these and no content page can: Places lives in
     // the parent process behind privileged APIs, and Firefox has nothing like
     // chrome://history for content to be pointed at. What answers is the agent
-    // installed at startup — see firefox.js — reached through the function it
-    // hands each document, which is an ordinary page call from here.
-    //
-    // A Firefox this session did not start never had the agent installed, and
-    // there is nothing to be done about that from outside: the one moment a
-    // privileged script can be installed is the moment the browser starts.
+    // installed at startup — see firefox.js — reached through its loopback
+    // raw socket without involving the current document.
     async readLibrary(kind, scope) {
       const entries = await askAgent(kind, { max: MAX_ENTRIES }, scope, 'read them');
       return orderEntries(kind, entries);

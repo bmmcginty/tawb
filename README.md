@@ -253,8 +253,9 @@ npm start -- --connect 9222
 
 Attaching has limitations. In particular, Chromium's native dialogs may be
 unavailable unless accessibility was enabled when the browser started, and
-Firefox cannot provide its bookmarks, history, and downloads agent to an
-already-running instance.
+Firefox cannot add its bookmarks, history, and downloads agent to an arbitrary
+already-running instance. An instance previously started with `--keep-browser`
+retains that agent and makes all three lists available when TAWB rejoins it.
 
 ### Search configuration
 
