@@ -2,9 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 
-const { tempDir } = require('../tmpdir');
+const { tempDir, removeTempDir } = require('../tmpdir');
 const { openDriver } = require('../../src/driver');
 const { Core } = require('../../src/core');
 const { exactBlockForElement } = require('../../src/place');
@@ -18,7 +17,7 @@ let driver;
 
 test.after(async () => {
   if (driver) await driver.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  removeTempDir(profile);
 });
 
 test('an activation-scoped focus change identifies its exact destination', async () => {

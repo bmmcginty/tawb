@@ -11,7 +11,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const http = require('node:http');
 
-const { tempDir } = require('../tmpdir');
+const { tempDir, removeTempDir } = require('../tmpdir');
 const { openDriver } = require('../../src/driver');
 const { Core } = require('../../src/core');
 const { snapshotFrameTree } = require('../../src/frames');
@@ -29,7 +29,7 @@ let driver;
 test.after(async () => {
   if (driver) await driver.close();
   if (server) await new Promise((resolve) => server.close(resolve));
-  fs.rmSync(profile, { recursive: true, force: true });
+  removeTempDir(profile);
 });
 
 function lineNamed(state, name) {

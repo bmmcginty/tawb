@@ -14,9 +14,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 
-const { tempDir } = require('../tmpdir');
+const { tempDir, removeTempDir } = require('../tmpdir');
 
 const { openDriver } = require('../../src/driver');
 const { startEdbServer } = require('../../src/edb_server');
@@ -51,7 +50,7 @@ test.after(async () => {
   await Promise.resolve(shared.server.close?.()).catch(() => {});
   await shared.driver.close().catch(() => {});
   shared.pageServer.server.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  removeTempDir(profile);
 });
 
 const get = async (url) => {

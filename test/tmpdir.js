@@ -89,11 +89,42 @@ function tempDir(prefix) {
   return dir;
 }
 
-// Removing one before the file ends — the same thing test.after would do,
-// without leaving it on the list to be done twice.
+// How long to wait for a browser to finish leaving a profile before giving up
+// on removing that profile here. A browser that was signalled goes in well
+// under a second; anything still there after this is a browser that was never
+// signalled at all.
+const RELEASE_MS = 5000;
+
+// Removing a directory this file made, without waiting for the run to end.
+//
+// A browser that has been told to quit is not yet a browser that has quit.
+// Chromium goes on writing its profile all through its shutdown, so removing
+// the profile the moment the driver's close returns races those last writes:
+// the walk empties a directory, the browser creates one more file inside it,
+// and the final rmdir fails with ENOTEMPTY. That is the flake this waits out.
+//
+// The condition to wait on is the browser leaving the profile, because once no
+// process names the profile there is nobody left to write into it. The retries
+// are for the moment either side of that, where a write may already be in
+// flight. The wait costs nothing in the ordinary case: the driver's close
+// signalled the browser before this was called.
 function removeTempDir(dir) {
+  for (const deadline = Date.now() + RELEASE_MS;
+    anyProcessUsing(dir) && Date.now() < deadline;) {
+    sleepSync(50);
+  }
+  // Still occupied, which is not this function's business to end: a browser
+  // another reader is in, or one --keep-browser asked to stay. The directory
+  // keeps its owner in its name and is swept by the next run, once that
+  // browser has been reaped.
+  if (anyProcessUsing(dir)) return false;
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch {
+    return false;
+  }
   mine.delete(dir);
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* already gone */ }
+  return true;
 }
 
 module.exports = { tempDir, removeTempDir };

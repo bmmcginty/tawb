@@ -13,7 +13,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { tempDir } = require('../tmpdir');
+const { tempDir, removeTempDir } = require('../tmpdir');
 
 // Claims live under the user's data directory. A test must not write to the
 // real one, so this is set before session.js is asked for anything.
@@ -35,8 +35,8 @@ test.after(async () => {
   // this, every run of this file leaks a browser.
   if (driver) fs.rmSync(claimsPath(driver.port), { force: true });
   if (driver) await driver.close().catch(() => {});
-  fs.rmSync(profile, { recursive: true, force: true });
-  fs.rmSync(state, { recursive: true, force: true });
+  removeTempDir(profile);
+  removeTempDir(state);
 });
 
 test('every tab has a name of its own, and the browser has a port to key them by', async () => {

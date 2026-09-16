@@ -2,9 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 
-const { tempDir } = require('../tmpdir');
+const { tempDir, removeTempDir } = require('../tmpdir');
 
 const { openDriver } = require('../../src/driver');
 const { sendFieldEdit } = require('../../src/edit');
@@ -15,7 +14,7 @@ let driver;
 
 test.after(async () => {
   if (driver) await driver.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  removeTempDir(profile);
 });
 
 test('typing and readline editing operate a browser text field', async () => {

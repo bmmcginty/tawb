@@ -19,7 +19,7 @@ const fs = require('node:fs');
 
 const { PassThrough } = require('node:stream');
 
-const { tempDir } = require('../tmpdir');
+const { tempDir, removeTempDir } = require('../tmpdir');
 
 const { openDriver } = require('../../src/driver');
 const { killProcessGroup } = require('../../src/proc');
@@ -51,7 +51,7 @@ async function browser() {
 
 test.after(async () => {
   if (shared) await shared.driver.close().catch(() => {});
-  fs.rmSync(profile, { recursive: true, force: true });
+  removeTempDir(profile);
 });
 
 // Each case gets its own server, because a browser caches credentials by

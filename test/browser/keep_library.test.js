@@ -26,7 +26,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const http = require('node:http');
 
-const { tempDir } = require('../tmpdir');
+const { tempDir, removeTempDir } = require('../tmpdir');
 const { openDriver } = require('../../src/driver');
 const { readEndpointRecord } = require('../../src/endpoint');
 const { readRegistry, forgetBrowser } = require('../../src/registry');
@@ -111,6 +111,9 @@ test.after(async () => {
   }
   if (server) server.close();
   for (const file of fetched) fs.rmSync(file, { force: true });
+  // The browser was signalled a moment ago and is still writing its profile,
+  // so this waits for the browser to leave before removing the profile.
+  removeTempDir(profile);
 });
 
 test('a browser that was kept is joined rather than started again', () => {
