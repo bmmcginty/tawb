@@ -123,10 +123,14 @@ test('contenteditable hosts are fields with a browser-tracked caret', async () =
     assert.match(await page.evaluate(() => document.querySelector('#events').textContent),
       /^[1-9][0-9]* input events$/);
 
+    // Tab moves to the next control without ending the edit. Notes is another
+    // editing host, so the reader goes on typing in Notes rather than being
+    // put back into browsing and made to activate Notes again.
     await handleTypeKey('\t', state, page);
-    assert.equal(state.mode, 'browse');
+    assert.equal(state.mode, 'type');
     const block = state.core.blocks[state.lines[state.cursor].blockIndex];
     assert.equal(block.item.name, 'Notes');
+    assert.equal(state.typing.text, 'plain notes');
   } finally {
     process.stdout.write = write;
   }
