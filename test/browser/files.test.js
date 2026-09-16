@@ -111,7 +111,9 @@ test('an unlabelled file input remains an upload control in AX and PAGE views', 
       const upload = core.blocks.find((block) => block.item
         && block.item.name === 'toc_set-0-soundfile');
       assert.ok(upload, `${source} omitted the unlabelled file input`);
-      assert.deepEqual(upload.item.file, { multiple: false, accept: '' });
+      assert.equal(upload.item.file.multiple, false);
+      assert.equal(upload.item.file.accept, '');
+      assert.deepEqual(upload.item.file.names, []);
       assert.equal(upload.item.role, 'button');
     }
   } finally {
@@ -124,8 +126,20 @@ test('a file input the reader activated is given its file directly', async () =>
   const page = await driver.context.newPage();
   try {
     await page.goto(url);
-    const handle = await page.evaluateHandle(() => document.getElementById('plain'));
-    await driver.setFiles(handle, [file]);
+    const core = new Core({ driver, page, source: 'ax' });
+    await core.rescan();
+    const input = core.blocks.find((block) => block.item && block.item.file
+      && block.item.file.key === 'id:plain');
+    assert.ok(input, 'the file input was not rendered');
+    await core.attachFiles(input.item, [file], page);
+    await core.rescan();
+    assert.ok(core.blocks.some((block) => block.text.includes(file)),
+      'the attached shell path was not shown in AX view');
+    core.setView('render');
+    await core.rescan();
+    assert.ok(core.blocks.some((block) => block.text.includes(file)),
+      'the attached shell path was not shown in PAGE view');
+
     // The page's own word for it: the change event fired and the file is
     // there, exactly as if a chooser had been used.
     assert.ok(await waitFor(async () => (await page.evaluate(() => JSON.stringify(window.picked.plain || null))) !== 'null'));
@@ -133,6 +147,16 @@ test('a file input the reader activated is given its file directly', async () =>
       await page.evaluate(() => JSON.stringify(window.picked.plain)),
       JSON.stringify(['report.txt:27']),
     );
+
+    const selected = core.blocks.find((block) => block.item && block.item.file
+      && block.item.file.key === 'id:plain');
+    const handle = await core.handleFor(selected.item, page);
+    await handle.evaluate((el) => { el.value = ''; });
+    await handle.dispose();
+    await core.rescan();
+    assert.equal(core.blocks.filter((block) => block.item && block.item.file)
+      .some((block) => block.text.includes(file)), false,
+      'a path remained displayed after the browser cleared the input');
   } finally {
     await page.close().catch(() => {});
   }

@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('path');
 const { snapshotFrameTree } = require('./frames');
 const { armRenderedFrames, createLiveState, installLive, collect, INPUT_GRACE_MS } = require('./live');
 const { activateDomItem, domElementHandle } = require('./dom');
@@ -8,7 +9,7 @@ const { renderElementHandle } = require('./render_html');
 const { remapIndex } = require('./remap');
 const { claimTab } = require('./session');
 const { log } = require('./log');
-const { BUTTON_ROLES, LINK_ROLES } = require('./aria');
+const { renderLine, BUTTON_ROLES, LINK_ROLES } = require('./aria');
 
 // The core: everything about a page that is not about a terminal.
 //
@@ -435,6 +436,11 @@ class Core {
     // points at. See relocatePopup().
     this.popup = null;
     this.snapshotCostMs = 0;
+    // Full shell paths cannot be read back from a file input: browsers expose
+    // only its filenames so a page cannot learn the reader's directory tree.
+    // Keep paths outside the page, by frame and stable control identity, and
+    // show them only while the browser still reports the same selected files.
+    this.attachedFiles = new WeakMap();
     // When the page last changed under us, whether a refresh is owed, how
     // recently the reader touched anything. The rules that read it live in
     // live.js; what is here is the orchestration those rules drive.
@@ -576,6 +582,21 @@ class Core {
     const started = Date.now();
     const visited = [];
     this.blocks = await snapshotBlocks(page, this.source, { visited, driver: this.driver });
+    for (const block of this.blocks) {
+      const item = block.item;
+      if (!item || !item.file || !item.file.key) continue;
+      const frame = item.frame || page;
+      const remembered = this.attachedFiles.get(frame)?.get(item.file.key);
+      if (!remembered) continue;
+      const names = item.file.names || [];
+      if (names.length !== remembered.names.length
+        || names.some((name, index) => name !== remembered.names[index])) {
+        this.attachedFiles.get(frame).delete(item.file.key);
+        continue;
+      }
+      item.value = remembered.paths.join(', ');
+      block.text = renderLine(item);
+    }
     this.generation += 1;
     this.renderedUrl = page.url();
     // Observe what we display: a frame that contributed lines may keep
@@ -1211,6 +1232,27 @@ class Core {
   // hidden controls) sit off-screen. The click is still aimed where a mouse
   // would land — see click.js — since a site is free to listen below the
   // control it labelled.
+  async attachFiles(item, paths, page = this.page) {
+    const handle = await withTimeout(
+      this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating the file control');
+    try {
+      await withTimeout(
+        this.driver.setFiles(handle, paths), ACTION_TIMEOUT_MS, 'Attaching the file');
+      const frame = item.frame || page;
+      let controls = this.attachedFiles.get(frame);
+      if (!controls) {
+        controls = new Map();
+        this.attachedFiles.set(frame, controls);
+      }
+      controls.set(item.file.key, {
+        paths: paths.slice(),
+        names: paths.map((file) => path.basename(file)),
+      });
+    } finally {
+      await handle.dispose().catch(() => {});
+    }
+  }
+
   async activate(item, page = this.page) {
     if (item.pressFrame) return this.pressFrame(item);
     if (item.nativeControl && typeof this.driver.activateNativeControl === 'function') {

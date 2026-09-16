@@ -2109,8 +2109,6 @@ async function activateCurrent(state, page) {
     // neither the reader nor this program can reach, and on a machine with no
     // portal it would do nothing whatsoever — which is what it used to do.
     if (item.file) {
-      const handle = await withTimeout(
-        state.core.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating the file control');
       const files = await askForFilePaths(state, {
         asking: item.name, multiple: !!item.file.multiple, accept: item.file.accept || '',
       });
@@ -2118,9 +2116,7 @@ async function activateCurrent(state, page) {
         setStatus(state, `Nothing attached to "${item.name}".`);
         return;
       }
-      await withTimeout(
-        state.driver.setFiles(handle, files.map((file) => file.path)),
-        ACTION_TIMEOUT_MS, 'Attaching the file');
+      await state.core.attachFiles(item, files.map((file) => file.path), page);
       log('files.attached', {
         control: String(item.name).slice(0, 60), files: files.length, engine: state.driver.name,
       });

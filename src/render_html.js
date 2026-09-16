@@ -117,10 +117,19 @@ function extractVisible() {
     // Keep that distinction and its upload metadata in this fallback view so
     // pressing it opens the same terminal path prompt as the AX view.
     if (shown && tag === 'input' && el.type === 'file') {
+      const allFiles = Array.from(document.querySelectorAll('input[type="file"]'));
+      const sameName = el.name ? allFiles.filter((one) => one.name === el.name) : [];
+      const key = el.id ? `id:${el.id}`
+        : (el.name ? `name:${el.name}:${sameName.indexOf(el)}` : `index:${allFiles.indexOf(el)}`);
       emit({
         kind: 'button',
         text: labelFor(el),
-        file: { multiple: !!el.multiple, accept: el.getAttribute('accept') || '' },
+        file: {
+          multiple: !!el.multiple,
+          accept: el.getAttribute('accept') || '',
+          key,
+          names: Array.from(el.files || []).map((file) => file.name),
+        },
         index: register(),
         block: true,
       });

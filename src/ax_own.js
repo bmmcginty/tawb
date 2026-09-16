@@ -669,7 +669,18 @@ function extractAxItems(options) {
         // needs a filename rather than a press — so it is marked, along with
         // what it says it will take.
         if (fileInput) {
-          item.file = { multiple: !!el.multiple, accept: el.getAttribute('accept') || '' };
+          const sameName = el.name
+            ? Array.from(document.querySelectorAll('input[type="file"]')).filter((one) => one.name === el.name)
+            : [];
+          const key = el.id ? `id:${el.id}`
+            : (el.name ? `name:${el.name}:${sameName.indexOf(el)}`
+              : `index:${Array.from(document.querySelectorAll('input[type="file"]')).indexOf(el)}`);
+          item.file = {
+            multiple: !!el.multiple,
+            accept: el.getAttribute('accept') || '',
+            key,
+            names: Array.from(el.files || []).map((file) => file.name),
+          };
         }
         if (role === 'heading') {
           item.level = el.getAttribute('aria-level')

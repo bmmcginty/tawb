@@ -48,7 +48,10 @@ function renderLine(item) {
     return marker + name;
   }
   if (LINK_ROLES.has(role)) return `{${name}${expansion(item)}}`;
-  if (BUTTON_ROLES.has(role)) return `[*${name}${expansion(item)}]`;
+  if (BUTTON_ROLES.has(role)) {
+    const attached = item.file && value ? `: ${value}` : '';
+    return `[*${name}${attached}${expansion(item)}]`;
+  }
   if (FIELD_ROLES.has(role)) {
     // A field the browser filled from its password manager reads as empty:
     // the value is kept from page script until the person interacts with the
