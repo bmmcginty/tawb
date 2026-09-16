@@ -27,8 +27,29 @@ function lineNamed(state, name) {
   });
 }
 
-test('Tab leaves editing for the next control and comboboxes open', async () => {
+test('an invalid ARIA role does not erase a submit button', async () => {
   driver = await openDriver({ engine: ENGINE, profile, log: () => {} });
+  const page = driver.context.pages()[0] || await driver.context.newPage();
+  await page.goto('data:text/html,' + encodeURIComponent(`
+    <form onsubmit="window.submitted += 1; event.preventDefault()">
+      <input value="Delete" type="submit" role="Book" aria-label="Book">
+    </form>
+    <script>window.submitted = 0</script>
+  `));
+
+  for (const source of ['ax', 'render']) {
+    const core = new Core({ driver, page, source });
+    await core.rescan();
+    const button = core.blocks.find((block) => block.item && block.item.role === 'button');
+    assert.ok(button, `${source} omitted the native submit button`);
+    assert.equal(button.item.role, 'button');
+    await core.activate(button.item, page);
+  }
+  assert.equal(await page.evaluate(() => window.submitted), 2);
+});
+
+test('Tab leaves editing for the next control and comboboxes open', async () => {
+  driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
   const page = driver.context.pages()[0] || await driver.context.newPage();
   await page.goto('data:text/html,' + encodeURIComponent(`
     <input aria-label="First field">

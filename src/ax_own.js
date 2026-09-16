@@ -125,6 +125,24 @@ function extractAxItems(options) {
     'menuitemcheckbox', 'menuitemradio', 'tab', 'switch', 'checkbox', 'radio', 'option']);
   const FIELDS = new Set(['textbox', 'searchbox', 'combobox', 'listbox', 'slider',
     'spinbutton']);
+  // Concrete ARIA roles authors may use. Unknown roles are ignored by the
+  // browser, leaving the element's native HTML role in force; accepting any
+  // string here instead makes a typo erase controls such as submit buttons.
+  // A role attribute is a token list, so the first recognised token wins.
+  const ARIA_ROLES = new Set([
+    'alert', 'alertdialog', 'application', 'article', 'banner', 'button', 'cell',
+    'checkbox', 'code', 'columnheader', 'combobox', 'complementary', 'contentinfo',
+    'definition', 'deletion', 'dialog', 'directory', 'document', 'emphasis', 'feed',
+    'figure', 'form', 'generic', 'grid', 'gridcell', 'group', 'heading', 'img',
+    'insertion', 'link', 'list', 'listbox', 'listitem', 'log', 'main', 'mark',
+    'marquee', 'math', 'menu', 'menubar', 'menuitem', 'menuitemcheckbox',
+    'menuitemradio', 'meter', 'navigation', 'none', 'note', 'option', 'paragraph',
+    'presentation', 'progressbar', 'radio', 'radiogroup', 'region', 'row',
+    'rowgroup', 'rowheader', 'scrollbar', 'search', 'searchbox', 'separator',
+    'slider', 'spinbutton', 'status', 'strong', 'subscript', 'suggestion',
+    'superscript', 'switch', 'tab', 'table', 'tablist', 'tabpanel', 'term',
+    'textbox', 'time', 'timer', 'toolbar', 'tooltip', 'tree', 'treegrid', 'treeitem',
+  ]);
   // A player is one line, and what it says is where it has got to.
   const MEDIA = new Set(['video', 'audio']);
   // Containers that only style a run of text, so content flows through them.
@@ -288,7 +306,8 @@ function extractAxItems(options) {
     && !(el.parentElement && el.parentElement.isContentEditable);
 
   const roleOf = (el) => {
-    const explicit = clean(el.getAttribute('role')).split(' ')[0];
+    const explicit = clean(el.getAttribute('role')).toLowerCase().split(' ')
+      .find((token) => ARIA_ROLES.has(token));
     if (explicit) return explicit;
     const tag = el.tagName.toLowerCase();
     // HTML gives an editing host textbox behaviour without requiring an ARIA
