@@ -103,14 +103,14 @@ class FirefoxFrame {
     return this._url;
   }
 
-  async evaluate(fn, arg) {
+  async evaluate(fn, arg, { timeout } = {}) {
     const result = await this.session.send('script.callFunction', {
       functionDeclaration: asFunctionDeclaration(fn),
       arguments: arg === undefined ? [] : [toRemoteArgument(arg)],
       target: { context: this.contextId },
       awaitPromise: true,
       resultOwnership: 'none',
-    });
+    }, timeout == null ? undefined : { timeout });
     if (result.type === 'exception') {
       throw new Error(result.exceptionDetails?.text || 'the page threw while evaluating');
     }
@@ -363,8 +363,8 @@ class FirefoxPage {
     }
   }
 
-  evaluate(fn, arg) {
-    return this._mainFrame.evaluate(fn, arg);
+  evaluate(fn, arg, options) {
+    return this._mainFrame.evaluate(fn, arg, options);
   }
 
   evaluateHandle(fn, arg) {
@@ -539,12 +539,60 @@ async function startSession(session, { profileDir, marionettePort, log, brokered
 // page rather than assumed from the clear having returned successfully. This
 // is the check that keeps a broken patch from becoming a browser that fails
 // bot checks without anybody noticing.
-async function readWebdriverFlag(page) {
+//
+// It must be a new page. Firefox publishes the remote-agent keys early enough
+// for its launch about:blank to read them as true, and clearing the parent
+// process's shared data does not rewrite a content global that already read
+// the value. Testing that old page produced a false bot warning even though
+// every page opened afterwards saw false.
+//
+// Creating the page is also the useful readiness signal: an open protocol
+// port only says that Firefox has begun bringing the remote agent up. Script
+// evaluation can still fail while its first content process is settling. Such
+// failures are retried; a successful boolean answer is final.
+const WEBDRIVER_READY_TIMEOUT_MS = 30000;
+
+async function verifyWebdriverFlag(context, {
+  timeoutMs = WEBDRIVER_READY_TIMEOUT_MS,
+  pollMs = 200,
+  now = Date.now,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  log = () => {},
+} = {}) {
+  const probe = await context.newPage({ background: true });
+  const started = now();
+  const deadline = started + timeoutMs;
+  let lastError = null;
   try {
-    return await page.evaluate(() => navigator.webdriver);
-  } catch {
-    return null;
+    for (;;) {
+      const remaining = deadline - now();
+      if (remaining <= 0) break;
+      try {
+        const state = await probe.evaluate(() => ({
+          readyState: document.readyState,
+          webdriver: navigator.webdriver,
+        }), undefined, { timeout: Math.max(1, Math.min(5000, remaining)) });
+        if (state && state.readyState !== 'loading'
+          && typeof state.webdriver === 'boolean') return state.webdriver;
+        lastError = new Error('the probe page did not return a final boolean value');
+      } catch (err) {
+        lastError = err;
+        log('firefox.ready.wait', {
+          ms: now() - started,
+          error: String(err && err.message ? err.message : err).slice(0, 200),
+        });
+      }
+      await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
+    }
+  } finally {
+    await probe.close().catch(() => {});
   }
+  const detail = lastError
+    ? ` Last answer: ${String(lastError.message || lastError).slice(0, 200)}.` : '';
+  throw new Error(
+    `Firefox opened its protocol but did not finish initializing a page within ${timeoutMs / 1000}s.`
+    + detail,
+  );
 }
 
 // What Firefox calls itself on the accessibility bus. Only needed for a
@@ -648,8 +696,10 @@ async function openFirefox({
 
   const browserContext = {
     pages() { return [...pages.values()]; },
-    async newPage() {
-      const created = await session.send('browsingContext.create', { type: 'tab' });
+    async newPage({ background = false } = {}) {
+      const params = { type: 'tab' };
+      if (background) params.background = true;
+      const created = await session.send('browsingContext.create', params);
       return pageFor(created.context, 'about:blank');
     },
     async exposeBinding(name, callback) {
@@ -759,8 +809,8 @@ async function openFirefox({
     }).catch(() => {})));
   };
 
-  const webdriverFlag = await readWebdriverFlag(page);
-  log('firefox.ready', { cleared, webdriver: webdriverFlag });
+  const webdriverFlag = await verifyWebdriverFlag(browserContext, { log });
+  log('firefox.ready', { cleared, webdriver: webdriverFlag, probe: 'new-page' });
   if (webdriverFlag !== false) {
     session.close();
     if (child) killProcessGroup(child.pid);
@@ -1219,5 +1269,6 @@ async function openFirefox({
 
 module.exports = {
   openFirefox, FirefoxPage, FirefoxFrame, FirefoxHandle, FirefoxKeyboard,
+  verifyWebdriverFlag, WEBDRIVER_READY_TIMEOUT_MS,
   toRemoteArgument, WEBDRIVER_KEYS,
 };
