@@ -38,7 +38,7 @@ const BROWSER_NAMES = ['Chromium', 'Chrome', 'Google Chrome', 'Chromium-browser'
 // one is closed.
 
 async function openChromium({
-  connect = null, profile = null, keepBrowser = false, log = () => {},
+  connect = null, profile = null, keepBrowser = false, log = () => {}, onStartup = () => {},
 } = {}) {
   let browser;
   let context;
@@ -52,13 +52,16 @@ async function openChromium({
   let a11y = null;
 
   if (connect) {
+    try { onStartup('Connecting to Chromium…'); } catch { /* display only */ }
     const connected = await connectToBrowser(connect, { log });
     ({ browser, context } = connected);
     port = connected.port;
     rejoined = true;
     a11y = connected.a11y;
   } else {
-    const started = await launchOwnBrowser({ profileDir: profile || defaultProfileDir(), log });
+    const started = await launchOwnBrowser({
+      profileDir: profile || defaultProfileDir(), log, onStartup,
+    });
     ({ browser, context } = started);
     child = started.child;
     owned = !!started.owned;

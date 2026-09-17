@@ -158,7 +158,9 @@ const findRunningBrowser = runningEndpoint;
 // Starts an ordinary browser and attaches to it, or rejoins one already
 // running on this profile. The profile persists between runs, so logins and
 // cookies survive — which is most of what makes the web usable.
-async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => {} } = {}) {
+async function launchOwnBrowser({
+  profileDir = defaultProfileDir(), log = () => {}, onStartup = () => {},
+} = {}) {
   const found = findBrowserExecutable();
   if (!found) {
     throw new Error(
@@ -189,6 +191,7 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
 
   const running = await findRunningBrowser(profileDir);
   if (running) {
+    try { onStartup('Joining the running Chromium…'); } catch { /* display only */ }
     log('browser.rejoin', { port: running, profileDir });
     const browser = await cdpBrowser.connect(`http://127.0.0.1:${running}`);
     const context = browser.contexts()[0];
@@ -222,6 +225,7 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
 
   const { command, args } = buildCommand(found.executable, browserArgs);
   const displayNote = lastDisplayNote;
+  try { onStartup('Starting Chromium…'); } catch { /* display only */ }
   log('browser.spawn', { executable: found.executable, name: found.name, port, profileDir });
 
   // Detached, so the browser leads a process group of its own. That is the
@@ -243,11 +247,19 @@ async function launchOwnBrowser({ profileDir = defaultProfileDir(), log = () => 
   // Stop waiting when the process exits, but do not guess why. A profile clash
   // is only one possible quick exit; the browser's own stderr is the evidence.
   const timeoutMs = startupTimeoutMs(STARTUP_TIMEOUT_MS);
-  const deadline = Date.now() + timeoutMs;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  let nextNotice = startedAt + 10000;
   let ready = false;
   while (Date.now() < deadline) {
     if (await endpointReady(port)) { ready = true; break; }
     if (startup.closed) break;
+    if (Date.now() >= nextNotice) {
+      try {
+        onStartup(`Chromium is still starting (${Math.round((Date.now() - startedAt) / 1000)}s)…`);
+      } catch { /* display only */ }
+      nextNotice += 10000;
+    }
     await new Promise((r) => setTimeout(r, 200));
   }
 

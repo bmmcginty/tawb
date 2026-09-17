@@ -24,6 +24,7 @@ const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 const { entryLine, matches, shortAddress, KIND_LABELS } = require('./library');
 const { resolveAddress, DEFAULT_SEARCH } = require('./address');
 const { readSettings } = require('./settings');
+const { startupStatus } = require('./startup');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -3547,14 +3548,26 @@ async function main() {
   // ordinary one ourselves. There is deliberately no Playwright-launched
   // fallback: that browser announces itself as automated, and sites that
   // react to it leave the reader stuck on pages that never resolve.
-  const driver = await timed('browser.start', { engine: ARGS.engine }, () =>
-    openDriver({
-      engine: ARGS.engine,
-      connect: ARGS.connect,
-      profile: ARGS.profile,
-      keepBrowser: ARGS.keepBrowser,
-      log,
-    }));
+  //
+  // This is before the full-screen interface takes the terminal. Give that
+  // otherwise blank wait one stable, screen-reader-friendly status line;
+  // browser-specific startup phases replace it as they advance.
+  const startup = startupStatus();
+  startup.update(`Starting ${ARGS.engine === 'firefox' ? 'Firefox' : 'Chromium'}…`);
+  let driver;
+  try {
+    driver = await timed('browser.start', { engine: ARGS.engine }, () =>
+      openDriver({
+        engine: ARGS.engine,
+        connect: ARGS.connect,
+        profile: ARGS.profile,
+        keepBrowser: ARGS.keepBrowser,
+        log,
+        onStartup: startup.update,
+      }));
+  } finally {
+    startup.finish();
+  }
   setCurrentDriver(driver);
   const { browser, context } = driver;
   const browserPort = driver.port;

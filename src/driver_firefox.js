@@ -602,6 +602,7 @@ const BROWSER_NAMES = ['Firefox', 'Mozilla Firefox', 'firefox'];
 
 async function openFirefox({
   profile = null, connect = null, keepBrowser = false, broker = true, log = () => {},
+  onStartup = () => {},
 } = {}) {
   let child = null;
   let endpoint = connect;
@@ -621,7 +622,7 @@ async function openFirefox({
 
   if (!endpoint) {
     const started = await launchFirefox({
-      profileDir: profile || defaultProfileDir(), keepBrowser, log,
+      profileDir: profile || defaultProfileDir(), keepBrowser, log, onStartup,
     });
     child = started.child;
     endpoint = started.endpoint;
@@ -655,6 +656,7 @@ async function openFirefox({
   // leaves, and the reader arriving in that moment finds a socket that closes
   // under it. That is not a failure to report to anybody; it is a reason to
   // start one of our own and try again.
+  try { onStartup('Starting the Firefox browsing session…'); } catch { /* display only */ }
   let session = null;
   for (let attempt = 0; ; attempt += 1) {
     endpoint = brokered
@@ -809,6 +811,7 @@ async function openFirefox({
     }).catch(() => {})));
   };
 
+  try { onStartup('Checking Firefox bot-detection state…'); } catch { /* display only */ }
   const webdriverFlag = await verifyWebdriverFlag(browserContext, { log });
   log('firefox.ready', { cleared, webdriver: webdriverFlag, probe: 'new-page' });
   if (webdriverFlag !== false) {

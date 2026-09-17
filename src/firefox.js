@@ -69,6 +69,25 @@ const STARTUP_TIMEOUT_MS = 45000;
 // Give every Marionette operation the same full minute rather than imposing
 // three different, shorter limits at different points in startup and recovery.
 const MARIONETTE_TIMEOUT_MS = 60000;
+const STARTUP_NOTICE_MS = 10000;
+
+function sayStartup(onStartup, message) {
+  try { onStartup(message); } catch { /* display trouble must not stop the browser */ }
+}
+
+async function waitWithStartup(promise, onStartup, phase) {
+  const started = Date.now();
+  sayStartup(onStartup, `${phase}…`);
+  const timer = setInterval(() => {
+    const seconds = Math.max(1, Math.round((Date.now() - started) / 1000));
+    sayStartup(onStartup, `${phase} (${seconds}s)…`);
+  }, STARTUP_NOTICE_MS);
+  try {
+    return await promise;
+  } finally {
+    clearInterval(timer);
+  }
+}
 
 // Both agents publish their own key, and either one being true is enough to
 // give the browser away.
@@ -716,7 +735,7 @@ function releaseStrandedSession(port, { timeout = MARIONETTE_TIMEOUT_MS } = {}) 
 // Starts an ordinary Firefox, silences the announcement, and returns where to
 // attach. The caller verifies from inside a page before trusting any of it.
 async function launchFirefox({
-  profileDir = defaultProfileDir(), keepBrowser = false, log = () => {},
+  profileDir = defaultProfileDir(), keepBrowser = false, log = () => {}, onStartup = () => {},
 } = {}) {
   const found = findFirefox();
   if (!found) {
@@ -726,6 +745,7 @@ async function launchFirefox({
     );
   }
 
+  sayStartup(onStartup, 'Preparing Firefox profile…');
   requireBrowserUser(found.name);
   requireReachableProfile(found, profileDir);
   fs.mkdirSync(profileDir, { recursive: true });
@@ -749,6 +769,7 @@ async function launchFirefox({
 
   const running = await runningEndpoint(profileDir);
   if (running) {
+    sayStartup(onStartup, 'Joining the running Firefox…');
     const record = readEndpointRecord(profileDir) || {};
     log('firefox.rejoin', { port: running, marionette: record.marionettePort || null, profileDir });
     return {
@@ -784,6 +805,7 @@ async function launchFirefox({
 
   const { command, args: spawnArgs } = buildCommand(found.executable, args);
   const displayNote = lastDisplayNote;
+  sayStartup(onStartup, 'Starting Firefox…');
   log('firefox.spawn', { executable: found.executable, port, marionette: marionettePort, profileDir });
 
   // Detached, so the browser is not taken down by the terminal session ending
@@ -806,9 +828,14 @@ async function launchFirefox({
   const timeoutMs = startupTimeoutMs(STARTUP_TIMEOUT_MS);
   const deadline = spawnedAt + timeoutMs;
   let ready = false;
+  let nextNotice = spawnedAt + STARTUP_NOTICE_MS;
   while (Date.now() < deadline) {
     if (await portOpen(port)) { ready = true; break; }
     if (startup.closed) break;
+    if (Date.now() >= nextNotice) {
+      sayStartup(onStartup, `Firefox is still starting (${Math.round((Date.now() - spawnedAt) / 1000)}s)…`);
+      nextNotice += STARTUP_NOTICE_MS;
+    }
     await new Promise((r) => setTimeout(r, 200));
   }
   const portMs = Date.now() - spawnedAt;
@@ -833,9 +860,18 @@ async function launchFirefox({
 
   let cleared = null;
   const clearStarted = Date.now();
-  if (await waitForEndpoint(marionettePort, Date.now() + MARIONETTE_TIMEOUT_MS)) {
+  const marionetteReady = await waitWithStartup(
+    waitForEndpoint(marionettePort, Date.now() + MARIONETTE_TIMEOUT_MS),
+    onStartup,
+    'Firefox opened; waiting for its startup service',
+  );
+  if (marionetteReady) {
     try {
-      cleared = await clearAutomationFlag({ port: marionettePort });
+      cleared = await waitWithStartup(
+        clearAutomationFlag({ port: marionettePort }),
+        onStartup,
+        'Preparing Firefox for browsing',
+      );
       if (cleared.libraryPort) {
         writeEndpointRecord(profileDir, {
           ...(readEndpointRecord(profileDir) || {}), libraryPort: cleared.libraryPort,
