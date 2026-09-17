@@ -32,7 +32,7 @@ test('logging is off until --log enables a timestamped private file', async () =
     await closeLog();
 
     const contents = fs.readFileSync(expected, 'utf8');
-    assert.match(contents, /^# tawb log .* pid \d+\n/);
+    assert.match(contents, /^# tawb log .* pid \d+ commit [0-9a-f]{40,64}\n/);
     assert.match(contents, /"event":"enabled","answer":42/);
     assert.equal(fs.statSync(expected).mode & 0o777, 0o600);
   } finally {

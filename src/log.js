@@ -3,6 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { currentRevision } = require('./revision');
 
 // Timing log. The UI owns the terminal, so diagnostics go to a file — one
 // NDJSON record per event, timestamped from process start. Logging is opt-in:
@@ -47,7 +48,9 @@ function open() {
     const fd = fs.openSync(logPath, 'w', 0o600);
     stream = fs.createWriteStream(null, { fd });
     stream.on('error', () => { stream = null; });
-    stream.write(`# tawb log ${enabledAt.toISOString()} pid ${process.pid}\n`);
+    stream.write(
+      `# tawb log ${enabledAt.toISOString()} pid ${process.pid} commit ${currentRevision()}\n`,
+    );
   } catch {
     stream = null;
   }
