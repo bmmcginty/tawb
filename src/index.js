@@ -3549,9 +3549,10 @@ async function main() {
   // fallback: that browser announces itself as automated, and sites that
   // react to it leave the reader stuck on pages that never resolve.
   //
-  // This is before the full-screen interface takes the terminal. Give that
-  // otherwise blank wait one stable, screen-reader-friendly status line;
-  // browser-specific startup phases replace it as they advance.
+  // This is before the full-screen interface takes the terminal. If the wait
+  // lasts ten seconds, give it one stable, screen-reader-friendly status line;
+  // browser-specific startup phases replace it as they advance. A normal
+  // quick start stays quiet.
   const startup = startupStatus();
   startup.update(`Starting ${ARGS.engine === 'firefox' ? 'Firefox' : 'Chromium'}…`);
   let driver;
