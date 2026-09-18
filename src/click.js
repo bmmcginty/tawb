@@ -21,17 +21,52 @@
 // view and activate the bare <div> there.
 //
 // So the click is aimed the way a mouse would be: at the deepest descendant
-// covering the middle of the element. Events bubble from there back up
+// covering the aim point of the element. Events bubble from there back up
 // through the element itself, so a handler on either one now hears it. The
 // aim is done with layout boxes rather than elementFromPoint, which answers
 // only for what is on screen and would make an off-screen control
 // unclickable again.
+//
+// The aim point is the middle of the element's first line box, not the middle
+// of getBoundingClientRect(). For a block element the two are the same point.
+// For an inline element that wraps onto more than one line they are not:
+// getBoundingClientRect() returns the union of every line box, and the middle
+// of that union falls in the leading between two lines, or past the end of a
+// short last line — a place the element does not occupy at all. See
+// aimPointOf, which both functions in this file duplicate because each one is
+// serialised into the page on its own.
 function clickThrough(el) {
   if (!el || typeof el.getBoundingClientRect !== 'function') return false;
 
-  const box = el.getBoundingClientRect();
-  const x = box.left + box.width / 2;
-  const y = box.top + box.height / 2;
+  // Duplicated in prepareRealClick: each function is stringified separately
+  // when it is sent into the page, so neither can call out to the other.
+  const aimPointOf = (node) => {
+    const rects = typeof node.getClientRects === 'function'
+      ? Array.from(node.getClientRects()) : [];
+    for (const rect of rects) {
+      if (rect.width < 1 || rect.height < 1) continue;
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, rect };
+    }
+    const box = node.getBoundingClientRect();
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2, rect: box };
+  };
+  // Whether a real line box of this node covers the point, rather than the
+  // union of every line box covering it.
+  const covers = (node, x, y) => {
+    const rects = typeof node.getClientRects === 'function'
+      ? Array.from(node.getClientRects()) : [];
+    const boxes = rects.length ? rects : [node.getBoundingClientRect()];
+    for (const rect of boxes) {
+      if (!rect.width || !rect.height) continue;
+      if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
+      return true;
+    }
+    return false;
+  };
+
+  const aim = aimPointOf(el);
+  const x = aim.x;
+  const y = aim.y;
 
   let node = el;
   // Deep enough for an icon inside a span inside a button; bounded so a
@@ -43,9 +78,7 @@ function clickThrough(el) {
       // Something the pointer would pass straight through is not a target.
       if (style.pointerEvents === 'none' || style.display === 'none'
         || style.visibility === 'hidden') continue;
-      const rect = child.getBoundingClientRect();
-      if (!rect.width || !rect.height) continue;
-      if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
+      if (!covers(child, x, y)) continue;
       inner = child;
       break;
     }
@@ -123,9 +156,8 @@ function prepareRealClick(el) {
     return { ok: false, reason: 'is not an element' };
   }
 
-  // The middle of the element's first line box. For a block element that is
-  // the middle of getBoundingClientRect(); for a wrapped inline element it is
-  // not, and getBoundingClientRect() is the wrong rectangle.
+  // Duplicated in clickThrough: each function is stringified separately when
+  // it is sent into the page, so neither can call out to the other.
   const aimPointOf = (node) => {
     const rects = typeof node.getClientRects === 'function'
       ? Array.from(node.getClientRects()) : [];
