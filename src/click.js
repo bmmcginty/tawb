@@ -101,10 +101,41 @@ function submitsAutofilled(el) {
 // the shadow host — a custom element several hundred pixels away reports as
 // the thing in the way — which is both useless to report and wrong to judge:
 // what matters is the innermost element the click would actually reach.
+//
+// The point tested here has to be the point the click will land on, or the
+// check answers about somewhere else. Both drivers aim at the middle of the
+// element's *first* line box — Chromium through DOM.getContentQuads, which
+// returns one quad per line, and Firefox through the WebDriver in-view centre
+// point, which is defined on the first client rect. So this tests the first
+// line box too, not the middle of getBoundingClientRect().
+//
+// The difference is the whole bug on bestmed.co.za, where a form is
+//
+//   <li><a href="...">Corporate Member Benefit Option Change Form</a></li>
+//
+// and the link text wraps onto two lines. getBoundingClientRect() unions the
+// two line boxes into one 198x33 rectangle whose middle lies in the leading
+// between the lines, where the <li> is what gets hit. Alt+D and the click key
+// both refused the link — "is covered by <li>" — while the click they were
+// guarding would have landed on the link's first line perfectly well.
 function prepareRealClick(el) {
   if (!el || typeof el.getBoundingClientRect !== 'function') {
     return { ok: false, reason: 'is not an element' };
   }
+
+  // The middle of the element's first line box. For a block element that is
+  // the middle of getBoundingClientRect(); for a wrapped inline element it is
+  // not, and getBoundingClientRect() is the wrong rectangle.
+  const aimPointOf = (node) => {
+    const rects = typeof node.getClientRects === 'function'
+      ? Array.from(node.getClientRects()) : [];
+    for (const rect of rects) {
+      if (rect.width < 1 || rect.height < 1) continue;
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, rect };
+    }
+    const box = node.getBoundingClientRect();
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2, rect: box };
+  };
 
   // A closed shadow root is a shadow root for hit-testing purposes and not
   // for scripting ones: elementFromPoint retargets out of it and answers with
@@ -160,11 +191,15 @@ function prepareRealClick(el) {
     // that would be about where it used to be.
     el.scrollIntoView({ block, inline: 'center', behavior: 'instant' });
 
-    const box = el.getBoundingClientRect();
-    if (!box.width || !box.height) return { ok: false, reason: 'has no size on screen' };
+    // Re-read after the scroll: the boxes measured before it are at the
+    // positions the element used to be at.
+    const aim = aimPointOf(el);
+    if (!aim.rect.width || !aim.rect.height) {
+      return { ok: false, reason: 'has no size on screen' };
+    }
 
-    const x = box.left + box.width / 2;
-    const y = box.top + box.height / 2;
+    const x = aim.x;
+    const y = aim.y;
     if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) {
       blocked = blocked || { ok: false, reason: 'cannot be brought onto the screen' };
       continue;
