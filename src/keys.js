@@ -103,6 +103,11 @@ const ACTIONS = [
   // same row said a shorter way.
   ['toggle-short-links', 'Toggle short link addresses', ['U']],
   ['real-click', 'Real click', ['m']],
+  // Browse mode must keep letters for reading commands, while some web
+  // applications only expose parts of their interface through their own
+  // keyboard handlers. This switches to a separate keyboard where every key
+  // except this toggle belongs to the page.
+  ['page-keyboard', 'Send keys to the webpage', ['Alt+K']],
   ['find-forward', 'Find forward', ['/']],
   ['find-backward', 'Find backward', ['?']],
   ['repeat-find', 'Repeat find', ['Ctrl+G']],

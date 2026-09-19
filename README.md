@@ -119,6 +119,7 @@ if you would rather not hear an address on every link. Start with these keys:
 | `r` | Rescan TAWB's view without reloading the page |
 | `F5` | Reload the page in the browser |
 | `Alt+?` | Open keyboard help and change bindings |
+| `Alt+K` | Toggle webpage keyboard mode |
 | `q` | Quit |
 
 Useful single-letter navigation keys are `h` for headings, `l` for links, `b`
@@ -136,6 +137,13 @@ its choices; select-only ARIA
 comboboxes are activated rather than treated as text fields. Press `m` when a
 site requires a real pointer click, for example to grant user activation to a
 media control or open a file chooser.
+
+Press `Alt+K` to enter webpage keyboard mode. In that separate mode, keys are
+sent as trusted browser input instead of running TAWB commands: for example,
+Instagram Reels accepts `Space` to play or pause, `m` to mute or unmute, and
+the arrow or page keys to scroll in either direction. Even `Escape`, `Ctrl+L`,
+and `q` go to the webpage while this mode is active. Press `Alt+K` again to
+return to reading. The binding can be changed in the keyboard wizard.
 
 All browse and editing bindings are configurable. Press `Alt+?`, select an
 action, and replace or add a key. TAWB stores the result in

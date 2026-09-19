@@ -168,6 +168,16 @@ function keyIs(chunk, name, state) {
   return (state.keys || FALLBACK_KEYMAP).isKey(chunk, name);
 }
 
+// Turn one complete terminal keystroke back into the name understood by both
+// browser drivers. Printable characters already are their own names; terminfo
+// sequences become ArrowUp, PageDown, and so on. The only spelling difference
+// is Ctrl (terminal convention) versus Control (browser protocol convention).
+function browserKeyForTerminalSequence(chunk, keys = FALLBACK_KEYMAP) {
+  const name = keys.nameForSequence(chunk);
+  if (!name || name.startsWith('raw:')) return null;
+  return name.replace(/^Ctrl\+/, 'Control+');
+}
+
 // ANSI cursor positioning is 1-indexed. This is the whole point of the
 // exercise: a terminal screen reader / braille display follows the actual
 // terminal cursor, so it must land on the focused line, and mid-edit on the
@@ -599,6 +609,7 @@ function hintText(state) {
   if (state.mode === 'type') return 'Typing — Tab: next control  Esc: stop  Enter: submit';
   if (state.mode === 'forms') return 'Forms — Tab: next control  Enter: activate  Esc: browse';
   if (state.mode === 'control') return 'Control — arrows adjust  Home/End  Esc: stop';
+  if (state.mode === 'page') return 'Webpage keyboard — every key goes to the page  Alt+K: stop';
   if (state.mode === 'find') return 'Find — Enter: search  Esc: cancel';
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
   if (state.mode === 'library') {
@@ -2000,6 +2011,13 @@ async function handleBrowseKey(chunk, state, page) {
   }
 
   if (action === 'real-click') return clickAsHuman(state, page);
+
+  if (action === 'page-keyboard') {
+    state.mode = 'page';
+    drawHint(state);
+    setStatus(state, 'Webpage keyboard on — Space can play or pause and m can mute or unmute; Alt+K returns to reading.');
+    return;
+  }
 
   if (action === 'find-forward' || action === 'find-backward') {
     state.mode = 'find';
@@ -3442,6 +3460,42 @@ async function handleControlKey(chunk, state, page) {
   setStatus(state, `Adjusted "${controlling.item.name}" with ${name}.`);
 }
 
+async function handlePageKey(chunk, state, page) {
+  markInput(state);
+  const keys = state.keys || FALLBACK_KEYMAP;
+
+  // The same configurable key enters and leaves this mode. Everything else,
+  // including Escape, Ctrl+L, arrows and ordinary browse-mode commands, is
+  // deliberately the webpage's rather than ours.
+  if (keys.actionFor(chunk) === 'page-keyboard') {
+    const anchor = anchorFor(state);
+    const screen = screenBefore(state);
+    state.mode = 'browse';
+    drawHint(state);
+    try {
+      await refresh(state, page, { anchor });
+      repaintList(state, page, screen);
+      setStatus(state, 'Webpage keyboard off.');
+    } catch (err) {
+      setStatus(state, `Webpage keyboard off — could not rescan: ${String(err.message || err).split('\n')[0]}`);
+    }
+    return;
+  }
+
+  const name = browserKeyForTerminalSequence(chunk, keys);
+  if (!name) {
+    setStatus(state, 'That terminal key cannot be sent to the webpage.');
+    log('key.passthrough.unknown', { bytes: JSON.stringify(chunk) });
+    return;
+  }
+
+  try {
+    await page.keyboard.press(name);
+  } catch (err) {
+    setStatus(state, `Could not send ${keys.nameForSequence(chunk)} to the webpage: ${String(err.message || err).split('\n')[0]}`);
+  }
+}
+
 async function handleFindKey(chunk, state, page) {
   markInput(state);
   const find = state.find;
@@ -3649,8 +3703,8 @@ async function main() {
     col: 0,
     scroll: 0,
     statusMsg: '',
-    // 'browse' | 'choose' | 'library' | 'type' | 'control' | 'address' | 'find'
-    // | 'auth' | 'dialog' | 'line' | 'keyboard'
+    // 'browse' | 'choose' | 'library' | 'type' | 'control' | 'page' | 'address'
+    // | 'find' | 'auth' | 'dialog' | 'line' | 'keyboard'
     mode: 'browse',
     typing: null,
     controlling: null,
@@ -3815,6 +3869,7 @@ async function main() {
     else if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
     else if (state.mode === 'forms') result = await handleFormsKey(chunk, state, current);
     else if (state.mode === 'control') result = await handleControlKey(chunk, state, current);
+    else if (state.mode === 'page') result = await handlePageKey(chunk, state, current);
     else if (state.mode === 'address') result = await handleAddressKey(chunk, state, current);
     else if (state.mode === 'find') result = await handleFindKey(chunk, state, current);
     else result = await handleBrowseKey(chunk, state, current);
@@ -3909,7 +3964,8 @@ if (require.main === module) {
 }
 
 module.exports = {
-  handleBrowseKey, handleTypeKey, handleFormsKey, handleControlKey, handleAddressKey, handleFindKey,
+  handleBrowseKey, handleTypeKey, handleFormsKey, handleControlKey, handlePageKey,
+  handleAddressKey, handleFindKey, browserKeyForTerminalSequence,
   findText, runSearch,
   render, drawList, drawAddress, drawHint, drawStatus, setStatus,
   patchEditedLine, moveSelection, moveScreen, preserveViewportRow,
