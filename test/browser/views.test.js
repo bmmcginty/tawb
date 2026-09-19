@@ -246,6 +246,14 @@ test('ax view: a name is not doubled by a hidden pseudo element reserving width'
     'drawing a bolder copy of a tab behind itself is layout, not content');
 });
 
+test('ax view: an SVG image can name a link', async () => {
+  const text = await readFixture(
+    '<a href="/"><svg role="img" aria-label="Home"><path d="M0 0"></path></svg></a>',
+    'ax',
+  );
+  assert.match(text, /\{Home\}/);
+});
+
 // --- names reached through a reference --------------------------------------
 
 // aria-labelledby is read out of the referenced element whether or not it is

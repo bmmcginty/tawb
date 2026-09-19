@@ -35,7 +35,7 @@ const NAME_FROM_CONTENT = new Set([
 // text a reader wants.
 const SKIP_TAGS = new Set([
   'script', 'style', 'noscript', 'template', 'head', 'meta', 'link', 'title',
-  'svg', 'path', 'defs', 'symbol', 'canvas', 'br', 'wbr',
+  'path', 'defs', 'symbol', 'canvas', 'br', 'wbr',
 ]);
 
 // Tag to role, for the elements that carry one implicitly. Anything absent
@@ -90,7 +90,7 @@ function extractAxItems(options) {
     'gridcell', 'heading', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
     'option', 'radio', 'row', 'rowheader', 'switch', 'tab', 'tooltip', 'treeitem']);
   const SKIP = new Set(['script', 'style', 'noscript', 'template', 'head', 'meta',
-    'link', 'title', 'svg', 'path', 'defs', 'symbol', 'canvas', 'br', 'wbr']);
+    'link', 'title', 'path', 'defs', 'symbol', 'canvas', 'br', 'wbr']);
   const IMPLICIT = {
     a: 'link', area: 'link', button: 'button', h1: 'heading', h2: 'heading',
     h3: 'heading', h4: 'heading', h5: 'heading', h6: 'heading', img: 'img',
