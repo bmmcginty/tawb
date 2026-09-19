@@ -3,7 +3,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { moveScreen, preserveViewportRow } = require('../src/index');
+const {
+  moveScreen, preserveViewportRow, markInput, keepLivePlace,
+} = require('../src/index');
 
 // Plain prose, so the status row has no link target to announce and the
 // screen movement being measured is the only thing happening.
@@ -60,4 +62,15 @@ test('switching to a much longer view preserves the cursor row', () => {
 
   assert.equal(state.scroll, 698);
   assert.equal(state.cursor - state.scroll, 2);
+});
+
+test('startup refreshes stay at the top until the reader chooses a place', () => {
+  let marked = 0;
+  const state = { inputSeen: false, core: { markInput: () => { marked += 1; } } };
+
+  assert.equal(keepLivePlace(state, false), false);
+  markInput(state);
+  assert.equal(marked, 1);
+  assert.equal(keepLivePlace(state, false), true);
+  assert.equal(keepLivePlace(state, true), false);
 });

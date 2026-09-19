@@ -1201,7 +1201,12 @@ async function onExternalNavigation(state, page) {
 }
 
 function markInput(state) {
+  state.inputSeen = true;
   if (state.core) state.core.markInput();
+}
+
+function keepLivePlace(state, wasNavigation) {
+  return !wasNavigation && !!state.inputSeen;
 }
 
 // Puts the reader back where they were after the buffer has been rebuilt.
@@ -1248,10 +1253,14 @@ async function runLiveRefresh(state, page) {
 
   let rebuilt;
   const tPost = Date.now();
+  // Before the first keystroke there is no reader-chosen place to protect.
+  // Keeping the only control from an early, partial snapshot can drag the
+  // cursor to the end as the rest of an application renders above it.
+  const keepPlace = keepLivePlace(state, wasNavigation);
   try {
     // Nothing to keep across a navigation: the lines the reader was among
     // belong to a document that is gone.
-    rebuilt = await state.core.rebuild(anchor, { page, keepPlace: !wasNavigation });
+    rebuilt = await state.core.rebuild(anchor, { page, keepPlace });
   } catch (err) {
     live.refreshing = false;
     log('live.refresh.error', { error: String(err.message || err).slice(0, 160) });
@@ -1259,13 +1268,13 @@ async function runLiveRefresh(state, page) {
   }
   live.snapshotCostMs = state.core.snapshotCostMs;
 
-  if (wasNavigation) {
+  if (!keepPlace) {
     state.cursor = 0;
     state.col = 0;
     state.scroll = 0;
   }
   relayout(state);
-  if (!wasNavigation) settleCursorOn(state, rebuilt.settled.block);
+  if (keepPlace) settleCursorOn(state, rebuilt.settled.block);
   const remapExact = rebuilt.settled.exact;
   const regions = rebuilt.regions;
   const reanchorMs = Date.now() - tPost;
@@ -3672,6 +3681,9 @@ async function main() {
     shortLinks: ARGS.shortLinks,
     statusHeldUntil: 0,
     loadingMore: false,
+    // Until the reader acts, dynamic startup content should continue to open
+    // at its beginning rather than following a transient first item downward.
+    inputSeen: false,
     historyPlaces: new WeakMap(),
   };
   relayout(state);
@@ -3908,6 +3920,7 @@ module.exports = {
   expandPath, completePath, fileToAttach, fileSize, attachedNote,
   anchorFor, restoreAnchor, capturePlace, restorePlace, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
+  markInput, keepLivePlace,
   screenBefore, repaintList, visibleRowsNow,
   applyTextPatches, loadMore, atEnd,
   historyEntryIdentity, rememberHistoryPlace, rememberCurrentHistoryPlace,
