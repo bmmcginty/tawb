@@ -307,6 +307,18 @@ function clampScroll(state) {
   syncCursor(state);
 }
 
+// A view switch can turn one item near the top of a short semantic view into
+// an element hundreds of markup lines down in SOURCE. Merely clamping the old
+// scroll position puts that item on the terminal's last row. Keep its screen
+// row instead, just as screen-wise movement does, so changing representation
+// does not also make the reader's cursor jump around the window.
+function preserveViewportRow(state, row, height = viewportHeight()) {
+  const wanted = Math.min(Math.max(row, 0), Math.max(height - 1, 0));
+  const maxScroll = Math.max(0, state.lines.length - height);
+  state.scroll = Math.min(Math.max(0, state.cursor - wanted), maxScroll);
+  syncCursor(state);
+}
+
 // Tell the core where the reader is, in the only currency it understands: a
 // block index. Every cursor movement in this file settles through
 // clampScroll, which makes this the one place that has to say so.
@@ -1877,6 +1889,7 @@ async function handleBrowseKey(chunk, state, page) {
   // reader is told their place could not be kept rather than left to work
   // out why they are somewhere else.
   if (action === 'cycle-view') {
+    const viewportRow = state.cursor - state.scroll;
     const anchor = anchorFor(state);
     const place = await withTimeout(
       capturePlace(state, (item) => state.core.handleFor(item, page)),
@@ -1892,7 +1905,7 @@ async function handleBrowseKey(chunk, state, page) {
     ).catch(() => null);
     if (!kept) restoreAnchor(state, anchor);
     clampCol(state);
-    clampScroll(state);
+    preserveViewportRow(state, viewportRow);
 
     render(state, page);
     setStatus(state, kept === 'exact' || (!place && !kept)
@@ -3887,7 +3900,7 @@ module.exports = {
   handleBrowseKey, handleTypeKey, handleFormsKey, handleControlKey, handleAddressKey, handleFindKey,
   findText, runSearch,
   render, drawList, drawAddress, drawHint, drawStatus, setStatus,
-  patchEditedLine, moveSelection, moveScreen,
+  patchEditedLine, moveSelection, moveScreen, preserveViewportRow,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
   itemUnderCursor, linkTarget, shortTarget,
   findQuickNav, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,

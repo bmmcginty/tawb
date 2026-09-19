@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { moveScreen } = require('../src/index');
+const { moveScreen, preserveViewportRow } = require('../src/index');
 
 // Plain prose, so the status row has no link target to announce and the
 // screen movement being measured is the only thing happening.
@@ -51,4 +51,13 @@ test('screen movement clamps the final partial screen and reaches its end', () =
 
   assert.equal(state.scroll, 7);
   assert.equal(state.cursor, 11);
+});
+
+test('switching to a much longer view preserves the cursor row', () => {
+  const state = movementState(1000, 700, 0);
+
+  preserveViewportRow(state, 2, 20);
+
+  assert.equal(state.scroll, 698);
+  assert.equal(state.cursor - state.scroll, 2);
 });
