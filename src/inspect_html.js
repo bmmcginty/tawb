@@ -13,9 +13,10 @@ function inspectBlocks(items, frame) {
     if (!semantic) continue;
     const markup = item.markup || '<generated-accessibility-node>';
     const origin = item.shadow ? ` #${item.shadow}-shadow-root` : '';
+    const nested = item.nestedIn ? ` — focusable inside ${item.nestedIn}` : '';
     blocks.push({
       ...semantic,
-      text: `${semantic.text}    ${markup}${origin}`,
+      text: `${semantic.text}    ${markup}${origin}${nested}`,
       item: { ...item, frame },
     });
   }

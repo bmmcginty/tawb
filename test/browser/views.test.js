@@ -265,6 +265,29 @@ const LABELLEDBY_PAGE = `<!doctype html><meta charset="utf-8"><title>labelledby<
 <button aria-labelledby="part">unused</button>
 <span id="part">gamma <span style="display:none">delta</span></span>`;
 
+const NESTED_CONTROLS_PAGE = `<!doctype html><meta charset="utf-8"><title>nested controls</title>
+<div role="button" aria-label="Player" tabindex="0">
+  <div role="slider" aria-label="Volume" aria-valuemin="0" aria-valuemax="100"
+       aria-valuenow="35" aria-orientation="vertical" tabindex="0">
+    <div role="button" aria-label="Mute" tabindex="0"></div>
+  </div>
+</div>`;
+
+for (const view of VIEWS) {
+  test(`${view} view: focusable controls nested inside controls remain operable`, async () => {
+    const text = await readFixture(NESTED_CONTROLS_PAGE, view);
+    assert.match(text, /\[\*Player\]/);
+    assert.match(text, /\[Volume: 35(?:, vertical)?\]/);
+    assert.match(text, /\[\*Mute\]/);
+  });
+}
+
+test('inspect view identifies invalid nested focusable controls', async () => {
+  const text = await readFixture(NESTED_CONTROLS_PAGE, 'inspect');
+  assert.match(text, /Volume.*focusable inside button/);
+  assert.match(text, /Mute.*focusable inside slider/);
+});
+
 test('ax view: a hidden label is read through to its nested content', async () => {
   assert.match(await readFixture(LABELLEDBY_PAGE, 'ax'), /\[\*alpha beta\]/);
 });

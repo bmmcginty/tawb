@@ -324,6 +324,23 @@ function extractAxItems(options) {
     return Object.prototype.hasOwnProperty.call(IMPLICIT, tag) ? IMPLICIT[tag] : 'generic';
   };
 
+  // Atomic controls normally own all of their descendants: a span inside a
+  // button is its label, not another reading stop. Pages nevertheless put
+  // real controls inside controls. When a descendant is independently in the
+  // browser's tab order it is an operation in its own right, however invalid
+  // the surrounding ARIA is, and must neither disappear nor become part of
+  // the ancestor's name.
+  const independentlyFocusable = (el) => {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+    const role = roleOf(el);
+    const control = FIELDS.has(role)
+      || (ATOMIC.has(role) && role !== 'heading' && role !== 'img');
+    if (!control) return false;
+    if (editingHost(el)) return true;
+    return Number(el.tabIndex) >= 0;
+  };
+
   // Text as a reader would hear it. Not innerText: a link whose content is an
   // image has no text at all, and its name is the image's alt — so the
   // traversal has to ask each child for its accessible name rather than for
@@ -385,6 +402,7 @@ function extractAxItems(options) {
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         if (SKIP.has(child.tagName.toLowerCase())) continue;
         if (!inherited && hidden(child)) continue;
+        if (independentlyFocusable(child)) continue;
         const name = accessibleName(child, depth + 1, true, includeHidden);
         if (!name) continue;
         raw += blockLevel(child) ? ` ${name} ` : name;
@@ -583,10 +601,12 @@ function extractAxItems(options) {
     }
     return `<${parts.join(' ')}>`;
   };
+  let nestedIn = null;
   const fromElement = (item, el) => ({
     ...item,
     markup: markupOf(el),
     shadow: insideShadow || undefined,
+    nestedIn: nestedIn || undefined,
   });
 
   const emit = (item) => {
@@ -639,6 +659,26 @@ function extractAxItems(options) {
     if (!el.hasAttribute('aria-haspopup') && !el.hasAttribute('aria-expanded')) return undefined;
     const named = el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '';
     return named.split(/\s+/)[0] || undefined;
+  };
+
+  // Walk only controls under an atomic ancestor. Ordinary descendants have
+  // already contributed to the ancestor's accessible name and walking them
+  // again would duplicate every word. A focusable control is different: hand
+  // it to the ordinary walker, which gives it all the same state, identity,
+  // activation and nested-control handling as a top-level control.
+  const walkNestedControls = (root, parentRole) => {
+    for (const child of kidsOf(root)) {
+      if (child.nodeType !== Node.ELEMENT_NODE) continue;
+      if (visibilityOf(child) === GONE) continue;
+      if (independentlyFocusable(child)) {
+        const previous = nestedIn;
+        nestedIn = parentRole;
+        walk(child);
+        nestedIn = previous;
+      } else {
+        walkNestedControls(child, parentRole);
+      }
+    }
   };
 
   const walkInner = (el) => {
@@ -743,7 +783,12 @@ function extractAxItems(options) {
         if (controls) item.controls = controls;
         emit(fromElement(item, el));
       }
-      return; // the name already covers everything inside
+      // The name covers prose and decoration, but not a control the browser
+      // can focus independently. Invalid nested controls are common in
+      // custom players and feeds, and dropping them makes pointer-only pages
+      // needlessly pointer-only here too.
+      walkNestedControls(el, role);
+      return;
     }
 
     if (shown && FIELDS.has(role)) {
@@ -780,6 +825,12 @@ function extractAxItems(options) {
         for (const child of kidsOf(el)) {
           if (child.nodeType === Node.ELEMENT_NODE) walk(child);
         }
+      } else {
+        // A field is atomic too, but malformed widgets sometimes put another
+        // independently focusable operation inside it (Instagram's mute
+        // button lives inside its volume slider). Preserve that operation by
+        // the same rule used for buttons above.
+        walkNestedControls(el, role);
       }
       return;
     }

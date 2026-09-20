@@ -21,6 +21,11 @@ function extractVisible() {
     'nav', 'aside', 'ul', 'ol', 'li', 'dl', 'dt', 'dd', 'table', 'tr', 'td', 'th',
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'form', 'fieldset',
     'figure', 'figcaption', 'hr', 'br', 'address', 'details', 'summary']);
+  const BUTTON_ROLES = new Set([
+    'button', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'tab', 'switch',
+    'checkbox', 'radio', 'option',
+  ]);
+  const FIELD_ROLES = new Set(['textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton']);
 
   const out = [];
 
@@ -93,7 +98,34 @@ function extractVisible() {
     return el.getAttribute('placeholder') || el.getAttribute('name') || el.type || 'field';
   };
 
-  const walk = (el, inheritedBlock) => {
+  const explicitRoleOf = (el) => (el.getAttribute('role') || '').toLowerCase().split(/\s+/)[0];
+  const interactionKind = (el) => {
+    const tag = el.tagName.toLowerCase();
+    const role = explicitRoleOf(el);
+    if (tag === 'button' || BUTTON_ROLES.has(role)
+      || (tag === 'input' && ['button', 'submit', 'reset', 'checkbox', 'radio'].includes(el.type))) {
+      return 'button';
+    }
+    if ((tag === 'a' && el.hasAttribute('href')) || role === 'link') return 'link';
+    if (['input', 'textarea', 'select'].includes(tag) || el.isContentEditable || FIELD_ROLES.has(role)) {
+      return 'field';
+    }
+    return null;
+  };
+  const independentlyFocusable = (el) => interactionKind(el)
+    && !el.disabled && el.getAttribute('aria-disabled') !== 'true' && Number(el.tabIndex) >= 0;
+
+  let walk = null;
+  const walkNestedControls = (root) => {
+    for (const child of kidsOf(root)) {
+      if (child.nodeType !== Node.ELEMENT_NODE) continue;
+      if (visibilityOf(child) === GONE) continue;
+      if (independentlyFocusable(child)) walk(child, false);
+      else walkNestedControls(child);
+    }
+  };
+
+  walk = (el, inheritedBlock) => {
     const tag = el.tagName.toLowerCase();
     if (SKIP.has(tag)) return;
     const visibility = visibilityOf(el);
@@ -107,7 +139,7 @@ function extractVisible() {
       return nodes.length - 1;
     };
 
-    const explicitRole = (el.getAttribute('role') || '').toLowerCase();
+    const explicitRole = explicitRoleOf(el);
     const label = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
     const own = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
 
@@ -146,6 +178,7 @@ function extractVisible() {
       || (tag === 'input' && ['button', 'submit', 'reset'].includes(el.type)))) {
       const text = own || el.value || label;
       if (text) emit({ kind: 'button', text, index: register(), block: true });
+      walkNestedControls(el);
       return;
     }
     if (shown && ((tag === 'a' && el.getAttribute('href') != null) || explicitRole === 'link')) {
@@ -154,19 +187,24 @@ function extractVisible() {
       // stands on it — see ax_own.js. A div wearing role="link" has none.
       const href = typeof el.href === 'string' && el.href ? el.href : undefined;
       if (text) emit({ kind: 'link', text, href, index: register(), block: true });
+      walkNestedControls(el);
       return;
     }
     const editingHost = el.isContentEditable
       && !(el.parentElement && el.parentElement.isContentEditable);
-    if (shown && (tag === 'input' || tag === 'textarea' || tag === 'select' || editingHost)) {
+    if (shown && (tag === 'input' || tag === 'textarea' || tag === 'select'
+      || editingHost || FIELD_ROLES.has(explicitRole))) {
+      const ariaValue = (el.getAttribute('aria-valuetext') || el.getAttribute('aria-valuenow') || '').trim();
       emit({
         kind: 'field',
+        role: FIELD_ROLES.has(explicitRole) ? explicitRole : undefined,
         text: labelFor(el),
-        value: editingHost ? own : (el.value || ''),
+        value: ariaValue || (editingHost ? own : (el.value || '')),
         editable: editingHost ? 'content' : undefined,
         index: register(),
         block: true,
       });
+      walkNestedControls(el);
       return;
     }
     if (shown && /^h[1-6]$/.test(tag)) {
@@ -273,7 +311,7 @@ async function snapshotRenderBlocks(target) {
     startsBlock: !!entry.block,
     isParagraph: !!entry.paragraph,
     item: {
-      role: ROLE_BY_KIND[entry.kind] || 'text',
+      role: entry.role || ROLE_BY_KIND[entry.kind] || 'text',
       name: entry.text,
       level: entry.level,
       href: entry.href,
