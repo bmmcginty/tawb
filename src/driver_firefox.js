@@ -1144,6 +1144,80 @@ async function openFirefox({
       }
     },
 
+    async clickSlider(scope, handle, ratio, orientation = null) {
+      if (!handle || !handle.sharedId) {
+        throw new Error('this slider carries no element reference');
+      }
+      const context = scope && scope.contextId ? scope.contextId : page.contextId;
+      const target = { type: 'element', element: { sharedId: handle.sharedId } };
+      try {
+        // The first move reveals hover-only tracks. Element-origin offsets
+        // are from its centre in WebDriver actions, so the second move needs
+        // only the dimensions after that disclosure has happened.
+        await session.send('input.performActions', {
+          context,
+          actions: [{
+            type: 'pointer', id: 'tweb-slider', parameters: { pointerType: 'mouse' },
+            actions: [{ type: 'pointerMove', x: 0, y: 0, origin: target }],
+          }],
+        });
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const geometry = await handle.evaluate((el, requested) => {
+          const root = el.getBoundingClientRect();
+          const vertical = requested === 'vertical'
+            || (!requested && root.height > root.width * 1.5);
+          let start = 2;
+          let end = (vertical ? root.height : root.width) - 2;
+          // A composite slider may keep its mute button inside the slider's
+          // own box. That button is not track: clicking a low volume on it
+          // toggles mute instead of setting the requested value.
+          for (const child of el.querySelectorAll('button,[role="button"]')) {
+            const part = child.getBoundingClientRect();
+            if (!part.width || !part.height) continue;
+            const nearStart = vertical ? part.top <= root.top + 2 : part.left <= root.left + 2;
+            const nearEnd = vertical ? part.bottom >= root.bottom - 2 : part.right >= root.right - 2;
+            if (nearStart) start = Math.max(start, vertical ? part.bottom - root.top : part.right - root.left);
+            if (nearEnd) end = Math.min(end, vertical ? part.top - root.top : part.left - root.left);
+          }
+          let track = null;
+          for (const child of el.querySelectorAll('*:not(button):not([role="button"])')) {
+            const part = child.getBoundingClientRect();
+            const along = vertical ? part.height : part.width;
+            const across = vertical ? part.width : part.height;
+            const rootAlong = vertical ? root.height : root.width;
+            const rootAcross = vertical ? root.width : root.height;
+            if (along < rootAlong * 0.3 || across >= rootAcross * 0.8) continue;
+            if (!track || along > track.along) {
+              track = {
+                along,
+                start: vertical ? part.top - root.top : part.left - root.left,
+                end: vertical ? part.bottom - root.top : part.right - root.left,
+              };
+            }
+          }
+          if (track) { start = track.start; end = track.end; }
+          return { width: root.width, height: root.height, vertical, start, end: Math.max(start, end) };
+        }, orientation);
+        const along = geometry.start + (geometry.vertical ? 1 - ratio : ratio)
+          * (geometry.end - geometry.start);
+        const x = geometry.vertical ? 0 : Math.round(along - geometry.width / 2);
+        const y = geometry.vertical ? Math.round(along - geometry.height / 2) : 0;
+        await session.send('input.performActions', {
+          context,
+          actions: [{
+            type: 'pointer', id: 'tweb-slider', parameters: { pointerType: 'mouse' },
+            actions: [
+              { type: 'pointerMove', x, y, origin: target },
+              { type: 'pointerDown', button: 0 },
+              { type: 'pointerUp', button: 0 },
+            ],
+          }],
+        });
+      } finally {
+        await session.send('input.releaseActions', { context }).catch(() => {});
+      }
+    },
+
     // Firefox's native Alt-click save gesture. Keyboard and pointer sources
     // advance together in BiDi ticks, so Alt is down before the pointer moves
     // and remains down until after its release produces the click.

@@ -3453,11 +3453,23 @@ async function handleControlKey(chunk, state, page) {
   const name = names.find((candidate) => keyIs(chunk, candidate, state));
   if (!name) return;
 
-  await page.keyboard.press(name);
+  let adjusted;
+  try {
+    adjusted = await state.core.adjustControl(controlling.item, name, page);
+  } catch (err) {
+    setStatus(state, `Could not adjust "${controlling.item.name}": ${String(err.message || err).split('\n')[0]}`);
+    return;
+  }
   const screen = screenBefore(state);
   await refresh(state, page, { anchor: anchorFor(state) });
   repaintList(state, page, screen);
-  setStatus(state, `Adjusted "${controlling.item.name}" with ${name}.`);
+  if (!adjusted.changed) {
+    setStatus(state, `The page ignored ${name} on "${controlling.item.name}".`);
+  } else if (adjusted.fallback) {
+    setStatus(state, `Adjusted "${controlling.item.name}" with its visual slider because it ignored ${name}.`);
+  } else {
+    setStatus(state, `Adjusted "${controlling.item.name}" with ${name}.`);
+  }
 }
 
 async function handlePageKey(chunk, state, page) {

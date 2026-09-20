@@ -11,7 +11,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { Core } = require('../src/core');
+const { Core, sliderTarget } = require('../src/core');
 
 const blocksOf = (texts) => texts.map((text, i) => ({ text, item: { name: text, domIndex: i } }));
 
@@ -191,6 +191,46 @@ test('a dropdown becomes lines under its control', async (t) => {
     core.closeChooser();
     assert.deepEqual(core.texts(), ['before', '[Country: United States]', 'after']);
   });
+});
+
+test('slider keys map onto an advertised ARIA range', () => {
+  const state = { value: '50', min: '0', max: '100', step: '2' };
+  assert.equal(sliderTarget(state, 'ArrowUp'), 52);
+  assert.equal(sliderTarget(state, 'ArrowLeft'), 48);
+  assert.equal(sliderTarget(state, 'PageDown'), 40);
+  assert.equal(sliderTarget(state, 'Home'), 0);
+  assert.equal(sliderTarget(state, 'End'), 100);
+});
+
+test('a custom slider that ignores keys falls back to a verified pointer adjustment', async () => {
+  const attrs = new Map([
+    ['aria-valuenow', '0'], ['aria-valuemin', '0'], ['aria-valuemax', '100'],
+  ]);
+  const element = {
+    value: undefined, min: '', max: '', step: '',
+    getAttribute: (name) => attrs.has(name) ? attrs.get(name) : null,
+    focus() {},
+  };
+  const handle = {
+    evaluate: async (fn) => fn(element),
+    dispose: async () => {},
+  };
+  let pointer = null;
+  const driver = {
+    clickSlider: async (_scope, given, ratio, orientation) => {
+      pointer = { given, ratio, orientation };
+      attrs.set('aria-valuenow', '5');
+    },
+  };
+  const page = { keyboard: { press: async () => {} } };
+  const core = new Core({ driver, page, source: 'ax', sources: ['ax'] });
+  core.handleFor = async () => handle;
+
+  const result = await core.adjustControl({ role: 'slider', name: 'Volume' }, 'ArrowUp', page);
+  assert.equal(result.changed, true);
+  assert.equal(result.fallback, true);
+  assert.equal(pointer.ratio, 0.05);
+  assert.equal(pointer.given, handle);
 });
 
 test('a privileged native media slider can be focused for keyboard control', async () => {

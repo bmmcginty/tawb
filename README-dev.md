@@ -171,6 +171,21 @@ Page Down are sent as trusted keys to the focused browser control, and Esc
 returns to reading. This is tested by observing the media element's elapsed
 time change in both engines.
 
+The same control mode handles page-authored ARIA sliders. Their
+`aria-valuetext` or `aria-valuenow`, range, orientation and interactive state
+are retained in AX view. A slider that ignores its required keyboard commands
+falls back to a trusted pointer press at the requested fraction of its painted
+track, after hovering to reveal controls that expand only under a mouse. The
+value is read back before TAWB reports success. Composite players often put a
+mute button inside the slider's box; that independently focusable button is
+kept as its own control and excluded from the track geometry.
+
+Focusable controls nested inside an atomic button or field are preserved in
+both AX and PAGE rather than swallowed into the ancestor's name. INSPECT marks
+them as `focusable inside button` (or the corresponding role), making the
+site's invalid structure visible without requiring a separate interaction
+view or a compatibility option.
+
 ### Startup, and why it looks worse than it is
 
 A cold start is 3.7s for Chromium and 5.3s for Firefox, the difference being

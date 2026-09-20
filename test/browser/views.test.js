@@ -288,6 +288,33 @@ test('inspect view identifies invalid nested focusable controls', async () => {
   assert.match(text, /Mute.*focusable inside slider/);
 });
 
+const POINTER_SLIDER_PAGE = `<!doctype html><meta charset="utf-8"><title>pointer slider</title>
+<div role="slider" aria-label="Pointer volume" aria-valuemin="0" aria-valuemax="100"
+     aria-valuenow="0" tabindex="0" style="width:20px;height:100px;background:#ccc"></div>
+<script>
+  const slider = document.querySelector('[role=slider]');
+  slider.addEventListener('click', event => {
+    const box = slider.getBoundingClientRect();
+    const value = Math.round(100 * (1 - (event.clientY - box.top) / box.height));
+    slider.setAttribute('aria-valuenow', Math.max(0, Math.min(100, value)));
+  });
+</script>`;
+
+test('a slider that ignores keys is adjusted through its visual track', async () => {
+  await readFixture(POINTER_SLIDER_PAGE, 'ax');
+  const { driver } = await browser();
+  const blocks = await snapshotFrameTree(fixture.page, 'ax', { driver });
+  const slider = blocks.find((block) => block.item && block.item.role === 'slider');
+  assert.ok(slider);
+  const core = new Core({ driver, page: fixture.page, source: 'ax', sources: ['ax'] });
+  const result = await core.adjustControl(slider.item, 'ArrowUp', fixture.page);
+  const value = await fixture.page.evaluate(
+    () => Number(document.querySelector('[role=slider]').getAttribute('aria-valuenow')));
+  assert.equal(result.fallback, true);
+  assert.equal(result.changed, true);
+  assert.ok(value >= 3 && value <= 7, `pointer set ${value}, not approximately 5`);
+});
+
 test('ax view: a hidden label is read through to its nested content', async () => {
   assert.match(await readFixture(LABELLEDBY_PAGE, 'ax'), /\[\*alpha beta\]/);
 });

@@ -145,6 +145,14 @@ the arrow or page keys to scroll in either direction. Even `Escape`, `Ctrl+L`,
 and `q` go to the webpage while this mode is active. Press `Alt+K` again to
 return to reading. The binding can be changed in the keyboard wizard.
 
+Custom ARIA sliders appear as fields with their current value. Press `Enter`
+on one to start control mode, use arrows, Home, End, Page Up or Page Down, and
+press `Escape` to stop. If a site advertises a slider but ignores those
+standard keyboard commands, TAWB uses trusted pointer input on the visible
+track and verifies that its value changed. Independently focusable controls
+remain reachable even when a site incorrectly nests them inside another
+button or field.
+
 All browse and editing bindings are configurable. Press `Alt+?`, select an
 action, and replace or add a key. TAWB stores the result in
 `$XDG_CONFIG_HOME/tawb/keys.json`, or `~/.config/tawb/keys.json` when

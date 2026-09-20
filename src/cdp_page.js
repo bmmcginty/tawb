@@ -123,6 +123,15 @@ class CdpHandle {
   // Where the element is on screen, in the top-level viewport's coordinates,
   // having first been brought there. Null when it has no box to click.
   async clickPoint() {
+    const box = await this.clickBox();
+    return box ? { x: box.x + box.width / 2, y: box.y + box.height / 2 } : null;
+  }
+
+  // The protocol's quad, translated into top-level viewport coordinates.
+  // Slider fallback needs more than the centre: it maps a semantic value to
+  // a point along the track. Keeping that arithmetic beside clickPoint keeps
+  // out-of-process frame offsets correct for both uses.
+  async clickBox() {
     const session = this.#session();
     await session.send('DOM.scrollIntoViewIfNeeded', { objectId: this.objectId })
       .catch(() => { /* an element with no box; getContentQuads says so next */ });
@@ -139,8 +148,10 @@ class CdpHandle {
       const height = Math.max(...ys) - Math.min(...ys);
       if (width < 1 || height < 1) continue;
       return {
-        x: Math.round(xs.reduce((a, b) => a + b, 0) / 4 + offset.x),
-        y: Math.round(ys.reduce((a, b) => a + b, 0) / 4 + offset.y),
+        x: Math.min(...xs) + offset.x,
+        y: Math.min(...ys) + offset.y,
+        width,
+        height,
       };
     }
     return null;
