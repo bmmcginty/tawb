@@ -711,10 +711,13 @@ back-tab (`kcbt`) is asked for first and `\e[Z` is the fallback.
 `Alt+K` switches to a separate keyboard whose input goes through the browser's
 trusted input pipeline. Browse commands are not interpreted there: `Space`,
 letters, arrows, page keys, `Escape`, and control or Alt combinations belong
-to the site. The one exception is the configurable webpage-keyboard toggle
-itself; press it again to return to reading, at which point the buffer is
-rescanned. This gives keyboard-driven players and applications their own
-shortcuts without taking any keys away from browse mode. It also provides a
+to the site. The exceptions are the configurable webpage-keyboard toggle and
+its default one-byte `Ctrl+\\` alternative; either returns to reading. Exit
+does not wait behind a snapshot: it marks the buffer dirty and the ordinary
+live-update path rescans after input becomes idle. A short repeat guard keeps
+a second toggle queued by key repeat from immediately re-entering the mode.
+This gives keyboard-driven players and applications their own shortcuts
+without taking any keys away from browse mode. It also provides a
 way to scroll a visual feed upward again when scrolling down hid its controls.
 For example, Instagram Reels uses `Space` for play/pause and `m` for
 mute/unmute.
@@ -730,7 +733,7 @@ mute/unmute.
 | `Ctrl+L` | Address bar — an address, or words to search for (`Esc` cancels)  |
 | `Alt+-` / `Alt++` | Back / forward in this tab's page history              |
 | `Alt+?`  | Open the keyboard binding wizard                               |
-| `Alt+K`  | Toggle webpage keyboard mode (all other keys go to the page)     |
+| `Alt+K` / `Ctrl+\\` | Toggle webpage keyboard mode (other keys go to the page) |
 | `\`      | Cycle view: AX → PAGE → INSPECT → SOURCE                         |
 | `Ctrl+T` | Open and follow a new tab                                        |
 | `Ctrl+O` | Bookmarks                                                        |

@@ -107,7 +107,7 @@ const ACTIONS = [
   // applications only expose parts of their interface through their own
   // keyboard handlers. This switches to a separate keyboard where every key
   // except this toggle belongs to the page.
-  ['page-keyboard', 'Send keys to the webpage', ['Alt+K']],
+  ['page-keyboard', 'Send keys to the webpage', ['Alt+K', 'Ctrl+\\']],
   ['find-forward', 'Find forward', ['/']],
   ['find-backward', 'Find backward', ['?']],
   ['repeat-find', 'Repeat find', ['Ctrl+G']],

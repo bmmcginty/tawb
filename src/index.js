@@ -168,6 +168,13 @@ function keyIs(chunk, name, state) {
   return (state.keys || FALLBACK_KEYMAP).isKey(chunk, name);
 }
 
+function actionKeyLabel(state, id, fallback = '') {
+  const keys = state.keys || FALLBACK_KEYMAP;
+  const action = keys.byId && keys.byId.get(id);
+  const binding = action && action.bindings && action.bindings[0];
+  return binding ? keys.display(binding) : fallback;
+}
+
 // Turn one complete terminal keystroke back into the name understood by both
 // browser drivers. Printable characters already are their own names; terminfo
 // sequences become ArrowUp, PageDown, and so on. The only spelling difference
@@ -609,7 +616,9 @@ function hintText(state) {
   if (state.mode === 'type') return 'Typing — Tab: next control  Esc: stop  Enter: submit';
   if (state.mode === 'forms') return 'Forms — Tab: next control  Enter: activate  Esc: browse';
   if (state.mode === 'control') return 'Control — arrows adjust  Home/End  Esc: stop';
-  if (state.mode === 'page') return 'Webpage keyboard — every key goes to the page  Alt+K: stop';
+  if (state.mode === 'page') {
+    return `Webpage keyboard — every other key goes to the page  ${actionKeyLabel(state, 'page-keyboard', 'Alt+K')}: stop`;
+  }
   if (state.mode === 'find') return 'Find — Enter: search  Esc: cancel';
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
   if (state.mode === 'library') {
@@ -2013,9 +2022,14 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'real-click') return clickAsHuman(state, page);
 
   if (action === 'page-keyboard') {
+    // Key repeat can leave another copy of the exit chord queued behind the
+    // one that just left page mode. Without this short guard that copy is
+    // handled in browse mode and immediately puts the reader back in.
+    if ((state.pageKeyboardExitUntil || 0) > Date.now()) return;
     state.mode = 'page';
     drawHint(state);
-    setStatus(state, 'Webpage keyboard on — Space can play or pause and m can mute or unmute; Alt+K returns to reading.');
+    const exit = actionKeyLabel(state, 'page-keyboard', 'Alt+K');
+    setStatus(state, `Webpage keyboard on — Space can play or pause and m can mute or unmute; ${exit} returns to reading.`);
     return;
   }
 
@@ -3480,17 +3494,22 @@ async function handlePageKey(chunk, state, page) {
   // including Escape, Ctrl+L, arrows and ordinary browse-mode commands, is
   // deliberately the webpage's rather than ours.
   if (keys.actionFor(chunk) === 'page-keyboard') {
-    const anchor = anchorFor(state);
-    const screen = screenBefore(state);
     state.mode = 'browse';
-    drawHint(state);
-    try {
-      await refresh(state, page, { anchor });
-      repaintList(state, page, screen);
-      setStatus(state, 'Webpage keyboard off.');
-    } catch (err) {
-      setStatus(state, `Webpage keyboard off — could not rescan: ${String(err.message || err).split('\n')[0]}`);
+    state.pageKeyboardExitUntil = Date.now() + 1500;
+    // Do not hold the keyboard while taking a potentially multi-second
+    // snapshot. Besides making the exit feel broken, key repeat queued a
+    // second toggle behind that wait and re-entered page mode as soon as the
+    // snapshot ended. The ordinary live-refresh path already knows how to
+    // rebuild without racing subsequent input, so ask it to do so when the
+    // reader becomes idle.
+    if (state.core.live) {
+      state.core.live.dirty = true;
+      state.core.live.lastPulseMs = 0;
     }
+    drawHint(state);
+    setStatus(state, state.core.live && state.core.live.enabled
+      ? 'Webpage keyboard off — the page will rescan when you pause.'
+      : 'Webpage keyboard off — press r to rescan.');
     return;
   }
 
@@ -3747,6 +3766,7 @@ async function main() {
     shortLinks: ARGS.shortLinks,
     statusHeldUntil: 0,
     loadingMore: false,
+    pageKeyboardExitUntil: 0,
     // Until the reader acts, dynamic startup content should continue to open
     // at its beginning rather than following a transient first item downward.
     inputSeen: false,

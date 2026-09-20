@@ -119,7 +119,7 @@ if you would rather not hear an address on every link. Start with these keys:
 | `r` | Rescan TAWB's view without reloading the page |
 | `F5` | Reload the page in the browser |
 | `Alt+?` | Open keyboard help and change bindings |
-| `Alt+K` | Toggle webpage keyboard mode |
+| `Alt+K` / `Ctrl+\\` | Toggle webpage keyboard mode |
 | `q` | Quit |
 
 Useful single-letter navigation keys are `h` for headings, `l` for links, `b`
@@ -143,7 +143,11 @@ sent as trusted browser input instead of running TAWB commands: for example,
 Instagram Reels accepts `Space` to play or pause, `m` to mute or unmute, and
 the arrow or page keys to scroll in either direction. Even `Escape`, `Ctrl+L`,
 and `q` go to the webpage while this mode is active. Press `Alt+K` again to
-return to reading. The binding can be changed in the keyboard wizard.
+return to reading. `Ctrl+\\` is a one-byte alternative that remains reliable
+when a slow SSH connection separates an Alt key's two bytes. Both bindings can
+be changed in the keyboard wizard. Leaving is immediate; any page changes are
+rescanned through normal live updating after you pause, or with `r` when live
+updates are disabled.
 
 Custom ARIA sliders appear as fields with their current value. Press `Enter`
 on one to start control mode, use arrows, Home, End, Page Up or Page Down, and

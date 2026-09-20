@@ -20,6 +20,16 @@ test('the input reader separates combined keys and joins split sequences', async
   assert.equal(stream.isPaused(), true, 'closing releases the input stream');
 });
 
+test('an Alt key split by network scheduling stays one key', async () => {
+  const stream = new PassThrough();
+  const reader = new KeyReader(stream);
+  stream.write('\x1b');
+  await new Promise((resolve) => setTimeout(resolve, 45));
+  stream.write('k');
+  assert.equal(await reader.next(), '\x1bk');
+  reader.close();
+});
+
 test('the input reader distinguishes Escape from Alt keys', async () => {
   const stream = new PassThrough();
   const reader = new KeyReader(stream, { escapeMs: 5 });

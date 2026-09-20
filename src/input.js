@@ -19,7 +19,7 @@
 const EOF = Symbol('input.eof');
 
 class KeyReader {
-  constructor(stream, { escapeMs = 35 } = {}) {
+  constructor(stream, { escapeMs = 80 } = {}) {
     this.stream = stream;
     this.escapeMs = escapeMs;
     this.buffer = '';
@@ -105,6 +105,12 @@ class KeyReader {
           this.buffer = '';
           this.emit('\x1b');
         } else {
+          // A terminal writes Alt+letter as Escape followed by the letter.
+          // Over SSH those two bytes can arrive in different packets tens of
+          // milliseconds apart; expiring at 35ms intermittently turned the
+          // webpage-mode exit key into Escape and a plain letter. Eighty
+          // milliseconds remains a short lone-Escape delay while covering a
+          // normal network scheduling gap.
           this.escapeTimer = setTimeout(() => this.parse(true), this.escapeMs);
         }
         return;
