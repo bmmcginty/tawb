@@ -506,12 +506,51 @@ function extractAxItems(options) {
 
   const valueOf = (el, role) => {
     if (!FIELDS.has(role)) return undefined;
+    // ARIA's human-readable value wins over its numeric one, just as it does
+    // in a platform accessibility tree. Custom sliders have no DOM `value`
+    // property at all, so ignoring these attributes leaves exactly the field
+    // whose value matters reading as empty.
+    const valueText = clean(el.getAttribute('aria-valuetext'));
+    if (valueText) return valueText;
+    const valueNow = clean(el.getAttribute('aria-valuenow'));
+    if (valueNow) return valueNow;
     const tag = el.tagName.toLowerCase();
     if (tag === 'input' || tag === 'textarea') return clean(el.value) || undefined;
     if (tag === 'select') return clean(el.selectedOptions?.[0]?.textContent) || undefined;
     if (el.isContentEditable) return contentText(el) || undefined;
     return undefined;
   };
+
+  const ariaToken = (el, name) => {
+    const value = clean(el.getAttribute(name)).toLowerCase();
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value || undefined;
+  };
+
+  // State that changes what a control means or whether it can be used. Keep
+  // the raw, compact values on the item; aria.js decides how much belongs in
+  // an ordinary reading line and INSPECT carries the attributes themselves.
+  const stateOf = (el) => ({
+    checked: el.indeterminate ? 'mixed'
+      : (el.checked === true ? true : ariaToken(el, 'aria-checked')),
+    pressed: ariaToken(el, 'aria-pressed'),
+    selected: el.selected === true ? true : ariaToken(el, 'aria-selected'),
+    disabled: el.disabled === true || el.getAttribute('aria-disabled') === 'true' || undefined,
+    readonly: el.readOnly === true || el.getAttribute('aria-readonly') === 'true' || undefined,
+    required: el.required === true || el.getAttribute('aria-required') === 'true' || undefined,
+    invalid: (() => {
+      const value = ariaToken(el, 'aria-invalid');
+      return value === false ? undefined : value;
+    })(),
+    current: (() => {
+      const value = ariaToken(el, 'aria-current');
+      return value === false ? undefined : value;
+    })(),
+    orientation: clean(el.getAttribute('aria-orientation')).toLowerCase() || undefined,
+    valueMin: clean(el.getAttribute('aria-valuemin')) || undefined,
+    valueMax: clean(el.getAttribute('aria-valuemax')) || undefined,
+  });
 
   // Whether the browser filled this in itself. Both engines answer the
   // standard pseudo-class; Chromium also answers the older prefixed one, and
@@ -663,7 +702,7 @@ function extractAxItems(options) {
       const name = accessibleName(el) || (fileInput
         ? (clean(el.getAttribute('name')) || 'Choose file') : '');
       if (name) {
-        const item = { role, name, axIndex: register(el) };
+        const item = { role, name, ...stateOf(el), axIndex: register(el) };
         // A file input arrives here as a button, because that is what it is
         // to a reader. What it also is, is the one control whose activation
         // needs a filename rather than a press — so it is marked, along with
@@ -695,8 +734,6 @@ function extractAxItems(options) {
         // only once it has been read against the page it sits on. An element
         // that merely says role="link" has no href at all and says nothing.
         if (role === 'link' && typeof el.href === 'string' && el.href) item.href = el.href;
-        const checked = el.getAttribute('aria-checked');
-        if (checked === 'true' || el.checked === true) item.checked = true;
         // A menu button is an atomic role, and whether its menu is open is
         // the only thing that distinguishes pressing it from having pressed
         // it. Carried here as well as on fields for that reason.
@@ -714,6 +751,7 @@ function extractAxItems(options) {
         role,
         name: accessibleName(el),
         value: valueOf(el, role),
+        ...stateOf(el),
         // A field the browser filled in from its own password manager. The
         // value is deliberately not readable — Chromium keeps an autofilled
         // credential from page script until the person interacts with the

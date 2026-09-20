@@ -41,16 +41,37 @@ function expansion(item) {
   return '';
 }
 
+// State is said in words rather than encoded in punctuation: every one of
+// these distinctions has to survive speech and a braille display. False is
+// meaningful for toggles and checkable controls, but not for attributes such
+// as selected/current whose ordinary false state would add noise everywhere.
+function stateText(item) {
+  const states = [];
+  if (item.checked === 'mixed') states.push('partly checked');
+  else if (item.checked === true) states.push('checked');
+  else if (item.checked === false) states.push('not checked');
+  if (item.pressed === true) states.push('pressed');
+  else if (item.pressed === false) states.push('not pressed');
+  if (item.selected === true) states.push('selected');
+  if (item.current) states.push(item.current === true ? 'current' : `current ${item.current}`);
+  if (item.readonly) states.push('read only');
+  if (item.required) states.push('required');
+  if (item.invalid) states.push(item.invalid === true ? 'invalid' : `invalid: ${item.invalid}`);
+  if (item.orientation) states.push(item.orientation);
+  if (item.disabled) states.push('unavailable');
+  return states.length ? `, ${states.join(', ')}` : '';
+}
+
 function renderLine(item) {
   const { role, name, value, level } = item;
   if (role === 'heading') {
     const marker = level ? '#'.repeat(Number(level)) + ' ' : '## ';
     return marker + name;
   }
-  if (LINK_ROLES.has(role)) return `{${name}${expansion(item)}}`;
+  if (LINK_ROLES.has(role)) return `{${name}${expansion(item)}${stateText(item)}}`;
   if (BUTTON_ROLES.has(role)) {
     const attached = item.file && value ? `: ${value}` : '';
-    return `[*${name}${attached}${expansion(item)}]`;
+    return `[*${name}${attached}${expansion(item)}${stateText(item)}]`;
   }
   if (FIELD_ROLES.has(role)) {
     // A field the browser filled from its password manager reads as empty:
@@ -59,7 +80,7 @@ function renderLine(item) {
     // keystroke and a reader typing a password they did not need to type.
     const filled = item.autofilled ? 'filled by the browser' : '';
     const inside = value || filled ? `${name}: ${value || filled}` : name;
-    return `[${inside}${expansion(item)}]`;
+    return `[${inside}${expansion(item)}${stateText(item)}]`;
   }
   if (role === 'img') return `(image) ${name}`;
   // A player says where it has got to, which is the one thing about it that
@@ -72,6 +93,6 @@ function renderLine(item) {
 }
 
 module.exports = {
-  renderLine,
+  renderLine, stateText,
   LINK_ROLES, BUTTON_ROLES, FIELD_ROLES, FOCUSABLE_ROLES,
 };
