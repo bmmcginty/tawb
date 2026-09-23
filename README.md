@@ -311,6 +311,25 @@ npm start -- --short-links
 export TAWB_SHORT_LINKS=on
 ```
 
+### Unicode on a physical Linux console
+
+Speakup can receive many Unicode characters as they are first written, but
+screen review on a physical virtual console is limited by the loaded console
+font, and supplementary code points cannot pass through Speakup's 16-bit text
+buffers. To keep webpage text stable when it is reviewed later, represent every
+non-ASCII page character with an ASCII Unicode escape:
+
+```sh
+npm start -- --escape-unicode https://example.com
+```
+
+For example, `é`, `中`, and `😀` are displayed as `\u00E9`, `\u4E2D`, and
+`\U0001F600`. This applies to all four page views, page titles, text shown while
+editing a webpage field, live announcements, and page text repeated on the
+status line. Browser interaction and submitted field values retain their
+original Unicode. Put `--escape-unicode` in the settings file to enable it for
+every run; `--no-escape-unicode` overrides that setting for one run.
+
 ### Diagnostic logging
 
 TAWB does not create a diagnostic log by default. Add `--log` when

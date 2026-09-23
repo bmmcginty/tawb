@@ -102,6 +102,12 @@ test('an unchanged title is not rewritten, because a repaint is re-read', () => 
     [{ row: 1, text: 'Somewhere Else' }], 'a changed title was not drawn');
 });
 
+test('a page title is escaped before it is cut to the terminal width', () => {
+  const state = { ...titleState('中文 😀'), escapeUnicode: true };
+  const { rows } = capture(() => drawTitle(state));
+  assert.deepEqual(rows, [{ row: 1, text: '\\u4E2D\\u6587 \\U0001F600' }]);
+});
+
 test('a title longer than the window is cut to it', () => {
   const state = titleState('x'.repeat(500));
   const { rows } = capture(() => drawTitle(state));

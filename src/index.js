@@ -25,6 +25,7 @@ const { entryLine, matches, shortAddress, KIND_LABELS } = require('./library');
 const { resolveAddress, DEFAULT_SEARCH } = require('./address');
 const { readSettings } = require('./settings');
 const { startupStatus } = require('./startup');
+const { escapeNonAscii, escapedOffset } = require('./unicode_escape');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -43,6 +44,8 @@ const path = require('node:path');
 // --short-links says a link that stays on this site as its path alone. Off by
 // default, because a graphical browser's status bar shows the whole address
 // and this is meant to read like one.
+// --escape-unicode represents non-ASCII page text with ASCII-only Unicode
+// escapes, for Speakup review on a physical Linux console.
 // Options in the settings file are read first, so an explicit command-line
 // option can replace them. --no-keep-browser provides that escape hatch for
 // the otherwise one-way --keep-browser switch.
@@ -56,6 +59,7 @@ function parseArgs(argv, env = process.env) {
     search: env.TAWB_SEARCH || DEFAULT_SEARCH,
     linkAddress: !OFF.has(String(env.TAWB_LINK_ADDRESS || '').toLowerCase()),
     shortLinks: ON.has(String(env.TAWB_SHORT_LINKS || '').toLowerCase()),
+    escapeUnicode: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -73,6 +77,8 @@ function parseArgs(argv, env = process.env) {
     else if (arg === '--no-link-address') { options.linkAddress = false; }
     else if (arg === '--short-links') { options.shortLinks = true; }
     else if (arg === '--no-short-links') { options.shortLinks = false; }
+    else if (arg === '--escape-unicode') { options.escapeUnicode = true; }
+    else if (arg === '--no-escape-unicode') { options.escapeUnicode = false; }
     else if (arg === '--browser') { options.engine = argv[i + 1] || DEFAULT_ENGINE; i += 1; }
     else if (arg.startsWith('--browser=')) { options.engine = arg.slice('--browser='.length); }
     else if (arg === '--search') { options.search = argv[i + 1] || DEFAULT_SEARCH; i += 1; }
@@ -359,8 +365,20 @@ function syncCursor(state) {
   state.core.at(line ? line.blockIndex : -1);
 }
 
+function pageText(state, text) {
+  return state.escapeUnicode ? escapeNonAscii(text) : String(text ?? '');
+}
+
+function displayBlocks(state) {
+  const blocks = activeBlocks(state);
+  if (!state.escapeUnicode || blocks !== state.core.blocks) return blocks;
+  // Keep Core's original text intact. It uses that text to resolve live
+  // patches, preserve the reader's place, and identify page controls.
+  return blocks.map((block) => ({ ...block, text: escapeNonAscii(block.text) }));
+}
+
 function relayout(state) {
-  state.lines = layoutLines(activeBlocks(state), contentWidth());
+  state.lines = layoutLines(displayBlocks(state), contentWidth());
   if (state.cursor >= state.lines.length) state.cursor = Math.max(state.lines.length - 1, 0);
   clampCol(state);
   clampScroll(state);
@@ -402,7 +420,7 @@ async function readTitle(page) {
 }
 
 function drawTitle(state, { force = false } = {}) {
-  const rendered = (state.title || '').slice(0, termSize().cols);
+  const rendered = pageText(state, state.title).slice(0, termSize().cols);
   if (!force && rendered === state.drawn.title) return;
   state.drawn.title = rendered;
   writeLine(TITLE_ROW, rendered);
@@ -676,10 +694,14 @@ function renderRow(state, lineIndex) {
 
 function typingText(state) {
   const item = state.typing.item;
-  const label = `[${item.name}: `;
+  const label = `[${pageText(state, item.name)}: `;
+  const value = pageText(state, state.typing.text);
   return {
-    text: label + state.typing.text + ']',
-    caretCol: GUTTER + label.length + state.typing.caret + 1,
+    text: label + value + ']',
+    caretCol: GUTTER + label.length
+      + (state.escapeUnicode
+        ? escapedOffset(state.typing.text, state.typing.caret)
+        : state.typing.caret) + 1,
   };
 }
 
@@ -691,7 +713,9 @@ function statusRow() {
 // known — drawStatus below will not repaint a row that already says what it
 // is about to say.
 function writeStatusRow(state, text) {
-  const rendered = String(text || '').slice(0, termSize().cols);
+  // Status messages can repeat page-provided control names and carry ARIA
+  // live announcements, so they belong to the escaped page presentation too.
+  const rendered = pageText(state, text).slice(0, termSize().cols);
   state.drawn.status = rendered;
   writeLine(statusRow(), rendered);
 }
@@ -721,7 +745,7 @@ function setStatus(state, msg) {
 function drawStatus(state, page) {
   if (state.mode !== 'browse') return;
   const wanted = linkTarget(state, page) || state.statusMsg;
-  const rendered = String(wanted || '').slice(0, termSize().cols);
+  const rendered = pageText(state, wanted).slice(0, termSize().cols);
   if (rendered === state.drawn.status) return;
   writeStatusRow(state, rendered);
 }
@@ -926,8 +950,9 @@ function findText(state, needle, direction) {
   if (!total || !needle) return null;
 
   // Smart case: a capital anywhere means the reader meant it.
-  const sensitive = /[A-Z]/.test(needle);
-  const want = sensitive ? needle : needle.toLowerCase();
+  const displayedNeedle = pageText(state, needle);
+  const sensitive = /[A-Z]/.test(displayedNeedle);
+  const want = sensitive ? displayedNeedle : displayedNeedle.toLowerCase();
   const textAt = (index) => {
     const text = lineText(state, index);
     return sensitive ? text : text.toLowerCase();
@@ -3767,6 +3792,7 @@ async function main() {
     drawn: { title: null, address: null, hint: null, status: null },
     linkAddress: ARGS.linkAddress,
     shortLinks: ARGS.shortLinks,
+    escapeUnicode: ARGS.escapeUnicode,
     statusHeldUntil: 0,
     loadingMore: false,
     pageKeyboardExitUntil: 0,
@@ -4018,7 +4044,7 @@ module.exports = {
   restoreHistoryPlace, acknowledgeHistoryNavigation, traversePageHistory, moveInHistory,
   switchToTab, focusAddressBar, openNewTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
-  renderRow, parseArgs, restoreInvocationDirectory, onExternalNavigation, readTitle, drawTitle,
+  renderRow, typingText, parseArgs, restoreInvocationDirectory, onExternalNavigation, readTitle, drawTitle,
   navigate, navigateInterruptibly, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
   openLibrary, closeLibrary, showLibrary, handleLibraryKey,
