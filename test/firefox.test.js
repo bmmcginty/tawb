@@ -231,14 +231,15 @@ function runClearScript(stub) {
   return new Function('Services', 'Cc', 'Ci', CLEAR_SCRIPT)(stub.Services, stub.Cc, stub.Ci);
 }
 
-test('the startup clear reports every shared-data key, not only the two it targets', () => {
+test('the startup clear reports every key that could carry a flag, not only the two it targets', () => {
   const stub = chromeStub({
     shared: {
       'RemoteAgent:Active': true,
       'Marionette:Active': true,
       'SomeBuild:WebDriverActive': true,
+      'SomeBuild:AutomationName': 'x'.repeat(400),
       'Unrelated:Setting': false,
-      'Unrelated:Text': 'x'.repeat(400),
+      'Unrelated:Payload': { manifest: 'an extension payload' },
     },
   });
   const result = runClearScript(stub);
@@ -251,16 +252,20 @@ test('the startup clear reports every shared-data key, not only the two it targe
   });
 
   // The key this build publishes under a name ACTIVE_KEYS does not carry is
-  // the one that survives the clear, and the report names it.
-  assert.equal(result.report.shared.count, 5);
-  assert.deepEqual(result.report.shared.names, [
-    'Marionette:Active', 'RemoteAgent:Active', 'SomeBuild:WebDriverActive',
-    'Unrelated:Setting', 'Unrelated:Text',
-  ]);
-  assert.deepEqual(result.report.shared.active, {
+  // the one that survives the clear, and the report names it — by its boolean
+  // shape here, and a string-valued one by its name.
+  assert.equal(result.report.shared.count, 6);
+  assert.deepEqual(result.report.shared.values, {
+    'Marionette:Active': false,
+    'RemoteAgent:Active': false,
     'SomeBuild:WebDriverActive': true,
-    'Unrelated:Text': 'x'.repeat(200),
+    'SomeBuild:AutomationName': 'x'.repeat(200),
+    'Unrelated:Setting': false,
   });
+
+  // An extension payload is neither boolean nor named after an automation
+  // component, so it stays out of every reading.
+  assert.equal('Unrelated:Payload' in result.report.shared.values, false);
 });
 
 test('the report reads the two services navigator.webdriver actually consults', () => {
@@ -285,10 +290,10 @@ test('a build without the WebDriver interfaces reports their absence rather than
     marionette: 'no such interface', remoteAgent: 'no such interface',
   });
   // The clear writes both targeted keys, so an empty map still holds them.
-  assert.deepEqual(result.report.shared.names, [
-    'Marionette:Active', 'RemoteAgent:Active',
-  ]);
-  assert.deepEqual(result.report.shared.active, {});
+  assert.equal(result.report.shared.count, 2);
+  assert.deepEqual(result.report.shared.values, {
+    'Marionette:Active': false, 'RemoteAgent:Active': false,
+  });
 });
 
 test('the report records the process topology the clear depends on', () => {

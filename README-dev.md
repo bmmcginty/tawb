@@ -132,13 +132,22 @@ apart:
 
 | Recorded | Cause it identifies |
 | --- | --- |
-| `shared.names`, `shared.active` | the build publishes the state under a key `ACTIVE_KEYS` does not name |
+| `shared.count`, `shared.values` | the build publishes the state under a key `ACTIVE_KEYS` does not name |
 | `services.marionette`, `services.remoteAgent` | a service `navigator.webdriver` consults still reports itself running |
 | `processes` | the document runs in the parent process, where shared data is never consulted and the clear cannot work |
 
 `services` is the more direct reading of the two: `navigator.webdriver` asks
 `nsIMarionette.running` and `nsIRemoteAgent.running`, and shared data is only
-how those services answer inside a content process.
+how those services answer inside a content process. Read from the parent
+process both services report `true` for as long as the reader holds a session,
+which is why `services` is read together with `processes`: two services
+reporting `true` matter when `processes.remoteTabs` is `false`, because the
+document is then in the parent process and reads those services directly.
+
+`shared.values` is not every key. Firefox 147 publishes 53 and 49 of them are
+extension payloads, so a key's value is reported when the value is a boolean —
+the only shape `navigator.webdriver` can be computed from — or when the key's
+name mentions an automation component. `shared.count` is the total either way.
 
 All four views work, and none of them cares which engine is underneath.
 Three are injected JavaScript; the accessibility tree is computed by

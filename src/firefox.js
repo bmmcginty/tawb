@@ -131,31 +131,43 @@ const AUTOMATION_REPORT_BODY = `
       }
     }
 
-    // Every key by name, but only the value of a key that is not falsy: a key
-    // set to false is evidence of nothing, and a key nobody expected holding
-    // true is the whole answer to CAUSE-1. Values are reduced to primitives so
-    // one large or unserializable entry cannot cost the rest of the report.
+    // Measured against Firefox 147, the parent process publishes 53 shared-data
+    // keys and 49 of them are extension payloads — manifests, locales, content
+    // scripts. Reporting all 53 at four phases of every startup buries the
+    // handful that matter, so two filters decide what a key's value is worth:
+    //
+    //   - the value is a boolean. navigator.webdriver is a boolean computed
+    //     from booleans, so a key of that shape is the only kind that can be
+    //     the source CAUSE-1 describes. On Firefox 147 there are four.
+    //   - the name mentions an automation component. A build that used a
+    //     number or a string would still be caught by name.
+    //
+    // The total key count is kept either way, so a build publishing far more
+    // or far fewer keys than expected is still visible.
+    //
+    // Values are reduced to primitives, because one large or unserializable
+    // entry must not cost the rest of the report.
     try {
-      const names = [];
-      const active = {};
+      const interesting = /marionette|remote.?agent|webdriver|automation/i;
+      const values = {};
+      let count = 0;
       for (const name of Services.ppmm.sharedData.keys()) {
         const key = String(name);
-        names.push(key);
+        count += 1;
         let value;
         try {
           value = Services.ppmm.sharedData.get(name);
         } catch (e) {
-          active[key] = "unreadable";
+          values[key] = "unreadable";
           continue;
         }
-        if (!value) continue;
         const kind = typeof value;
-        if (kind === "boolean" || kind === "number") active[key] = value;
-        else if (kind === "string") active[key] = value.slice(0, 200);
-        else active[key] = kind;
+        if (kind !== "boolean" && !interesting.test(key)) continue;
+        if (kind === "boolean" || kind === "number") values[key] = value;
+        else if (kind === "string") values[key] = value.slice(0, 200);
+        else values[key] = kind;
       }
-      names.sort();
-      report.shared = { count: names.length, names, active };
+      report.shared = { count, values };
     } catch (e) {
       report.shared = { error: String((e && e.message) || e).slice(0, 200) };
     }
