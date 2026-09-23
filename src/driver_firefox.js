@@ -551,8 +551,18 @@ async function startSession(session, { profileDir, marionettePort, log, brokered
 // Creating the page is also the useful readiness signal: an open protocol
 // port only says that Firefox has begun bringing the remote agent up. Script
 // evaluation can still fail while its first content process is settling. Such
-// failures are retried; a successful boolean answer is final.
+// failures are retried.
+//
+// A reading of false is final, because nothing later sets the flag again. A
+// reading of true is not: the parent process flushes shared data to each
+// content process, and a page that answered before the flush arrived reports
+// the state from before the clear. Treating the first true as final made a
+// flush still in flight indistinguishable from a flag that never goes away, so
+// a true reading is re-asked until it turns false or the confirmation window
+// closes. The window is short because the flush is a message between processes
+// on one machine, and a real failure should still be reported in seconds.
 const WEBDRIVER_READY_TIMEOUT_MS = 30000;
+const WEBDRIVER_CONFIRM_MS = 3000;
 
 async function readAutomationState(libraryPort, phase, {
   ask = askFirefoxLibrary,
@@ -619,6 +629,7 @@ async function probeExistingContext(session, context, phase, log = () => {}) {
 
 async function verifyWebdriverFlag(context, {
   timeoutMs = WEBDRIVER_READY_TIMEOUT_MS,
+  confirmMs = WEBDRIVER_CONFIRM_MS,
   pollMs = 200,
   now = Date.now,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -628,21 +639,34 @@ async function verifyWebdriverFlag(context, {
   const started = now();
   const deadline = started + timeoutMs;
   let lastError = null;
+  let confirmUntil = null;
+  let readings = 0;
+  const readPage = (remaining) => probe.evaluate(() => ({
+    readyState: document.readyState,
+    webdriver: navigator.webdriver,
+  }), undefined, { timeout: Math.max(1, Math.min(5000, remaining)) });
   try {
     for (;;) {
-      const remaining = deadline - now();
+      const remaining = (confirmUntil === null ? deadline : confirmUntil) - now();
       if (remaining <= 0) break;
       try {
-        const state = await probe.evaluate(() => ({
-          readyState: document.readyState,
-          webdriver: navigator.webdriver,
-        }), undefined, { timeout: Math.max(1, Math.min(5000, remaining)) });
+        const state = await readPage(remaining);
         if (state && state.readyState !== 'loading'
           && typeof state.webdriver === 'boolean') {
-          log('firefox.automation.page', { phase: 'new-after-session-clear', state });
-          return state.webdriver;
+          readings += 1;
+          const phase = readings === 1
+            ? 'new-after-session-clear' : 'new-after-session-clear-recheck';
+          log('firefox.automation.page', { phase, state, ms: now() - started, readings });
+          // False is final: nothing sets the flag again once the clear has
+          // reached this content process.
+          if (state.webdriver === false) return false;
+          // True may still be the value from before the flush reached this
+          // content process, so keep asking the same page for a short while.
+          if (confirmUntil === null) confirmUntil = now() + confirmMs;
+          lastError = null;
+        } else {
+          lastError = new Error('the probe page did not return a final boolean value');
         }
-        lastError = new Error('the probe page did not return a final boolean value');
       } catch (err) {
         lastError = err;
         log('firefox.ready.wait', {
@@ -650,7 +674,16 @@ async function verifyWebdriverFlag(context, {
           error: String(err && err.message ? err.message : err).slice(0, 200),
         });
       }
-      await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
+      const until = confirmUntil === null ? deadline : confirmUntil;
+      await sleep(Math.min(pollMs, Math.max(0, until - now())));
+    }
+    // The confirmation window closed with every reading still true.
+    if (confirmUntil !== null) {
+      log('firefox.automation.page', {
+        phase: 'new-after-session-clear-confirmed', webdriver: true, readings,
+        confirmMs, ms: now() - started,
+      });
+      return true;
     }
   } finally {
     await probe.close().catch(() => {});
@@ -916,8 +949,11 @@ async function openFirefox({
       if (child) killProcessGroup(child.pid);
       throw new Error(
         'Firefox is still announcing itself as automated (navigator.webdriver is '
-        + `${webdriverFlag}). Refusing to read the web with a browser that will fail bot `
-        + 'checks. This usually means Firefox moved the shared-data key the clear targets.',
+        + `${webdriverFlag}) and stayed that way for ${WEBDRIVER_CONFIRM_MS / 1000}s after the `
+        + 'clear. Refusing to read the web with a browser that will fail bot checks. '
+        + 'Run `npm run diagnose:firefox --log-dir <directory>` to record every shared-data '
+        + 'key, the Marionette and remote-agent service state, and the process topology at '
+        + 'the moment of the failure.',
       );
     }
     // The one-shot diagnostic must inspect documents after the failure it was

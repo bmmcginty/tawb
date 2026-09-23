@@ -83,12 +83,16 @@ test('failure to repeat the clear is logged for the authoritative page check', a
   }]);
 });
 
+// The probe page answers each scripted reading in turn and then repeats the
+// last one, because the check re-asks the same page rather than asking once.
 function webdriverProbe(answers) {
   let closed = false;
   let options = null;
+  let asked = 0;
   const page = {
     async evaluate() {
-      const answer = answers.shift();
+      const answer = answers[Math.min(asked, answers.length - 1)];
+      asked += 1;
       if (answer instanceof Error) throw answer;
       return answer;
     },
@@ -100,7 +104,14 @@ function webdriverProbe(answers) {
     },
     closed: () => closed,
     options: () => options,
+    asked: () => asked,
   };
+}
+
+// A clock the check drives itself, so no test waits out a real window.
+function testClock() {
+  let clock = 0;
+  return { now: () => clock, sleep: async (ms) => { clock += Math.max(ms, 1); } };
 }
 
 test('the bot check uses a new post-clear page and waits for it to initialize', async () => {
@@ -117,10 +128,51 @@ test('the bot check uses a new post-clear page and waits for it to initialize', 
   assert.equal(probe.closed(), true);
 });
 
-test('a true bot flag from the new page is a real failure result', async () => {
+test('a bot flag still true after the confirmation window is a real failure', async () => {
+  const events = [];
   const probe = webdriverProbe([{ readyState: 'complete', webdriver: true }]);
-  assert.equal(await verifyWebdriverFlag(probe.context), true);
+  assert.equal(await verifyWebdriverFlag(probe.context, {
+    confirmMs: 1000, pollMs: 200, ...testClock(), log: (event, detail) => events.push({ event, detail }),
+  }), true);
   assert.equal(probe.closed(), true);
+
+  // The page was re-asked rather than believed once.
+  assert.ok(probe.asked() > 1, `expected more than one reading, got ${probe.asked()}`);
+  const phases = events.filter((e) => e.event === 'firefox.automation.page')
+    .map((e) => e.detail.phase);
+  assert.equal(phases[0], 'new-after-session-clear');
+  assert.equal(phases[1], 'new-after-session-clear-recheck');
+  assert.equal(phases[phases.length - 1], 'new-after-session-clear-confirmed');
+});
+
+test('a bot flag that turns false during the confirmation window is not a failure', async () => {
+  const events = [];
+  // Shared data is flushed from the parent process to each content process, so
+  // the page can answer with the value from before the clear and then with the
+  // value after it.
+  const probe = webdriverProbe([
+    { readyState: 'complete', webdriver: true },
+    { readyState: 'complete', webdriver: true },
+    { readyState: 'complete', webdriver: false },
+  ]);
+
+  assert.equal(await verifyWebdriverFlag(probe.context, {
+    confirmMs: 1000, pollMs: 200, ...testClock(), log: (event, detail) => events.push({ event, detail }),
+  }), false);
+  assert.equal(probe.asked(), 3);
+  assert.equal(probe.closed(), true);
+
+  const readings = events.filter((e) => e.event === 'firefox.automation.page')
+    .map((e) => e.detail.state.webdriver);
+  assert.deepEqual(readings, [true, true, false]);
+});
+
+test('a false bot flag is taken as final without waiting out the window', async () => {
+  const probe = webdriverProbe([{ readyState: 'complete', webdriver: false }]);
+  assert.equal(await verifyWebdriverFlag(probe.context, {
+    confirmMs: 1000, pollMs: 200, ...testClock(),
+  }), false);
+  assert.equal(probe.asked(), 1);
 });
 
 test('a page that never becomes evaluable is reported as unfinished startup', async () => {

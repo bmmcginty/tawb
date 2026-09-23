@@ -117,6 +117,29 @@ announcing something about itself. Startup then asks a real page what it sees
 and **refuses to run** if the answer is not `false`, so a browser that would
 fail bot checks cannot slip through unnoticed.
 
+A reading of `false` is final, because nothing sets the flag again afterwards.
+A reading of `true` is not. Shared data is flushed from the parent process to
+each content process, so a page that answered before the flush arrived reports
+the state from before the clear. A `true` reading is therefore re-asked of the
+same page for `WEBDRIVER_CONFIRM_MS` before startup treats it as a failure,
+which keeps a flush still in flight distinguishable from a flag that never goes
+away.
+
+When the flag does stay `true`, three different causes produce the same two
+observations — the targeted keys reading `false` and `navigator.webdriver`
+reading `true` — so the parent-process report records enough to tell them
+apart:
+
+| Recorded | Cause it identifies |
+| --- | --- |
+| `shared.names`, `shared.active` | the build publishes the state under a key `ACTIVE_KEYS` does not name |
+| `services.marionette`, `services.remoteAgent` | a service `navigator.webdriver` consults still reports itself running |
+| `processes` | the document runs in the parent process, where shared data is never consulted and the clear cannot work |
+
+`services` is the more direct reading of the two: `navigator.webdriver` asks
+`nsIMarionette.running` and `nsIRemoteAgent.running`, and shared data is only
+how those services answer inside a content process.
+
 All four views work, and none of them cares which engine is underneath.
 Three are injected JavaScript; the accessibility tree is computed by
 `ax_own.js`, in the page, on both browsers.
@@ -1578,7 +1601,8 @@ It contains one JSON record per line, timestamped from process start:
 For a remote Firefox startup failure, `npm run diagnose:firefox -- --log-dir
 /logs` launches the ordinary Firefox path with a fresh temporary profile and
 writes one report containing runtime identity, WebDriver capabilities,
-automation-key state around `session.new`, browser output on a bot-check
+automation state around `session.new` — every shared-data key, the two
+WebDriver services, and the process topology — browser output on a bot-check
 failure, and probes from several document lifetimes. Container builds can set
 `TAWB_IMAGE_REVISION` to put their own identifier in that report.
 
