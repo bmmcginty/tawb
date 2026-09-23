@@ -942,6 +942,11 @@ async function openFirefox({
     cleared: cleared ? clearedSummary : cleared, webdriver: webdriverFlag, probe: 'new-page',
   });
   if (webdriverFlag !== false) {
+    // The state at the moment of the failure, not the state minutes earlier at
+    // the last clear. A run that refuses to start still records the full
+    // report, so the one log a remote reporter can send back carries it
+    // without them having to run the diagnostic separately.
+    await readAutomationState(libraryPort, 'after-bot-check-failure', { log });
     const browserOutput = compactDiagnostic(browserDiagnostics && browserDiagnostics.output, 4000);
     if (browserOutput) log('firefox.browser-output', { reason: 'webdriver-check', output: browserOutput });
     if (!diagnoseAutomation) {

@@ -328,3 +328,22 @@ test('the parent agent reports automation state exactly as the startup clear doe
   assert.match(parentScript, /report: automationReport\(\)/);
   assert.equal(parentScript.includes('__ACTIVE_KEYS__'), false);
 });
+
+test('a reading taken at a failure names its own phase', async () => {
+  const events = [];
+  const report = {
+    keys: { 'RemoteAgent:Active': false, 'Marionette:Active': false },
+    shared: { count: 2, names: ['Marionette:Active', 'RemoteAgent:Active'], active: {} },
+    services: { marionette: true, remoteAgent: false },
+    processes: { remoteTabs: true, fission: true, maxWebProcesses: 8, children: 3 },
+  };
+
+  assert.deepEqual(await readAutomationState(4321, 'after-bot-check-failure', {
+    ask: async () => report,
+    log: (event, detail) => events.push({ event, detail }),
+  }), report);
+  assert.deepEqual(events, [{
+    event: 'firefox.automation.state',
+    detail: { phase: 'after-bot-check-failure', state: report },
+  }]);
+});
