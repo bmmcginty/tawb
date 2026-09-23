@@ -3,11 +3,44 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { MARIONETTE_TIMEOUT_MS } = require('../src/firefox');
-const { verifyWebdriverFlag } = require('../src/driver_firefox');
+const { MARIONETTE_TIMEOUT_MS, libraryParentScript } = require('../src/firefox');
+const { clearWebdriverAfterSession, verifyWebdriverFlag } = require('../src/driver_firefox');
 
 test('Marionette operations allow a slow Firefox a full minute', () => {
   assert.equal(MARIONETTE_TIMEOUT_MS, 60000);
+});
+
+test('the parent agent can clear automation keys after the BiDi session starts', async () => {
+  const calls = [];
+  const events = [];
+  const result = await clearWebdriverAfterSession(4321, {
+    ask: async (port, request) => {
+      calls.push({ port, request });
+      return { before: [true, false], after: [false, false] };
+    },
+    log: (event, detail) => events.push({ event, detail }),
+  });
+
+  assert.deepEqual(calls, [{ port: 4321, request: { kind: 'clearAutomation' } }]);
+  assert.deepEqual(result, { before: [true, false], after: [false, false] });
+  assert.equal(events[0].event, 'firefox.automation.session-cleared');
+
+  const parentScript = libraryParentScript();
+  assert.match(parentScript, /const clearAutomation = async function/);
+  assert.match(parentScript, /\["RemoteAgent:Active","Marionette:Active"\]/);
+  assert.equal(parentScript.includes('__ACTIVE_KEYS__'), false);
+});
+
+test('failure to repeat the clear is logged for the authoritative page check', async () => {
+  const events = [];
+  assert.equal(await clearWebdriverAfterSession(4321, {
+    ask: async () => { throw new Error('agent unavailable'); },
+    log: (event, detail) => events.push({ event, detail }),
+  }), null);
+  assert.deepEqual(events, [{
+    event: 'firefox.automation.session-clear-error',
+    detail: { error: 'agent unavailable' },
+  }]);
 });
 
 function webdriverProbe(answers) {

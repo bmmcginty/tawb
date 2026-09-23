@@ -552,6 +552,28 @@ async function startSession(session, { profileDir, marionettePort, log, brokered
 // failures are retried; a successful boolean answer is final.
 const WEBDRIVER_READY_TIMEOUT_MS = 30000;
 
+// Firefox versions disagree about when the remote-agent key is published.
+// The startup clear runs as soon as Marionette is ready, but some versions set
+// RemoteAgent:Active again when session.new is handled. The privileged agent
+// installed by that first clear survives it, so ask the parent process once
+// more after the BiDi session exists and before any page is trusted.
+async function clearWebdriverAfterSession(libraryPort, {
+  ask = askFirefoxLibrary,
+  log = () => {},
+} = {}) {
+  if (!libraryPort) return null;
+  try {
+    const result = await ask(libraryPort, { kind: 'clearAutomation' });
+    log('firefox.automation.session-cleared', result || {});
+    return result;
+  } catch (err) {
+    log('firefox.automation.session-clear-error', {
+      error: String(err && err.message ? err.message : err).slice(0, 200),
+    });
+    return null;
+  }
+}
+
 async function verifyWebdriverFlag(context, {
   timeoutMs = WEBDRIVER_READY_TIMEOUT_MS,
   pollMs = 200,
@@ -676,6 +698,8 @@ async function openFirefox({
       clearBrokerRecord(profileDir);
     }
   }
+
+  await clearWebdriverAfterSession(libraryPort, { log });
 
   const tree = await session.send('browsingContext.getTree', {});
   const top = tree.contexts[0];
@@ -1346,6 +1370,6 @@ async function openFirefox({
 
 module.exports = {
   openFirefox, FirefoxPage, FirefoxFrame, FirefoxHandle, FirefoxKeyboard,
-  verifyWebdriverFlag, WEBDRIVER_READY_TIMEOUT_MS,
+  clearWebdriverAfterSession, verifyWebdriverFlag, WEBDRIVER_READY_TIMEOUT_MS,
   toRemoteArgument, WEBDRIVER_KEYS,
 };

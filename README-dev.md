@@ -103,10 +103,13 @@ navigator.webdriver: false -> true
 ```
 
 Nothing else. Not one other field. And that boolean has one source: the
-parent process publishes a shared-data key when the remote agent starts
-listening, and content reads it back — once, at startup, not per session. So
-it is cleared, through privileged JavaScript in the parent using Marionette's
-chrome context, and Marionette is then shut down behind us.
+parent process publishes shared-data keys while its automation agents are
+active, and content reads them back. They are cleared through privileged
+JavaScript in the parent using Marionette's chrome context. Because some
+Firefox releases publish a key again when the BiDi session starts, the
+parent-process agent installed there repeats the clear after that session
+exists. Marionette stays available to recover a session stranded by a dead
+reader.
 
 Nothing in any page is touched. No getter is redefined and no `toString` is
 patched, so there is nothing for a site to catch: the browser simply stops

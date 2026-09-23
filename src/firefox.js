@@ -31,13 +31,14 @@ const { openAccessibilityBus } = require('./a11y_bus');
 //   navigator.webdriver: false -> true
 //
 // Nothing else. Not one other field. And that boolean has one source: the
-// parent process publishes a shared-data key when the remote agent starts
-// listening, and `navigator.webdriver` in a content process reads it back.
-// It is published exactly once, at startup — not per session — which is why
-// clearing it once holds.
+// parent process publishes shared-data keys while its automation agents are
+// active, and `navigator.webdriver` in a content process reads them back.
 //
-// So we clear it, through privileged JavaScript in the parent process, using
-// Marionette's chrome context. Nothing in any page is touched: no getter is
+// So we clear them through privileged JavaScript in the parent process, using
+// Marionette's chrome context. Some Firefox releases publish a key again when
+// the BiDi session starts, so the parent-process agent installed at startup
+// clears them a second time after that session exists. Nothing in any page is
+// touched: no getter is
 // redefined, no toString is patched, so there is no tampering for a site to
 // notice. The browser simply stops announcing something about itself.
 //
@@ -526,7 +527,19 @@ const LIBRARY_PARENT_BODY = `
     };
   };
 
-  const answer = { bookmarks, history, downloads, save };
+  // Some Firefox releases publish an automation key again when a BiDi session
+  // begins. This agent outlives the Marionette session that installed it, so
+  // it can clear the keys after BiDi has finished doing that. Keeping this in
+  // the parent process avoids changing anything a webpage can inspect.
+  const clearAutomation = async function () {
+    const keys = __ACTIVE_KEYS__;
+    const before = keys.map((key) => Services.ppmm.sharedData.get(key) ?? false);
+    for (const key of keys) Services.ppmm.sharedData.set(key, false);
+    Services.ppmm.sharedData.flush();
+    return { before, after: keys.map((key) => Services.ppmm.sharedData.get(key) ?? false) };
+  };
+
+  const answer = { bookmarks, history, downloads, save, clearAutomation };
   const { require: devtoolsRequire } = ChromeUtils.importESModule(
     "resource://devtools/shared/loader/Loader.sys.mjs");
   const { DebuggerTransport } = devtoolsRequire(
@@ -583,8 +596,9 @@ const LIBRARY_PARENT_BODY = `
 `;
 
 function libraryParentScript() {
-  const parent = LIBRARY_PARENT_BODY.replace(
-    '__ROOTS__', JSON.stringify(FIREFOX_ROOT_LABELS));
+  const parent = LIBRARY_PARENT_BODY
+    .replace('__ROOTS__', JSON.stringify(FIREFOX_ROOT_LABELS))
+    .replace('__ACTIVE_KEYS__', JSON.stringify(ACTIVE_KEYS));
   return `${parent}\nreturn server.port;`;
 }
 
