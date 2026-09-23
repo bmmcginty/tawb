@@ -1560,10 +1560,12 @@ Logging is off by default. Add `--log` when a run needs diagnosing:
 ```
 npm start -- --log https://example.com
 npm run edb -- --log
+npm start -- --log --log-dir /logs       # for example, a container bind mount
 ```
 
-The log is written in the user's home directory as
-`~/.tawb.YYYYMMDDhhmmss.<pid>.log`. The timestamp and process id give every
+The log is written in the user's home directory by default, or in the directory
+selected by `--log-dir` or `TAWB_LOG_DIR`, as
+`.tawb.YYYYMMDDhhmmss.<pid>.log`. A selected directory is created when possible. The timestamp and process id give every
 session its own file, so simultaneous readers never overwrite one another.
 It contains one JSON record per line, timestamped from process start:
 

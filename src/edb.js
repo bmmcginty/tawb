@@ -22,10 +22,10 @@ const { readSettings } = require('./settings');
 // edb.json for the entry-point plugin to find, and then stays out of the way
 // until you stop it.
 
-function parseArgs(argv) {
+function parseArgs(argv, env = process.env) {
   const options = {
     engine: DEFAULT_ENGINE, connect: null, profile: null, keepBrowser: false,
-    port: 0, url: null, log: false,
+    port: 0, url: null, log: false, logDir: env.TAWB_LOG_DIR || null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -38,6 +38,8 @@ function parseArgs(argv) {
     else if (arg === '--keep-browser') options.keepBrowser = true;
     else if (arg === '--no-keep-browser') options.keepBrowser = false;
     else if (arg === '--log') options.log = true;
+    else if (arg === '--log-dir') { options.logDir = argv[i + 1] || null; i += 1; }
+    else if (arg.startsWith('--log-dir=')) options.logDir = arg.slice('--log-dir='.length) || null;
     else if (arg === '--port') { options.port = Number(argv[i + 1] || 0); i += 1; }
     else if (arg.startsWith('--port=')) options.port = Number(arg.slice('--port='.length));
     else if (!arg.startsWith('-') && !options.url) options.url = arg;
@@ -47,7 +49,7 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs([...readSettings(), ...process.argv.slice(2)]);
-  const logPath = args.log ? enableLog() : null;
+  const logPath = args.log ? enableLog({ directory: args.logDir }) : null;
   log('edb.start', { engine: args.engine, logPath });
 
   // One way to get a browser, used twice: once now, and again whenever the

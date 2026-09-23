@@ -52,7 +52,8 @@ const ON = new Set(['on', 'yes', 'true', '1']);
 function parseArgs(argv, env = process.env) {
   const options = {
     url: null, connect: null, profile: null, engine: DEFAULT_ENGINE, keepBrowser: false,
-    keyboard: false, log: false, search: env.TAWB_SEARCH || DEFAULT_SEARCH,
+    keyboard: false, log: false, logDir: env.TAWB_LOG_DIR || null,
+    search: env.TAWB_SEARCH || DEFAULT_SEARCH,
     linkAddress: !OFF.has(String(env.TAWB_LINK_ADDRESS || '').toLowerCase()),
     shortLinks: ON.has(String(env.TAWB_SHORT_LINKS || '').toLowerCase()),
   };
@@ -66,6 +67,8 @@ function parseArgs(argv, env = process.env) {
     else if (arg === '--no-keep-browser') { options.keepBrowser = false; }
     else if (arg === '--keyboard') { options.keyboard = true; }
     else if (arg === '--log') { options.log = true; }
+    else if (arg === '--log-dir') { options.logDir = argv[i + 1] || null; i += 1; }
+    else if (arg.startsWith('--log-dir=')) { options.logDir = arg.slice('--log-dir='.length) || null; }
     else if (arg === '--link-address') { options.linkAddress = true; }
     else if (arg === '--no-link-address') { options.linkAddress = false; }
     else if (arg === '--short-links') { options.shortLinks = true; }
@@ -3640,7 +3643,7 @@ async function handleAddressKey(chunk, state, page) {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  const logPath = ARGS.log ? enableLog() : null;
+  const logPath = ARGS.log ? enableLog({ directory: ARGS.logDir }) : null;
   if (ARGS.keyboard) {
     await runKeyWizard();
     return;

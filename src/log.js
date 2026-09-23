@@ -8,7 +8,7 @@ const { currentRevision } = require('./revision');
 // Timing log. The UI owns the terminal, so diagnostics go to a file — one
 // NDJSON record per event, timestamped from process start. Logging is opt-in:
 // ordinary runs leave nothing behind, while --log enables one uniquely named
-// file in the user's home directory.
+// file in the user's home directory or the directory selected by --log-dir.
 
 let logPath = null;
 let enabledAt = null;
@@ -24,8 +24,10 @@ function timestamp(date) {
     + `${two(date.getHours())}${two(date.getMinutes())}${two(date.getSeconds())}`;
 }
 
-function defaultLogPath({ now = new Date(), pid = process.pid, home = os.homedir() } = {}) {
-  return path.join(home, `.tawb.${timestamp(now)}.${pid}.log`);
+function defaultLogPath({
+  now = new Date(), pid = process.pid, home = os.homedir(), directory = null,
+} = {}) {
+  return path.join(directory || home, `.tawb.${timestamp(now)}.${pid}.log`);
 }
 
 function enableLog(options = {}) {
@@ -43,8 +45,11 @@ function open() {
   if (!logPath) return null;
   if (stream) return stream;
   try {
-    // Open synchronously so an unwritable home disables diagnostics rather
-    // than raising an asynchronous stream error that takes the reader down.
+    // A chosen log directory may not exist yet (a common case for a bind
+    // mount's subdirectory). Create it privately where permissions allow.
+    fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 });
+    // Open synchronously so an unwritable directory disables diagnostics
+    // rather than raising an asynchronous stream error that takes the reader down.
     const fd = fs.openSync(logPath, 'w', 0o600);
     stream = fs.createWriteStream(null, { fd });
     stream.on('error', () => { stream = null; });

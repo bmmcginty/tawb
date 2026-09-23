@@ -24,9 +24,13 @@ test('logging is off until --log enables a timestamped private file', async () =
     assert.equal(getLogPath(), null);
 
     const now = new Date(2026, 7, 27, 14, 5, 9);
-    const expected = path.join(home, '.tawb.20260827140509.4321.log');
-    assert.equal(defaultLogPath({ now, pid: 4321, home }), expected);
-    assert.equal(enableLog({ now, pid: 4321, home }), expected);
+    const name = '.tawb.20260827140509.4321.log';
+    assert.equal(defaultLogPath({ now, pid: 4321, home }), path.join(home, name));
+
+    const directory = path.join(home, 'mounted', 'logs');
+    const expected = path.join(directory, name);
+    assert.equal(defaultLogPath({ now, pid: 4321, home, directory }), expected);
+    assert.equal(enableLog({ now, pid: 4321, home, directory }), expected);
 
     log('enabled', { answer: 42 });
     await closeLog();

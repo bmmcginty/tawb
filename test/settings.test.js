@@ -41,13 +41,24 @@ test('settings are read from disk as arguments', () => {
 
 test('command-line options can override persistent browser settings', () => {
   const configured = ['--browser', 'firefox', '--keep-browser'];
-  const args = parseArgs([...configured, '--browser', 'chromium', '--no-keep-browser'], {});
+  assert.equal(parseArgs([], { TAWB_LOG_DIR: '/environment/logs' }).logDir, '/environment/logs');
+  assert.equal(parseEdbArgs([], { TAWB_LOG_DIR: '/environment/logs' }).logDir, '/environment/logs');
+
+  const args = parseArgs([
+    ...configured, '--browser', 'chromium', '--no-keep-browser', '--log', '--log-dir', '/host/logs',
+  ], {});
   assert.equal(args.engine, 'chromium');
   assert.equal(args.keepBrowser, false);
+  assert.equal(args.log, true);
+  assert.equal(args.logDir, '/host/logs');
 
-  const edbArgs = parseEdbArgs([...configured, '--browser', 'chromium', '--no-keep-browser']);
+  const edbArgs = parseEdbArgs([
+    ...configured, '--browser', 'chromium', '--no-keep-browser', '--log', '--log-dir=/host/logs',
+  ], {});
   assert.equal(edbArgs.engine, 'chromium');
   assert.equal(edbArgs.keepBrowser, false);
+  assert.equal(edbArgs.log, true);
+  assert.equal(edbArgs.logDir, '/host/logs');
 });
 
 test('a malformed settings file names itself in the error', () => {

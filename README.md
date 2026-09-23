@@ -321,8 +321,16 @@ npm start -- --log https://example.com
 ```
 
 The log is written to your home directory with a name such as
-`~/.tawb.20260827140509.1234.log`. Logs may contain addresses and other
-browsing details; inspect them before sharing.
+`~/.tawb.20260827140509.1234.log`. Choose another directory with `--log-dir`
+or `TAWB_LOG_DIR`; TAWB creates it when possible. This is useful for a directory
+mounted out of a container:
+
+```sh
+docker run -v "$PWD/tawb-logs:/logs" IMAGE npm start -- --log --log-dir /logs
+```
+
+Logs may contain addresses and other browsing details; inspect them before
+sharing.
 
 If a browser is unusually slow to create its profile, increase the startup
 timeout:
