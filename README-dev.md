@@ -1575,8 +1575,15 @@ It contains one JSON record per line, timestamped from process start:
  "reanchorMs":1,"drawMs":0,"repainted":18,"remapExact":true,"cursor":15}
 ```
 
-It records startup phases, every page snapshot with its cost, live refresh
-broken down by stage, text splices that avoided a snapshot (`live.patch`),
+For a remote Firefox startup failure, `npm run diagnose:firefox -- --log-dir
+/logs` launches the ordinary Firefox path with a fresh temporary profile and
+writes one report containing runtime identity, WebDriver capabilities,
+automation-key state around `session.new`, browser output on a bot-check
+failure, and probes from several document lifetimes. Container builds can set
+`TAWB_IMAGE_REVISION` to put their own identifier in that report.
+
+The normal log records startup phases, every page snapshot with its cost, live
+refresh broken down by stage, text splices that avoided a snapshot (`live.patch`),
 keypresses that took longer than 20ms, saved and restored page-history
 positions, and any frame slower than 100ms with the URL responsible. It is
 the fastest way to find

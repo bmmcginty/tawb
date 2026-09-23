@@ -16,6 +16,7 @@
     "authpage": "node tools/authserve.js",
     "dump": "node tools/dump.js",
     "probe": "node tools/probe.js",
+    "diagnose:firefox": "node tools/diagnose_firefox.js",
     "browsers": "node tools/browsers.js",
     "test:browser": "node --test --test-concurrency=2 test/browser/*.test.js",
     "wpt": "node tools/wpt.js"

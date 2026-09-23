@@ -670,7 +670,7 @@ const BROWSER_NAMES = ['Firefox', 'Mozilla Firefox', 'firefox'];
 
 async function openFirefox({
   profile = null, connect = null, keepBrowser = false, broker = true, log = () => {},
-  onStartup = () => {},
+  onStartup = () => {}, diagnoseAutomation = false,
 } = {}) {
   let child = null;
   let endpoint = connect;
@@ -906,13 +906,19 @@ async function openFirefox({
   if (webdriverFlag !== false) {
     const browserOutput = compactDiagnostic(browserDiagnostics && browserDiagnostics.output, 4000);
     if (browserOutput) log('firefox.browser-output', { reason: 'webdriver-check', output: browserOutput });
-    session.close();
-    if (child) killProcessGroup(child.pid);
-    throw new Error(
-      'Firefox is still announcing itself as automated (navigator.webdriver is '
-      + `${webdriverFlag}). Refusing to read the web with a browser that will fail bot `
-      + 'checks. This usually means Firefox moved the shared-data key the clear targets.',
-    );
+    if (!diagnoseAutomation) {
+      session.close();
+      if (child) killProcessGroup(child.pid);
+      throw new Error(
+        'Firefox is still announcing itself as automated (navigator.webdriver is '
+        + `${webdriverFlag}). Refusing to read the web with a browser that will fail bot `
+        + 'checks. This usually means Firefox moved the shared-data key the clear targets.',
+      );
+    }
+    // The one-shot diagnostic must inspect documents after the failure it was
+    // invoked to explain. This option is internal, never accepted by either
+    // reader entry point, and the failed state remains explicit in the log.
+    log('firefox.automation.diagnostic-continued', { webdriver: webdriverFlag });
   }
 
   // The one call the privileged parent-process agent answers, whichever

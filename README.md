@@ -332,6 +332,18 @@ docker run -v "$PWD/tawb-logs:/logs" IMAGE npm start -- --log --log-dir /logs
 Logs may contain addresses and other browsing details; inspect them before
 sharing.
 
+For a Firefox startup problem on a machine that cannot be inspected directly,
+create a self-contained report with a fresh temporary profile:
+
+```sh
+npm run diagnose:firefox -- --log-dir /logs
+```
+
+The report records the OS and runtime, Firefox's WebDriver capabilities,
+automation-key state around session creation, bounded browser output on a bot
+check failure, and `navigator.webdriver` from several document lifetimes. Set
+`TAWB_IMAGE_REVISION` in a container image to include its build identifier.
+
 If a browser is unusually slow to create its profile, increase the startup
 timeout:
 
