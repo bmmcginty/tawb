@@ -96,11 +96,39 @@ const ACTIVE_KEYS = ['RemoteAgent:Active', 'Marionette:Active'];
 
 const CLEAR_SCRIPT = `
   const keys = ${JSON.stringify(ACTIVE_KEYS)};
-  const before = keys.map((k) => Services.ppmm.sharedData.get(k) ?? false);
-  for (const k of keys) Services.ppmm.sharedData.set(k, false);
+  const state = () => Object.fromEntries(
+    keys.map((key) => [key, Services.ppmm.sharedData.get(key) ?? false]));
+  const before = state();
+  for (const key of keys) Services.ppmm.sharedData.set(key, false);
   Services.ppmm.sharedData.flush();
-  return { before, after: keys.map((k) => Services.ppmm.sharedData.get(k) ?? false) };
+  return { before, after: state() };
 `;
+
+function osDescription() {
+  try {
+    const text = fs.readFileSync('/etc/os-release', 'utf8');
+    const found = /^PRETTY_NAME=(?:"([^"]*)"|'([^']*)'|(.*))$/m.exec(text);
+    return found ? (found[1] || found[2] || found[3] || '').trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function firefoxRuntimeInfo(executable, env = process.env) {
+  let resolved = executable;
+  try { resolved = fs.realpathSync(executable); } catch { /* the spawn error will name it */ }
+  return {
+    executable,
+    resolvedExecutable: resolved,
+    node: process.version,
+    platform: process.platform,
+    arch: process.arch,
+    kernel: os.release(),
+    os: osDescription(),
+    uid: typeof process.getuid === 'function' ? process.getuid() : null,
+    imageRevision: env.TAWB_IMAGE_REVISION || null,
+  };
+}
 
 // Media has to be allowed to start without a user gesture, because there is
 // no gesture to give.
@@ -527,19 +555,26 @@ const LIBRARY_PARENT_BODY = `
     };
   };
 
-  // Some Firefox releases publish an automation key again when a BiDi session
-  // begins. This agent outlives the Marionette session that installed it, so
-  // it can clear the keys after BiDi has finished doing that. Keeping this in
-  // the parent process avoids changing anything a webpage can inspect.
-  const clearAutomation = async function () {
+  // Some Firefox releases appear to publish automation state again while a
+  // BiDi session starts. This agent outlives the Marionette session that
+  // installed it, so diagnostics can observe each transition and the reader
+  // can clear the keys after BiDi has finished. Keeping this in the parent
+  // process avoids changing anything a webpage can inspect.
+  const automationState = async function () {
     const keys = __ACTIVE_KEYS__;
-    const before = keys.map((key) => Services.ppmm.sharedData.get(key) ?? false);
-    for (const key of keys) Services.ppmm.sharedData.set(key, false);
+    return Object.fromEntries(
+      keys.map((key) => [key, Services.ppmm.sharedData.get(key) ?? false]));
+  };
+  const clearAutomation = async function () {
+    const before = await automationState();
+    for (const key of __ACTIVE_KEYS__) Services.ppmm.sharedData.set(key, false);
     Services.ppmm.sharedData.flush();
-    return { before, after: keys.map((key) => Services.ppmm.sharedData.get(key) ?? false) };
+    return { before, after: await automationState() };
   };
 
-  const answer = { bookmarks, history, downloads, save, clearAutomation };
+  const answer = {
+    bookmarks, history, downloads, save, automationState, clearAutomation,
+  };
   const { require: devtoolsRequire } = ChromeUtils.importESModule(
     "resource://devtools/shared/loader/Loader.sys.mjs");
   const { DebuggerTransport } = devtoolsRequire(
@@ -598,7 +633,7 @@ const LIBRARY_PARENT_BODY = `
 function libraryParentScript() {
   const parent = LIBRARY_PARENT_BODY
     .replace('__ROOTS__', JSON.stringify(FIREFOX_ROOT_LABELS))
-    .replace('__ACTIVE_KEYS__', JSON.stringify(ACTIVE_KEYS));
+    .replaceAll('__ACTIVE_KEYS__', JSON.stringify(ACTIVE_KEYS));
   return `${parent}\nreturn server.port;`;
 }
 
@@ -760,6 +795,7 @@ async function launchFirefox({
   }
 
   sayStartup(onStartup, 'Preparing Firefox profile…');
+  log('firefox.environment', firefoxRuntimeInfo(found.executable));
   requireBrowserUser(found.name);
   requireReachableProfile(found, profileDir);
   fs.mkdirSync(profileDir, { recursive: true });
@@ -796,6 +832,7 @@ async function launchFirefox({
       cleared: null,
       rejoined: true,
       libraryPort: record.libraryPort || null,
+      diagnostics: null,
       a11y,
     };
   }
@@ -909,6 +946,7 @@ async function launchFirefox({
     profileDir,
     cleared,
     rejoined: false,
+    diagnostics: startup,
     a11y,
   };
 }
@@ -918,4 +956,5 @@ module.exports = {
   defaultProfileDir, writeProfilePrefs, MEDIA_PREFS, PASSWORD_PREFS, ACTIVE_KEYS, CLEAR_SCRIPT,
   PIERCE_PARENT_SCRIPT, PIERCE_CHILD_SCRIPT,
   libraryParentScript, FIREFOX_ROOT_LABELS, MARIONETTE_TIMEOUT_MS,
+  firefoxRuntimeInfo,
 };

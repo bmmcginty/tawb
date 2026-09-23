@@ -3,8 +3,12 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { MARIONETTE_TIMEOUT_MS, libraryParentScript } = require('../src/firefox');
-const { clearWebdriverAfterSession, verifyWebdriverFlag } = require('../src/driver_firefox');
+const {
+  MARIONETTE_TIMEOUT_MS, libraryParentScript, firefoxRuntimeInfo,
+} = require('../src/firefox');
+const {
+  readAutomationState, clearWebdriverAfterSession, verifyWebdriverFlag,
+} = require('../src/driver_firefox');
 
 test('Marionette operations allow a slow Firefox a full minute', () => {
   assert.equal(MARIONETTE_TIMEOUT_MS, 60000);
@@ -16,19 +20,55 @@ test('the parent agent can clear automation keys after the BiDi session starts',
   const result = await clearWebdriverAfterSession(4321, {
     ask: async (port, request) => {
       calls.push({ port, request });
-      return { before: [true, false], after: [false, false] };
+      return {
+        before: { 'RemoteAgent:Active': true, 'Marionette:Active': false },
+        after: { 'RemoteAgent:Active': false, 'Marionette:Active': false },
+      };
     },
     log: (event, detail) => events.push({ event, detail }),
   });
 
   assert.deepEqual(calls, [{ port: 4321, request: { kind: 'clearAutomation' } }]);
-  assert.deepEqual(result, { before: [true, false], after: [false, false] });
+  assert.deepEqual(result, {
+    before: { 'RemoteAgent:Active': true, 'Marionette:Active': false },
+    after: { 'RemoteAgent:Active': false, 'Marionette:Active': false },
+  });
   assert.equal(events[0].event, 'firefox.automation.session-cleared');
 
   const parentScript = libraryParentScript();
+  assert.match(parentScript, /const automationState = async function/);
   assert.match(parentScript, /const clearAutomation = async function/);
   assert.match(parentScript, /\["RemoteAgent:Active","Marionette:Active"\]/);
   assert.equal(parentScript.includes('__ACTIVE_KEYS__'), false);
+});
+
+test('automation keys can be observed without changing them', async () => {
+  const events = [];
+  const state = { 'RemoteAgent:Active': false, 'Marionette:Active': true };
+  assert.deepEqual(await readAutomationState(4321, 'after-session-new', {
+    ask: async (port, request) => {
+      assert.equal(port, 4321);
+      assert.deepEqual(request, { kind: 'automationState' });
+      return state;
+    },
+    log: (event, detail) => events.push({ event, detail }),
+  }), state);
+  assert.deepEqual(events, [{
+    event: 'firefox.automation.state',
+    detail: { phase: 'after-session-new', state },
+  }]);
+});
+
+test('Firefox runtime diagnostics identify the executable and container build', () => {
+  const info = firefoxRuntimeInfo('/path/that/does/not/exist/firefox', {
+    TAWB_IMAGE_REVISION: 'image-42',
+  });
+  assert.equal(info.executable, '/path/that/does/not/exist/firefox');
+  assert.equal(info.resolvedExecutable, info.executable);
+  assert.equal(info.node, process.version);
+  assert.equal(info.platform, process.platform);
+  assert.equal(info.arch, process.arch);
+  assert.equal(info.imageRevision, 'image-42');
 });
 
 test('failure to repeat the clear is logged for the authoritative page check', async () => {

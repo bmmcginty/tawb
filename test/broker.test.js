@@ -110,11 +110,13 @@ test('the browser is asked for a session once, however many readers ask', async 
     assert.deepEqual(status.result, { ready: true, message: '' }, 'a joining reader was told to go away');
 
     one.send(2, 'session.new');
-    await one.until((m) => m.id === 2);
+    const created = await one.until((m) => m.id === 2);
     const two = await reader(url);
     two.send(2, 'session.new');
-    await two.until((m) => m.id === 2);
+    const replayed = await two.until((m) => m.id === 2);
 
+    assert.equal(created.result.capabilities['tawb:brokerSession'], 'created');
+    assert.equal(replayed.result.capabilities['tawb:brokerSession'], 'replayed');
     const asked = browser.commands.filter((c) => c.method === 'session.new');
     assert.equal(asked.length, 1, 'the second reader asked Firefox for a second session');
     assert.equal(browser.commands.some((c) => c.method === 'session.status'), false,

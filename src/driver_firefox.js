@@ -4,7 +4,7 @@ const bidi = require('./bidi');
 const { launchFirefox, defaultProfileDir, releaseStrandedSession } = require('./firefox');
 const { readEndpointRecord, writeEndpointRecord, portOfEndpoint } = require('./endpoint');
 const { ensureBroker, clearBrokerRecord } = require('./broker');
-const { processAlive, killProcessGroup } = require('./proc');
+const { processAlive, killProcessGroup, compactDiagnostic } = require('./proc');
 const { otherReadersOn } = require('./session');
 const { forgetBrowser, markKept } = require('./registry');
 const { extractAxItems } = require('./ax_own');
@@ -502,8 +502,9 @@ async function startSession(session, { profileDir, marionettePort, log, brokered
   }
 
   const newSession = () => session.send('session.new', { capabilities: { alwaysMatch: {} } });
+  let result;
   try {
-    await newSession();
+    result = await newSession();
   } catch (err) {
     const stranded = brokered && marionettePort
       && /Maximum number of active sessions/i.test(String(err.message || ''));
@@ -520,7 +521,7 @@ async function startSession(session, { profileDir, marionettePort, log, brokered
       throw err;
     }
     try {
-      await newSession();
+      result = await newSession();
     } catch (again) {
       session.close();
       throw again;
@@ -533,6 +534,7 @@ async function startSession(session, { profileDir, marionettePort, log, brokered
     ...(readEndpointRecord(profileDir) || {}),
     readerPid: process.pid,
   });
+  return result;
 }
 
 // Whether the automation announcement really is silenced, asked from inside a
@@ -552,11 +554,32 @@ async function startSession(session, { profileDir, marionettePort, log, brokered
 // failures are retried; a successful boolean answer is final.
 const WEBDRIVER_READY_TIMEOUT_MS = 30000;
 
+async function readAutomationState(libraryPort, phase, {
+  ask = askFirefoxLibrary,
+  log = () => {},
+} = {}) {
+  if (!libraryPort) {
+    log('firefox.automation.state', { phase, unavailable: 'no parent-agent endpoint' });
+    return null;
+  }
+  try {
+    const state = await ask(libraryPort, { kind: 'automationState' });
+    log('firefox.automation.state', { phase, state });
+    return state;
+  } catch (err) {
+    log('firefox.automation.state-error', {
+      phase,
+      error: String(err && err.message ? err.message : err).slice(0, 200),
+    });
+    return null;
+  }
+}
+
 // Firefox versions disagree about when the remote-agent key is published.
-// The startup clear runs as soon as Marionette is ready, but some versions set
-// RemoteAgent:Active again when session.new is handled. The privileged agent
-// installed by that first clear survives it, so ask the parent process once
-// more after the BiDi session exists and before any page is trusted.
+// The startup clear runs as soon as Marionette is ready, but some versions may
+// set RemoteAgent:Active again while session.new is handled. The privileged
+// agent installed by that first clear survives it, so observe both sides of
+// that transition and clear once more before any page is trusted.
 async function clearWebdriverAfterSession(libraryPort, {
   ask = askFirefoxLibrary,
   log = () => {},
@@ -568,6 +591,26 @@ async function clearWebdriverAfterSession(libraryPort, {
     return result;
   } catch (err) {
     log('firefox.automation.session-clear-error', {
+      error: String(err && err.message ? err.message : err).slice(0, 200),
+    });
+    return null;
+  }
+}
+
+async function probeExistingContext(session, context, phase, log = () => {}) {
+  try {
+    const answer = await session.send('script.evaluate', {
+      expression: '({ readyState: document.readyState, webdriver: navigator.webdriver })',
+      target: { context },
+      awaitPromise: false,
+      resultOwnership: 'none',
+    });
+    const state = answer && answer.result ? bidi.fromRemoteValue(answer.result) : null;
+    log('firefox.automation.page', { phase, state });
+    return state;
+  } catch (err) {
+    log('firefox.automation.page-error', {
+      phase,
       error: String(err && err.message ? err.message : err).slice(0, 200),
     });
     return null;
@@ -595,7 +638,10 @@ async function verifyWebdriverFlag(context, {
           webdriver: navigator.webdriver,
         }), undefined, { timeout: Math.max(1, Math.min(5000, remaining)) });
         if (state && state.readyState !== 'loading'
-          && typeof state.webdriver === 'boolean') return state.webdriver;
+          && typeof state.webdriver === 'boolean') {
+          log('firefox.automation.page', { phase: 'new-after-session-clear', state });
+          return state.webdriver;
+        }
         lastError = new Error('the probe page did not return a final boolean value');
       } catch (err) {
         lastError = err;
@@ -632,6 +678,7 @@ async function openFirefox({
   let marionettePort = null;
 
   let libraryPort = null;
+  let browserDiagnostics = null;
   // Where this Firefox describes its own windows, if there is a bus for it to
   // describe them to. See native_prompt.js.
   let a11y = null;
@@ -651,6 +698,7 @@ async function openFirefox({
     cleared = started.cleared;
     marionettePort = started.marionettePort;
     libraryPort = started.libraryPort;
+    browserDiagnostics = started.diagnostics;
     a11y = started.a11y;
   } else {
     const record = readEndpointRecord(profile || defaultProfileDir()) || {};
@@ -686,7 +734,19 @@ async function openFirefox({
       : browserEndpoint;
     try {
       session = await bidi.connect(endpoint);
-      await startSession(session, { profileDir, marionettePort, log, brokered });
+      await readAutomationState(libraryPort, 'before-session-new', { log });
+      const sessionResult = await startSession(
+        session, { profileDir, marionettePort, log, brokered },
+      );
+      const capabilities = (sessionResult && sessionResult.capabilities) || {};
+      log('firefox.session.started', {
+        brokered,
+        brokerSession: capabilities['tawb:brokerSession'] || (brokered ? 'unknown' : 'direct'),
+        browserName: capabilities.browserName || null,
+        browserVersion: capabilities.browserVersion || null,
+        platformName: capabilities.platformName || null,
+        userAgent: capabilities.userAgent || null,
+      });
       break;
     } catch (err) {
       const vanished = brokered && attempt < 2
@@ -699,11 +759,16 @@ async function openFirefox({
     }
   }
 
-  await clearWebdriverAfterSession(libraryPort, { log });
+  await readAutomationState(libraryPort, 'after-session-new', { log });
 
   const tree = await session.send('browsingContext.getTree', {});
   const top = tree.contexts[0];
   if (!top) throw new Error('Firefox exposed no browsing context');
+  await probeExistingContext(session, top.context, 'existing-before-session-clear', log);
+
+  await clearWebdriverAfterSession(libraryPort, { log });
+  await readAutomationState(libraryPort, 'before-page-probe', { log });
+  await probeExistingContext(session, top.context, 'existing-after-session-clear', log);
 
   // Pages are kept by browsing-context id rather than rebuilt on demand,
   // because a page owns things that must not be thrown away and remade: its
@@ -839,6 +904,8 @@ async function openFirefox({
   const webdriverFlag = await verifyWebdriverFlag(browserContext, { log });
   log('firefox.ready', { cleared, webdriver: webdriverFlag, probe: 'new-page' });
   if (webdriverFlag !== false) {
+    const browserOutput = compactDiagnostic(browserDiagnostics && browserDiagnostics.output, 4000);
+    if (browserOutput) log('firefox.browser-output', { reason: 'webdriver-check', output: browserOutput });
     session.close();
     if (child) killProcessGroup(child.pid);
     throw new Error(
@@ -1370,6 +1437,6 @@ async function openFirefox({
 
 module.exports = {
   openFirefox, FirefoxPage, FirefoxFrame, FirefoxHandle, FirefoxKeyboard,
-  clearWebdriverAfterSession, verifyWebdriverFlag, WEBDRIVER_READY_TIMEOUT_MS,
-  toRemoteArgument, WEBDRIVER_KEYS,
+  readAutomationState, clearWebdriverAfterSession, probeExistingContext,
+  verifyWebdriverFlag, WEBDRIVER_READY_TIMEOUT_MS, toRemoteArgument, WEBDRIVER_KEYS,
 };

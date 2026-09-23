@@ -229,6 +229,28 @@ function startBroker({
       const route = routes.get(id);
       if (!route) return;
       routes.delete(id);
+      // Tell diagnostics whether this reader caused Firefox to create the
+      // shared session or received the broker's existing answer. This is a
+      // private extension capability on the local hop only; Firefox never
+      // sees it.
+      if (route.method === 'session.new') {
+        try {
+          const message = JSON.parse(text);
+          if (message.result) {
+            sessionResult = message.result;
+            message.result = {
+              ...message.result,
+              capabilities: {
+                ...(message.result.capabilities || {}),
+                'tawb:brokerSession': 'created',
+              },
+            };
+            message.id = route.clientId;
+            route.client.peer.send(JSON.stringify(message));
+            return;
+          }
+        } catch { /* forward the original browser answer below */ }
+      }
       // The reader's own id goes back on the message, in place of ours.
       route.client.peer.send(text.replace(/"id"\s*:\s*\d+/, `"id":${route.clientId}`));
       return;
@@ -284,7 +306,17 @@ function startBroker({
       return;
     }
     if (method === 'session.new' && sessionResult) {
-      client.peer.send(JSON.stringify({ type: 'success', id, result: sessionResult }));
+      client.peer.send(JSON.stringify({
+        type: 'success',
+        id,
+        result: {
+          ...sessionResult,
+          capabilities: {
+            ...(sessionResult.capabilities || {}),
+            'tawb:brokerSession': 'replayed',
+          },
+        },
+      }));
       return;
     }
     // One reader leaving is not the browser closing: session.end from any
@@ -306,7 +338,7 @@ function startBroker({
     }
 
     const ours = nextUpstreamId++;
-    routes.set(ours, { client, clientId: id });
+    routes.set(ours, { client, clientId: id, method });
     let socket;
     try {
       socket = await connectUpstream();
@@ -316,16 +348,6 @@ function startBroker({
         type: 'error', id, error: 'unknown error', message: 'the browser is not there',
       }));
       return;
-    }
-    if (method === 'session.new' && !sessionResult) {
-      // Remember what it answers, so the next reader gets the same yes.
-      const capture = (event) => {
-        const data = String(event.data);
-        if (idOf(data) !== ours) return;
-        socket.removeEventListener('message', capture);
-        try { sessionResult = JSON.parse(data).result; } catch { /* not fatal */ }
-      };
-      socket.addEventListener('message', capture);
     }
     socket.send(text.replace(/"id"\s*:\s*\d+/, `"id":${ours}`));
   };
