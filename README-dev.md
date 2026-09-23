@@ -1613,7 +1613,10 @@ writes one report containing runtime identity, WebDriver capabilities,
 automation state around `session.new` — every shared-data key, the two
 WebDriver services, and the process topology — browser output on a bot-check
 failure, and probes from several document lifetimes. Container builds can set
-`TAWB_IMAGE_REVISION` to put their own identifier in that report.
+`TAWB_IMAGE_REVISION` to put their own identifier in that report. `--log-dir`
+is the only argument it takes and anything else is refused, because a diagnostic
+whose whole purpose is retrieving a log must not silently write one where it
+cannot be retrieved.
 
 The normal log records startup phases, every page snapshot with its cost, live
 refresh broken down by stage, text splices that avoided a snapshot (`live.patch`),

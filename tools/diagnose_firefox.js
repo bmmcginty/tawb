@@ -12,12 +12,40 @@ const path = require('node:path');
 const { openDriver } = require('../src/driver');
 const { enableLog, getLogPath, log, closeLog } = require('../src/log');
 
+const USAGE = 'Usage: npm run diagnose:firefox -- [--log-dir <directory>]';
+
+// Unknown arguments are refused rather than ignored.
+//
+// The reader this diagnostic exists for cannot retrieve a log written inside a
+// container, which is the whole reason --log-dir exists. Silently ignoring
+// --logdir, or --log-dir with nothing after it, would write the log to the
+// default path inside the container and report success, leaving that reader
+// with exactly the problem they wrote in about. --log is refused for the same
+// reason: it is a real flag of the reader's, it does nothing here because this
+// diagnostic always logs, and accepting it silently teaches that an argument
+// landing here had an effect.
 function parseArgs(argv, env = process.env) {
   const options = { logDir: env.TAWB_LOG_DIR || null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === '--log-dir') { options.logDir = argv[i + 1] || null; i += 1; }
-    else if (arg.startsWith('--log-dir=')) options.logDir = arg.slice('--log-dir='.length) || null;
+    if (arg === '--log-dir') {
+      const directory = argv[i + 1];
+      if (!directory || directory.startsWith('-')) {
+        throw new Error(`--log-dir needs a directory after it. ${USAGE}`);
+      }
+      options.logDir = directory;
+      i += 1;
+    } else if (arg.startsWith('--log-dir=')) {
+      const directory = arg.slice('--log-dir='.length);
+      if (!directory) throw new Error(`--log-dir= needs a directory after it. ${USAGE}`);
+      options.logDir = directory;
+    } else if (arg === '--log') {
+      throw new Error(
+        `This diagnostic always writes a log, so --log has no effect here. ${USAGE}`,
+      );
+    } else {
+      throw new Error(`Unrecognized argument ${arg}. ${USAGE}`);
+    }
   }
   return options;
 }
@@ -45,7 +73,17 @@ async function pageState(page, phase) {
 }
 
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
+  // A mistyped argument is the reader's mistake to correct, not a fault to
+  // show a stack trace for. Nothing has been started or written yet, so there
+  // is nothing to clean up either.
+  let options;
+  try {
+    options = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    process.stderr.write(`${String(err.message || err)}\n`);
+    process.exitCode = 1;
+    return;
+  }
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'tawb-firefox-diagnose-'));
   enableLog({ directory: options.logDir });
   const report = { profileKind: 'fresh-temporary', probes: [] };

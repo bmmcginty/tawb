@@ -956,7 +956,7 @@ async function openFirefox({
         'Firefox is still announcing itself as automated (navigator.webdriver is '
         + `${webdriverFlag}) and stayed that way for ${WEBDRIVER_CONFIRM_MS / 1000}s after the `
         + 'clear. Refusing to read the web with a browser that will fail bot checks. '
-        + 'Run `npm run diagnose:firefox --log-dir <directory>` to record every shared-data '
+        + 'Run `npm run diagnose:firefox -- --log-dir <directory>` to record every shared-data '
         + 'key, the Marionette and remote-agent service state, and the process topology at '
         + 'the moment of the failure.',
       );

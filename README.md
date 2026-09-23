@@ -339,8 +339,14 @@ create a self-contained report with a fresh temporary profile:
 npm run diagnose:firefox -- --log-dir /logs
 ```
 
+Note the `--` before `--log-dir`: without it, `npm run` keeps the argument for
+itself and the diagnostic never sees it. `--log-dir` is the only argument the
+diagnostic takes, and anything else is refused rather than ignored, so a
+mistyped flag cannot leave the report inside a container you cannot reach. The
+diagnostic always writes a log, so it has no `--log` of its own.
+
 The report records the OS and runtime, Firefox's WebDriver capabilities,
-automation-key state around session creation, bounded browser output on a bot
+automation state around session creation, bounded browser output on a bot
 check failure, and `navigator.webdriver` from several document lifetimes. Set
 `TAWB_IMAGE_REVISION` in a container image to include its build identifier.
 
