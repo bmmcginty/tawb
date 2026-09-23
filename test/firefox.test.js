@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const {
-  MARIONETTE_TIMEOUT_MS, libraryParentScript, firefoxRuntimeInfo,
+  MARIONETTE_TIMEOUT_MS, libraryParentScript, firefoxRuntimeInfo, CLEAR_SCRIPT,
 } = require('../src/firefox');
 const {
   readAutomationState, clearWebdriverAfterSession, verifyWebdriverFlag,
@@ -136,4 +136,143 @@ test('a page that never becomes evaluable is reported as unfinished startup', as
     /did not finish initializing a page within 0\.01s.*still not ready/s,
   );
   assert.equal(probe.closed(), true);
+});
+
+// A stand-in for the parent process the clear script and the parent agent
+// both run in. Only the pieces the automation report reads are present, so a
+// report that starts reading something else fails here rather than in a
+// container nobody can attach a debugger to.
+function chromeStub({
+  shared = {}, marionetteRunning = false, remoteAgentRunning = false,
+  appinfo = {}, childCount = 4, interfaces = ['nsIMarionette', 'nsIRemoteAgent'],
+} = {}) {
+  const map = new Map(Object.entries(shared));
+  const Services = {
+    ppmm: {
+      childCount,
+      sharedData: {
+        get: (name) => map.get(name),
+        set: (name, value) => map.set(name, value),
+        flush: () => {},
+        keys: () => map.keys(),
+      },
+    },
+    appinfo: {
+      browserTabsRemoteAutostart: true,
+      fissionAutostart: true,
+      maxWebProcessCount: 8,
+      ...appinfo,
+    },
+  };
+  const services = {
+    '@mozilla.org/remote/marionette;1': { running: marionetteRunning },
+    '@mozilla.org/remote/agent;1': { running: remoteAgentRunning },
+  };
+  const Ci = Object.fromEntries(interfaces.map((name) => [name, { name }]));
+  const Cc = new Proxy({}, {
+    get: (_target, contract) => ({ getService: () => services[contract] || null }),
+  });
+  return { Services, Cc, Ci, map };
+}
+
+function runClearScript(stub) {
+  return new Function('Services', 'Cc', 'Ci', CLEAR_SCRIPT)(stub.Services, stub.Cc, stub.Ci);
+}
+
+test('the startup clear reports every shared-data key, not only the two it targets', () => {
+  const stub = chromeStub({
+    shared: {
+      'RemoteAgent:Active': true,
+      'Marionette:Active': true,
+      'SomeBuild:WebDriverActive': true,
+      'Unrelated:Setting': false,
+      'Unrelated:Text': 'x'.repeat(400),
+    },
+  });
+  const result = runClearScript(stub);
+
+  assert.deepEqual(result.before, {
+    'RemoteAgent:Active': true, 'Marionette:Active': true,
+  });
+  assert.deepEqual(result.after, {
+    'RemoteAgent:Active': false, 'Marionette:Active': false,
+  });
+
+  // The key this build publishes under a name ACTIVE_KEYS does not carry is
+  // the one that survives the clear, and the report names it.
+  assert.equal(result.report.shared.count, 5);
+  assert.deepEqual(result.report.shared.names, [
+    'Marionette:Active', 'RemoteAgent:Active', 'SomeBuild:WebDriverActive',
+    'Unrelated:Setting', 'Unrelated:Text',
+  ]);
+  assert.deepEqual(result.report.shared.active, {
+    'SomeBuild:WebDriverActive': true,
+    'Unrelated:Text': 'x'.repeat(200),
+  });
+});
+
+test('the report reads the two services navigator.webdriver actually consults', () => {
+  const stub = chromeStub({
+    shared: { 'RemoteAgent:Active': true, 'Marionette:Active': true },
+    marionetteRunning: true,
+    remoteAgentRunning: false,
+  });
+  const result = runClearScript(stub);
+
+  // Both targeted keys are false and Marionette still reports itself running.
+  // Only a reading of nsIMarionette distinguishes that from a stale document.
+  assert.deepEqual(result.after, {
+    'RemoteAgent:Active': false, 'Marionette:Active': false,
+  });
+  assert.deepEqual(result.report.services, { marionette: true, remoteAgent: false });
+});
+
+test('a build without the WebDriver interfaces reports their absence rather than failing', () => {
+  const result = runClearScript(chromeStub({ interfaces: [] }));
+  assert.deepEqual(result.report.services, {
+    marionette: 'no such interface', remoteAgent: 'no such interface',
+  });
+  // The clear writes both targeted keys, so an empty map still holds them.
+  assert.deepEqual(result.report.shared.names, [
+    'Marionette:Active', 'RemoteAgent:Active',
+  ]);
+  assert.deepEqual(result.report.shared.active, {});
+});
+
+test('the report records the process topology the clear depends on', () => {
+  const remote = runClearScript(chromeStub({}));
+  assert.deepEqual(remote.report.processes, {
+    remoteTabs: true, fission: true, maxWebProcesses: 8, children: 4,
+  });
+
+  // With no content process the read document runs in the parent process,
+  // where the services report their real state and shared data is never
+  // consulted, so clearing the keys cannot work at all.
+  const parentOnly = runClearScript(chromeStub({
+    appinfo: { browserTabsRemoteAutostart: false, fissionAutostart: false },
+    childCount: 0,
+  }));
+  assert.deepEqual(parentOnly.report.processes, {
+    remoteTabs: false, fission: false, maxWebProcesses: 8, children: 0,
+  });
+});
+
+test('an unreadable shared-data map does not cost the rest of the report', () => {
+  const stub = chromeStub({ shared: { 'Marionette:Active': true } });
+  stub.Services.ppmm.sharedData.keys = () => { throw new Error('no iterator here'); };
+  const result = runClearScript(stub);
+
+  assert.deepEqual(result.report.shared, { error: 'no iterator here' });
+  assert.deepEqual(result.report.keys, {
+    'RemoteAgent:Active': false, 'Marionette:Active': false,
+  });
+  assert.equal(result.report.processes.children, 4);
+});
+
+test('the parent agent reports automation state exactly as the startup clear does', () => {
+  const parentScript = libraryParentScript();
+  assert.match(parentScript, /const automationReport = \(\) =>/);
+  assert.match(parentScript, /return automationReport\(\);/);
+  assert.match(parentScript, /report: automationReport\(\)/);
+  assert.equal(parentScript.includes('__ACTIVE_KEYS__'), false);
 });

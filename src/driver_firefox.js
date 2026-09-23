@@ -902,7 +902,12 @@ async function openFirefox({
 
   try { onStartup('Checking Firefox bot-detection state…'); } catch { /* display only */ }
   const webdriverFlag = await verifyWebdriverFlag(browserContext, { log });
-  log('firefox.ready', { cleared, webdriver: webdriverFlag, probe: 'new-page' });
+  // The startup clear already logged its own full report under
+  // firefox.automation.cleared, so only what it changed is repeated here.
+  const { report: _clearReport, ...clearedSummary } = cleared || {};
+  log('firefox.ready', {
+    cleared: cleared ? clearedSummary : cleared, webdriver: webdriverFlag, probe: 'new-page',
+  });
   if (webdriverFlag !== false) {
     const browserOutput = compactDiagnostic(browserDiagnostics && browserDiagnostics.output, 4000);
     if (browserOutput) log('firefox.browser-output', { reason: 'webdriver-check', output: browserOutput });

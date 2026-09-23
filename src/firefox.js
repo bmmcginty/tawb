@@ -94,14 +94,116 @@ async function waitWithStartup(promise, onStartup, phase) {
 // give the browser away.
 const ACTIVE_KEYS = ['RemoteAgent:Active', 'Marionette:Active'];
 
+// What `navigator.webdriver` actually consults, reported from the parent
+// process. Runs with privilege, reads nothing a page can see, and changes
+// nothing.
+//
+// Clearing the two keys in ACTIVE_KEYS is what makes a content process stop
+// announcing the browser. A container reported both keys reading false
+// immediately after the clear while `navigator.webdriver` stayed true, and a
+// report of those two keys alone cannot say why. Three causes produce exactly
+// that pair of observations, and each one leaves a different trace here.
+//
+// CAUSE-1: the build publishes the state under a key ACTIVE_KEYS does not
+// name. Every targeted key then reads false while another key carries the
+// state. `shared.names` lists every shared-data key and `shared.active` gives
+// the value of every key that is not falsy, so the responsible key is named.
+//
+// CAUSE-2: `navigator.webdriver` asks `nsIMarionette.running` and
+// `nsIRemoteAgent.running`. Shared data is only how those two services answer
+// inside a content process. A service reporting running while the keys read
+// false names the mechanism exactly, and `services` records both.
+//
+// CAUSE-3: the read document is in the parent process rather than a content
+// process. Those services then report their real internal state and shared
+// data is never consulted, so the clear cannot work at all. A container whose
+// /dev/shm is too small to start a content process lands here. Nothing about
+// the keys shows CAUSE-3; `processes` does.
+const AUTOMATION_REPORT_BODY = `
+  const automationReport = () => {
+    const keys = ${JSON.stringify(ACTIVE_KEYS)};
+    const report = { keys: {}, shared: null, services: {}, processes: {} };
+    for (const key of keys) {
+      try {
+        report.keys[key] = Services.ppmm.sharedData.get(key) ?? false;
+      } catch (e) {
+        report.keys[key] = String((e && e.message) || e).slice(0, 200);
+      }
+    }
+
+    // Every key by name, but only the value of a key that is not falsy: a key
+    // set to false is evidence of nothing, and a key nobody expected holding
+    // true is the whole answer to CAUSE-1. Values are reduced to primitives so
+    // one large or unserializable entry cannot cost the rest of the report.
+    try {
+      const names = [];
+      const active = {};
+      for (const name of Services.ppmm.sharedData.keys()) {
+        const key = String(name);
+        names.push(key);
+        let value;
+        try {
+          value = Services.ppmm.sharedData.get(name);
+        } catch (e) {
+          active[key] = "unreadable";
+          continue;
+        }
+        if (!value) continue;
+        const kind = typeof value;
+        if (kind === "boolean" || kind === "number") active[key] = value;
+        else if (kind === "string") active[key] = value.slice(0, 200);
+        else active[key] = kind;
+      }
+      names.sort();
+      report.shared = { count: names.length, names, active };
+    } catch (e) {
+      report.shared = { error: String((e && e.message) || e).slice(0, 200) };
+    }
+
+    const running = (contract, iface) => {
+      try {
+        if (!Ci[iface]) return "no such interface";
+        const service = Cc[contract].getService(Ci[iface]);
+        if (!service) return "no such service";
+        return Boolean(service.running);
+      } catch (e) {
+        return String((e && e.message) || e).slice(0, 200);
+      }
+    };
+    report.services.marionette = running(
+      "@mozilla.org/remote/marionette;1", "nsIMarionette");
+    report.services.remoteAgent = running(
+      "@mozilla.org/remote/agent;1", "nsIRemoteAgent");
+
+    const appinfo = (name) => {
+      try {
+        const value = Services.appinfo[name];
+        return value === undefined ? null : value;
+      } catch (e) {
+        return String((e && e.message) || e).slice(0, 200);
+      }
+    };
+    report.processes = {
+      remoteTabs: appinfo("browserTabsRemoteAutostart"),
+      fission: appinfo("fissionAutostart"),
+      maxWebProcesses: appinfo("maxWebProcessCount"),
+      children: (() => {
+        try { return Services.ppmm.childCount; } catch (e) { return null; }
+      })(),
+    };
+    return report;
+  };
+`;
+
 const CLEAR_SCRIPT = `
+  ${AUTOMATION_REPORT_BODY}
   const keys = ${JSON.stringify(ACTIVE_KEYS)};
   const state = () => Object.fromEntries(
     keys.map((key) => [key, Services.ppmm.sharedData.get(key) ?? false]));
   const before = state();
   for (const key of keys) Services.ppmm.sharedData.set(key, false);
   Services.ppmm.sharedData.flush();
-  return { before, after: state() };
+  return { before, after: state(), report: automationReport() };
 `;
 
 function osDescription() {
@@ -560,16 +662,24 @@ const LIBRARY_PARENT_BODY = `
   // installed it, so diagnostics can observe each transition and the reader
   // can clear the keys after BiDi has finished. Keeping this in the parent
   // process avoids changing anything a webpage can inspect.
-  const automationState = async function () {
+  //
+  // automationState answers with the full report, because every caller of
+  // automationState is asking why a clear did not take. clearAutomation
+  // answers with the targeted keys it changed, plus one report of the state
+  // it left behind.
+  const targetedKeys = function () {
     const keys = __ACTIVE_KEYS__;
     return Object.fromEntries(
       keys.map((key) => [key, Services.ppmm.sharedData.get(key) ?? false]));
   };
+  const automationState = async function () {
+    return automationReport();
+  };
   const clearAutomation = async function () {
-    const before = await automationState();
+    const before = targetedKeys();
     for (const key of __ACTIVE_KEYS__) Services.ppmm.sharedData.set(key, false);
     Services.ppmm.sharedData.flush();
-    return { before, after: await automationState() };
+    return { before, after: targetedKeys(), report: automationReport() };
   };
 
   const answer = {
@@ -634,7 +744,10 @@ function libraryParentScript() {
   const parent = LIBRARY_PARENT_BODY
     .replace('__ROOTS__', JSON.stringify(FIREFOX_ROOT_LABELS))
     .replaceAll('__ACTIVE_KEYS__', JSON.stringify(ACTIVE_KEYS));
-  return `${parent}\nreturn server.port;`;
+  // The agent and the startup clear report the same way, so one reader of the
+  // log compares readings taken minutes apart without translating between two
+  // shapes.
+  return `${AUTOMATION_REPORT_BODY}\n${parent}\nreturn server.port;`;
 }
 
 // Loads the above into every content process, present and future.
