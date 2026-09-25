@@ -369,6 +369,23 @@ automation state around session creation, bounded browser output on a bot
 check failure, and `navigator.webdriver` from several document lifetimes. Set
 `TAWB_IMAGE_REVISION` in a container image to include its build identifier.
 
+To check TAWB against Mozilla's newest stable, beta, and nightly Linux builds
+in fresh containers, run:
+
+```sh
+npm run test:firefox-releases
+# Or test selected channels:
+npm run test:firefox-releases -- stable nightly
+```
+
+The channels run sequentially. Each container is limited by default to 1536 MB
+of RAM with no additional swap, 256 MB of shared memory, 256 processes, and two
+CPUs. Override those bounds with `TAWB_FIREFOX_MEMORY`,
+`TAWB_FIREFOX_SHM_SIZE`, `TAWB_FIREFOX_PIDS_LIMIT`, and `TAWB_FIREFOX_CPUS`.
+Logs are written below `firefox-diagnostics/`, or `TAWB_FIREFOX_LOG_DIR` when
+set. The browser download is deliberately refreshed on every invocation so an
+old Docker layer cannot masquerade as the latest release.
+
 If a browser is unusually slow to create its profile, increase the startup
 timeout:
 

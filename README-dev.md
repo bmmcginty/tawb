@@ -1640,7 +1640,18 @@ npm test                              # about two seconds, no browser
 npm run test:browser                  # a real browser and a real page (two at a time)
 xvfb-run -a npm run test:browser      # with no display of your own
 TWEB_TEST_BROWSER=firefox npm run test:browser
+npm run test:firefox-releases           # latest stable, beta, and nightly in Docker
+npm run test:firefox-releases -- beta   # one channel
 ```
+
+The Firefox release matrix uses Mozilla's current official Linux archives, not
+the distribution package, and changes a download cache key on every run. Its
+channels run sequentially so three browsers never compete for memory. Each run
+has cgroup limits of 1536 MB RAM with no additional swap, 256 MB `/dev/shm`,
+256 processes, and two CPUs; `TAWB_FIREFOX_MEMORY`,
+`TAWB_FIREFOX_SHM_SIZE`, `TAWB_FIREFOX_PIDS_LIMIT`, and `TAWB_FIREFOX_CPUS`
+override them. Reports go below `firefox-diagnostics/` unless
+`TAWB_FIREFOX_LOG_DIR` names another directory.
 
 The fast suite is everything that can be decided without a browser, which is
 more than it sounds: what html the edbrowse server produces from a page's

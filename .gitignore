@@ -10,6 +10,9 @@ tweb-*.log
 out/
 *.saz
 
+# Logs produced by the stable/beta/nightly Firefox container matrix.
+firefox-diagnostics/
+
 # The edbrowse side of the integration — the plugin, its .ebrc fragment, the
 # patches to edbrowse and the study — is its own repository living here. It
 # carries its own .git and its own edbrowse checkout; it is not ours to
