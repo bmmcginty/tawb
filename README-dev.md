@@ -104,9 +104,13 @@ navigator.webdriver: false -> true
 
 Nothing else. Not one other field. And that boolean has one source: the
 parent process publishes shared-data keys while its automation agents are
-active, and content reads them back. They are cleared through privileged
-JavaScript in the parent using Marionette's chrome context. Because some
-Firefox releases publish a key again when the BiDi session starts, the
+active, and content reads them back. Firefox through 154 uses the
+`Marionette:Active` and `RemoteAgent:Active` keys; Firefox 155 and later make
+`navigator.webdriver` consult the narrower
+`Marionette:IsBrowserAutomationRunning` and
+`RemoteAgent:IsBrowserAutomationRunning` keys. All four are cleared through
+privileged JavaScript in the parent using Marionette's chrome context. Because
+some Firefox releases publish a key again when the BiDi session starts, the
 parent-process agent installed there repeats the clear after that session
 exists. Marionette stays available to recover a session stranded by a dead
 reader.
@@ -125,8 +129,8 @@ same page for `WEBDRIVER_CONFIRM_MS` before startup treats it as a failure,
 which keeps a flush still in flight distinguishable from a flag that never goes
 away.
 
-When the flag does stay `true`, three different causes produce the same two
-observations — the targeted keys reading `false` and `navigator.webdriver`
+When the flag does stay `true`, three different causes can produce the same
+observations — every known key reading `false` and `navigator.webdriver`
 reading `true` — so the parent-process report records enough to tell them
 apart:
 
@@ -136,13 +140,16 @@ apart:
 | `services.marionette`, `services.remoteAgent` | a service `navigator.webdriver` consults still reports itself running |
 | `processes` | the document runs in the parent process, where shared data is never consulted and the clear cannot work |
 
-`services` is the more direct reading of the two: `navigator.webdriver` asks
-`nsIMarionette.running` and `nsIRemoteAgent.running`, and shared data is only
-how those services answer inside a content process. Read from the parent
-process both services report `true` for as long as the reader holds a session,
-which is why `services` is read together with `processes`: two services
-reporting `true` matter when `processes.remoteTabs` is `false`, because the
-document is then in the parent process and reads those services directly.
+`services` is the more direct reading of the two: Firefox through 154 asks
+`nsIMarionette.running` and `nsIRemoteAgent.running`; Firefox 155 and later ask
+each service's `isBrowserAutomationRunning` property. The report prefers the
+new property when the installed interface provides it and falls back to
+`running`. Shared data is only how those services answer inside a content
+process. Read from the parent process the relevant service property reports
+`true` while the reader holds an automation session, which is why `services`
+is read together with `processes`: a service reporting `true` matters when
+`processes.remoteTabs` is `false`, because the document is then in the parent
+process and reads the service directly.
 
 `shared.values` is not every key. Firefox 147 publishes 53 and 49 of them are
 extension payloads, so a key's value is reported when the value is a boolean —

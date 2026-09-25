@@ -33,6 +33,8 @@ const { openAccessibilityBus } = require('./a11y_bus');
 // Nothing else. Not one other field. And that boolean has one source: the
 // parent process publishes shared-data keys while its automation agents are
 // active, and `navigator.webdriver` in a content process reads them back.
+// Firefox 155 introduced narrower `IsBrowserAutomationRunning` keys while
+// retaining the older `Active` keys, so both generations have to be cleared.
 //
 // So we clear them through privileged JavaScript in the parent process, using
 // Marionette's chrome context. Some Firefox releases publish a key again when
@@ -90,29 +92,40 @@ async function waitWithStartup(promise, onStartup, phase) {
   }
 }
 
-// Both agents publish their own key, and either one being true is enough to
-// give the browser away.
-const ACTIVE_KEYS = ['RemoteAgent:Active', 'Marionette:Active'];
+// Firefox through 154 publishes each agent's running state under `Active`.
+// Firefox 155 added a narrower `IsBrowserAutomationRunning` property and made
+// navigator.webdriver consult that instead. Keep both generations false: an
+// older release ignores the new keys and a newer one deliberately keeps its
+// agent running while distinguishing browser automation from dynamic use.
+const ACTIVE_KEYS = [
+  'RemoteAgent:Active',
+  'Marionette:Active',
+  'RemoteAgent:IsBrowserAutomationRunning',
+  'Marionette:IsBrowserAutomationRunning',
+];
 
 // What `navigator.webdriver` actually consults, reported from the parent
 // process. Runs with privilege, reads nothing a page can see, and changes
 // nothing.
 //
-// Clearing the two keys in ACTIVE_KEYS is what makes a content process stop
-// announcing the browser. A container reported both keys reading false
-// immediately after the clear while `navigator.webdriver` stayed true, and a
-// report of those two keys alone cannot say why. Three causes produce exactly
-// that pair of observations, and each one leaves a different trace here.
+// Clearing the version-appropriate keys in ACTIVE_KEYS is what makes a content
+// process stop announcing the browser. A container running Firefox 156
+// reported both legacy `Active` keys reading false while `navigator.webdriver`
+// stayed true: that release had moved the answer to the two
+// `IsBrowserAutomationRunning` keys. The broad report made that change visible.
+// If every known key is false and the page still says true, three causes remain,
+// and each one leaves a different trace here.
 //
 // CAUSE-1: the build publishes the state under a key ACTIVE_KEYS does not
 // name. Every targeted key then reads false while another key carries the
-// state. `shared.names` lists every shared-data key and `shared.active` gives
-// the value of every key that is not falsy, so the responsible key is named.
+// state. `shared.values` includes every boolean and every automation-named
+// primitive, so the responsible key is named.
 //
-// CAUSE-2: `navigator.webdriver` asks `nsIMarionette.running` and
-// `nsIRemoteAgent.running`. Shared data is only how those two services answer
-// inside a content process. A service reporting running while the keys read
-// false names the mechanism exactly, and `services` records both.
+// CAUSE-2: `navigator.webdriver` asks a service property that differs by
+// version: `running` through Firefox 154 and `isBrowserAutomationRunning`
+// afterwards. Shared data is only how those services answer inside a content
+// process. A service reporting browser automation while the keys read false
+// names the mechanism exactly, and `services` records both.
 //
 // CAUSE-3: the read document is in the parent process rather than a content
 // process. Those services then report their real internal state and shared
@@ -172,19 +185,24 @@ const AUTOMATION_REPORT_BODY = `
       report.shared = { error: String((e && e.message) || e).slice(0, 200) };
     }
 
-    const running = (contract, iface) => {
+    const browserAutomationRunning = (contract, iface) => {
       try {
         if (!Ci[iface]) return "no such interface";
         const service = Cc[contract].getService(Ci[iface]);
         if (!service) return "no such service";
+        // Added in Firefox 155, when Navigator.webdriver changed to consult
+        // this narrower property. Older interfaces expose only running.
+        if ("isBrowserAutomationRunning" in service) {
+          return Boolean(service.isBrowserAutomationRunning);
+        }
         return Boolean(service.running);
       } catch (e) {
         return String((e && e.message) || e).slice(0, 200);
       }
     };
-    report.services.marionette = running(
+    report.services.marionette = browserAutomationRunning(
       "@mozilla.org/remote/marionette;1", "nsIMarionette");
-    report.services.remoteAgent = running(
+    report.services.remoteAgent = browserAutomationRunning(
       "@mozilla.org/remote/agent;1", "nsIRemoteAgent");
 
     const appinfo = (name) => {

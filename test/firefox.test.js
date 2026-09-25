@@ -38,7 +38,8 @@ test('the parent agent can clear automation keys after the BiDi session starts',
   const parentScript = libraryParentScript();
   assert.match(parentScript, /const automationState = async function/);
   assert.match(parentScript, /const clearAutomation = async function/);
-  assert.match(parentScript, /\["RemoteAgent:Active","Marionette:Active"\]/);
+  assert.match(parentScript,
+    /\["RemoteAgent:Active","Marionette:Active","RemoteAgent:IsBrowserAutomationRunning","Marionette:IsBrowserAutomationRunning"\]/);
   assert.equal(parentScript.includes('__ACTIVE_KEYS__'), false);
 });
 
@@ -196,6 +197,7 @@ test('a page that never becomes evaluable is reported as unfinished startup', as
 // container nobody can attach a debugger to.
 function chromeStub({
   shared = {}, marionetteRunning = false, remoteAgentRunning = false,
+  marionetteAutomationRunning, remoteAgentAutomationRunning,
   appinfo = {}, childCount = 4, interfaces = ['nsIMarionette', 'nsIRemoteAgent'],
 } = {}) {
   const map = new Map(Object.entries(shared));
@@ -216,9 +218,14 @@ function chromeStub({
       ...appinfo,
     },
   };
+  const service = (running, automationRunning) => {
+    const result = { running };
+    if (automationRunning !== undefined) result.isBrowserAutomationRunning = automationRunning;
+    return result;
+  };
   const services = {
-    '@mozilla.org/remote/marionette;1': { running: marionetteRunning },
-    '@mozilla.org/remote/agent;1': { running: remoteAgentRunning },
+    '@mozilla.org/remote/marionette;1': service(marionetteRunning, marionetteAutomationRunning),
+    '@mozilla.org/remote/agent;1': service(remoteAgentRunning, remoteAgentAutomationRunning),
   };
   const Ci = Object.fromEntries(interfaces.map((name) => [name, { name }]));
   const Cc = new Proxy({}, {
@@ -231,11 +238,13 @@ function runClearScript(stub) {
   return new Function('Services', 'Cc', 'Ci', CLEAR_SCRIPT)(stub.Services, stub.Cc, stub.Ci);
 }
 
-test('the startup clear reports every key that could carry a flag, not only the two it targets', () => {
+test('the startup clear resets both generations of Firefox automation keys', () => {
   const stub = chromeStub({
     shared: {
       'RemoteAgent:Active': true,
       'Marionette:Active': true,
+      'RemoteAgent:IsBrowserAutomationRunning': true,
+      'Marionette:IsBrowserAutomationRunning': true,
       'SomeBuild:WebDriverActive': true,
       'SomeBuild:AutomationName': 'x'.repeat(400),
       'Unrelated:Setting': false,
@@ -245,19 +254,27 @@ test('the startup clear reports every key that could carry a flag, not only the 
   const result = runClearScript(stub);
 
   assert.deepEqual(result.before, {
-    'RemoteAgent:Active': true, 'Marionette:Active': true,
+    'RemoteAgent:Active': true,
+    'Marionette:Active': true,
+    'RemoteAgent:IsBrowserAutomationRunning': true,
+    'Marionette:IsBrowserAutomationRunning': true,
   });
   assert.deepEqual(result.after, {
-    'RemoteAgent:Active': false, 'Marionette:Active': false,
+    'RemoteAgent:Active': false,
+    'Marionette:Active': false,
+    'RemoteAgent:IsBrowserAutomationRunning': false,
+    'Marionette:IsBrowserAutomationRunning': false,
   });
 
   // The key this build publishes under a name ACTIVE_KEYS does not carry is
   // the one that survives the clear, and the report names it — by its boolean
   // shape here, and a string-valued one by its name.
-  assert.equal(result.report.shared.count, 6);
+  assert.equal(result.report.shared.count, 8);
   assert.deepEqual(result.report.shared.values, {
     'Marionette:Active': false,
+    'Marionette:IsBrowserAutomationRunning': false,
     'RemoteAgent:Active': false,
+    'RemoteAgent:IsBrowserAutomationRunning': false,
     'SomeBuild:WebDriverActive': true,
     'SomeBuild:AutomationName': 'x'.repeat(200),
     'Unrelated:Setting': false,
@@ -268,20 +285,19 @@ test('the startup clear reports every key that could carry a flag, not only the 
   assert.equal('Unrelated:Payload' in result.report.shared.values, false);
 });
 
-test('the report reads the two services navigator.webdriver actually consults', () => {
+test('the report reads the service properties navigator.webdriver actually consults', () => {
   const stub = chromeStub({
     shared: { 'RemoteAgent:Active': true, 'Marionette:Active': true },
     marionetteRunning: true,
-    remoteAgentRunning: false,
+    remoteAgentRunning: true,
+    marionetteAutomationRunning: false,
+    remoteAgentAutomationRunning: true,
   });
   const result = runClearScript(stub);
 
-  // Both targeted keys are false and Marionette still reports itself running.
-  // Only a reading of nsIMarionette distinguishes that from a stale document.
-  assert.deepEqual(result.after, {
-    'RemoteAgent:Active': false, 'Marionette:Active': false,
-  });
-  assert.deepEqual(result.report.services, { marionette: true, remoteAgent: false });
+  // Firefox 155 and later can keep both services running while only one is
+  // being used for browser automation. The narrower property is authoritative.
+  assert.deepEqual(result.report.services, { marionette: false, remoteAgent: true });
 });
 
 test('a build without the WebDriver interfaces reports their absence rather than failing', () => {
@@ -289,10 +305,13 @@ test('a build without the WebDriver interfaces reports their absence rather than
   assert.deepEqual(result.report.services, {
     marionette: 'no such interface', remoteAgent: 'no such interface',
   });
-  // The clear writes both targeted keys, so an empty map still holds them.
-  assert.equal(result.report.shared.count, 2);
+  // The clear writes all known keys, so an empty map still holds them.
+  assert.equal(result.report.shared.count, 4);
   assert.deepEqual(result.report.shared.values, {
-    'Marionette:Active': false, 'RemoteAgent:Active': false,
+    'Marionette:Active': false,
+    'Marionette:IsBrowserAutomationRunning': false,
+    'RemoteAgent:Active': false,
+    'RemoteAgent:IsBrowserAutomationRunning': false,
   });
 });
 
@@ -321,7 +340,10 @@ test('an unreadable shared-data map does not cost the rest of the report', () =>
 
   assert.deepEqual(result.report.shared, { error: 'no iterator here' });
   assert.deepEqual(result.report.keys, {
-    'RemoteAgent:Active': false, 'Marionette:Active': false,
+    'RemoteAgent:Active': false,
+    'Marionette:Active': false,
+    'RemoteAgent:IsBrowserAutomationRunning': false,
+    'Marionette:IsBrowserAutomationRunning': false,
   });
   assert.equal(result.report.processes.children, 4);
 });
