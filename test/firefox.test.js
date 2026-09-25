@@ -3,9 +3,14 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 const {
   MARIONETTE_TIMEOUT_MS, libraryParentScript, firefoxRuntimeInfo, CLEAR_SCRIPT,
+  requireCompatibleProfile, profileLastVersion, installedFirefoxVersion,
 } = require('../src/firefox');
+const { tempDir, removeTempDir } = require('./tmpdir');
 const {
   readAutomationState, clearWebdriverAfterSession, verifyWebdriverFlag,
 } = require('../src/driver_firefox');
@@ -373,4 +378,97 @@ test('a reading taken at a failure names its own phase', async () => {
     event: 'firefox.automation.state',
     detail: { phase: 'after-bot-check-failure', state: report },
   }]);
+});
+
+// ---------------------------------------------------------------------------
+// A profile a newer Firefox wrote
+//
+// Firefox 154 pointed at a profile Firefox 156 used last takes the profile
+// lock, draws "You've launched an older version of Firefox", and waits there.
+// Under Xvfb nobody sees that warning, the debugging port never opens, and the
+// launcher times out saying the browser said nothing. So the two versions are
+// compared before anything is spawned.
+
+// A Firefox install: the executable, and the platform.ini beside it that names
+// the version. The executable answers --version too, for the check's fallback.
+function fakeFirefoxInstall(dir, version, { platformIni = true } = {}) {
+  const executable = path.join(dir, 'firefox');
+  fs.writeFileSync(executable, `#!/bin/sh\necho "Mozilla Firefox ${version}"\n`, { mode: 0o755 });
+  if (platformIni) {
+    fs.writeFileSync(
+      path.join(dir, 'platform.ini'),
+      `[Build]\nBuildID=20260812182057\nMilestone=${version}\n`,
+    );
+  }
+  return { executable, name: 'firefox' };
+}
+
+function profileLastUsedBy(dir, version) {
+  fs.writeFileSync(
+    path.join(dir, 'compatibility.ini'),
+    `[Compatibility]\nLastVersion=${version}_20260909172920/20260909172920\n`
+    + 'LastOSABI=Linux_x86_64-gcc3\nLastPlatformDir=/usr/lib/firefox\n',
+  );
+  return dir;
+}
+
+test('a profile a newer Firefox wrote is refused before Firefox is launched', () => {
+  const install = tempDir('tweb-ff-install-');
+  const profile = tempDir('tweb-ff-profile-');
+  const found = fakeFirefoxInstall(install, '154.0');
+  profileLastUsedBy(profile, '156.0');
+
+  assert.equal(profileLastVersion(profile), '156.0');
+  assert.equal(installedFirefoxVersion(found.executable), '154.0');
+  assert.throws(
+    () => requireCompatibleProfile(found, profile),
+    /firefox 154\.0.*cannot open.*Firefox 156\.0 used that profile last.*--allow-downgrade/s,
+  );
+
+  removeTempDir(install);
+  removeTempDir(profile);
+});
+
+test('the same Firefox, an older profile, and an unopened profile are all launched', () => {
+  const install = tempDir('tweb-ff-install-');
+  const found = fakeFirefoxInstall(install, '154.0');
+
+  const same = profileLastUsedBy(tempDir('tweb-ff-profile-'), '154.0');
+  assert.doesNotThrow(() => requireCompatibleProfile(found, same));
+
+  // An older profile is an upgrade, which Firefox performs by itself.
+  const older = profileLastUsedBy(tempDir('tweb-ff-profile-'), '153.0.1');
+  assert.doesNotThrow(() => requireCompatibleProfile(found, older));
+
+  // A profile no Firefox has opened yet records nothing to compare.
+  const fresh = tempDir('tweb-ff-profile-');
+  assert.equal(profileLastVersion(fresh), null);
+  assert.doesNotThrow(() => requireCompatibleProfile(found, fresh));
+
+  for (const dir of [install, same, older, fresh]) removeTempDir(dir);
+});
+
+test('an install with no platform.ini is asked its version directly', () => {
+  const install = tempDir('tweb-ff-install-');
+  const found = fakeFirefoxInstall(install, '154.0', { platformIni: false });
+  const profile = profileLastUsedBy(tempDir('tweb-ff-profile-'), '156.0');
+
+  assert.equal(installedFirefoxVersion(found.executable), '154.0');
+  assert.throws(() => requireCompatibleProfile(found, profile), /Firefox 156\.0 used that profile last/);
+
+  removeTempDir(install);
+  removeTempDir(profile);
+});
+
+test('a version nothing can be read from is not a refusal', () => {
+  const install = tempDir('tweb-ff-install-');
+  const executable = path.join(install, 'firefox');
+  fs.writeFileSync(executable, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const profile = profileLastUsedBy(tempDir('tweb-ff-profile-'), '156.0');
+
+  assert.equal(installedFirefoxVersion(executable), null);
+  assert.doesNotThrow(() => requireCompatibleProfile({ executable, name: 'firefox' }, profile));
+
+  removeTempDir(install);
+  removeTempDir(profile);
 });

@@ -386,6 +386,14 @@ Logs are written below `firefox-diagnostics/`, or `TAWB_FIREFOX_LOG_DIR` when
 set. The browser download is deliberately refreshed on every invocation so an
 old Docker layer cannot masquerade as the latest release.
 
+If Firefox was downgraded — the installed Firefox is older than the Firefox
+that last used the profile — TAWB refuses to launch and names both versions.
+Firefox itself will not open such a profile: it shows a warning window and
+waits, which on a machine with no display is a browser that never finishes
+starting. Install the newer Firefox again, move the profile aside so a new one
+is made, or run Firefox once yourself with `--allow-downgrade -profile <dir>`,
+which keeps the profile and can lose what the newer Firefox saved in it.
+
 If a browser is unusually slow to create its profile, increase the startup
 timeout:
 

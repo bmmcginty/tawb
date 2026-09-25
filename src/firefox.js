@@ -1,6 +1,6 @@
 'use strict';
 
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const net = require('net');
 const os = require('os');
@@ -352,6 +352,97 @@ function requireReachableProfile({ executable, name }, profileDir) {
     + 'its confinement allows only non-hidden directories under your home directory. '
     + `Use a profile it can reach, such as ${snapProfileDir(snap, 'firefox-profile')}, `
     + 'or install Firefox from a package that is not confined.',
+  );
+}
+
+// Firefox will not open a profile that a newer Firefox has already written.
+// It takes the profile lock, draws "You've launched an older version of
+// Firefox" on the screen, and waits there for an answer. On a machine with no
+// display that warning is drawn on a virtual screen nobody can see, so the
+// browser neither exits nor opens its debugging port: the launcher waits out
+// its whole timeout and reports that the browser said nothing, which is true
+// and tells the reader nothing.
+//
+// The profile records which Firefox wrote it last, and the installed Firefox
+// says which version it is, so the clash can be found before anything is
+// spawned. This is the same argument as requireReachableProfile above: a
+// browser sitting on a dialog is a startup that will never finish, and the
+// reader should be told which two versions disagree rather than handed a
+// timeout.
+//
+// A version is only a refusal when the profile's version is strictly newer.
+// Equal versions are the ordinary case, an older profile is an upgrade Firefox
+// performs by itself, and anything that cannot be parsed is no opinion at all.
+function versionParts(text) {
+  const found = /^\d+(?:\.\d+)*/.exec(String(text || '').trim());
+  return found ? found[0].split('.').map(Number) : null;
+}
+
+function firstVersionIsNewer(candidate, against) {
+  const left = versionParts(candidate);
+  const right = versionParts(against);
+  if (!left || !right) return false;
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const mine = left[i] || 0;
+    const theirs = right[i] || 0;
+    if (mine > theirs) return true;
+    if (mine < theirs) return false;
+  }
+  return false;
+}
+
+// Which Firefox last used this profile, from the profile's own record of it.
+// `LastVersion=156.0_20260909172920/20260909172920` names the version before
+// the underscore. A profile no Firefox has opened yet has no record and
+// answers null.
+function profileLastVersion(profileDir) {
+  try {
+    const text = fs.readFileSync(path.join(profileDir, 'compatibility.ini'), 'utf8');
+    const found = /^LastVersion=([^\s_/]+)/m.exec(text);
+    return found ? found[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+// Which Firefox is installed. platform.ini sits beside the real executable and
+// names the version in `Milestone`, and reading a file costs nothing. A
+// wrapper script whose directory has no platform.ini is asked directly
+// instead, which is one short subprocess on the startup path and only where
+// the file was not there to read.
+function installedFirefoxVersion(executable) {
+  try {
+    const appDir = path.dirname(fs.realpathSync(executable));
+    const text = fs.readFileSync(path.join(appDir, 'platform.ini'), 'utf8');
+    const found = /^Milestone=(\S+)/m.exec(text);
+    if (found) return found[1];
+  } catch { /* ask the executable itself */ }
+  try {
+    const said = execFileSync(executable, ['--version'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000,
+    });
+    const found = /(\d+(?:\.\d+)+[^\s]*)/.exec(said);
+    return found ? found[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function requireCompatibleProfile({ executable, name }, profileDir) {
+  const wroteItLast = profileLastVersion(profileDir);
+  if (!wroteItLast) return;
+  const installed = installedFirefoxVersion(executable);
+  if (!installed) return;
+  if (!firstVersionIsNewer(wroteItLast, installed)) return;
+  throw new Error(
+    `${name} ${installed} at ${executable} cannot open ${profileDir}: Firefox ${wroteItLast} `
+    + 'used that profile last, and Firefox refuses to open a profile a newer Firefox has '
+    + 'written. It shows a warning on a screen nobody can see here and waits there, which is '
+    + 'why the launch times out with no output from the browser. '
+    + `Install Firefox ${wroteItLast} again, or move ${profileDir} aside and let this session `
+    + `make a new profile, or run \`${executable} --allow-downgrade -profile ${profileDir}\` `
+    + `once yourself — which lets Firefox ${installed} keep the profile, and can lose what `
+    + `Firefox ${wroteItLast} saved in it.`,
   );
 }
 
@@ -980,6 +1071,10 @@ async function launchFirefox({
     };
   }
 
+  // Only the launch path asks this: a Firefox already serving the profile has
+  // opened it successfully, whatever version wrote it before.
+  requireCompatibleProfile(found, profileDir);
+
   const port = await freePort();
   const marionettePort = await freePort();
   writeProfilePrefs(profileDir, {
@@ -1095,7 +1190,8 @@ async function launchFirefox({
 }
 
 module.exports = {
-  launchFirefox, requireReachableProfile, clearAutomationFlag, releaseStrandedSession, findFirefox,
+  launchFirefox, requireReachableProfile, requireCompatibleProfile, profileLastVersion,
+  installedFirefoxVersion, clearAutomationFlag, releaseStrandedSession, findFirefox,
   defaultProfileDir, writeProfilePrefs, MEDIA_PREFS, PASSWORD_PREFS, ACTIVE_KEYS, CLEAR_SCRIPT,
   PIERCE_PARENT_SCRIPT, PIERCE_CHILD_SCRIPT,
   libraryParentScript, FIREFOX_ROOT_LABELS, MARIONETTE_TIMEOUT_MS,

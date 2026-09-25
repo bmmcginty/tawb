@@ -63,6 +63,16 @@ unreachable `--profile` is refused before launch rather than after the timeout:
 told to use a profile it cannot open, Firefox does not exit, it waits on a
 window drawn to a screen nobody is looking at.
 
+A profile is also refused before launch when a newer Firefox wrote it last.
+Firefox 154 pointed at a profile Firefox 156 used takes the profile lock, draws
+"You've launched an older version of Firefox", and waits for an answer to a
+window drawn on a virtual screen — the same shape of failure as the Snap
+profile, and the same answer: the profile's `compatibility.ini` names the
+version that wrote it, `platform.ini` beside the executable names the version
+installed, and the two are compared before anything is spawned. The refusal
+names both versions, because "the browser said nothing" after 45 seconds names
+neither.
+
 `TAWB_BROWSER_TIMEOUT`, in seconds, replaces the startup wait (25s for
 Chromium, 45s for Firefox). It exists to tell a slow first launch apart from
 one that was never going to finish.
