@@ -1654,6 +1654,8 @@ npm run test:aria-at                    # adapted ARIA-AT behavior checks
 TWEB_TEST_BROWSER=firefox npm run test:aria-at
 npm run test:wai-aria                   # WPT's WAI-ARIA role expectations
 npm run test:wai-aria -- --browser firefox
+npm run axe -- https://example.com      # page-authoring audit with axe-core
+npm run axe -- --browser firefox https://example.com
 npm run test:firefox-releases           # latest stable, beta, and nightly in Docker
 npm run test:firefox-releases -- beta   # one channel
 ```
@@ -1672,6 +1674,13 @@ focused command exits unsuccessfully when a role mismatch is found, so it is
 suitable as a conformance gate. Elements TAWB deliberately emits through their
 children rather than as their own line remain reported separately as
 `unreached`; they are not silently counted as role matches.
+
+`npm run axe -- <url>` injects axe-core into the rendered page through TAWB's
+own Chromium or Firefox driver, prints each violation and affected selector,
+and exits unsuccessfully when violations are found. `--tags=wcag2a,wcag2aa`
+limits an audit to selected axe rule tags. This checks the page author's HTML
+and ARIA, not whether TAWB represented it correctly; use it alongside the
+ARIA-AT and WAI-ARIA checks rather than as a replacement for them.
 
 The Firefox release matrix uses Mozilla's current official Linux archives, not
 the distribution package, and changes a download cache key on every run. Its

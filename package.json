@@ -22,8 +22,12 @@
     "test:browser": "node --test --test-concurrency=2 test/browser/*.test.js",
     "test:aria-at": "node --test --test-concurrency=1 test/browser/aria_at.test.js",
     "test:wai-aria": "node tools/wpt.js --suite wai-aria --fail-on-mismatch",
+    "axe": "node tools/axe.js",
     "wpt": "node tools/wpt.js"
   },
   "keywords": [],
-  "type": "commonjs"
+  "type": "commonjs",
+  "devDependencies": {
+    "axe-core": "^4.13.0"
+  }
 }
