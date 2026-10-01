@@ -1652,6 +1652,8 @@ xvfb-run -a npm run test:browser      # with no display of your own
 TWEB_TEST_BROWSER=firefox npm run test:browser
 npm run test:aria-at                    # adapted ARIA-AT behavior checks
 TWEB_TEST_BROWSER=firefox npm run test:aria-at
+npm run test:wai-aria                   # WPT's WAI-ARIA role expectations
+npm run test:wai-aria -- --browser firefox
 npm run test:firefox-releases           # latest stable, beta, and nightly in Docker
 npm run test:firefox-releases -- beta   # one channel
 ```
@@ -1663,6 +1665,13 @@ adapted case instead checks that navigation reaches the widget, that TAWB
 conveys the expected role, name, and state, and that operating it conveys the
 state change. The source test plan is named in the test file so updates can be
 compared with upstream.
+
+`test:wai-aria` runs the official web-platform-tests role expectations against
+TAWB's own accessibility tree. Unlike the general `npm run wpt` report, this
+focused command exits unsuccessfully when a role mismatch is found, so it is
+suitable as a conformance gate. Elements TAWB deliberately emits through their
+children rather than as their own line remain reported separately as
+`unreached`; they are not silently counted as role matches.
 
 The Firefox release matrix uses Mozilla's current official Linux archives, not
 the distribution package, and changes a download cache key on every run. Its

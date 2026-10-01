@@ -4,6 +4,7 @@
 //
 //   npm run wpt                     # accessible names and roles, Chromium
 //   npm run wpt -- --browser firefox
+//   npm run test:wai-aria           # WAI-ARIA role tests, fail on mismatches
 //   npm run wpt -- --filter labelledby
 //   npm run wpt -- --verbose        # every case, not just the failures
 //
@@ -37,21 +38,37 @@ const { extractAxItems } = require(path.join(__dirname, '..', 'src', 'ax_own.js'
 const RAW = 'https://raw.githubusercontent.com/web-platform-tests/wpt/master';
 const API = 'https://api.github.com/repos/web-platform-tests/wpt/contents';
 // The directories whose expectations are written into the markup.
-const SUITES = ['accname/name', 'accname/name/shadowdom', 'wai-aria/role'];
+const SUITES = {
+  accname: ['accname/name', 'accname/name/shadowdom'],
+  'wai-aria': ['wai-aria/role'],
+};
 const CACHE = path.join(os.tmpdir(), 'tweb-wpt-cache');
 
 function parseArgs(argv) {
-  const options = { engine: 'chromium', filter: null, verbose: false, refresh: false };
+  const options = {
+    engine: 'chromium', filter: null, suite: 'all', verbose: false,
+    refresh: false, failOnMismatch: false,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--browser') { options.engine = argv[i + 1]; i += 1; }
     else if (arg.startsWith('--browser=')) options.engine = arg.slice('--browser='.length);
     else if (arg === '--filter') { options.filter = argv[i + 1]; i += 1; }
     else if (arg.startsWith('--filter=')) options.filter = arg.slice('--filter='.length);
+    else if (arg === '--suite') { options.suite = argv[i + 1]; i += 1; }
+    else if (arg.startsWith('--suite=')) options.suite = arg.slice('--suite='.length);
     else if (arg === '--verbose') options.verbose = true;
     else if (arg === '--refresh') options.refresh = true;
+    else if (arg === '--fail-on-mismatch') options.failOnMismatch = true;
+  }
+  if (options.suite !== 'all' && !SUITES[options.suite]) {
+    throw new Error(`Unknown WPT suite ${JSON.stringify(options.suite)}; use all, accname, or wai-aria`);
   }
   return options;
+}
+
+function selectedSuites(name) {
+  return name === 'all' ? Object.values(SUITES).flat() : SUITES[name];
 }
 
 async function fetchText(url) {
@@ -62,9 +79,9 @@ async function fetchText(url) {
 
 // The suite is fetched once and kept, because it is somebody else's tree and
 // vendoring a copy of it into this one would go stale silently.
-async function ensureSuite(refresh) {
+async function ensureSuite(refresh, suites) {
   const pages = [];
-  for (const suite of SUITES) {
+  for (const suite of suites) {
     const dir = path.join(CACHE, suite);
     fs.mkdirSync(dir, { recursive: true });
     const index = path.join(dir, '.index.json');
@@ -112,10 +129,12 @@ const COLLECT = () => {
 // references, so there is no way to ask it what it made of *this* element —
 // which is why ax_own.js registers the nodes it walks in the first place.
 const norm = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+const isComparableExpectation = (value) => value != null
+  && String(value).toLowerCase() !== 'spec_ambiguous_log_value';
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const pages = await ensureSuite(options.refresh);
+  const pages = await ensureSuite(options.refresh, selectedSuites(options.suite));
 
   // Served rather than opened as files: a file:// document has an opaque
   // origin and its shadow and frame behaviour differs, and several of these
@@ -159,6 +178,13 @@ async function main() {
       }
 
       for (const c of cases) {
+        const compareLabel = isComparableExpectation(c.expectedLabel);
+        const compareRole = isComparableExpectation(c.expectedRole);
+        // WPT uses this sentinel in tentative tests where the specification
+        // deliberately has no expected answer. It asks implementations to log
+        // their result; treating that instruction as a literal role invents a
+        // conformance failure.
+        if (!compareLabel && !compareRole) continue;
         const item = c.index >= 0 ? byIndex.get(c.index) : undefined;
         if (!item) {
           totals.unreached += 1;
@@ -166,7 +192,7 @@ async function main() {
           unreached.set(key, (unreached.get(key) || 0) + 1);
           continue;
         }
-        if (c.expectedLabel != null) {
+        if (compareLabel) {
           const ok = norm(item.name) === norm(c.expectedLabel);
           totals.label[ok ? 0 : 1] += 1;
           if (!ok) {
@@ -174,7 +200,7 @@ async function main() {
               + `           want ${JSON.stringify(norm(c.expectedLabel))}  got ${JSON.stringify(norm(item.name))}`);
           }
         }
-        if (c.expectedRole != null) {
+        if (compareRole) {
           const want = norm(c.expectedRole).toLowerCase();
           const ok = norm(item.role).toLowerCase() === want;
           totals.role[ok ? 0 : 1] += 1;
@@ -208,6 +234,11 @@ async function main() {
   console.log(`  ${String(totals.unreached).padStart(4)} elements our tree emitted no item for, by shape:`);
   const worst = [...unreached.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
   for (const [what, count] of worst) console.log(`         ${String(count).padStart(4)}  ${what}`);
+  if (options.failOnMismatch && (totals.label[1] || totals.role[1])) process.exitCode = 1;
 }
 
-main().then(() => process.exit(0)).catch((err) => { console.error(err); process.exit(1); });
+if (require.main === module) {
+  main().catch((err) => { console.error(err); process.exitCode = 1; });
+}
+
+module.exports = { parseArgs, selectedSuites, isComparableExpectation };
