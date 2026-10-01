@@ -1650,9 +1650,19 @@ npm test                              # about two seconds, no browser
 npm run test:browser                  # a real browser and a real page (two at a time)
 xvfb-run -a npm run test:browser      # with no display of your own
 TWEB_TEST_BROWSER=firefox npm run test:browser
+npm run test:aria-at                    # adapted ARIA-AT behavior checks
+TWEB_TEST_BROWSER=firefox npm run test:aria-at
 npm run test:firefox-releases           # latest stable, beta, and nightly in Docker
 npm run test:firefox-releases -- beta   # one channel
 ```
+
+`test:aria-at` adapts the product-independent assertions from ARIA-AT test
+plans to TAWB's line interface. The upstream ARIA-AT harness is manual and
+specific to JAWS, NVDA, and VoiceOver, so it cannot drive TAWB directly. Each
+adapted case instead checks that navigation reaches the widget, that TAWB
+conveys the expected role, name, and state, and that operating it conveys the
+state change. The source test plan is named in the test file so updates can be
+compared with upstream.
 
 The Firefox release matrix uses Mozilla's current official Linux archives, not
 the distribution package, and changes a download cache key on every run. Its
