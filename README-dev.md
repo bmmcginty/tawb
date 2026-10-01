@@ -1260,8 +1260,13 @@ Two things have to be true, and both are checked rather than assumed:
   the session bus itself, since an accessibility bus is an ordinary bus and
   the separate one a desktop runs is for isolation rather than for a different
   protocol. With no session bus at all, `dbus-daemon` is started for the
-  browser and taken down with it. The name is released when the session ends.
-  Verified against a browser with at-spi2-core's daemons not running at all,
+  browser and taken down with it. The name is released when the reader ends.
+  If `--keep-browser` leaves the browser alive, its private daemon and address
+  are recorded with the browser instead: ending the daemon makes Chromium
+  exit, and a later reader also needs that same address to inspect native
+  windows. Browser cleanup and sweeping therefore take down the browser and
+  its bus together. Verified against a browser with at-spi2-core's daemons not
+  running at all,
   which registered with ours and described its windows through it.
 
   at-spi2-registryd is not needed either way: applications are found by asking

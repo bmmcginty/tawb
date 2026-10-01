@@ -634,23 +634,32 @@ async function openChromium({
       }
       chooserSessions.clear();
       await browser.close().catch(() => {});
-      // The accessibility bus, and the session bus under it if this session
-      // started one. A name claimed here is released here, so a desktop that
-      // later starts a real accessibility bus finds it free.
-      if (a11y) await a11y.close().catch(() => {});
       // Only tear down a browser we started; one the user was already running
       // is theirs to keep. --keep-browser leaves even ours running, so the
       // next session rejoins it in 50ms instead of cold-starting in four
       // seconds. Nor is it ours to close while another reader is still in it,
       // however it got there — starting the browser makes us its first user,
       // not its owner.
-      if (child && !keepBrowser && !otherReadersOn(port)) {
+      const browserStays = !child || keepBrowser || otherReadersOn(port);
+      if (child && !browserStays) {
         killProcessGroup(child.pid);
+        // forgetBrowser also stops a private accessibility-bus daemon recorded
+        // as this browser's companion.
         forgetBrowser(port);
       } else if (child && keepBrowser) {
         // Left running on purpose, so not something a later sweep should
         // mistake for a browser somebody crashed out of.
         markKept(port);
+      }
+
+      // A private bus is part of a browser that stays alive, not part of the
+      // reader that happened to launch it. Taking it down here makes Chromium
+      // exit moments after --keep-browser supposedly returned. Transfer it to
+      // the browser registry instead; a later rejoin uses the recorded address
+      // and browser cleanup stops the daemon.
+      if (a11y) {
+        if (browserStays && child && a11y.owned) await a11y.leaveRunning().catch(() => {});
+        else await a11y.close().catch(() => {});
       }
     },
   };

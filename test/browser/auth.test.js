@@ -22,6 +22,8 @@ const { PassThrough } = require('node:stream');
 const { tempDir, removeTempDir } = require('../tmpdir');
 
 const { openDriver } = require('../../src/driver');
+const { readEndpointRecord } = require('../../src/endpoint');
+const { stopBrowserCompanion } = require('../../src/registry');
 const { killProcessGroup } = require('../../src/proc');
 const { Credentials } = require('../../src/auth');
 const { KeyReader } = require('../../src/input');
@@ -214,6 +216,7 @@ test('a challenge nobody has answered is cancelled when the browser is let go', 
     // The whole group: with no display the process we spawned is xvfb-run,
     // and signalling it leaves the browser it is holding running.
     killProcessGroup(leaving.child.pid);
+    stopBrowserCompanion(readEndpointRecord(dir));
     site.server.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }

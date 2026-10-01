@@ -18,15 +18,19 @@
 //     is claimed only if nobody owns it, and what it hands out is the session
 //     bus itself. An accessibility bus is an ordinary bus; the separate one a
 //     desktop runs is for isolation, not for a different protocol.
-//   * No session bus at all means one is started for the browser, private to
-//     this session and taken down with it.
+//   * No session bus at all means one is started for the browser. It normally
+//     ends with the reader, but a browser deliberately kept alive keeps its
+//     bus too; both are recorded and swept as one browser-lifetime resource.
 //
-// The name is released when the session ends, so a desktop that later starts
-// a real one finds it free.
+// The name is released when the reader ends, so a desktop that later starts a
+// real one finds it free. A kept browser already has the direct bus address in
+// its environment, and later readers use the same recorded address.
 
 const { spawn } = require('node:child_process');
+const { randomBytes } = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
+const path = require('node:path');
 const { connect } = require('./dbus');
 
 const A11Y_NAME = 'org.a11y.Bus';
@@ -57,47 +61,52 @@ function sessionBusAddress() {
   return fs.existsSync(path) ? `unix:path=${path}` : null;
 }
 
-// A session bus of our own, for a machine that has none. dbus-daemon prints
-// the address it chose and then stays in the foreground, which is what makes
-// it something this session can own and take away again.
+// A session bus of our own, for a machine that has none. Its address is chosen
+// here rather than read from stdout so the daemon can have no pipe back to the
+// reader. Closing that pipe when the launching process exits otherwise takes
+// down a bus that a kept browser still needs, even if the child was unrefed.
 function startSessionBus({ log = () => {} } = {}) {
   return new Promise((resolve, reject) => {
+    // Put a random socket path in the daemon's command line. If its pid is
+    // ever reused, the browser registry can prove that a process is this
+    // particular companion before signalling it, rather than accepting any
+    // unrelated dbus-daemon with the same pid.
+    const socketPath = path.join(
+      os.tmpdir(), `tawb-a11y-${process.pid}-${randomBytes(6).toString('hex')}.sock`,
+    );
+    const address = `unix:path=${socketPath}`;
     let child;
     try {
-      child = spawn('dbus-daemon', ['--session', '--nofork', '--print-address'], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      child = spawn('dbus-daemon', [
+        '--session', '--nofork', `--address=${address}`,
+      ], { stdio: 'ignore', detached: true });
     } catch (err) {
       reject(new Error(`no session bus, and dbus-daemon could not be started: ${err.message}`));
       return;
     }
+    child.once('exit', () => fs.rmSync(socketPath, { force: true }));
 
-    let address = '';
     let settled = false;
-    const finish = (err, value) => {
+    const finish = (err) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(poll);
       if (err) {
         try { child.kill('SIGTERM'); } catch { /* never started */ }
         reject(err);
       } else {
-        resolve(value);
+        log('a11y.bus.started', { address });
+        resolve({ address, child, socketPath });
       }
     };
     const timer = setTimeout(
-      () => finish(new Error('dbus-daemon did not say where it was listening')),
+      () => finish(new Error('dbus-daemon did not open its private socket')),
       START_TIMEOUT_MS,
     );
-
-    child.stdout.on('data', (chunk) => {
-      address += chunk.toString('utf8');
-      const line = address.split('\n')[0];
-      if (address.includes('\n') && line.trim()) {
-        log('a11y.bus.started', { address: line.trim() });
-        finish(null, { address: line.trim(), child });
-      }
-    });
+    const poll = setInterval(() => {
+      if (fs.existsSync(socketPath)) finish(null);
+    }, 10);
     child.once('error', (err) => finish(new Error(`dbus-daemon could not be started: ${err.message}`)));
     child.once('exit', (code) => finish(new Error(`dbus-daemon exited with ${code}`)));
   });
@@ -148,16 +157,19 @@ function serveAccessibilityBus(connection, address) {
 // else about the browser still works.
 async function openAccessibilityBus({ log = () => {} } = {}) {
   const idle = {
-    available: false, address: null, env: {}, reason: null, close: async () => {},
+    available: false, address: null, env: {}, reason: null, owned: false, pid: null,
+    close: async () => {}, leaveRunning: async () => {},
   };
 
   let sessionAddress = sessionBusAddress();
   let daemon = null;
+  let daemonSocket = null;
   const env = {};
   const startOwnBus = async () => {
     const started = await startSessionBus({ log });
     sessionAddress = started.address;
     daemon = started.child;
+    daemonSocket = started.socketPath;
     // Override an exported address too. A stale DBUS_SESSION_BUS_ADDRESS is
     // indistinguishable from a desktop bus until connecting to it fails, and
     // passing that stale value through would leave Firefox describing no
@@ -185,6 +197,7 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
     if (connection) connection.close();
     if (daemon) {
       try { daemon.kill('SIGTERM'); } catch { /* already gone */ }
+      if (daemonSocket) fs.rmSync(daemonSocket, { force: true });
     }
   };
 
@@ -228,7 +241,10 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
         address,
         env,
         reason: null,
+        owned: false,
+        pid: null,
         close: async () => { await stop(null); },
+        leaveRunning: async () => {},
       };
     } catch {
       // Nobody is answering for it, so we will.
@@ -254,12 +270,34 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
 
   serveAccessibilityBus(session, sessionAddress);
   log('a11y.bus.served', { address: sessionAddress, ownSession: !!daemon });
+  let released = false;
   return {
     available: true,
     address: sessionAddress,
     env,
     reason: null,
-    close: async () => { await stop(session); },
+    owned: !!daemon,
+    pid: daemon ? daemon.pid : null,
+    close: async () => {
+      if (released) return;
+      released = true;
+      await stop(session);
+    },
+    // A kept browser still has DBUS_SESSION_BUS_ADDRESS and
+    // AT_SPI_BUS_ADDRESS pointing here. Release the service connection owned
+    // by this reader, but leave the daemon alive for the browser and make its
+    // pipes stop keeping this Node process alive. The browser registry owns
+    // the daemon from this point and removes it with the browser.
+    leaveRunning: async () => {
+      if (released) return;
+      released = true;
+      session.close();
+      if (daemon) {
+        if (daemon.stdout && daemon.stdout.unref) daemon.stdout.unref();
+        if (daemon.stderr && daemon.stderr.unref) daemon.stderr.unref();
+        daemon.unref();
+      }
+    },
   };
 }
 

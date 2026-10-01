@@ -116,6 +116,36 @@ test('an unreachable exported bus is replaced with a private accessibility bus',
   }
 });
 
+test('a private bus can be transferred to a browser that outlives its reader', async (t) => {
+  const before = process.env.DBUS_SESSION_BUS_ADDRESS;
+  process.env.DBUS_SESSION_BUS_ADDRESS = 'unix:path=/tmp/tawb-session-bus-that-does-not-exist';
+  let bus;
+  try {
+    bus = await openAccessibilityBus();
+    if (!bus.available && /dbus-daemon could not be started/.test(bus.reason || '')) {
+      t.skip(bus.reason);
+      return;
+    }
+    assert.equal(bus.owned, true);
+    assert.ok(bus.pid);
+    await bus.leaveRunning();
+
+    // The service connection belonged to this reader, but the underlying bus
+    // is still where the kept browser expects it and where the next reader can
+    // inspect native windows.
+    const client = await connect(bus.address);
+    client.close();
+  } finally {
+    if (bus && bus.pid) {
+      try { process.kill(bus.pid, 'SIGTERM'); } catch { /* already gone */ }
+    } else if (bus) {
+      await bus.close();
+    }
+    if (before === undefined) delete process.env.DBUS_SESSION_BUS_ADDRESS;
+    else process.env.DBUS_SESSION_BUS_ADDRESS = before;
+  }
+});
+
 test('an exported session bus address is taken as it stands', () => {
   const before = process.env.DBUS_SESSION_BUS_ADDRESS;
   process.env.DBUS_SESSION_BUS_ADDRESS = 'unix:path=/tmp/whatever-bus';

@@ -29,6 +29,7 @@ const {
 } = require('../src/registry');
 const { claimsPath } = require('../src/session');
 const { processAlive, killProcessGroup } = require('../src/proc');
+const { startSessionBus } = require('../src/a11y_bus');
 
 // A stand-in for a browser: a process group whose command line names the
 // profile directory it was started with, which is what the sweep checks.
@@ -169,6 +170,42 @@ test('recording, forgetting and a sweep of nothing', () => {
   assert.equal(readRegistry().length, 1, 'the same port was recorded twice');
   forgetBrowser(9007);
   assert.equal(readRegistry().length, 0, 'the browser was not forgotten');
+});
+
+test('forgetting a browser stops its private accessibility bus', async (t) => {
+  let bus;
+  try {
+    bus = await startSessionBus();
+  } catch (err) {
+    t.skip(`no session bus available here: ${err.message}`);
+    return;
+  }
+  recordBrowser({
+    pid: process.pid,
+    port: 9008,
+    profileDir: state,
+    engine: 'chromium',
+    a11yPid: bus.child.pid,
+    a11yAddress: bus.address,
+  });
+  forgetBrowser(9008);
+  assert.ok(await goneWithin(bus.child.pid), 'the browser\'s accessibility bus was left running');
+});
+
+test('a reused companion pid does not stop an unrelated process', () => {
+  const unrelated = spawn('sleep', ['60'], { stdio: 'ignore', detached: true });
+  unrelated.unref();
+  strays.push(unrelated.pid);
+  recordBrowser({
+    pid: process.pid,
+    port: 9009,
+    profileDir: state,
+    engine: 'chromium',
+    a11yPid: unrelated.pid,
+    a11yAddress: 'unix:path=/tmp/not-this-process.sock',
+  });
+  forgetBrowser(9009);
+  assert.ok(processAlive(unrelated.pid), 'an unrelated process with a reused pid was stopped');
 });
 
 

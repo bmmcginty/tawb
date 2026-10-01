@@ -155,6 +155,24 @@ function devToolsPortNote(profileDir, port) {
 // starting a second session used to hang until the startup timeout expired.
 const findRunningBrowser = runningEndpoint;
 
+// A private accessibility bus is a browser-lifetime resource. The reader that
+// launched a kept browser leaves the daemon running and records its address;
+// later readers connect to that address directly when they need native browser
+// windows. They do not own the daemon and must not stop it when they leave.
+function recordedAccessibilityBus(record) {
+  if (!record || !record.a11yAddress) return null;
+  return {
+    available: true,
+    address: record.a11yAddress,
+    env: {},
+    reason: null,
+    owned: false,
+    pid: null,
+    close: async () => {},
+    leaveRunning: async () => {},
+  };
+}
+
 // Starts an ordinary browser and attaches to it, or rejoins one already
 // running on this profile. The profile persists between runs, so logins and
 // cookies survive — which is most of what makes the web usable.
@@ -178,6 +196,24 @@ async function launchOwnBrowser({
   // by the out-of-memory kill that a pile of them causes — is finally reaped.
   sweepStrandedBrowsers({ log });
 
+  const running = await findRunningBrowser(profileDir);
+  if (running) {
+    try { onStartup('Joining the running Chromium…'); } catch { /* display only */ }
+    log('browser.rejoin', { port: running, profileDir });
+    const browser = await cdpBrowser.connect(`http://127.0.0.1:${running}`);
+    const context = browser.contexts()[0];
+    if (context) {
+      // Use the bus the browser was started on. Starting a new private bus
+      // here would produce a valid address with no browser registered on it.
+      const record = readEndpointRecord(profileDir);
+      const a11y = recordedAccessibilityBus(record) || await openAccessibilityBus({ log });
+      return {
+        browser, context, child: null, owned: false, port: running, rejoined: true, a11y,
+      };
+    }
+    await browser.close().catch(() => {});
+  }
+
   // Somewhere for the browser to describe its own windows to, and the flag
   // that makes it describe them. A native dialog — an extension asking for
   // consent, a file picker — is not a document and is in neither protocol;
@@ -188,24 +224,6 @@ async function launchOwnBrowser({
   // accessibility that nothing is reading is renderer work nobody wants.
   const a11y = await openAccessibilityBus({ log });
   if (!a11y.available) log('a11y.unavailable', { reason: a11y.reason });
-
-  const running = await findRunningBrowser(profileDir);
-  if (running) {
-    try { onStartup('Joining the running Chromium…'); } catch { /* display only */ }
-    log('browser.rejoin', { port: running, profileDir });
-    const browser = await cdpBrowser.connect(`http://127.0.0.1:${running}`);
-    const context = browser.contexts()[0];
-    if (context) {
-      // Not ours to shut down: another session may still be reading it. Its
-      // accessibility, too, is whatever the session that started it set up —
-      // which may be nothing, and is why the bus is handed over rather than
-      // promised.
-      return {
-        browser, context, child: null, owned: false, port: running, rejoined: true, a11y,
-      };
-    }
-    await browser.close().catch(() => {});
-  }
 
   const port = await freePort();
 
@@ -278,8 +296,18 @@ async function launchOwnBrowser({
   }
   startup.unref();
 
-  writeEndpointRecord(profileDir, { port, pid: child.pid, startedAt: Date.now() });
-  recordBrowser({ pid: child.pid, port, profileDir, engine: 'chromium' });
+  writeEndpointRecord(profileDir, {
+    port,
+    pid: child.pid,
+    startedAt: Date.now(),
+    a11yAddress: a11y.available ? a11y.address : null,
+    a11yPid: a11y.owned ? a11y.pid : null,
+  });
+  recordBrowser({
+    pid: child.pid, port, profileDir, engine: 'chromium',
+    a11yPid: a11y.owned ? a11y.pid : null,
+    a11yAddress: a11y.owned ? a11y.address : null,
+  });
 
   const browser = await cdpBrowser.connect(`http://127.0.0.1:${port}`);
   const context = browser.contexts()[0];

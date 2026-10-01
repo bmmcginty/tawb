@@ -29,7 +29,7 @@ const http = require('node:http');
 const { tempDir, removeTempDir } = require('../tmpdir');
 const { openDriver } = require('../../src/driver');
 const { readEndpointRecord } = require('../../src/endpoint');
-const { readRegistry, forgetBrowser } = require('../../src/registry');
+const { readRegistry, forgetBrowser, stopBrowserCompanion } = require('../../src/registry');
 const { killProcessGroup } = require('../../src/proc');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
@@ -104,10 +104,22 @@ test.after(async () => {
   if (rejoined) await rejoined.close().catch(() => {});
   // A kept browser is kept from every sweep, including the one that cleans up
   // after a test run, so this test takes down the browser it asked to stay.
+  let cleaned = false;
   for (const entry of readRegistry()) {
     if (entry.profileDir !== profile) continue;
     killProcessGroup(entry.pid);
     forgetBrowser(entry.port);
+    cleaned = true;
+  }
+  // The registry is deliberately best-effort. A read-only state directory
+  // must not make this test leak the kept browser and its companion bus; the
+  // profile's endpoint record carries the same identities.
+  if (!cleaned) {
+    const record = readEndpointRecord(profile);
+    if (record) {
+      killProcessGroup(record.pid);
+      stopBrowserCompanion(record);
+    }
   }
   if (server) server.close();
   for (const file of fetched) fs.rmSync(file, { force: true });

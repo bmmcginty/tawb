@@ -105,16 +105,45 @@ function stillOurBrowser(pid, profileDir) {
     || cmdline.split('\0').includes(profileDir);
 }
 
-function recordBrowser({ pid, port, profileDir, engine }) {
+function recordBrowser({
+  pid, port, profileDir, engine, a11yPid = null, a11yAddress = null,
+}) {
   if (!pid || !port) return;
   writeEntry({
     pid, port, profileDir, engine, owner: process.pid, keep: false, at: Date.now(),
+    a11yPid, a11yAddress,
   });
+}
+
+// A private session bus belongs to the browser that was started on it. Check
+// the command before signalling: a pid can be reused, and stopping an
+// unrelated desktop bus would be much worse than leaking one of ours.
+function stopBrowserCompanion(entry) {
+  const pid = Number(entry && entry.a11yPid);
+  if (!pid) return false;
+  let command;
+  try {
+    command = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+  } catch {
+    return false;
+  }
+  const socket = String(entry.a11yAddress || '').match(/^unix:path=([^,;]+)/);
+  if (!socket || !command.includes('dbus-daemon') || !command.includes('--nofork')
+      || !command.includes(`--address=unix:path=${socket[1]}`)) return false;
+  try {
+    process.kill(pid, 'SIGTERM');
+    fs.rmSync(socket[1], { force: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // A browser we have taken down, or one that was never ours to take down.
 function forgetBrowser(port) {
   if (!port) return;
+  const entry = readEntry(port);
+  if (entry) stopBrowserCompanion(entry);
   dropEntry(port);
 }
 
@@ -139,7 +168,9 @@ function sweepStrandedBrowsers({ log = () => {} } = {}) {
   let swept = 0;
   for (const entry of entries) {
     if (!processAlive(entry.pid) || !stillOurBrowser(entry.pid, entry.profileDir)) {
-      dropEntry(entry.port); // gone already, or the pid belongs to somebody else now
+      // The browser may have crashed while its private accessibility bus kept
+      // running. Both were recorded together, so both are forgotten together.
+      forgetBrowser(entry.port);
       continue;
     }
     if (entry.keep || processAlive(entry.owner) || otherReadersOn(entry.port)) continue;
@@ -147,7 +178,7 @@ function sweepStrandedBrowsers({ log = () => {} } = {}) {
       pid: entry.pid, port: entry.port, engine: entry.engine, profileDir: entry.profileDir,
     });
     killProcessGroup(entry.pid);
-    dropEntry(entry.port);
+    forgetBrowser(entry.port);
     swept += 1;
   }
   return swept;
@@ -253,6 +284,6 @@ function tempProfiles({ dir = os.tmpdir() } = {}) {
 
 module.exports = {
   registryDir, entryPath, readRegistry, writeRegistry, recordBrowser, forgetBrowser,
-  markKept, sweepStrandedBrowsers, stillOurBrowser,
+  markKept, stopBrowserCompanion, sweepStrandedBrowsers, stillOurBrowser,
   tempName, ownerOfTempDir, sweepStaleProfiles, tempProfiles,
 };
