@@ -258,6 +258,55 @@ test('a privileged native media control can receive the real-click command', asy
   assert.deepEqual(received, { scope: page, item });
 });
 
+// Hovering goes through the same reachability check as a real click, because
+// it is the same act minus the press: the pointer has to be somewhere a
+// pointer could be, and whatever is painted over the element would receive
+// the hover instead of the element.
+test('a hover moves the pointer onto the element the line came from', async () => {
+  let moved = null;
+  let disposed = false;
+  const handle = {
+    evaluate: async () => ({ ok: true, x: 40, y: 12, placed: 'center' }),
+    dispose: async () => { disposed = true; },
+  };
+  const page = {};
+  const driver = {
+    name: 'chromium',
+    hover: async (scope, given, at) => { moved = { scope, given, at }; },
+  };
+  const core = new Core({ driver, page, source: 'ax', sources: ['ax'] });
+  core.handleFor = async () => handle;
+
+  const item = { role: 'link', name: 'Members' };
+  assert.deepEqual(await core.hover(item, page), { ok: true });
+  // The driver is given the point the check vetted, not left to compute its
+  // own: what was established is that this point lands on the element.
+  assert.deepEqual(moved, { scope: page, given: handle, at: { x: 40, y: 12 } });
+  assert.equal(disposed, true, 'the element handle was not released');
+});
+
+test('a hover is refused with the page\'s own reason, and the pointer stays put', async () => {
+  let moved = false;
+  const handle = {
+    evaluate: async () => ({ ok: false, reason: 'is covered by <div#banner>', covered: true }),
+    dispose: async () => {},
+  };
+  const driver = { name: 'chromium', hover: async () => { moved = true; } };
+  const core = new Core({ driver, page: {}, source: 'ax', sources: ['ax'] });
+  core.handleFor = async () => handle;
+
+  const result = await core.hover({ role: 'link', name: 'Members' }, {});
+  assert.deepEqual(result, { ok: false, reason: 'is covered by <div#banner>' });
+  assert.equal(moved, false, 'the pointer was moved at a point known to be blocked');
+});
+
+test('a driver with no pointer of its own says so rather than appearing to hover', async () => {
+  const core = new Core({ driver: { name: 'edbrowse' }, page: {}, source: 'ax', sources: ['ax'] });
+  assert.equal(core.canHover(), false);
+  const result = await core.hover({ role: 'link', name: 'Members' }, {});
+  assert.deepEqual(result, { ok: false, reason: 'cannot be hovered with the edbrowse driver' });
+});
+
 test('a popup rendered at the end of the document is brought to its control', () => {
   // Frameworks render a menu into the end of <body> so nothing can clip it,
   // which in a line list puts it nowhere near the button that opened it.

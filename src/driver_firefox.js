@@ -1287,6 +1287,42 @@ async function openFirefox({
       }
     },
 
+    // The pointer moved onto the element and left there. See core.hover.
+    //
+    // No releaseActions afterwards, unlike realClick: there is no button held
+    // down to release, and releasing the action sequence is what would undo
+    // the pointer's position. The pointer has to stay on the element for the
+    // page to keep whatever it opened open.
+    // Aimed at viewport coordinates rather than at the element, which is the
+    // opposite of realClick and deliberate. An element-origin move leaves the
+    // pointer on the element without reliably leaving the *document* hovering
+    // it: measured against a Joomla menu bar, `document.querySelectorAll(':hover')`
+    // came back empty after an element-origin move and came back with the
+    // full ancestor chain after a move to the same point in viewport
+    // coordinates. Since the point handed in is the one prepareRealClick
+    // vetted, aiming at it is also aiming at what was checked.
+    //
+    // Two moves, arriving from one pixel above, for the reason given in the
+    // Chromium driver.
+    async hover(scope, handle, at = null) {
+      if (!at) {
+        throw new Error('hovering needs the point the reachability check vetted');
+      }
+      const context = scope && scope.contextId ? scope.contextId : page.contextId;
+      await session.send('input.performActions', {
+        context,
+        actions: [{
+          type: 'pointer',
+          id: 'tweb-mouse',
+          parameters: { pointerType: 'mouse' },
+          actions: [
+            { type: 'pointerMove', x: at.x, y: at.y - 1, origin: 'viewport' },
+            { type: 'pointerMove', x: at.x, y: at.y, origin: 'viewport' },
+          ],
+        }],
+      });
+    },
+
     async clickSlider(scope, handle, ratio, orientation = null) {
       if (!handle || !handle.sharedId) {
         throw new Error('this slider carries no element reference');

@@ -103,6 +103,11 @@ const ACTIONS = [
   // same row said a shorter way.
   ['toggle-short-links', 'Toggle short link addresses', ['U']],
   ['real-click', 'Real click', ['m']],
+  // The other half of what a mouse does, and on a dropdown menu the half that
+  // has to come first: a submenu's contents are not in the page at all until
+  // the pointer is over the item above them. Alt of the click key, because it
+  // is the same pointer doing the other thing with it.
+  ['hover-line', 'Hover the line under the cursor', ['Alt+M']],
   // Browse mode must keep letters for reading commands, while some web
   // applications only expose parts of their interface through their own
   // keyboard handlers. This switches to a separate keyboard where every key

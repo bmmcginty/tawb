@@ -2049,6 +2049,8 @@ async function handleBrowseKey(chunk, state, page) {
 
   if (action === 'real-click') return clickAsHuman(state, page);
 
+  if (action === 'hover-line') return hoverAsHuman(state, page);
+
   if (action === 'page-keyboard') {
     // Key repeat can leave another copy of the exit chord queued behind the
     // one that just left page mode. Without this short guard that copy is
@@ -2436,6 +2438,69 @@ async function clickAsHuman(state, page) {
     return;
   }
 
+  await reportAfterAction(state, page, { previousTexts, previousUrl, anchor, screen });
+}
+
+// ---------------------------------------------------------------------------
+// The pointer put somewhere, pressing nothing
+//
+// A dropdown menu is the case this exists for. The items under "Members" are
+// not in the accessibility tree while the menu is shut — a page hides them
+// with display:none, or parks them a thousand ems to the left of the
+// viewport, or has not even built them yet — so a reader has nothing to move
+// to, nothing to activate, and no way to find out that anything is there.
+// A sighted user sweeps the pointer along the menu bar and the contents
+// appear. Alt+M is that sweep, one line at a time.
+//
+// It is deliberately not folded into `m`. A click is a decision and a hover
+// is a question, and the reader asking what is behind a menu item has not
+// agreed to press it.
+//
+// A menu that slides or fades open is not finished when the pointer arrives,
+// so the page is given a moment before it is read again. Anything slower than
+// that is picked up by live updates, which are watching the page anyway.
+// ---------------------------------------------------------------------------
+
+const HOVER_SETTLE_MS = 600;
+
+async function hoverAsHuman(state, page) {
+  const item = itemUnderCursor(state);
+  if (!item) {
+    setStatus(state, 'Nothing on this line to hover.');
+    return;
+  }
+  if (!state.core.canHover()) {
+    setStatus(state, `The ${state.core.driver.name} driver cannot move the pointer.`);
+    return;
+  }
+
+  const previousTexts = state.core.blocks.map((b) => b.text);
+  const previousUrl = page.url();
+  const anchor = anchorFor(state);
+  const screen = screenBefore(state);
+  const started = Date.now();
+
+  try {
+    setStatus(state, `Putting the pointer on "${item.name}"…`);
+    const hovered = await state.core.hover(item, page);
+    if (!hovered.ok) {
+      log('hover.refused', { name: String(item.name).slice(0, 80), reason: hovered.reason });
+      setStatus(state, `Cannot hover "${item.name}": it ${hovered.reason}.`);
+      return;
+    }
+
+    log('hover', { name: String(item.name).slice(0, 80), ms: Date.now() - started, source: state.core.source });
+    state.statusMsg = `Pointer on "${item.name}"`;
+  } catch (err) {
+    const timedOut = err instanceof ActionTimeout;
+    setStatus(state, timedOut
+      ? `Gave up hovering "${item.name}" after ${ACTION_TIMEOUT_MS / 1000}s.`
+      : `Could not hover "${item.name}": ${String(err.message || err).split('\n')[0]}`);
+    log('hover.failed', { name: String(item.name).slice(0, 80), timedOut, source: state.core.source });
+    return;
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, HOVER_SETTLE_MS));
   await reportAfterAction(state, page, { previousTexts, previousUrl, anchor, screen });
 }
 

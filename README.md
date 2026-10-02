@@ -138,6 +138,15 @@ comboboxes are activated rather than treated as text fields. Press `m` when a
 site requires a real pointer click, for example to grant user activation to a
 media control or open a file chooser.
 
+Press `Alt+M` to put the pointer on the line under the cursor without pressing
+anything, the way a sighted user rests a mouse on a menu to see what is in it.
+A dropdown menu is what this is for: the items under a menu like "Members" are
+often not in the page at all until the pointer is over the menu itself, so
+there is nothing for TAWB to show and nothing for `Enter` or `m` to act on.
+Hover the menu, and the items appear as ordinary lines you can move to and
+activate. Nothing is pressed, so asking what is behind a menu never commits
+you to following it.
+
 Press `Alt+K` to enter webpage keyboard mode. In that separate mode, keys are
 sent as trusted browser input instead of running TAWB commands: for example,
 Instagram Reels accepts `Space` to play or pause, `m` to mute or unmute, and

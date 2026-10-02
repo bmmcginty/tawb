@@ -32,6 +32,10 @@ test('terminfo key sequences are added to the portable fallbacks', () => {
   assert.equal(keys.actionFor('\x1b?'), 'keyboard-wizard');
   assert.equal(keys.actionFor('\x14'), 'new-tab');
   assert.equal(keys.actionFor('\x1bd'), 'download-link');
+  // Alt of the click key: m clicks the line, Alt+M puts the pointer on it
+  // without pressing, which is how a dropdown menu is opened.
+  assert.equal(keys.actionFor('m'), 'real-click');
+  assert.equal(keys.actionFor('\x1bm'), 'hover-line');
   // Browsing and editing are separate keyboards on the same key, the way
   // Ctrl+D already is: Alt+D downloads a link while reading a page and
   // deletes the next word while a field is being edited.

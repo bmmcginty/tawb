@@ -1437,6 +1437,53 @@ class Core {
     return typeof this.driver.realClick === 'function';
   }
 
+  canHover() {
+    return typeof this.driver.hover === 'function';
+  }
+
+  // The pointer put on an element, pressing nothing.
+  //
+  // Hovering is not a convenience here, it is the only way to see part of the
+  // web. A dropdown's contents do not exist until the pointer is over the
+  // item above them: a page may hide the submenu with display:none and have
+  // script show it, or park the submenu a thousand ems to the left and have
+  // :hover bring it back, or move every submenu into a container elsewhere in
+  // the document after the document has been parsed. In each arrangement the
+  // submenu is not in the accessibility tree at all while the menu is shut,
+  // so there is nothing for a reader to move to and nothing for a click to
+  // aim at. A sighted user sweeps a pointer along a menu bar to find out what
+  // is in it; this is that gesture.
+  //
+  // Reached through the same check as a real click, because it is the same
+  // act minus the press: the element has to be somewhere on screen a pointer
+  // could be, and whatever is painted over it would receive the hover
+  // instead. A reader cannot see either, so both are reported rather than
+  // left to be inferred from a menu that did not open.
+  async hover(item, page = this.page) {
+    if (!this.canHover()) {
+      return { ok: false, reason: `cannot be hovered with the ${this.driver.name} driver` };
+    }
+    const handle = await withTimeout(
+      this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating element');
+    try {
+      const ready = await withTimeout(
+        handle.evaluate(prepareRealClick), ACTION_TIMEOUT_MS, 'Bringing it on screen');
+      if (!ready || !ready.ok) {
+        return { ok: false, reason: ready ? ready.reason : 'could not be found on the page' };
+      }
+      // The point the check vetted, not a point computed again afterwards:
+      // what was established is that *this* point lands on the element.
+      await withTimeout(
+        this.driver.hover(item.frame || page, handle, { x: ready.x, y: ready.y }),
+        ACTION_TIMEOUT_MS,
+        'Hovering',
+      );
+      return { ok: true };
+    } finally {
+      await handle.dispose().catch(() => {});
+    }
+  }
+
   // Give a link to the browser's own download manager without navigating the
   // tab away from the page. Both engines implement this as their native
   // Alt-click gesture, so cookies, proxy settings, filename selection and the

@@ -535,6 +535,24 @@ async function openChromium({
       await handle.click();
     },
 
+    // The pointer moved onto the element and left there. See core.hover.
+    //
+    // Two moves, arriving from one pixel above the aim point. One move does
+    // produce the mouseover, but a pointer that only ever appears somewhere
+    // is not quite a pointer that travelled there, and a move after the
+    // arrival is what a page watching for mousemove is waiting for. The
+    // offset is a single pixel so the approach cannot land on a neighbouring
+    // menu item and open the wrong menu on the way past.
+    async hover(scope, handle, at = null) {
+      if (!at) {
+        await handle.hover();
+        return;
+      }
+      const pageObject = handle.frame.pageObject;
+      await pageObject.moveTo(at.x, at.y - 1, pageObject.session);
+      await pageObject.moveTo(at.x, at.y, pageObject.session);
+    },
+
     // A custom ARIA slider that ignores its required keyboard commands can
     // still expose an honest range. Hover once (players commonly reveal the
     // track only then), remeasure, and click the requested fraction with real

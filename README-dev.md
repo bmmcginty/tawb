@@ -1607,6 +1607,62 @@ and rather than freeze, it gives up and tells you. Cloudflare's
 "Performing security verification" pages are the common case; there is no
 way in from here, so use the address bar to go somewhere else.
 
+## Hovering
+
+`Alt+M` moves the browser's own pointer onto the element the line under the
+cursor came from, and leaves it there. Nothing is pressed.
+
+Hovering is not a convenience. A dropdown's contents do not exist until the
+pointer is over the item above them, so for a reader the submenu is not a thing
+that is hard to reach — it is a thing that is not in the accessibility tree at
+all. There is nothing to move to, nothing for `Enter` to activate, and nothing
+for `m` to refuse. A sighted user sweeps a pointer along a menu bar to find out
+what is in it, and `Alt+M` is that sweep, one line at a time.
+
+It goes through `prepareRealClick`, the same reachability check `m` uses, for
+the same reasons: the element has to be somewhere on screen a pointer could
+be, and whatever is painted over it would receive the hover instead. A reader
+can see neither, so both are reported rather than inferred from a menu that
+did not open.
+
+`core.hover` resolves the line to an element and asks the driver to move the
+pointer to it. Chromium dispatches one `Input.dispatchMouseEvent` of type
+`mouseMoved`; Firefox performs one WebDriver `pointerMove` with the element as
+its origin. Firefox does not call `input.releaseActions` afterwards, unlike
+`realClick`: there is no button held down to release, and releasing the
+sequence is what would take the pointer back off the element. The pointer has
+to stay there, because that is what keeps the menu open while the reader reads
+it.
+
+The page is read again 600ms after the pointer arrives, since a menu that
+slides or fades open is not finished when the hover returns. A slower one is
+picked up by live updates, which are watching the page anyway.
+
+`Alt+M` is deliberately a separate key from `m` rather than a smarter `m`. A
+click is a decision and a hover is a question, and a reader asking what is
+behind a menu item has not agreed to press it.
+
+The pointer is aimed at the viewport coordinates `prepareRealClick` returned,
+not at the element, which is the opposite of what `realClick` does on Firefox
+and is deliberate. An element-origin WebDriver move leaves the pointer on the
+element without reliably leaving the document hovering it: measured against a
+Joomla menu bar, `document.querySelectorAll(':hover')` came back empty after
+an element-origin move and came back with the full ancestor chain after a move
+to the same point in viewport coordinates.
+
+One site is known not to respond, and the reason is not ours. On
+celticchoir.ca, whose menu is MenuMatic, `Alt+M` opens both dropdowns under
+Chromium and opens neither under Firefox. Under Firefox the gesture is
+delivered — one `mouseover` arrives at the `<li>`, `:hover` is set on the whole
+ancestor chain, and the page raises no error — and MenuMatic's own
+`showSubMenu` does not show anything. Calling the page's `S5showSubMenu`
+directly does open the submenu in that same Firefox, so the submenu is intact
+and the page's scheduling step is where it stops. `showSubMenu` defers through
+`setTimeout` and assigns the timer to an undeclared global, which is the only
+difference between the two paths; why that fails on one engine and not the
+other is unresolved. Use `--browser chromium` for that site, or the direct
+address.
+
 ## Timing log
 
 Logging is off by default. Add `--log` when a run needs diagnosing:

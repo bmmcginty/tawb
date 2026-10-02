@@ -165,6 +165,13 @@ class CdpHandle {
     await this.frame.pageObject.clickAt(at.x, at.y, this.frame.pageObject.session, modifiers);
   }
 
+  // The pointer put on the element and left there, pressing nothing.
+  async hover() {
+    const at = await this.clickPoint();
+    if (!at) throw new Error('that element has no box on screen to hover');
+    await this.frame.pageObject.moveTo(at.x, at.y, this.frame.pageObject.session);
+  }
+
   async dispose() {
     if (this.disposed) return;
     this.disposed = true;
@@ -812,6 +819,17 @@ class CdpPage {
     });
     await session.send('Input.dispatchMouseEvent', {
       type: 'mouseReleased', ...at, button: 'left', buttons: 0, clickCount: 1,
+    });
+  }
+
+  // The pointer moved to a point and left there. One event, because that is
+  // what a pointer arriving somewhere is: the page's mouseover, mouseenter
+  // and pointerover all come from this one, and the pointer stays where it
+  // was put until something else moves it — which is what keeps a menu open
+  // long enough to read.
+  async moveTo(x, y, session = this.session) {
+    await session.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved', x: Math.round(x), y: Math.round(y), buttons: 0,
     });
   }
 
