@@ -1650,18 +1650,26 @@ Joomla menu bar, `document.querySelectorAll(':hover')` came back empty after
 an element-origin move and came back with the full ancestor chain after a move
 to the same point in viewport coordinates.
 
-One site is known not to respond, and the reason is not ours. On
-celticchoir.ca, whose menu is MenuMatic, `Alt+M` opens both dropdowns under
-Chromium and opens neither under Firefox. Under Firefox the gesture is
-delivered — one `mouseover` arrives at the `<li>`, `:hover` is set on the whole
-ancestor chain, and the page raises no error — and MenuMatic's own
-`showSubMenu` does not show anything. Calling the page's `S5showSubMenu`
-directly does open the submenu in that same Firefox, so the submenu is intact
-and the page's scheduling step is where it stops. `showSubMenu` defers through
-`setTimeout` and assigns the timer to an undeclared global, which is the only
-difference between the two paths; why that fails on one engine and not the
-other is unresolved. Use `--browser chromium` for that site, or the direct
-address.
+The pointer arrives from a point three pixels outside the *menu item*, not
+outside the line's own element. A dropdown listens on the item, which is
+bigger than the link inside it — an `<li>` with padding around an `<a>` — and
+`mouseenter` is not `mouseover`: it is refused when the pointer came from
+somewhere the item already contains. A pointer that merely appears on its
+target, or approaches from a point still inside the item, crosses no boundary
+and the page is never told anything arrived. Pressing `Alt+M` twice on the
+same line did nothing the second time until the approach point moved outside
+the item.
+
+A measurement worth keeping, because it cost a long detour: a tab TAWB is not
+reading is `document.visibilityState === "hidden"` under Firefox, and Firefox
+throttles `setTimeout` in a hidden document to roughly one firing per second.
+A diagnostic driving `driver.context.pages()[0]` instead of the tab the reader
+is on therefore measured a menu that took 3.8 seconds to open — MenuMatic
+chains two timers, `setTimeout(fn, 10)` took 1831ms and `setTimeout(fn, 0)`
+took 2008ms — and looked exactly like a menu that never opened. Chromium
+reports every attached tab as visible and does not throttle. Any tool that
+reaches into a running browser must pick the visible tab, as `tools/probe.js`
+does.
 
 ## Timing log
 
