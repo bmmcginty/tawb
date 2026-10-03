@@ -462,3 +462,94 @@ for (const view of VIEWS) {
     assert.ok(!text.includes('D02'), 'a control behind a modal cannot be activated, so it is not offered');
   });
 }
+
+// --- pictures the page paints and no text accounts for ----------------------
+
+// The case this came from, reduced from https://celticchoir.ca/. Three of the
+// five menu items open a dropdown, and the only thing distinguishing those
+// three is a triangle painted from a stylesheet. PAGE view has to say so,
+// because nothing about a background image reaches the accessibility tree and
+// the reader is otherwise looking at five identical links.
+const DECORATION_PAGE = `<!doctype html><meta charset="utf-8"><title>decoration</title>
+<style>
+  .parent a { background: url(/images/s5_menu_arrow.png) no-repeat right center; padding-right: 18px; }
+  #tile { background-image: url(/images/hero_banner.jpg); width: 300px; height: 120px; }
+  #grad { background-image: linear-gradient(#fff, #000); width: 40px; height: 40px; }
+  #both { background-image: linear-gradient(#fff, #000), url(/images/star_filled.png); width: 40px; height: 40px; }
+  #gen::after { content: url(/images/external_link.png); }
+  #iconbtn .icon { background-image: url(/images/floppy_disk.png); width: 16px; height: 16px; display: inline-block; }
+</style>
+<ul>
+  <li class="parent"><a href="javascript:;">About Us</a></li>
+  <li class="parent"><a href="javascript:;">Concerts</a></li>
+  <li><a href="/links">Links</a></li>
+</ul>
+<div id="tile"></div>
+<div id="grad"></div>
+<div id="both"></div>
+<a id="gen" href="/spec">Specification</a>
+<button id="iconbtn"><span class="icon"></span>Save</button>
+<img src="/images/welsh_harpist.jpg" width="40" height="40">
+<img src="/images/spacer.gif" alt="" width="40" height="40">
+<img src="/images/crowd.jpg" alt="A festival crowd" width="40" height="40">
+<svg aria-hidden="true" width="16" height="16"><path d="M0 0"></path></svg>`;
+
+test('render view: a stylesheet triangle marks the menu items that open a dropdown', async () => {
+  const text = await readFixture(DECORATION_PAGE, 'render');
+  assert.match(text, /\{About Us\} \(image: s5 menu arrow\)/);
+  assert.match(text, /\{Concerts\} \(image: s5 menu arrow\)/);
+  // The item without a dropdown must stay bare, or the mark means nothing.
+  assert.match(text, /\{Links\}$/m);
+});
+
+test('render view: an element that paints a picture and says nothing gets a line', async () => {
+  assert.match(await readFixture(DECORATION_PAGE, 'render'), /^\(image: hero banner\)$/m);
+});
+
+test('render view: a gradient is colour rather than picture and is not reported', async () => {
+  const text = await readFixture(DECORATION_PAGE, 'render');
+  assert.ok(!text.includes('gradient'), 'background-image also carries gradients');
+});
+
+test('render view: the url layer of a gradient-and-url background is still reported', async () => {
+  assert.match(await readFixture(DECORATION_PAGE, 'render'), /^\(image: star filled\)$/m);
+});
+
+test('render view: a picture in generated content is reported', async () => {
+  assert.match(await readFixture(DECORATION_PAGE, 'render'), /\{Specification\} \(image: external link\)/);
+});
+
+// A control is emitted whole and its descendants never get a line of their
+// own, so an icon painted onto a span inside a button has to travel up to the
+// button's line.
+test('render view: an icon inside a control is reported on the control', async () => {
+  assert.match(await readFixture(DECORATION_PAGE, 'render'), /\[\*Save\] \(image: floppy disk\)/);
+});
+
+test('render view: an image whose alt attribute the page never wrote is named by its file', async () => {
+  assert.match(await readFixture(DECORATION_PAGE, 'render'), /^\(image: welsh harpist\)$/m);
+});
+
+test('render view: alt="" is the page saying the picture carries nothing, and is obeyed', async () => {
+  const text = await readFixture(DECORATION_PAGE, 'render');
+  assert.ok(!text.includes('spacer'), 'an empty alt attribute is a declaration, not an omission');
+});
+
+test('render view: an image the page named is still read as the page named it', async () => {
+  assert.match(await readFixture(DECORATION_PAGE, 'render'), /^\(image\) A festival crowd$/m);
+});
+
+test('render view: aria-hidden is the page saying the picture carries nothing, and is obeyed', async () => {
+  const text = await readFixture(DECORATION_PAGE, 'render');
+  assert.ok(!text.includes('graphic'), 'a decorative svg is already dropped as hidden');
+});
+
+// The accessibility tree has nothing to say about any of this, which is the
+// reason PAGE view is where it goes. Holding the two views against each other
+// is what keeps that claim honest.
+test('ax view: a stylesheet triangle is invisible to the accessibility tree', async () => {
+  const text = await readFixture(DECORATION_PAGE, 'ax');
+  assert.match(text, /\{About Us\}/);
+  assert.ok(!text.includes('s5 menu arrow'),
+    'a background image has no role and no accessible name');
+});

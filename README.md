@@ -187,6 +187,22 @@ view, it may still be available in PAGE or SOURCE. INSPECT can reveal whether
 a misleading name or role came from the site. Switching views attempts to keep
 you on the same element rather than the same line number.
 
+PAGE view also reports pictures a stylesheet paints, which no accessibility
+tree carries. A site whose dropdown menus are marked only by a small triangle
+beside the menu item reads like this, and `Alt+M` then hovers the line the way
+a sighted user moves the pointer to it:
+
+```
+{About Us} (image: s5 menu arrow)
+{Concerts} (image: s5 menu arrow)
+{Links}
+```
+
+A picture with nothing to attach to gets a line of its own, `(image: welsh
+harpist)`, named by its file because the page wrote no alt text. An `alt=""`
+attribute or `aria-hidden="true"` is the page declaring a picture decorative,
+and PAGE view obeys the declaration and says nothing.
+
 This does not make every inaccessible website accessible automatically. It
 does make failures inspectable and often provides another route to the
 content or control.
