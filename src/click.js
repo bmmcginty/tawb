@@ -250,7 +250,36 @@ function prepareRealClick(el) {
     // inside <body>'s own closed shadow root means the point is right.
     const hosts = hostsAbove(el);
     if (chain.some((node) => node === el || el.contains(node) || hosts.has(node))) {
-      return { ok: true, x: Math.round(x), y: Math.round(y), placed: block };
+      // A point just outside the element, for a pointer that has to arrive
+      // from somewhere. Above it where there is room, below it otherwise.
+      // See core.hover: a move that begins inside the element it is aiming
+      // at crosses no boundary, and a page waiting to be entered is never
+      // entered.
+      //
+      // Outside the menu item rather than outside the link inside it. A
+      // dropdown listens on the item, which is bigger than its link — an
+      // <li> with padding around an <a> — and mouseenter is not mouseover:
+      // it is refused when the pointer came from somewhere the item already
+      // contains. A point three pixels above the link is still inside the
+      // item, so the arrival would be rejected by the very handler it is
+      // meant to reach.
+      let holder = el;
+      try {
+        holder = el.closest('li, [role="menuitem"], [aria-haspopup]') || el;
+      } catch { /* an engine without closest, or a detached node */ }
+      const outer = holder.getBoundingClientRect();
+      const box = outer.width && outer.height ? outer : aim.rect;
+      const above = box.top - 3;
+      const below = box.bottom + 3;
+      const from = above >= 0 ? above : Math.min(below, window.innerHeight - 1);
+      return {
+        ok: true,
+        x: Math.round(x),
+        y: Math.round(y),
+        fromX: Math.round(x),
+        fromY: Math.round(from),
+        placed: block,
+      };
     }
 
     blocked = { ok: false, reason: `is covered by ${name(chain[chain.length - 1])}`, covered: true };

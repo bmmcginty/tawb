@@ -1302,13 +1302,16 @@ async function openFirefox({
     // coordinates. Since the point handed in is the one prepareRealClick
     // vetted, aiming at it is also aiming at what was checked.
     //
-    // Two moves, arriving from one pixel above, for the reason given in the
-    // Chromium driver.
+    // Two moves: onto the approach point just outside the element, then onto
+    // the element. See core.hover for why the pointer has to arrive from
+    // outside rather than simply appear on the target.
     async hover(scope, handle, at = null) {
       if (!at) {
         throw new Error('hovering needs the point the reachability check vetted');
       }
       const context = scope && scope.contextId ? scope.contextId : page.contextId;
+      const fromX = Number.isFinite(at.fromX) ? at.fromX : at.x;
+      const fromY = Number.isFinite(at.fromY) ? at.fromY : at.y - 1;
       await session.send('input.performActions', {
         context,
         actions: [{
@@ -1316,7 +1319,7 @@ async function openFirefox({
           id: 'tweb-mouse',
           parameters: { pointerType: 'mouse' },
           actions: [
-            { type: 'pointerMove', x: at.x, y: at.y - 1, origin: 'viewport' },
+            { type: 'pointerMove', x: fromX, y: fromY, origin: 'viewport' },
             { type: 'pointerMove', x: at.x, y: at.y, origin: 'viewport' },
           ],
         }],

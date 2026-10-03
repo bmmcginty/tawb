@@ -145,3 +145,36 @@ test('the pointer opens a submenu a script keeps hidden elsewhere in the documen
   await handle.dispose().catch(() => {});
   assert.ok(ready.ok, `the revealed link was unreachable: ${ready.reason}`);
 });
+
+// A pointer already inside the element arrives nowhere. Moving it to another
+// point inside the same element produces a mousemove and no mouseover, so the
+// page is never told anything entered it and a menu that was closed in the
+// meantime stays closed. Hovering the same line twice is the ordinary way to
+// meet that: open a menu, let it close, ask again.
+test('hovering the same line twice opens the menu both times', async () => {
+  const page = await driver.newTab();
+  await page.goto(`data:text/html,${encodeURIComponent(SCRIPT_MENU)}`);
+  // Count arrivals rather than inspect the menu: the page's own handler is
+  // what a second hover has to reach.
+  await page.evaluate(() => {
+    window.arrivals = 0;
+    document.querySelector('#parent').addEventListener('mouseover', () => { window.arrivals += 1; });
+  });
+
+  const core = await readerView(page);
+  const parent = lineFor(core, 'Members');
+  assert.ok(parent, 'the menu item that opens the submenu was not in the view');
+
+  for (const attempt of [1, 2]) {
+    // Shut the menu between the two, as moving the pointer away would.
+    await page.evaluate(() => { document.querySelector('#subs > div').style.display = 'none'; });
+    const hovered = await core.hover(parent, page);
+    assert.ok(hovered.ok, `hover ${attempt} was refused: ${hovered.reason}`);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const shown = await page.evaluate(() => getComputedStyle(document.querySelector('#subs > div')).display);
+    assert.equal(shown, 'block', `the menu did not open on hover ${attempt}`);
+  }
+
+  assert.equal(await page.evaluate(() => window.arrivals), 2,
+    'the second hover did not reach the page as an arrival');
+});

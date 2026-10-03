@@ -266,7 +266,7 @@ test('a hover moves the pointer onto the element the line came from', async () =
   let moved = null;
   let disposed = false;
   const handle = {
-    evaluate: async () => ({ ok: true, x: 40, y: 12, placed: 'center' }),
+    evaluate: async () => ({ ok: true, x: 40, y: 12, fromX: 40, fromY: 3, placed: 'center' }),
     dispose: async () => { disposed = true; },
   };
   const page = {};
@@ -281,7 +281,13 @@ test('a hover moves the pointer onto the element the line came from', async () =
   assert.deepEqual(await core.hover(item, page), { ok: true });
   // The driver is given the point the check vetted, not left to compute its
   // own: what was established is that this point lands on the element.
-  assert.deepEqual(moved, { scope: page, given: handle, at: { x: 40, y: 12 } });
+  assert.deepEqual(moved, {
+    scope: page,
+    given: handle,
+    // The approach point comes with it: a pointer already inside the element
+    // crosses no boundary, and the page never learns it arrived.
+    at: { x: 40, y: 12, fromX: 40, fromY: 3 },
+  });
   assert.equal(disposed, true, 'the element handle was not released');
 });
 

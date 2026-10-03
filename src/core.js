@@ -1473,8 +1473,19 @@ class Core {
       }
       // The point the check vetted, not a point computed again afterwards:
       // what was established is that *this* point lands on the element.
+      //
+      // And the point to arrive from, which matters more than it sounds. A
+      // page learns that a pointer is on something from the events of its
+      // arrival, and a pointer already inside the element arrives nowhere:
+      // moving it to another point inside the same element produces a
+      // mousemove and no mouseover, so a menu does not open. Pressing Alt+M
+      // twice on the same line used to do nothing the second time for
+      // exactly that reason. The approach point is three pixels outside the
+      // element, so there is always a boundary to cross.
       await withTimeout(
-        this.driver.hover(item.frame || page, handle, { x: ready.x, y: ready.y }),
+        this.driver.hover(item.frame || page, handle, {
+          x: ready.x, y: ready.y, fromX: ready.fromX, fromY: ready.fromY,
+        }),
         ACTION_TIMEOUT_MS,
         'Hovering',
       );

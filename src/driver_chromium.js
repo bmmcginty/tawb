@@ -537,19 +537,18 @@ async function openChromium({
 
     // The pointer moved onto the element and left there. See core.hover.
     //
-    // Two moves, arriving from one pixel above the aim point. One move does
-    // produce the mouseover, but a pointer that only ever appears somewhere
-    // is not quite a pointer that travelled there, and a move after the
-    // arrival is what a page watching for mousemove is waiting for. The
-    // offset is a single pixel so the approach cannot land on a neighbouring
-    // menu item and open the wrong menu on the way past.
+    // Two moves: onto the approach point just outside the element, then onto
+    // the element. See core.hover for why the pointer has to arrive from
+    // outside rather than simply appear on the target.
     async hover(scope, handle, at = null) {
       if (!at) {
         await handle.hover();
         return;
       }
       const pageObject = handle.frame.pageObject;
-      await pageObject.moveTo(at.x, at.y - 1, pageObject.session);
+      const fromX = Number.isFinite(at.fromX) ? at.fromX : at.x;
+      const fromY = Number.isFinite(at.fromY) ? at.fromY : at.y - 1;
+      await pageObject.moveTo(fromX, fromY, pageObject.session);
       await pageObject.moveTo(at.x, at.y, pageObject.session);
     },
 
