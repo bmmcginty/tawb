@@ -553,3 +553,39 @@ test('ax view: a stylesheet triangle is invisible to the accessibility tree', as
   assert.ok(!text.includes('s5 menu arrow'),
     'a background image has no role and no accessible name');
 });
+
+// --- a control the page gave no text --------------------------------------
+
+// A link around an image is the ordinary way to make a picture clickable, and
+// a link's own text is empty for every one of them. All four controls below
+// were missing from PAGE view outright, which is worse than losing a name:
+// the reader had no line to stand on and no way to press them.
+const IMAGE_CONTROL_PAGE = `<!doctype html><meta charset="utf-8"><title>image controls</title>
+<style>#chip { background-image: url(/images/paper_plane.png); width: 16px; height: 16px; display: block; }</style>
+<a id="home" href="/"><img src="/images/ccc_logo.png" alt="ccc logo" width="40" height="40"></a>
+<a id="prev" href="/prev"><img src="/images/prev.png" alt="Previous" width="16" height="16"></a>
+<a id="plain" href="/photo"><img src="/images/welsh_harpist.jpg" width="40" height="40"></a>
+<button id="send"><span id="chip"></span></button>`;
+
+test('render view: a link around a named image is named by that image', async () => {
+  const text = await readFixture(IMAGE_CONTROL_PAGE, 'render');
+  assert.match(text, /\{ccc logo\}/);
+  assert.match(text, /\{Previous\}/);
+});
+
+test('render view: a link around an unnamed image is named by the file', async () => {
+  assert.match(await readFixture(IMAGE_CONTROL_PAGE, 'render'), /\{\(image: welsh harpist\)\}/);
+});
+
+test('render view: a button whose only content is a painted icon is still a button', async () => {
+  assert.match(await readFixture(IMAGE_CONTROL_PAGE, 'render'), /\[\*\(image: paper plane\)\]/);
+});
+
+// The accessibility view already named three of these four from the same alt
+// text, which is how the gap was found. Holding the two views against each
+// other is what keeps PAGE view honest about being a second opinion.
+test('ax view: a link around a named image was never missing its name', async () => {
+  const text = await readFixture(IMAGE_CONTROL_PAGE, 'ax');
+  assert.match(text, /\{ccc logo\}/);
+  assert.match(text, /\{Previous\}/);
+});

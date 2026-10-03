@@ -185,7 +185,13 @@ function extractVisible() {
       return `embedded ${subtype.replace(/\+.*$/, '') || 'image'}`;
     }
     if (/^blob:/i.test(url)) return 'embedded image';
-    const file = url.split(/[?#]/)[0].split('/').pop() || '';
+    let file = url.split(/[?#]/)[0].split('/').pop() || '';
+    // A file name reaches us percent-encoded, and the encoding is not the
+    // name: Wikipedia's photograph of a Celtic festival arrives as
+    // `330px-Keltfest_2010_%284610513447%29.jpg`, whose brackets a reader
+    // should hear as brackets. A malformed sequence throws, and the raw name
+    // is still better than nothing.
+    try { file = decodeURIComponent(file); } catch { /* keep it encoded */ }
     const stem = file.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ').trim();
     return stem || null;
   };
@@ -232,6 +238,14 @@ function extractVisible() {
         if (SKIP.has(child.tagName.toLowerCase())) continue;
         if (visibilityOf(child) === GONE) continue;
         if (independentlyFocusable(child)) continue;
+        // An <img> inside a control never reaches the img branch, because a
+        // control is emitted whole and returns. Only an unnamed one is a
+        // picture as far as this is concerned: an <img> the page gave alt
+        // text to is naming the control, and nameFromImages below reads it.
+        if (child.tagName === 'IMG' && !child.hasAttribute('alt')) {
+          const source = nameForImageUrl(child.currentSrc || child.getAttribute('src') || '');
+          if (source) found.push(source);
+        }
         found.push(...decorationsOf(child));
         visit(child);
       }
@@ -240,6 +254,34 @@ function extractVisible() {
     // One repeated icon is one picture as far as the reader is concerned, and
     // a control holding a dozen of them should not spend a dozen names on it.
     return [...new Set(found)].slice(0, MAX_DECORATIONS);
+  };
+
+  // The alt text of an image inside a control, which is the control's name
+  // whenever the control has no text of its own.
+  //
+  // A link around an image is the ordinary way to make a picture clickable,
+  // and `own` is empty for every one of them because an <img> contributes no
+  // text. Four controls on https://celticchoir.ca/ were missing from this
+  // view outright for that reason — the logo linking home, and the
+  // slideshow's Previous, Next and Pause — while the accessibility view
+  // named all four from the same alt text this reads.
+  const nameFromImages = (el) => {
+    let found = '';
+    const visit = (node) => {
+      for (const child of kidsOf(node)) {
+        if (found) return;
+        if (child.nodeType !== Node.ELEMENT_NODE) continue;
+        if (visibilityOf(child) === GONE) continue;
+        if (independentlyFocusable(child)) continue;
+        if (child.tagName === 'IMG' || child.tagName === 'INPUT') {
+          const alt = (child.getAttribute('alt') || '').trim();
+          if (alt) { found = alt; return; }
+        }
+        visit(child);
+      }
+    };
+    visit(el);
+    return found;
   };
 
   let walk = null;
@@ -303,17 +345,23 @@ function extractVisible() {
     // whatever tag it was built from, which is how most of them are built.
     if (shown && (tag === 'button' || explicitRole === 'button'
       || (tag === 'input' && ['button', 'submit', 'reset'].includes(el.type)))) {
-      const text = own || el.value || label;
-      if (text) emit({ kind: 'button', text, images: decorationsUnder(el), index: register(), block: true });
+      const text = own || el.value || label || nameFromImages(el);
+      const images = decorationsUnder(el);
+      // A control named by nothing at all is still a control, and the picture
+      // on it is what the sighted user is reading. Emitting it without the
+      // picture would be a line saying nothing; dropping it, as this did,
+      // takes the control away.
+      if (text || images.length) emit({ kind: 'button', text, images, index: register(), block: true });
       walkNestedControls(el);
       return;
     }
     if (shown && ((tag === 'a' && el.getAttribute('href') != null) || explicitRole === 'link')) {
-      const text = own || label;
+      const text = own || label || nameFromImages(el);
       // The resolved target, for the address line to show while the reader
       // stands on it — see ax_own.js. A div wearing role="link" has none.
       const href = typeof el.href === 'string' && el.href ? el.href : undefined;
-      if (text) emit({ kind: 'link', text, href, images: decorationsUnder(el), index: register(), block: true });
+      const images = decorationsUnder(el);
+      if (text || images.length) emit({ kind: 'link', text, href, images, index: register(), block: true });
       walkNestedControls(el);
       return;
     }
@@ -454,11 +502,20 @@ function withImages(line, entry) {
   return `${line} (image: ${entry.images.join(', ')})`;
 }
 
+// A control the page named nothing at all, whose picture is therefore the
+// whole of what it says: `{(image: ccc logo)}` is a site logo linking home.
+// The brackets stay, because what the reader needs first is that the line is
+// a link.
+function controlText(entry) {
+  if (entry.text) return entry.text;
+  return `(image: ${(entry.images || []).join(', ')})`;
+}
+
 function renderEntry(entry) {
   switch (entry.kind) {
     case 'heading': return withImages('#'.repeat(entry.level) + ' ' + entry.text, entry);
-    case 'link': return withImages(`{${entry.text}}`, entry);
-    case 'button': return withImages(`[*${entry.text}]`, entry);
+    case 'link': return entry.text ? withImages(`{${entry.text}}`, entry) : `{${controlText(entry)}}`;
+    case 'button': return entry.text ? withImages(`[*${entry.text}]`, entry) : `[*${controlText(entry)}]`;
     case 'field': return withImages(`[${entry.value ? entry.text + ': ' + entry.value : entry.text}]`, entry);
     case 'image': return `(image) ${entry.text}`;
     // A picture with no text of its own, named by its file. The colon is what
@@ -495,7 +552,9 @@ async function snapshotRenderBlocks(target) {
     isParagraph: !!entry.paragraph,
     item: {
       role: entry.role || ROLE_BY_KIND[entry.kind] || 'text',
-      name: entry.text,
+      // A control the page named nothing at all is still announced and still
+      // matched by name when the view changes, so its picture stands in.
+      name: entry.text || ((entry.images && entry.images.length) ? controlText(entry) : entry.text),
       level: entry.level,
       href: entry.href,
       editable: entry.editable,
