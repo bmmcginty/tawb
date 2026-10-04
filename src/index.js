@@ -4636,5 +4636,6 @@ module.exports = {
   navigate, navigateInterruptibly, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
   openLibrary, openLinkList, openDocumentInfo, closeLibrary, showLibrary, handleLibraryKey,
+  handleChooseKey,
   askForLine, bookmarkPage, downloadCurrentLink, drawLinePrompt,
 };
