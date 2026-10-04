@@ -9,7 +9,9 @@ const {
   ActionTimeout, withTimeout, readFieldState, ACTION_TIMEOUT_MS,
 } = require('./core');
 const { armFrame, refreshDue, pulse, TICK_MS } = require('./live');
-const { log, timed, count, flushCounters, enableLog } = require('./log');
+const {
+  log, timed, count, flushCounters, enableLog, disableLog, getLogPath, flushLog,
+} = require('./log');
 const { layoutLines } = require('./layout');
 const {
   clipField, renderLynxBlock, lynxFocusable, numberLynxBlocks, groupLynxFlows,
@@ -2339,6 +2341,18 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'reload-page') return reloadPage(state, page);
   if (action === 'reload-no-cache') return reloadPage(state, page, { ignoreCache: true });
   if (action === 'interrupt') return interruptLoading(state, page);
+  if (action === 'toggle-trace' && state.interface === 'lynx') {
+    if (getLogPath()) {
+      const disabled = await disableLog();
+      setStatus(state, `Trace logging off — ${disabled}.`);
+    } else {
+      const enabled = enableLog({ directory: state.logDir || null });
+      log('trace.enabled', { interface: 'lynx' });
+      setStatus(state, `Trace logging on — ${enabled}.`);
+    }
+    return;
+  }
+  if (action === 'trace-log' && state.interface === 'lynx') return openTraceLog(state, page);
 
   // Cycle views, keeping the reader on the same content.
   //
@@ -3159,6 +3173,29 @@ function showLibrary(state, page, filter) {
   relayout(state);
   render(state, page, { force: true });
   setStatus(state, libraryStatus(state));
+}
+
+async function openTraceLog(state, page) {
+  const file = getLogPath();
+  if (!file) { setStatus(state, 'Trace logging is off — press Ctrl+T to turn it on.'); return; }
+  await flushLog();
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    setStatus(state, `Could not read the trace log: ${String(err.message || err).split('\n')[0]}`);
+    return;
+  }
+  const lines = text.split(/\r?\n/).filter(Boolean).slice(-500);
+  state.core.live.refreshing = true;
+  state.mode = 'library';
+  state.library = {
+    kind: 'info', label: 'Trace Log', filter: '',
+    rows: lines.map((line) => ({ text: line, entry: null })), blocks: [], empty: false,
+    place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
+  };
+  state.title = `Trace Log — ${file}`;
+  showLibrary(state, page, '');
 }
 
 function openHelp(state, page) {
@@ -4742,6 +4779,7 @@ async function main() {
     linkAddress: ARGS.linkAddress,
     shortLinks: ARGS.shortLinks,
     escapeUnicode: ARGS.escapeUnicode,
+    logDir: ARGS.logDir,
     statusHeldUntil: 0,
     loadingMore: false,
     pageKeyboardExitUntil: 0,
@@ -5006,7 +5044,7 @@ module.exports = {
   navigate, navigateInterruptibly, reloadPage, interruptLoading,
   navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
-  openLibrary, openLinkList, openDocumentInfo, openOptions, openHelp, openMainMenu,
+  openLibrary, openLinkList, openDocumentInfo, openOptions, openHelp, openTraceLog, openMainMenu,
   closeLibrary, showLibrary, showOptions, handleLibraryKey, handleOptionsKey,
   handleChooseKey,
   askForLine, askYesNo, bookmarkPage, deleteLibraryBookmark,

@@ -103,6 +103,11 @@ function flushCounters(extra = {}) {
   if (Object.keys(snapshot).length) log('counters', snapshot);
 }
 
+function flushLog() {
+  if (!stream) return Promise.resolve();
+  return new Promise((resolve) => stream.write('', resolve));
+}
+
 function closeLog() {
   if (!stream) return Promise.resolve();
   const closing = stream;
@@ -110,7 +115,17 @@ function closeLog() {
   return new Promise((resolve) => closing.end(resolve));
 }
 
+async function disableLog() {
+  if (!logPath) return null;
+  const disabled = logPath;
+  await closeLog();
+  logPath = null;
+  enabledAt = null;
+  for (const key of Object.keys(counters)) delete counters[key];
+  return disabled;
+}
+
 module.exports = {
   log, timed, count, flushCounters,
-  enableLog, getLogPath, defaultLogPath, closeLog,
+  enableLog, disableLog, getLogPath, defaultLogPath, flushLog, closeLog,
 };

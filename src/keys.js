@@ -154,6 +154,8 @@ const ACTIONS = [
   ['reload-page', 'Reload page', ['F5']],
   ['reload-no-cache', 'Reload page without cache', []],
   ['interrupt', 'Stop loading', []],
+  ['toggle-trace', 'Toggle trace logging', []],
+  ['trace-log', 'View trace log', []],
   ['cycle-view', 'Cycle view', ['\\']],
   ['source-view', 'Toggle source and presentation', []],
   ['help', 'Help', []],

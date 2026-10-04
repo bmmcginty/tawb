@@ -882,7 +882,9 @@ identity, so `r`/`R` removes the selected entry through Chrome's bookmarks API
 or Firefox Places rather than deleting an arbitrary bookmark with the same
 URL. `x`/`X` passes the protocols' native `ignoreCache` flag to reload rather
 than emulating a cache clear, and `z`/`Z` shares Escape's interrupt path while
-an address navigation owns the keyboard. Reference entries likewise retain
+an address navigation owns the keyboard. `Ctrl+T` controls TAWB's own private
+NDJSON trace rather than Lynx's parser trace, and `;` shows its last 500 lines
+as a read-only internal page. Reference entries likewise retain
 original block objects and activate
 through the page after the list closes. This preserves
 fragment handling, authentication, focus observation, and history instead of

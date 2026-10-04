@@ -26,6 +26,8 @@ test('the effective Lynx browse map is translated by function name', () => {
     '^R          RELOAD        reload the current document',
     'x           NOCACHE       reload without cache',
     'z           INTERRUPT     stop loading',
+    '^T          TRACE_TOGGLE  toggle trace',
+    ';           TRACE_LOG     view trace',
     '<space>     NEXT_PAGE     view the next page',
     'Up Arrow    PREV_LINK     make the previous link current',
     'Right Arrow ACTIVATE      activate the current link',
@@ -51,6 +53,8 @@ test('the effective Lynx browse map is translated by function name', () => {
   assert.deepEqual(parsed.bindings['reload-page'], ['Ctrl+R']);
   assert.deepEqual(parsed.bindings['reload-no-cache'], ['x']);
   assert.deepEqual(parsed.bindings.interrupt, ['z']);
+  assert.deepEqual(parsed.bindings['toggle-trace'], ['Ctrl+T']);
+  assert.deepEqual(parsed.bindings['trace-log'], [';']);
   assert.deepEqual(parsed.bindings['next-screen'], ['Space']);
   assert.deepEqual(parsed.bindings['previous-focusable'], ['ArrowUp']);
   assert.deepEqual(parsed.bindings.activate, ['ArrowRight']);

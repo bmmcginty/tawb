@@ -72,6 +72,8 @@ const LYNX_BINDINGS = {
   'reload-page': ['Ctrl+R'],
   'reload-no-cache': ['x', 'X'],
   interrupt: ['z', 'Z'],
+  'toggle-trace': ['Ctrl+T'],
+  'trace-log': [';'],
   'cycle-view': [],
   'source-view': ['\\'],
   help: ['h', 'H', '?'],

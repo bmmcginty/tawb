@@ -20,6 +20,7 @@ const BROWSE_FUNCTIONS = {
   INFO: 'document-info', OPTIONS: 'options', F_LINK_NUM: 'link-number',
   WHEREIS: 'find-forward', NEXT: 'repeat-find-forward', PREV: 'repeat-find-backward',
   REFRESH: 'refresh', RELOAD: 'reload-page', NOCACHE: 'reload-no-cache', INTERRUPT: 'interrupt',
+  TRACE_TOGGLE: 'toggle-trace', TRACE_LOG: 'trace-log',
   SOURCE: 'source-view', KEYMAP: 'keyboard-wizard', HELP: 'help', DWIMHELP: 'help',
   MAIN_MENU: 'main-menu',
   NEXT_LINK: 'next-focusable', FASTFORW_LINK: 'next-focusable', DOWN_LINK: 'next-focusable',
