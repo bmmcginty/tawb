@@ -39,7 +39,7 @@ Compatibility requirements:
       keys, line-editor mode, and text-field activation.
 - [x] Do not import browser-owned or executable settings such as cookies, proxies,
       credentials, viewers, printers, or shell commands.
-- [ ] Add fixture tests for custom mappings, control/function keys, includes/effective
+- [x] Add fixture tests for custom mappings, control/function keys, includes/effective
       output, malformed output, missing Lynx, and unsupported functions.
 
 ## 3. Lynx-compatible display

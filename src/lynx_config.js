@@ -47,6 +47,7 @@ function lynxKeySpec(text) {
   if (KEY_NAMES[key]) return KEY_NAMES[key];
   const control = /^\^(.)$/.exec(key);
   if (control) return `Ctrl+${control[1]}`;
+  if (/^F(?:[1-9]|1[0-2])$/.test(key)) return key;
   return [...key].length === 1 ? key : null;
 }
 

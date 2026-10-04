@@ -22,7 +22,18 @@ const KEY_DEFINITIONS = {
   PageDown: { cap: 'knp', sequences: ['\x1b[6~'] },
   Home: { cap: 'khome', sequences: ['\x1b[H', '\x1bOH', '\x1b[1~'] },
   End: { cap: 'kend', sequences: ['\x1b[F', '\x1bOF', '\x1b[4~'] },
+  F1: { cap: 'kf1', sequences: ['\x1bOP', '\x1b[11~', '\x1b[[A'] },
+  F2: { cap: 'kf2', sequences: ['\x1bOQ', '\x1b[12~', '\x1b[[B'] },
+  F3: { cap: 'kf3', sequences: ['\x1bOR', '\x1b[13~', '\x1b[[C'] },
+  F4: { cap: 'kf4', sequences: ['\x1bOS', '\x1b[14~', '\x1b[[D'] },
   F5: { cap: 'kf5', sequences: ['\x1b[15~', '\x1b[[E'] },
+  F6: { cap: 'kf6', sequences: ['\x1b[17~'] },
+  F7: { cap: 'kf7', sequences: ['\x1b[18~'] },
+  F8: { cap: 'kf8', sequences: ['\x1b[19~'] },
+  F9: { cap: 'kf9', sequences: ['\x1b[20~'] },
+  F10: { cap: 'kf10', sequences: ['\x1b[21~'] },
+  F11: { cap: 'kf11', sequences: ['\x1b[23~'] },
+  F12: { cap: 'kf12', sequences: ['\x1b[24~'] },
   'Shift+F4': { cap: 'kf16', sequences: ['\x1b[1;2S', '\x1bO2S', '\x1b[14;2~', '\x1b[26~'] },
   // Tab is a control character rather than an escape sequence, so it is named
   // here only to be displayed as Tab instead of Ctrl+I. Shift+Tab has no such

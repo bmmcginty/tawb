@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
   lynxKeySpec, parseBrowseMap, parseEditMap, parsePreferences, readLynxConfig,
@@ -12,6 +14,7 @@ test('Lynx key names become portable TAWB key specifications', () => {
   assert.equal(lynxKeySpec('<space>'), 'Space');
   assert.equal(lynxKeySpec('Right Arrow'), 'ArrowRight');
   assert.equal(lynxKeySpec('Back Tab'), 'Shift+Tab');
+  assert.equal(lynxKeySpec('F12'), 'F12');
   assert.equal(lynxKeySpec('Do key'), null);
 });
 
@@ -49,6 +52,17 @@ test('the effective Lynx browse map is translated by function name', () => {
   assert.deepEqual(parsed.unsupported, ['SHELL']);
 });
 
+test('custom effective output carries included control and function-key mappings', () => {
+  const output = fs.readFileSync(path.join(
+    __dirname, 'fixtures', 'lynx-keymap-custom-effective.txt'), 'utf8');
+  const parsed = parseBrowseMap(output);
+  assert.deepEqual(parsed.bindings.quit, ['x']);
+  assert.deepEqual(parsed.bindings.goto, ['Ctrl+X']);
+  assert.deepEqual(parsed.bindings['document-info'], ['F2']);
+  assert.deepEqual(parsed.bindings['next-focusable'], ['ArrowDown']);
+  assert.deepEqual(parsed.bindings.activate, ['ArrowRight']);
+});
+
 test('the effective Lynx line editor map is translated separately', () => {
   const parsed = parseEditMap(`
   DELN   Delete next/curr char        -  ^D, ^R
@@ -64,6 +78,54 @@ test('the effective Lynx line editor map is translated separately', () => {
   assert.deepEqual(parsed.bindings['edit-next-word'], ['Ctrl+N']);
   assert.deepEqual(parsed.bindings['edit-command'], ['Ctrl+V']);
   assert.ok(parsed.unsupported.includes('PASS'));
+});
+
+test('malformed or partial effective output degrades to what can be read', () => {
+  const garbage = [
+    '',
+    'not a key map at all',
+    'q           lowercase      not a function name',
+    'g           GOTO',
+    'zzz',
+    ['x'.repeat(20), 'QUIT', 'too long a key column'].join(' '),
+  ].join('\n');
+  const parsed = parseBrowseMap(garbage);
+  assert.deepEqual(parsed.bindings.quit, []);
+  assert.deepEqual(parsed.bindings.goto, []);
+  assert.deepEqual(parsed.unsupported, []);
+
+  const edit = parseEditMap('  BOL broken line without a dash\n\n  EOL    End line\n');
+  assert.deepEqual(edit.bindings['edit-line-end'], []);
+});
+
+test('one unreadable map makes the whole import fall back rather than half-apply', () => {
+  const half = readLynxConfig({
+    run: (command, args) => (args[0] === '-dump' && args[1] === 'LYNXEDITMAP:'
+      ? { status: 1, stdout: '' }
+      : { status: 0, stdout: 'q           QUIT          quit the browser\n' }),
+  });
+  assert.equal(half.available, false);
+  assert.deepEqual(half.bindings, {});
+});
+
+test('a config path is passed through the environment and otherwise left unset', () => {
+  const seen = [];
+  readLynxConfig({
+    env: { HOME: '/home/me' },
+    run: (command, args, options) => {
+      seen.push(options.env);
+      return { status: 0, stdout: '' };
+    },
+  });
+  assert.equal(seen.length, 3);
+  assert.equal(Object.hasOwn(seen[0], 'LYNX_CFG'), false);
+  // No options file and no -show_cfg output still leaves usable preferences.
+  const imported = readLynxConfig({
+    env: {}, run: () => ({ status: 0, stdout: '' }),
+    readFile: () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); },
+  });
+  assert.equal(imported.available, true);
+  assert.equal(imported.preferences.keypadMode, 'NUMBERS_AS_ARROWS');
 });
 
 test('Lynx interaction preferences follow config and then .lynxrc precedence', () => {

@@ -8,3 +8,4 @@ Up Arrow    PREV_LINK     make the previous link current
 Down Arrow  NEXT_LINK     make the next link current
 Left Arrow  PREV_DOC      return to the previous document
 Right Arrow ACTIVATE      follow the current link
+F1          DWIMHELP      display context-sensitive help

@@ -1,0 +1,6 @@
+# Effective LYNXKEYMAP output after an included site config remaps stock keys.
+x           QUIT          quit the browser
+^X          GOTO          go to a document given as a URL
+F2          INFO          show information about the current document
+Down Arrow  NEXT_LINK     make the next link current
+Right Arrow ACTIVATE      go to the document given by the current link
