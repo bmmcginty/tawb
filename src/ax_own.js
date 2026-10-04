@@ -602,15 +602,93 @@ function extractAxItems(options) {
     return `<${parts.join(' ')}>`;
   };
   let nestedIn = null;
-  const fromElement = (item, el) => ({
-    ...item,
-    markup: markupOf(el),
-    shadow: insideShadow || undefined,
-    nestedIn: nestedIn || undefined,
-  });
+  // Where a cell's text came from.
+  //
+  // A table's rows and columns are not in the item model: a cell is a
+  // structural container and only the text inside it is emitted, so nothing
+  // downstream can tell one cell from the next. The ordinary reading order
+  // does not need to. The Lynx interface does, because it lays a row out as a
+  // row, so an item that came from a cell carries which table, row and cell
+  // it came from, whether that cell was a header, and any span.
+  //
+  // Computed from the element instead of kept in a walk context: this walk has
+  // a dozen early returns, and a context that has to be restored around each
+  // of them is a context that will eventually be restored in the wrong place.
+  // The per-table caches keep it linear for a long table.
+  const tableIds = new WeakMap();
+  const rowNumbers = new WeakMap();
+  const cellNumbers = new WeakMap();
+  let tableCount = 0;
 
-  const emit = (item) => {
+  const numberedTable = (table) => {
+    if (!tableIds.has(table)) tableIds.set(table, (tableCount += 1));
+    return tableIds.get(table);
+  };
+
+  const tableInfoOf = (el) => {
+    if (!el || typeof el.closest !== 'function') return undefined;
+    const cell = el.closest('td,th');
+    if (cell) {
+      const row = cell.parentElement && cell.parentElement.tagName === 'TR'
+        ? cell.parentElement
+        : cell.closest('tr');
+      const table = row && row.closest('table');
+      if (!row || !table) return undefined;
+      const id = numberedTable(table);
+
+      let rows = rowNumbers.get(table);
+      if (!rows) {
+        rows = new Map();
+        for (const [index, one] of Array.from(table.rows || []).entries()) rows.set(one, index);
+        rowNumbers.set(table, rows);
+      }
+      let cells = cellNumbers.get(row);
+      if (!cells) {
+        cells = new Map();
+        let index = 0;
+        for (const child of Array.from(row.children || [])) {
+          if (child.tagName === 'TD' || child.tagName === 'TH') cells.set(child, index++);
+        }
+        cellNumbers.set(row, cells);
+      }
+
+      const colspan = Math.max(1, Number(cell.getAttribute('colspan')) || 1);
+      const rowspan = Math.max(1, Number(cell.getAttribute('rowspan')) || 1);
+      return {
+        id,
+        row: rows.get(row) || 0,
+        cell: cells.get(cell) || 0,
+        header: cell.tagName === 'TH',
+        ...(colspan > 1 ? { colspan } : {}),
+        ...(rowspan > 1 ? { rowspan } : {}),
+      };
+    }
+
+    const caption = el.closest('caption');
+    if (caption) {
+      const table = caption.closest('table');
+      if (table) return { id: numberedTable(table), caption: true };
+    }
+    return undefined;
+  };
+
+  const fromElement = (item, el) => {
+    const table = tableInfoOf(el);
+    return {
+      ...item,
+      ...(table ? { table } : {}),
+      markup: markupOf(el),
+      shadow: insideShadow || undefined,
+      nestedIn: nestedIn || undefined,
+    };
+  };
+
+  const emit = (item, el) => {
     if (item.role !== '__break__') {
+      if (!item.table && el) {
+        const table = tableInfoOf(el);
+        if (table) item.table = table;
+      }
       if (insidePopup) item.popup = insidePopup;
       if (insideClosed) item.pierced = true;
     }
@@ -721,7 +799,7 @@ function extractAxItems(options) {
           markup: `<native-control role="${control.role}" name="${String(control.name).replace(/"/g, '&quot;')}">`,
           shadow: 'user-agent',
           pierced: true,
-        });
+        }, el);
       }
       if (privilegedRoots.has(el) && !described.length) {
         for (const child of kidsOf(el)) {
@@ -846,7 +924,7 @@ function extractAxItems(options) {
       if (child.nodeType === Node.TEXT_NODE) {
         if (!shown) continue; // this element's own text is not on screen
         const text = clean(child.data);
-        if (text) emit({ role: 'text', name: text, markup: '#text' });
+        if (text) emit({ role: 'text', name: text, markup: '#text' }, el);
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         walk(child);
       }

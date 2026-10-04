@@ -114,7 +114,75 @@ function extractVisible() {
   const nodes = [];
   window[Symbol.for('tweb.render')] = nodes;
 
-  const emit = (entry) => out.push(entry);
+  // Where a cell's content came from, for the Lynx interface that lays a row
+  // out as a row. See ax_own.js for why it is computed from the element
+  // rather than carried down the walk, and for what the fields mean. The two
+  // copies have to agree, which is the same constraint the role tables in
+  // both files already carry.
+  const tableIds = new WeakMap();
+  const rowNumbers = new WeakMap();
+  const cellNumbers = new WeakMap();
+  let tableCount = 0;
+
+  const numberedTable = (table) => {
+    if (!tableIds.has(table)) tableIds.set(table, (tableCount += 1));
+    return tableIds.get(table);
+  };
+
+  const tableInfoOf = (el) => {
+    if (!el || typeof el.closest !== 'function') return undefined;
+    const cell = el.closest('td,th');
+    if (cell) {
+      const row = cell.parentElement && cell.parentElement.tagName === 'TR'
+        ? cell.parentElement
+        : cell.closest('tr');
+      const table = row && row.closest('table');
+      if (!row || !table) return undefined;
+      const id = numberedTable(table);
+
+      let rows = rowNumbers.get(table);
+      if (!rows) {
+        rows = new Map();
+        for (const [index, one] of Array.from(table.rows || []).entries()) rows.set(one, index);
+        rowNumbers.set(table, rows);
+      }
+      let cells = cellNumbers.get(row);
+      if (!cells) {
+        cells = new Map();
+        let index = 0;
+        for (const child of Array.from(row.children || [])) {
+          if (child.tagName === 'TD' || child.tagName === 'TH') cells.set(child, index++);
+        }
+        cellNumbers.set(row, cells);
+      }
+
+      const colspan = Math.max(1, Number(cell.getAttribute('colspan')) || 1);
+      const rowspan = Math.max(1, Number(cell.getAttribute('rowspan')) || 1);
+      return {
+        id,
+        row: rows.get(row) || 0,
+        cell: cells.get(cell) || 0,
+        header: cell.tagName === 'TH',
+        ...(colspan > 1 ? { colspan } : {}),
+        ...(rowspan > 1 ? { rowspan } : {}),
+      };
+    }
+
+    const caption = el.closest('caption');
+    if (caption) {
+      const table = caption.closest('table');
+      if (table) return { id: numberedTable(table), caption: true };
+    }
+    return undefined;
+  };
+
+  const emit = (entry, el) => {
+    if (el) {
+      const table = tableInfoOf(el);
+      if (table) entry.table = table;
+    }
+    out.push(entry);
+  };
 
   // The flattened tree — what the browser actually renders. An element with a
   // shadow root renders that shadow tree instead of its own children, and a
@@ -333,7 +401,7 @@ function extractVisible() {
         },
         index: register(),
         block: true,
-      });
+      }, el);
       return;
     }
     //
@@ -351,7 +419,7 @@ function extractVisible() {
       // on it is what the sighted user is reading. Emitting it without the
       // picture would be a line saying nothing; dropping it, as this did,
       // takes the control away.
-      if (text || images.length) emit({ kind: 'button', text, images, index: register(), block: true });
+      if (text || images.length) emit({ kind: 'button', text, images, index: register(), block: true }, el);
       walkNestedControls(el);
       return;
     }
@@ -361,7 +429,7 @@ function extractVisible() {
       // stands on it — see ax_own.js. A div wearing role="link" has none.
       const href = typeof el.href === 'string' && el.href ? el.href : undefined;
       const images = decorationsUnder(el);
-      if (text || images.length) emit({ kind: 'link', text, href, images, index: register(), block: true });
+      if (text || images.length) emit({ kind: 'link', text, href, images, index: register(), block: true }, el);
       walkNestedControls(el);
       return;
     }
@@ -379,7 +447,7 @@ function extractVisible() {
         images: decorationsUnder(el),
         index: register(),
         block: true,
-      });
+      }, el);
       walkNestedControls(el);
       return;
     }
@@ -392,7 +460,7 @@ function extractVisible() {
           images: decorationsUnder(el),
           index: register(),
           block: true,
-        });
+        }, el);
       }
       return;
     }
@@ -409,10 +477,10 @@ function extractVisible() {
     // dropped all six without a word.
     if (shown && tag === 'img') {
       const alt = (el.getAttribute('alt') || '').trim();
-      if (alt) emit({ kind: 'image', text: alt, index: register(), block: true });
+      if (alt) emit({ kind: 'image', text: alt, index: register(), block: true }, el);
       else if (!el.hasAttribute('alt')) {
         const source = nameForImageUrl(el.currentSrc || el.getAttribute('src') || '');
-        if (source) emit({ kind: 'decoration', text: source, index: register(), block: true });
+        if (source) emit({ kind: 'decoration', text: source, index: register(), block: true }, el);
       }
       return;
     }
@@ -435,11 +503,11 @@ function extractVisible() {
       if (at && of) parts.push(`${at} of ${of}`);
       else if (at) parts.push(`${at}, live`);
       if (el.muted || el.volume === 0) parts.push('muted');
-      emit({ kind: 'media', tag, text: parts.join(', '), index: register(), block: true });
+      emit({ kind: 'media', tag, text: parts.join(', '), index: register(), block: true }, el);
       return;
     }
     if (shown && (tag === 'iframe' || tag === 'frame')) {
-      emit({ kind: 'frame', text: el.getAttribute('title') || el.getAttribute('src') || '', index: register(), block: true });
+      emit({ kind: 'frame', text: el.getAttribute('title') || el.getAttribute('src') || '', index: register(), block: true }, el);
       return;
     }
 
@@ -455,7 +523,7 @@ function extractVisible() {
     // picture and `Alt+M` can hover it.
     if (shown) {
       for (const picture of decorationsOf(el)) {
-        emit({ kind: 'decoration', text: picture, index: register(), block: true });
+        emit({ kind: 'decoration', text: picture, index: register(), block: true }, el);
       }
     }
 
@@ -480,7 +548,7 @@ function extractVisible() {
           text,
           block: isBlock && !opened,
           paragraph: startsParagraph && !opened,
-        });
+        }, el);
         opened = true;
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         walk(child, false);
@@ -559,6 +627,7 @@ async function snapshotRenderBlocks(target) {
       href: entry.href,
       editable: entry.editable,
       file: entry.file,
+      table: entry.table,
       renderIndex: entry.index,
       frame,
     },
