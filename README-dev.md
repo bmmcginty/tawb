@@ -806,6 +806,67 @@ mute/unmute.
 There is no `>` marker on the focused line: the terminal cursor is already
 sitting there, and printing a marker would only shift every line sideways.
 
+## The Lynx compatibility interface
+
+`--interface=lynx` is a presentation and interaction profile over the same
+browser, `Core`, and activation paths. It does not launch Lynx for browsing and
+does not give Lynx's network, cookie, proxy, or command settings to the page.
+The boundary is deliberate: Lynx supplies keyboard policy; Chrome or Firefox
+continues to supply the modern web platform.
+
+`src/lynx_config.js` obtains the effective maps by spawning the selected binary
+without a shell:
+
+```
+lynx -dump LYNXKEYMAP:
+lynx -dump LYNXEDITMAP:
+lynx -show_cfg
+```
+
+The C locale keeps function identifiers stable. Asking Lynx itself means its
+compiled defaults, `LYNX_CFG`, include processing, `.lynxrc`, vi/Emacs keys,
+and line-editor selection have already been resolved. `-show_cfg` and the
+later `.lynxrc` keypad setting provide only the interaction preferences TAWB
+needs: numbering mode, marker side, and text-field activation. Function names
+are translated to TAWB semantic action ids. Unknown or unsafe functions are
+retained as an unsupported list for keyboard help; they are never executed.
+A failed or absent binary selects `src/interfaces.js`'s built-in Lynx defaults.
+
+`Keymap` accepts the imported bindings as its reset baseline and then reads
+`keys-lynx.json`. The ordinary interface continues to read the original
+version-1 `keys.json`; its path, schema, defaults, and interpretation did not
+change. Any future schema change must load and convert version 1 in memory
+before writing a newer version, so merely upgrading TAWB can never require a
+user migration.
+
+`src/lynx_display.js` creates display copies of Core blocks. It renders classic
+form markers and adds link/form numbers as metadata. `src/layout.js` reserves
+terminal cells for those markers but does not insert them into block or line
+text. Search offsets, live comparisons, place restoration, and browser element
+identity therefore remain independent of numbering. `renderRow()` is the only
+place that adds reverse-video or bold ANSI attributes, keeping escape bytes out
+of searchable text and caret arithmetic. Movement repaints the old and new
+wrapped active regions when highlighting changes.
+
+Number entry snapshots references to the numbered block objects rather than
+indexes. If a live rebuild replaces the page before entry completes, the old
+object is no longer present and the command reports no such link; it cannot
+activate whichever unrelated block inherited that index. Links continue
+through `activateCurrent`. Numbered form controls and the `g` suffix only move
+the terminal selection.
+
+The reference and information commands reuse the internal-list buffer while
+holding live rebuilds. Reference entries likewise retain original block
+objects and activate through the page after the list closes. This preserves
+fragment handling, authentication, focus observation, and history instead of
+turning every reference into a fresh address-bar navigation.
+
+An ignored upstream checkout at `./lynx` is used to check behavior against Lynx
+2.9.3a. The initial display and configuration work was verified at commit
+`29d5a703b02a2c137c8c03949ccfec74d6c17b8a`, particularly `LYKeymap.c`,
+`LYEditmap.c`, `LYrcFile.c`, `LYShowInfo.c`, `LYList.c`, `LYGetFile.c`, and the
+numbering and highlight paths in `GridText.c` and `LYUtils.c`.
+
 ## How lines are written
 
 One item per line, so positions stay predictable:

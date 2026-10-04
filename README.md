@@ -171,6 +171,74 @@ action, and replace or add a key. TAWB stores the result in
 `$XDG_CONFIG_HOME/tawb/keys.json`, or `~/.config/tawb/keys.json` when
 `XDG_CONFIG_HOME` is not set.
 
+## Lynx interface
+
+Readers coming from Lynx can select a separate first-party interface while
+keeping Chrome or Firefox as the web engine:
+
+```sh
+npm start -- --interface=lynx https://example.com
+# Or persist it in TAWB's settings file:
+TAWB_INTERFACE=lynx npm start -- https://example.com
+```
+
+The interface asks an installed Lynx for its effective `LYNXKEYMAP:` and
+`LYNXEDITMAP:`. This respects Lynx defaults, `LYNX_CFG`, included configuration
+files, `.lynxrc`, vi or Emacs movement, and the selected line editor. Use a
+particular binary or configuration with:
+
+```sh
+npm start -- --interface=lynx \
+  --lynx-executable=/usr/bin/lynx \
+  --lynx-config="$HOME/lynx.cfg"
+```
+
+`TAWB_LYNX` can name the executable as well. If Lynx is unavailable, TAWB uses
+a built-in standard Lynx map. It imports only interaction settings; cookies,
+credentials, proxies, user agents, viewers, printers, and executable commands
+remain with Lynx or the graphical browser and are never run by the adapter.
+
+The common Lynx commands include:
+
+| Key | Action |
+| --- | --- |
+| Up / Down | Previous / next link or form control |
+| Right / Enter | Activate the current item |
+| Left | Go back |
+| Space / `b` | Next / previous screen |
+| `g` / `G` | Enter a new address / edit the current address |
+| `/`, `n`, `N` | Find / next match / previous match |
+| `l` / `A` | List references by name / by address |
+| `=` | Information about the current document and selected item |
+| `\\` | Toggle source and presentation |
+| `k`, `?`, `H` | Lynx-profile keyboard help |
+| `q` | Quit |
+
+Links and controls use Lynx-like terminal forms and the current control is
+shown in reverse video. Checkboxes appear as `[ ]` or `[X]`, radios as `( )`
+or `(*)`, selects in brackets, and text entries as underscore fields. Lynx
+link/field numbering preferences and left/right marker placement are honored.
+Typing a number opens the familiar status-line prompt; Enter follows a link,
+while `g` moves to it without activation. Numbering a form control moves to it
+without pressing or submitting it.
+
+Text fields normally enter editing as soon as navigation reaches them. Lynx's
+`TEXTFIELDS_NEED_ACTIVATION` setting changes that to explicit activation.
+Imported line-editor bindings apply in fields and TAWB prompts, including
+Lynx's one-command escape. Up, Down, Tab, or Shift-Tab moves out to another
+control.
+
+Lynx-specific overrides are saved to `keys-lynx.json`; ordinary TAWB bindings
+remain in the existing version-1 `keys.json`. Enabling the interface therefore
+requires no migration and never rewrites the user's normal key configuration.
+The keyboard screen lists imported Lynx functions that have no safe TAWB
+equivalent rather than silently assigning them different behavior.
+
+The display intentionally still uses TAWB's semantic extraction. Some visual
+flow, old parser toggles, shell commands, external programs, and advanced
+number expressions have no equivalent yet; `plan.md` tracks that remaining
+compatibility work.
+
 ## Four ways to read a page
 
 Press backslash (`\`) to cycle through four views:

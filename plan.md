@@ -104,11 +104,11 @@ Compatibility requirements:
 
 ## 7. Documentation and release verification
 
-- [ ] Document startup flags, environment variables, config precedence, imported settings,
+- [x] Document startup flags, environment variables, config precedence, imported settings,
       unsupported Lynx commands, and fallback behavior in `README.md`.
-- [ ] Document the adapter, key translation, context maps, and maintenance constraints in
+- [x] Document the adapter, key translation, context maps, and maintenance constraints in
       `README-dev.md`.
-- [ ] Add a migration note confirming that existing default-interface users need take no
+- [x] Add a migration note confirming that existing default-interface users need take no
       action.
 - [ ] Run the complete unit suite.
 - [ ] Run focused browser tests for navigation, forms, live updates, and dialogs on Chromium
