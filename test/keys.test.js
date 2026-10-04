@@ -76,10 +76,10 @@ test('imported Lynx defaults reset cleanly and expose unsupported commands', () 
     bindings: { quit: ['x'] }, unsupported: ['SHELL'],
   });
   assert.equal(keys.actionFor('x'), 'quit');
-  keys.assign('quit', 'z');
+  keys.assign('quit', '~');
   keys.reset();
   assert.equal(keys.actionFor('x'), 'quit');
-  assert.equal(keys.actionFor('z'), null);
+  assert.equal(keys.actionFor('~'), null);
   assert.ok(wizardRows(keys).some((row) => row.type === 'unsupported' && /SHELL/.test(row.label)));
 });
 
@@ -92,6 +92,15 @@ test('the version-one default key file still loads without conversion', () => {
   assert.equal(keys.actionFor('x'), 'quit');
   assert.equal(keys.actionFor('q'), null);
   assert.equal(keys.actionFor('j'), 'next-line');
+});
+
+test('an old Lynx key file wins over a new built-in action on the same key', () => {
+  const directory = tempDir('tawb-old-lynx-keys-');
+  const file = path.join(directory, 'keys-lynx.json');
+  fs.writeFileSync(file, JSON.stringify({ version: 1, actions: { quit: ['x'] } }));
+  const keys = new Keymap({ terminfo: {}, profile: 'lynx', file });
+  assert.equal(keys.actionFor('x'), 'quit');
+  assert.equal(keys.byId.get('reload-no-cache').bindings.includes('x'), false);
 });
 
 test('terminfo key sequences are added to the portable fallbacks', () => {

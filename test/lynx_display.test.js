@@ -279,7 +279,7 @@ test('the Lynx one-command escape cancels or refuses an unknown command', async 
   assert.equal(state.mode, 'type');
   assert.equal(state.statusMsg, 'Command cancelled.');
 
-  await captureTerminalAsync(() => handleFieldCommandKey('z', state, page));
+  await captureTerminalAsync(() => handleFieldCommandKey('~', state, page));
   assert.equal(state.mode, 'type');
   assert.equal(state.statusMsg, 'That is not a Lynx browse command.');
 });

@@ -284,6 +284,10 @@ class Keymap {
     this.namedSequences = new Map();
     this.sequenceNames = new Map();
     this.buildNames();
+    this.displaceUnspecifiedBindings(new Set(Object.keys(bindings)));
+    for (const action of this.actions) {
+      this.defaultBindings.set(action.id, [...action.bindings]);
+    }
     if (load) this.load();
     this.rebuild();
   }
@@ -333,15 +337,37 @@ class Keymap {
     return spec.startsWith('raw:') ? `sequence ${JSON.stringify(this.sequencesFor(spec)[0] || '')}` : spec;
   }
 
+  // An explicit imported or saved binding wins over a built-in binding added
+  // in a later release. Old version-one files do not contain newly introduced
+  // actions, so merely adding one on a familiar key must not steal that key
+  // from the action the reader explicitly put there years ago.
+  displaceUnspecifiedBindings(explicit) {
+    const claimed = new Set();
+    for (const action of this.actions) {
+      if (!explicit.has(action.id)) continue;
+      for (const binding of action.bindings) {
+        for (const sequence of this.sequencesFor(binding)) claimed.add(sequence);
+      }
+    }
+    for (const action of this.actions) {
+      if (explicit.has(action.id)) continue;
+      action.bindings = action.bindings.filter((binding) =>
+        !this.sequencesFor(binding).some((sequence) => claimed.has(sequence)));
+    }
+  }
+
   load() {
     let parsed;
     try { parsed = JSON.parse(fs.readFileSync(this.file, 'utf8')); } catch { return; }
     if (!parsed || typeof parsed.actions !== 'object') return;
+    const explicit = new Set();
     for (const [id, bindings] of Object.entries(parsed.actions)) {
       const action = this.byId.get(id);
       if (!action || !Array.isArray(bindings) || !bindings.every((item) => typeof item === 'string')) continue;
       action.bindings = [...new Set(bindings.filter((item) => this.sequencesFor(item).length))];
+      explicit.add(id);
     }
+    this.displaceUnspecifiedBindings(explicit);
   }
 
   // Each action is written into the map of every keyboard it belongs to, and

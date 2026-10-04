@@ -98,16 +98,16 @@ test('the two interfaces read their own key files and nothing else', () => {
   const directory = tempDir('tawb-interface-files-');
   const ordinaryFile = path.join(directory, 'keys.json');
   const lynxFile = path.join(directory, 'keys-lynx.json');
-  fs.writeFileSync(ordinaryFile, JSON.stringify({ version: 1, actions: { quit: ['x'] } }));
+  fs.writeFileSync(ordinaryFile, JSON.stringify({ version: 1, actions: { quit: ['~'] } }));
   fs.writeFileSync(lynxFile, JSON.stringify({ version: 1, actions: { quit: ['y'] } }));
 
   const ordinary = new Keymap({ terminfo: {}, file: ordinaryFile });
-  assert.equal(ordinary.actionFor('x'), 'quit');
+  assert.equal(ordinary.actionFor('~'), 'quit');
   assert.equal(ordinary.actionFor('y'), null, 'keys-lynx.json was not read');
 
   const lynx = new Keymap({ terminfo: {}, profile: 'lynx', file: lynxFile });
   assert.equal(lynx.actionFor('y'), 'quit');
-  assert.equal(lynx.actionFor('x'), null, 'keys.json was not read');
+  assert.equal(lynx.actionFor('~'), null, 'keys.json was not read');
 });
 
 test('default bindings and actions are the ones TAWB always had', () => {
