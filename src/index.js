@@ -697,6 +697,9 @@ function hintText(state) {
     return `${refused ? 'Password refused. ' : ''}Sign in to ${describeChallenge(challenge)}`
       + ' — Enter: next  Esc: cancel';
   }
+  if (state.interface === 'lynx') {
+    return "Commands: Use arrow keys to move, '?' for help, 'q' to quit, '<-' to go back.";
+  }
   return 'j/k line  h/l/f/b/n/p nav  / find  m click  \\ view  ^L address  c changes  q quit';
 }
 
@@ -1972,8 +1975,8 @@ async function handleBrowseKey(chunk, state, page) {
   // rather than one that leaves it open and them somewhere else.
   if (action === 'close-popup' && state.core.popup) return closePopup(state, page);
 
-  if (action === 'location-bar') {
-    focusAddressBar(state, page);
+  if (action === 'location-bar' || action === 'goto' || action === 'location-edit') {
+    focusAddressBar(state, page, action === 'goto' ? '' : page.url());
     return;
   }
 
@@ -2038,7 +2041,7 @@ async function handleBrowseKey(chunk, state, page) {
   // accessibility tree has no element references to match against — the
   // reader is told their place could not be kept rather than left to work
   // out why they are somewhere else.
-  if (action === 'cycle-view') {
+  if (action === 'cycle-view' || action === 'source-view') {
     const viewportRow = state.cursor - state.scroll;
     const anchor = anchorFor(state);
     const place = await withTimeout(
@@ -2047,7 +2050,16 @@ async function handleBrowseKey(chunk, state, page) {
     ).catch(() => null);
 
     const cycle = state.sources;
-    state.core.source = cycle[(cycle.indexOf(state.core.source) + 1) % cycle.length];
+    if (action === 'source-view') {
+      if (state.core.source === 'source') {
+        state.core.source = state.lynxPresentationSource || cycle[0];
+      } else {
+        state.lynxPresentationSource = state.core.source;
+        state.core.source = cycle.includes('source') ? 'source' : state.core.source;
+      }
+    } else {
+      state.core.source = cycle[(cycle.indexOf(state.core.source) + 1) % cycle.length];
+    }
     await refresh(state, page);
 
     const kept = await withTimeout(
@@ -2164,12 +2176,15 @@ async function handleBrowseKey(chunk, state, page) {
     return;
   }
 
-  if (action === 'repeat-find') {
+  if (action === 'repeat-find' || action === 'repeat-find-forward' || action === 'repeat-find-backward') {
     if (!state.lastFind) {
       setStatus(state, 'Nothing searched for yet — press / to search.');
       return;
     }
-    return runSearch(state, page, state.lastFind.text, state.lastFind.direction);
+    const direction = action === 'repeat-find-backward'
+      ? -1 : action === 'repeat-find-forward' ? 1 : state.lastFind.direction;
+    state.lastFind.direction = direction;
+    return runSearch(state, page, state.lastFind.text, direction);
   }
 
   if (action === 'next-paragraph' || action === 'previous-paragraph') {
@@ -4215,7 +4230,7 @@ module.exports = {
   handleBrowseKey, handleTypeKey, handleFormsKey, handleControlKey, handlePageKey,
   handleAddressKey, handleFindKey, browserKeyForTerminalSequence,
   findText, runSearch,
-  render, drawList, drawAddress, drawHint, drawStatus, setStatus,
+  render, drawList, drawAddress, drawHint, hintText, drawStatus, setStatus,
   patchEditedLine, moveSelection, repaintLynxSelection, moveScreen, preserveViewportRow,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
   itemUnderCursor, linkTarget, shortTarget,

@@ -20,7 +20,9 @@ test('interface profiles keep their defaults and saved files separate', () => {
   const ordinary = new Keymap({ terminfo: {}, load: false });
   const lynx = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
   assert.equal(ordinary.actionFor('g'), 'top');
-  assert.equal(lynx.actionFor('g'), 'location-bar');
+  assert.equal(lynx.actionFor('g'), 'goto');
+  assert.equal(lynx.actionFor('G'), 'location-edit');
+  assert.equal(lynx.actionFor('\\'), 'source-view');
   assert.equal(lynx.actionFor('\x1b[D'), 'history-back');
   assert.equal(lynx.actionFor('\x1b[C'), 'activate');
   assert.equal(lynx.actionFor(' '), 'next-screen');

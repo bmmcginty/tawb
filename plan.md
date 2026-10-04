@@ -64,9 +64,9 @@ Compatibility requirements:
 
 - [x] Make Up/Down and imported `PREV_LINK`/`NEXT_LINK` move between interactive topics.
 - [x] Make Left/`PREV_DOC` go back and Right/Enter/`ACTIVATE` activate.
-- [ ] Implement Lynx screen movement, top/bottom, address, edited-address, find, repeat
+- [x] Implement Lynx screen movement, top/bottom, address, edited-address, find, repeat
       find, refresh, reload, download, bookmarks, history, and quit semantics.
-- [ ] Add direct SOURCE selection rather than requiring view cycling.
+- [x] Add direct SOURCE selection rather than requiring view cycling.
 - [ ] Add current-page information for `INFO`.
 - [ ] Add accessible link-list and address-list views for `LIST` and `ADDRLIST`.
 - [x] Keep an always-available recovery route from transient modes and webpage keyboard

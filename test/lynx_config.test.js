@@ -18,18 +18,26 @@ test('Lynx key names become portable TAWB key specifications', () => {
 test('the effective Lynx browse map is translated by function name', () => {
   const parsed = parseBrowseMap([
     'q           QUIT          quit the browser',
+    'g           GOTO          enter an address',
+    'G           ELGOTO        edit the current address',
     '^R          RELOAD        reload the current document',
     '<space>     NEXT_PAGE     view the next page',
     'Up Arrow    PREV_LINK     make the previous link current',
     'Right Arrow ACTIVATE      activate the current link',
+    '?           HELP          display help',
+    '\\           SOURCE        toggle source',
     '!           SHELL         escape to a shell',
   ].join('\n'));
 
   assert.deepEqual(parsed.bindings.quit, ['q']);
+  assert.deepEqual(parsed.bindings.goto, ['g']);
+  assert.deepEqual(parsed.bindings['location-edit'], ['G']);
+  assert.deepEqual(parsed.bindings['source-view'], ['\\']);
   assert.deepEqual(parsed.bindings['reload-page'], ['Ctrl+R']);
   assert.deepEqual(parsed.bindings['next-screen'], ['Space']);
   assert.deepEqual(parsed.bindings['previous-focusable'], ['ArrowUp']);
   assert.deepEqual(parsed.bindings.activate, ['ArrowRight']);
+  assert.deepEqual(parsed.bindings['keyboard-wizard'], ['?']);
   assert.deepEqual(parsed.unsupported, ['SHELL']);
 });
 

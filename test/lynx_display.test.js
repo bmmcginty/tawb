@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { renderLynxItem, renderLynxBlock } = require('../src/lynx_display');
-const { moveSelection, relayout, renderRow, typingText } = require('../src/index');
+const { hintText, moveSelection, relayout, renderRow, typingText } = require('../src/index');
 
 function item(role, name, extra = {}) { return { role, name, ...extra }; }
 
@@ -15,6 +15,11 @@ function captureTerminal(fn) {
   try { fn(); } finally { process.stdout.write = write; }
   return chunks.join('');
 }
+
+test('the Lynx browse hint uses Lynx wording', () => {
+  assert.equal(hintText({ interface: 'lynx', mode: 'browse' }),
+    "Commands: Use arrow keys to move, '?' for help, 'q' to quit, '<-' to go back.");
+});
 
 test('the Lynx renderer uses Lynx form markers', () => {
   assert.equal(renderLynxItem(item('link', 'News')), 'News');

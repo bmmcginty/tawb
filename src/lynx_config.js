@@ -4,7 +4,7 @@ const { spawnSync } = require('node:child_process');
 
 const BROWSE_FUNCTIONS = {
   QUIT: 'quit', ABORT: 'quit',
-  GOTO: 'location-bar',
+  GOTO: 'goto', ELGOTO: 'location-edit',
   PREV_DOC: 'history-back', NEXT_DOC: 'history-forward',
   ACTIVATE: 'activate',
   DOWN_TWO: 'next-line', UP_TWO: 'previous-line',
@@ -14,9 +14,9 @@ const BROWSE_FUNCTIONS = {
   ADD_BOOKMARK: 'add-bookmark', VIEW_BOOKMARK: 'bookmarks',
   VLINKS: 'history', HISTORY: 'history', DOWNLOAD: 'download-link',
   INFO: 'where',
-  WHEREIS: 'find-forward', NEXT: 'repeat-find',
+  WHEREIS: 'find-forward', NEXT: 'repeat-find-forward', PREV: 'repeat-find-backward',
   REFRESH: 'refresh', RELOAD: 'reload-page',
-  SOURCE: 'cycle-view', KEYMAP: 'keyboard-wizard',
+  SOURCE: 'source-view', KEYMAP: 'keyboard-wizard', HELP: 'keyboard-wizard', DWIMHELP: 'keyboard-wizard',
   NEXT_LINK: 'next-focusable', FASTFORW_LINK: 'next-focusable', DOWN_LINK: 'next-focusable',
   PREV_LINK: 'previous-focusable', FASTBACKW_LINK: 'previous-focusable', UP_LINK: 'previous-focusable',
 };
