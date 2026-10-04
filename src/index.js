@@ -2042,6 +2042,10 @@ async function handleBrowseKey(chunk, state, page) {
   }
   const action = (state.keys || FALLBACK_KEYMAP).actionFor(chunk);
   if (action === 'quit') return 'quit';
+  if (action === 'link-number') {
+    openLinkNumberPrompt(state);
+    return;
+  }
 
   // A reader inside a menu must always have a way out that also shuts it,
   // rather than one that leaves it open and them somewhere else.

@@ -1,0 +1,10 @@
+g           GOTO          go to a document given as a URL
+G           ECGOTO        edit the current document's URL and go to it
+h           HELP          display help on using the browser
+k           KEYMAP        display the current key map
+l           LIST          list the references in the current document
+0           F_LINK_NUM    invoke the Follow link number prompt
+Up Arrow    PREV_LINK     make the previous link current
+Down Arrow  NEXT_LINK     make the next link current
+Left Arrow  PREV_DOC      return to the previous document
+Right Arrow ACTIVATE      follow the current link

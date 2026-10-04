@@ -6,7 +6,7 @@ const assert = require('node:assert');
 const { numberLynxBlocks, renderLynxItem, renderLynxBlock } = require('../src/lynx_display');
 const { layoutLines } = require('../src/layout');
 const {
-  handleNumberKey, hintText, moveSelection, openLinkNumberPrompt,
+  handleBrowseKey, handleNumberKey, hintText, moveSelection, openLinkNumberPrompt,
   parseLynxNumberExpression, relativeLinkNumber, relayout, renderRow, typingText,
 } = require('../src/index');
 const { Keymap } = require('../src/keys');
@@ -138,6 +138,23 @@ test('moving between Lynx links removes the old highlight and draws the new one'
   const output = captureTerminal(() => moveSelection(state, 1, { url: () => 'https://example.test/' }));
   assert.ok(output.includes('\x1b[2KFirst'), JSON.stringify(output));
   assert.ok(output.includes('\x1b[2K\x1b[7mSecond\x1b[0m'), JSON.stringify(output));
+});
+
+test('zero explicitly opens the Lynx number prompt when numbering is hidden', async () => {
+  const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  keys.preferences = { numberLinks: false, numberFields: false };
+  const block = { text: 'News', item: item('link', 'News') };
+  const state = {
+    interface: 'lynx', mode: 'browse', cursor: 0, scroll: 0, col: 0,
+    keys, inputSeen: false, library: null, dialog: null, statusMsg: '', drawn: {},
+    core: { blocks: [block], at() {}, markInput() {} },
+    lines: [{ blockIndex: 0, text: 'News' }],
+  };
+  await captureTerminalAsync(() => handleBrowseKey('0', state, {
+    url: () => 'https://example.test/',
+  }));
+  assert.equal(state.mode, 'number');
+  assert.equal(state.linkNumber.text, '');
 });
 
 test('Lynx number expressions accept page, relative, and move suffixes', () => {

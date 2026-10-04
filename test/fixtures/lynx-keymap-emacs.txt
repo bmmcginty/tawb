@@ -1,0 +1,6 @@
+^B          PREV_DOC      return to the previous document
+^F          ACTIVATE      follow the current link
+^N          NEXT_LINK     make the next link current
+^P          PREV_LINK     make the previous link current
+<space>     NEXT_PAGE     move down to the next page
+b           PREV_PAGE     move up to the previous page

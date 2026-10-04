@@ -19,7 +19,7 @@ test('the effective Lynx browse map is translated by function name', () => {
   const parsed = parseBrowseMap([
     'q           QUIT          quit the browser',
     'g           GOTO          enter an address',
-    'G           ELGOTO        edit the current address',
+    'G           ECGOTO        edit the current address',
     '^R          RELOAD        reload the current document',
     '<space>     NEXT_PAGE     view the next page',
     'Up Arrow    PREV_LINK     make the previous link current',
@@ -28,6 +28,7 @@ test('the effective Lynx browse map is translated by function name', () => {
     'l           LIST          list references',
     'A           ADDRLIST      list reference addresses',
     '=           INFO          document information',
+    '0           F_LINK_NUM    follow a number',
     '\\           SOURCE        toggle source',
     '!           SHELL         escape to a shell',
   ].join('\n'));
@@ -44,6 +45,7 @@ test('the effective Lynx browse map is translated by function name', () => {
   assert.deepEqual(parsed.bindings['list-links'], ['l']);
   assert.deepEqual(parsed.bindings['list-addresses'], ['A']);
   assert.deepEqual(parsed.bindings['document-info'], ['=']);
+  assert.deepEqual(parsed.bindings['link-number'], ['0']);
   assert.deepEqual(parsed.unsupported, ['SHELL']);
 });
 

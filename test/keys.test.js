@@ -9,6 +9,7 @@ const { PassThrough } = require('node:stream');
 const { tempDir } = require('./tmpdir');
 
 const { Keymap, configPath, readTerminfo } = require('../src/keys');
+const { parseBrowseMap } = require('../src/lynx_config');
 const { runKeyWizard, wizardRows } = require('../src/key_wizard');
 
 test('interface profiles keep their defaults and saved files separate', () => {
@@ -30,9 +31,39 @@ test('interface profiles keep their defaults and saved files separate', () => {
   assert.equal(lynx.actionFor('\x1b[B'), 'next-focusable');
   assert.equal(lynx.actionFor('\x1b[A'), 'previous-focusable');
   assert.equal(lynx.actionFor('k'), 'keyboard-wizard');
+  assert.equal(lynx.actionFor('0'), 'link-number');
   assert.equal(lynx.editingActionFor('\x01'), 'edit-line-start');
   assert.equal(lynx.editingActionFor('\x0e'), 'edit-next-word');
   assert.equal(lynx.editingActionFor('\x10'), 'edit-previous-word');
+});
+
+test('effective standard, vi, and Emacs Lynx maps drive their familiar keys', () => {
+  const imported = (name) => parseBrowseMap(fs.readFileSync(
+    path.join(__dirname, 'fixtures', `lynx-keymap-${name}.txt`), 'utf8')).bindings;
+
+  const standard = new Keymap({
+    terminfo: {}, profile: 'lynx', load: false, bindings: imported('standard'),
+  });
+  assert.equal(standard.actionFor('G'), 'location-edit');
+  assert.equal(standard.actionFor('0'), 'link-number');
+  assert.equal(standard.actionFor('l'), 'list-links');
+
+  const vi = new Keymap({
+    terminfo: {}, profile: 'lynx', load: false, bindings: imported('vi'),
+  });
+  assert.equal(vi.actionFor('h'), 'history-back');
+  assert.equal(vi.actionFor('j'), 'next-focusable');
+  assert.equal(vi.actionFor('k'), 'previous-focusable');
+  assert.equal(vi.actionFor('l'), 'activate');
+  assert.equal(vi.actionFor('L'), 'list-links');
+
+  const emacs = new Keymap({
+    terminfo: {}, profile: 'lynx', load: false, bindings: imported('emacs'),
+  });
+  assert.equal(emacs.actionFor('\x02'), 'history-back');
+  assert.equal(emacs.actionFor('\x06'), 'activate');
+  assert.equal(emacs.actionFor('\x0e'), 'next-focusable');
+  assert.equal(emacs.actionFor('\x10'), 'previous-focusable');
 });
 
 test('imported Lynx defaults reset cleanly and expose unsupported commands', () => {

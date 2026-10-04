@@ -72,7 +72,7 @@ Compatibility requirements:
 - [x] Keep an always-available recovery route from transient modes and webpage keyboard
       passthrough even when imported mappings are incomplete.
 - [x] Clearly expose unsupported commands in Lynx keyboard help.
-- [ ] Add unit and interaction tests for the standard, vi, and Emacs Lynx maps.
+- [x] Add unit and interaction tests for the standard, vi, and Emacs Lynx maps.
 
 ## 5. Numbered links and fields
 

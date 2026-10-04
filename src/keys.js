@@ -99,6 +99,7 @@ const ACTIONS = [
   ['previous-change', 'Previous changed area', ['C']],
   ['where', 'Report position', ['=']],
   ['document-info', 'Information about current document', []],
+  ['link-number', 'Follow a link or page number', []],
   ['toggle-live', 'Toggle live updates', ['L']],
   // Whether the status row says where the link under the cursor goes. A
   // graphical browser has no switch for this because its status bar costs

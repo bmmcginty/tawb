@@ -54,6 +54,7 @@ const LYNX_BINDINGS = {
   'previous-change': [],
   where: [],
   'document-info': ['='],
+  'link-number': ['0'],
   'toggle-live': [],
   'toggle-link-address': [],
   'toggle-short-links': [],
