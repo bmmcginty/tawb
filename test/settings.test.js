@@ -39,6 +39,19 @@ test('settings are read from disk as arguments', () => {
   assert.deepEqual(readSettings({ file }), ['--browser', 'firefox', '--keep-browser']);
 });
 
+test('the interface and its Lynx settings can be chosen in the settings file', () => {
+  const dir = tempDir('tawb-settings-interface-');
+  const file = path.join(dir, 'settings');
+  fs.writeFileSync(file, '--interface=lynx\n--lynx-executable=/opt/lynx\n');
+  const args = parseArgs([...readSettings({ file })], {});
+  assert.equal(args.interface, 'lynx');
+  assert.equal(args.lynxExecutable, '/opt/lynx');
+
+  // The command line is still read after the file, so it wins.
+  assert.equal(
+    parseArgs([...readSettings({ file }), '--interface=default'], {}).interface, 'default');
+});
+
 test('command-line options can override persistent browser settings', () => {
   const configured = ['--browser', 'firefox', '--keep-browser'];
   assert.equal(parseArgs([], { TAWB_LOG_DIR: '/environment/logs' }).logDir, '/environment/logs');
@@ -64,6 +77,8 @@ test('command-line options can override persistent browser settings', () => {
   ], {});
   assert.equal(lynxArgs.lynxExecutable, '/opt/lynx');
   assert.equal(lynxArgs.lynxConfig, '/config/lynx.cfg');
+  assert.equal(parseArgs(['--lynx-executable', '/opt/x'], {}).lynxExecutable, '/opt/x');
+  assert.equal(parseArgs(['--lynx-config=/config/x'], {}).lynxConfig, '/config/x');
 
   assert.equal(parseArgs([], {}).escapeUnicode, false);
   assert.equal(parseArgs(['--escape-unicode'], {}).escapeUnicode, true);

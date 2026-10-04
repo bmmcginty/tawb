@@ -110,7 +110,7 @@ Compatibility requirements:
       `README-dev.md`.
 - [x] Add a migration note confirming that existing default-interface users need take no
       action.
-- [ ] Run the complete unit suite.
+- [x] Run the complete unit suite.
 - [ ] Run focused browser tests for navigation, forms, live updates, and dialogs on Chromium
       and Firefox where available.
 - [ ] Test manually with stock Lynx defaults and customized vi, Emacs, numbered-link, and

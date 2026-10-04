@@ -6,8 +6,8 @@ const assert = require('node:assert');
 const { numberLynxBlocks, renderLynxItem, renderLynxBlock } = require('../src/lynx_display');
 const { layoutLines } = require('../src/layout');
 const {
-  contextNavigationAction, handleBrowseKey, handleNumberKey, hintText,
-  moveSelection, openLinkNumberPrompt,
+  contextNavigationAction, handleBrowseKey, handleFieldCommandKey, handleNumberKey,
+  hintText, moveSelection, openLinkNumberPrompt,
   parseLynxNumberExpression, relativeLinkNumber, relayout, renderRow, typingText,
 } = require('../src/index');
 const { Keymap } = require('../src/keys');
@@ -52,6 +52,229 @@ test('the Lynx renderer uses Lynx form markers', () => {
   assert.equal(renderLynxItem(item('img', 'Map')), 'Map');
   assert.equal(renderLynxItem(item('img', '')), '[IMAGE]');
   assert.equal(renderLynxItem(item('iframe', 'about:blank')), 'IFRAME: about:blank');
+  assert.equal(renderLynxItem(item('iframe', '')), 'IFRAME:');
+  // The remaining interactive roles use the marker family that matches how
+  // they are operated: toggled in place, chosen, or typed into.
+  assert.equal(renderLynxItem(item('switch', 'Night mode', { checked: true })), '[X] Night mode');
+  assert.equal(renderLynxItem(item('menuitemcheckbox', 'Bold', { checked: 'mixed' })), '[-] Bold');
+  assert.equal(renderLynxItem(item('menuitemradio', 'Blue', { checked: true })), '(*) Blue');
+  assert.equal(renderLynxItem(item('option', 'France')), 'France');
+  assert.equal(renderLynxItem(item('listbox', 'Country', { value: 'Canada' })),
+    'Country [Canada]');
+  assert.equal(renderLynxItem(item('listbox', 'Country', {})),
+    'Country [Country]');
+  assert.equal(renderLynxItem(item('searchbox', 'Query', { value: 'lynx' })),
+    `Query lynx${'_'.repeat(16)}`);
+  assert.equal(renderLynxItem(item('slider', 'Volume', { value: '7' })), 'Volume [7]');
+  assert.equal(renderLynxItem(item('spinbutton', 'Seats', {})), 'Seats [0]');
+  assert.equal(renderLynxItem(item('video', 'playing, 0:01 of 3:00')),
+    '[playing, 0:01 of 3:00]');
+  assert.equal(renderLynxItem(item('audio', '')), '[audio]');
+  assert.equal(renderLynxItem(item('group', 'Group')), 'Group');
+  assert.equal(renderLynxItem(undefined, 'fallback'), 'fallback');
+});
+
+test('Lynx numbering follows the links, fields, and both keypad modes', () => {
+  const blocks = [
+    { text: 'News', item: item('link', 'News') },
+    { text: 'Go', item: item('button', 'Go') },
+    { text: '[ ] Updates', item: item('checkbox', 'Updates', { checked: false }) },
+    { text: 'Search', item: item('textbox', 'Search') },
+    { text: 'France', item: item('option', 'France') },
+  ];
+  const numbers = (preferences) => numberLynxBlocks(blocks, preferences)
+    .map((block) => block.displayNumber);
+
+  // Numbers as arrows: nothing is numbered at all.
+  assert.deepEqual(numbers({ numberLinks: false, numberFields: false }),
+    [undefined, undefined, undefined, undefined, undefined]);
+  assert.deepEqual(numbers({ numberLinks: true, numberFields: false }),
+    [1, undefined, undefined, undefined, undefined]);
+  assert.deepEqual(numbers({ numberLinks: false, numberFields: true }),
+    [undefined, 1, 2, 3, undefined]);
+  assert.deepEqual(numbers({ numberLinks: true, numberFields: true }),
+    [1, 2, 3, 4, undefined], 'an option is part of a select, not a control of its own');
+
+  // Fields on the right put the marker after the control, like Lynx's
+  // NUMBER_FIELDS_ON_LEFT=FALSE.
+  const right = numberLynxBlocks(blocks, {
+    numberLinks: false, numberFields: true, numberFieldsOnLeft: false,
+  });
+  assert.equal(right[1].displayPrefix, '');
+  assert.equal(right[1].displaySuffix, '[1]');
+  assert.equal(right[3].displaySuffix, '[3]');
+});
+
+test('an internal Lynx view is neither re-rendered nor numbered', () => {
+  const core = { blocks: [{ text: '{News}', item: item('link', 'News') }], at() {} };
+  const row = { text: '[1] News', item: item('link', 'News'), entry: {} };
+  const state = {
+    interface: 'lynx', escapeUnicode: false, cursor: 0, scroll: 0, col: 0,
+    core, lines: [], drawn: {},
+    keys: new Keymap({ terminfo: {}, profile: 'lynx', load: false }),
+    library: { kind: 'links', label: 'References', filter: '', rows: [row], blocks: [row] },
+  };
+  relayout(state);
+  assert.equal(state.lines[0].text, '[1] News', 'the list already says what it says');
+  assert.equal(state.lines[0].displayNumber, undefined);
+  assert.equal(row.text, '[1] News');
+  assert.equal(state.core.blocks[0].text, '{News}');
+});
+
+test('Lynx numbering sits outside escaped page text', () => {
+  const core = {
+    blocks: [{ text: '{中文}', item: item('link', '中文') }],
+    at() {},
+  };
+  const state = {
+    interface: 'lynx', escapeUnicode: true, cursor: 0, scroll: 0, col: 0,
+    core, lines: [], library: null, dialog: null,
+    keys: new Keymap({ terminfo: {}, profile: 'lynx', load: false }),
+  };
+  state.keys.preferences = { numberLinks: true, numberFields: false };
+  relayout(state);
+  assert.equal(state.lines[0].text, '\\u4E2D\\u6587');
+  assert.equal(state.lines[0].displayPrefix, '[1]');
+  assert.equal(core.blocks[0].text, '{中文}');
+  assert.equal(renderRow(state, 0), '   [1]\x1b[7m\\u4E2D\\u6587\x1b[0m');
+});
+
+test('a digit opens the number prompt only when Lynx numbering is on', async () => {
+  const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  const blocks = [
+    { text: 'News', item: item('link', 'News') },
+    { text: 'More', item: item('link', 'More') },
+  ];
+  const state = {
+    interface: 'lynx', mode: 'browse', cursor: 0, scroll: 0, col: 0,
+    keys, inputSeen: false, library: null, dialog: null, statusMsg: '', drawn: {},
+    core: { blocks, at() {}, markInput() {} },
+    lines: [
+      { blockIndex: 0, text: 'News', displayNumber: 1 },
+      { blockIndex: 1, text: 'More', displayNumber: 2 },
+    ],
+  };
+  const page = { url: () => 'https://example.test/' };
+
+  keys.preferences = { numberLinks: false, numberFields: false };
+  await captureTerminalAsync(() => handleBrowseKey('2', state, page));
+  assert.equal(state.mode, 'browse', 'numbers as arrows leave digits to the page');
+
+  keys.preferences = { numberLinks: true, numberFields: false };
+  await captureTerminalAsync(() => handleBrowseKey('2', state, page));
+  assert.equal(state.mode, 'number');
+  assert.equal(state.linkNumber.text, '2');
+});
+
+test('the Lynx number prompt edits, cancels, and rejects an empty entry', async () => {
+  const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  keys.preferences = { numberLinks: true, numberFields: true };
+  const blocks = [{ text: 'News', item: item('link', 'News') }];
+  const state = {
+    interface: 'lynx', mode: 'browse', cursor: 0, scroll: 0, col: 0,
+    keys, inputSeen: false, library: null, dialog: null, statusMsg: '', drawn: {},
+    core: { blocks, at() {}, markInput() {} },
+    lines: [{ blockIndex: 0, text: 'News', displayNumber: 12 }],
+  };
+  const page = { url: () => 'https://example.test/' };
+  await captureTerminalAsync(async () => {
+    openLinkNumberPrompt(state, '1');
+    await handleNumberKey('2', state, page);
+    assert.equal(state.linkNumber.text, '12', 'a second digit extends the number');
+    await handleNumberKey('\x7f', state, page);
+    assert.equal(state.linkNumber.text, '1', 'backspace removes the last digit');
+    await handleNumberKey('\x1b', state, page);
+  });
+  assert.equal(state.mode, 'browse');
+  assert.equal(state.linkNumber, null);
+  assert.equal(state.statusMsg, 'Cancelled.');
+
+  await captureTerminalAsync(async () => {
+    openLinkNumberPrompt(state);
+    await handleNumberKey('\r', state, page);
+  });
+  assert.equal(state.statusMsg, 'Invalid link number: 0.');
+  assert.equal(state.cursor, 0, 'nothing moved');
+});
+
+test('the number key does nothing without an open prompt', async () => {
+  const state = {
+    interface: 'lynx', mode: 'number', linkNumber: null, statusMsg: '', drawn: {},
+    cursor: 0, scroll: 0, col: 0, lines: [],
+    core: { blocks: [], at() {}, markInput() {} },
+  };
+  await captureTerminalAsync(() => handleNumberKey('1', state, { url: () => 'https://example.test/' }));
+  assert.equal(state.mode, 'browse');
+});
+
+test('the Lynx one-command escape cancels or refuses an unknown command', async () => {
+  const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  const field = item('textbox', 'Query');
+  const state = {
+    interface: 'lynx', mode: 'field-command', cursor: 0, col: 0, scroll: 0,
+    keys, statusMsg: '', drawn: {},
+    typing: { handle: { dispose: async () => {} }, item: field, text: 'ab', caret: 2 },
+    core: { blocks: [{ text: 'Query', item: field }], at() {}, markInput() {} },
+    lines: [{ blockIndex: 0, text: 'Query' }],
+  };
+  const page = { url: () => 'https://example.test/' };
+
+  await captureTerminalAsync(() => handleFieldCommandKey('\x1b', state, page));
+  assert.equal(state.mode, 'type');
+  assert.equal(state.statusMsg, 'Command cancelled.');
+
+  await captureTerminalAsync(() => handleFieldCommandKey('z', state, page));
+  assert.equal(state.mode, 'type');
+  assert.equal(state.statusMsg, 'That is not a Lynx browse command.');
+});
+
+test('Lynx source toggling restores the presentation view it came from', async () => {
+  const renderBlocks = [
+    { text: 'Intro', item: item('text', 'Intro') },
+    { text: 'Target', item: item('text', 'Target') },
+  ];
+  const sourceBlocks = [
+    { text: '<p>Intro</p>', item: item('text', '<p>Intro</p>') },
+    { text: '<p>Target</p>', item: item('text', '<p>Target</p>') },
+  ];
+  const core = {
+    source: 'render',
+    sourceOf: { render: renderBlocks, source: sourceBlocks },
+    blocks: renderBlocks,
+    anchor: () => null,
+    restore: () => -1,
+    handleFor: async () => null,
+    at() {},
+    markInput() {},
+    rescan: async () => { core.blocks = core.sourceOf[core.source]; },
+  };
+  const state = {
+    interface: 'lynx', mode: 'browse', cursor: 1, col: 0, scroll: 0,
+    keys: new Keymap({ terminfo: {}, profile: 'lynx', load: false }),
+    sources: ['ax', 'render', 'source'], statusMsg: '', statusHeldUntil: 0, title: '',
+    inputSeen: false, library: null, dialog: null, linkAddress: false,
+    drawn: { title: null, address: null, hint: null, status: null },
+    core,
+    lines: layoutLines(renderBlocks, 79),
+  };
+  const page = { url: () => 'https://example.test/' };
+  const quietly = (fn) => {
+    const write = process.stdout.write;
+    process.stdout.write = () => true;
+    return Promise.resolve().then(fn).finally(() => { process.stdout.write = write; });
+  };
+
+  // One press reaches the source from whichever presentation view is on
+  // screen, rather than stepping through the other presentation views first.
+  await quietly(() => handleBrowseKey('\\', state, page));
+  assert.equal(core.source, 'source');
+  assert.equal(state.lynxPresentationSource, 'render');
+  assert.equal(state.lines[state.cursor].text, '<p>Target</p>');
+
+  await quietly(() => handleBrowseKey('\\', state, page));
+  assert.equal(core.source, 'render', 'the reader returns to the view they were reading');
+  assert.equal(state.lynxPresentationSource, 'render');
+  assert.equal(state.lines[state.cursor].text, 'Target');
 });
 
 test('Lynx presentation is a display copy rather than changed core text', () => {
