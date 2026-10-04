@@ -7,7 +7,7 @@ const { numberLynxBlocks, renderLynxItem, renderLynxBlock } = require('../src/ly
 const { layoutLines } = require('../src/layout');
 const {
   askForLine, contextNavigationAction, handleBrowseKey, handleFieldCommandKey,
-  handleNumberKey, hintText, moveSelection, openLinkNumberPrompt,
+  handleNumberKey, hintText, lineRow, moveSelection, openLinkNumberPrompt,
   parseLynxNumberExpression, relativeLinkNumber, relayout, renderRow, typingText,
 } = require('../src/index');
 const { Keymap } = require('../src/keys');
@@ -205,6 +205,41 @@ test('the number key does nothing without an open prompt', async () => {
   };
   await captureTerminalAsync(() => handleNumberKey('1', state, { url: () => 'https://example.test/' }));
   assert.equal(state.mode, 'browse');
+});
+
+test('the Lynx highlight is video only, and the cursor marks the item too', () => {
+  const blocks = [
+    { text: 'First', item: item('link', 'First') },
+    { text: 'Heading', item: item('heading', 'Heading') },
+    { text: 'Second', item: item('link', 'Second') },
+  ];
+  const state = {
+    interface: 'lynx', mode: 'browse', cursor: 0, scroll: 0, col: 0,
+    library: null, dialog: null, linkAddress: false, statusMsg: '', drawn: {},
+    core: { blocks, at() {} },
+    lines: [
+      { blockIndex: 0, text: 'First' },
+      { blockIndex: 1, text: 'Heading' },
+      { blockIndex: 2, text: 'Second' },
+    ],
+  };
+
+  const rendered = [0, 1, 2].map((index) => renderRow(state, index)).join('\n');
+  // Reverse video for the current control and bold for a heading. No color at
+  // all, so a monochrome terminal loses nothing, and no 256-color or
+  // foreground/background escape is ever emitted.
+  assert.match(rendered, /\x1b\[7mFirst\x1b\[0m/);
+  assert.match(rendered, /\x1b\[1mHeading\x1b\[0m/);
+  assert.doesNotMatch(rendered, /\x1b\[(3\d|4\d|9\d|38|48)[;m]/);
+
+  // Moving leaves the terminal cursor on the new line. That is what a braille
+  // display and a screen reader track, so the reverse video is an extra cue
+  // rather than the only one.
+  const output = captureTerminal(() => moveSelection(state, 2, { url: () => 'https://example.test/' }));
+  const row = lineRow(state, state.cursor);
+  assert.ok(output.includes(`\x1b[${row};1H`), JSON.stringify(output));
+  assert.match(output, /\x1b\[7mSecond\x1b\[0m/);
+  assert.ok(!output.includes('\x1b[7mHeading'), 'the old item is no longer highlighted');
 });
 
 test('the Lynx one-command escape cancels or refuses an unknown command', async () => {

@@ -57,8 +57,10 @@ Compatibility requirements:
 - [x] Keep link and field number markers outside the active highlight when shown on the left.
 - [ ] Add display fixtures rendered by upstream Lynx and compare TAWB's structural output,
       control markers, numbering, wrapping, and active region against them.
-- [ ] Verify monochrome, color, screen-reader, and braille behavior; highlighting must not be
-      the only indication of the current item.
+- [x] Verify monochrome, color, screen-reader, and braille behavior; highlighting must not be
+      the only indication of the current item. (Video attributes only — reverse for the current
+      control, bold for headings, no color — and the terminal cursor is parked on the current
+      line, which is what braille and screen readers follow.)
 
 ## 4. Lynx browse behavior
 
