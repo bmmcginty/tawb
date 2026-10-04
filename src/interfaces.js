@@ -37,6 +37,7 @@ const LYNX_BINDINGS = {
   'edit-delete-word': ['Ctrl+F'],
   'edit-kill-start': ['Ctrl+U'],
   'edit-kill-end': ['Ctrl+_'],
+  'edit-command': ['Ctrl+V'],
   'new-tab': [],
   bookmarks: ['v'],
   'add-bookmark': ['a'],

@@ -52,6 +52,7 @@ test('the effective Lynx line editor map is translated separately', () => {
   DELN   Delete next/curr char        -  ^D, ^R
   DELP   Delete prev char             -  ^H, <delete>, Remove key
   FORWW  Word forward                 -  ^N
+  LKCMD  Invoke command prompt        -  ^V
   PASS   Fields only                  -  Up Arrow, Down Arrow,
                                          Page Up, Back Tab
   CHAR   Insert printable char        -  32-126, 128-255
@@ -59,6 +60,7 @@ test('the effective Lynx line editor map is translated separately', () => {
   assert.deepEqual(parsed.bindings['edit-delete'], ['Ctrl+D', 'Ctrl+R']);
   assert.deepEqual(parsed.bindings['edit-backspace'], ['Ctrl+H', 'Backspace']);
   assert.deepEqual(parsed.bindings['edit-next-word'], ['Ctrl+N']);
+  assert.deepEqual(parsed.bindings['edit-command'], ['Ctrl+V']);
   assert.ok(parsed.unsupported.includes('PASS'));
 });
 

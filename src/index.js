@@ -679,6 +679,7 @@ function hintText(state) {
   if (state.mode === 'type') return state.interface === 'lynx'
     ? 'Enter text. Use arrows or Tab to move off of field.'
     : 'Typing — Tab: next control  Esc: stop  Enter: submit';
+  if (state.mode === 'field-command') return 'Command: press one Lynx browse key  Esc: cancel';
   if (state.mode === 'forms') return 'Forms — Tab: next control  Enter: activate  Esc: browse';
   if (state.mode === 'control') return 'Control — arrows adjust  Home/End  Esc: stop';
   if (state.mode === 'page') {
@@ -844,6 +845,10 @@ function parkCursor(state) {
   }
   if (state.mode === 'find') {
     drawFind(state);
+    return;
+  }
+  if (state.mode === 'field-command') {
+    moveCursor(statusRow(), Math.min((state.statusMsg || '').length + 1, termSize().cols));
     return;
   }
   if (state.mode === 'type') {
@@ -3745,7 +3750,15 @@ async function handleTypeKey(chunk, state, page) {
     return;
   }
 
-  const editing = editAction(chunk, state.keys || FALLBACK_KEYMAP);
+  const keymap = state.keys || FALLBACK_KEYMAP;
+  if (state.interface === 'lynx' && keymap.editingActionFor(chunk) === 'edit-command') {
+    state.mode = 'field-command';
+    drawHint(state);
+    setStatus(state, 'Command:');
+    return;
+  }
+
+  const editing = editAction(chunk, keymap);
   if (editing) {
     await sendFieldEdit(page.keyboard, editing);
   } else if (chunk.startsWith(ESC) || chunk < ' ') {
@@ -3768,6 +3781,38 @@ async function handleTypeKey(chunk, state, page) {
     finalCol: caretCol,
   });
   t.drawn = text;
+}
+
+async function handleFieldCommandKey(chunk, state, page) {
+  markInput(state);
+  const typing = state.typing;
+  if (!typing) { state.mode = 'browse'; return; }
+  if (keyIs(chunk, 'Escape', state)) {
+    state.mode = 'type';
+    drawHint(state);
+    setStatus(state, 'Command cancelled.');
+    return;
+  }
+  const action = (state.keys || FALLBACK_KEYMAP).actionFor(chunk);
+  if (!action) {
+    state.mode = 'type';
+    drawHint(state);
+    setStatus(state, 'That is not a Lynx browse command.');
+    return;
+  }
+
+  // Complete the field before running the command, just as Lynx hands the
+  // escaped key from its line editor back to the main keymap. Refreshing first
+  // keeps the ordinary reading line synchronized with the browser value.
+  const screen = screenBefore(state);
+  const anchor = anchorFor(state);
+  state.mode = 'browse';
+  state.typing = null;
+  await typing.handle.dispose().catch(() => {});
+  await refresh(state, page, { anchor });
+  repaintList(state, page, screen);
+  drawHint(state);
+  return handleBrowseKey(chunk, state, page);
 }
 
 async function handleFormsKey(chunk, state, page) {
@@ -4165,7 +4210,7 @@ async function main() {
     scroll: 0,
     statusMsg: '',
     // 'browse' | 'choose' | 'library' | 'type' | 'control' | 'page' | 'address'
-    // | 'find' | 'number' | 'auth' | 'dialog' | 'line' | 'keyboard'
+    // | 'field-command' | 'find' | 'number' | 'auth' | 'dialog' | 'line' | 'keyboard'
     mode: 'browse',
     typing: null,
     controlling: null,
@@ -4331,6 +4376,7 @@ async function main() {
     if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
     else if (state.mode === 'library') result = await handleLibraryKey(chunk, state, current);
     else if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
+    else if (state.mode === 'field-command') result = await handleFieldCommandKey(chunk, state, current);
     else if (state.mode === 'forms') result = await handleFormsKey(chunk, state, current);
     else if (state.mode === 'control') result = await handleControlKey(chunk, state, current);
     else if (state.mode === 'page') result = await handlePageKey(chunk, state, current);
@@ -4431,7 +4477,8 @@ if (require.main === module) {
 }
 
 module.exports = {
-  handleBrowseKey, handleTypeKey, handleFormsKey, handleControlKey, handlePageKey,
+  handleBrowseKey, handleTypeKey, handleFieldCommandKey,
+  handleFormsKey, handleControlKey, handlePageKey,
   handleAddressKey, handleFindKey, handleNumberKey, openLinkNumberPrompt,
   browserKeyForTerminalSequence,
   findText, runSearch,

@@ -9,7 +9,8 @@ const { Core } = require('../../src/core');
 const { layoutLines } = require('../../src/layout');
 const { Keymap } = require('../../src/keys');
 const {
-  activateCurrent, handleBrowseKey, handleTypeKey, handleFormsKey,
+  activateCurrent, handleBrowseKey, handleTypeKey, handleFieldCommandKey,
+  handleFormsKey,
 } = require('../../src/index');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
@@ -73,6 +74,16 @@ test('the Lynx arrows enter fields unless text-field activation is required', as
     assert.equal(state.mode, 'type');
     assert.equal(core.blocks[state.lines[state.cursor].blockIndex].item.name, 'Query');
 
+    await handleTypeKey('\x16', state, page);
+    assert.equal(state.mode, 'field-command');
+    await handleFieldCommandKey('\x1b[B', state, page);
+    assert.equal(state.mode, 'browse');
+    assert.equal(core.blocks[state.lines[state.cursor].blockIndex].item.name, 'Go');
+
+    state.cursor = 0;
+    keys.preferences.textfieldsNeedActivation = false;
+    await handleBrowseKey('\x1b[B', state, page);
+    assert.equal(state.mode, 'type');
     await handleTypeKey('\x1b[B', state, page);
     assert.equal(state.mode, 'browse');
     assert.equal(core.blocks[state.lines[state.cursor].blockIndex].item.name, 'Go');

@@ -61,6 +61,7 @@ const ACTIONS = [
   ['edit-delete-word', 'Delete next word while editing', ['Alt+D']],
   ['edit-kill-start', 'Delete to start while editing', ['Ctrl+U']],
   ['edit-kill-end', 'Delete to end while editing', ['Ctrl+K']],
+  ['edit-command', 'Run one browse command while editing', []],
   ['new-tab', 'New tab', ['Ctrl+T']],
   // The browser's own lists. Chrome and Firefox reach these with Ctrl+H,
   // Ctrl+J and Ctrl+Shift+O, and two of those three cannot exist in a

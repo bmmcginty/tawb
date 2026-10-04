@@ -94,7 +94,7 @@ Compatibility requirements:
 - [x] Enter text fields automatically when Lynx's normal field behavior is selected.
 - [x] Honor `TEXTFIELDS_NEED_ACTIVATION` by requiring activation before editing.
 - [x] Apply imported Lynx line-editor bindings in text fields and TAWB text prompts.
-- [ ] Implement Lynx's one-command line-editor escape behavior.
+- [x] Implement Lynx's one-command line-editor escape behavior.
 - [x] Move through fields with Tab, Shift-Tab, Up, and Down without accidentally activating
       buttons.
 - [x] Keep checkboxes, radios, selects, sliders, file inputs, and submit buttons on TAWB's

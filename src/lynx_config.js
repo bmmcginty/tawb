@@ -31,7 +31,7 @@ const EDIT_FUNCTIONS = {
   DELP: 'edit-backspace', DELN: 'edit-delete',
   BACKW: 'edit-previous-word', FORWW: 'edit-next-word',
   DELPW: 'edit-backspace-word', DELNW: 'edit-delete-word',
-  ERASE: 'edit-kill-start', DELEL: 'edit-kill-end',
+  ERASE: 'edit-kill-start', DELEL: 'edit-kill-end', LKCMD: 'edit-command',
 };
 
 const KEY_NAMES = {
