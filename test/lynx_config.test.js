@@ -28,6 +28,8 @@ test('the effective Lynx browse map is translated by function name', () => {
     'Up Arrow    PREV_LINK     make the previous link current',
     'Right Arrow ACTIVATE      activate the current link',
     '?           HELP          display help',
+    'm           MAIN_MENU     return to main screen',
+    'k           KEYMAP        show key bindings',
     'l           LIST          list references',
     'A           ADDRLIST      list reference addresses',
     '=           INFO          document information',
@@ -45,7 +47,9 @@ test('the effective Lynx browse map is translated by function name', () => {
   assert.deepEqual(parsed.bindings['next-screen'], ['Space']);
   assert.deepEqual(parsed.bindings['previous-focusable'], ['ArrowUp']);
   assert.deepEqual(parsed.bindings.activate, ['ArrowRight']);
-  assert.deepEqual(parsed.bindings['keyboard-wizard'], ['?']);
+  assert.deepEqual(parsed.bindings.help, ['?']);
+  assert.deepEqual(parsed.bindings['main-menu'], ['m']);
+  assert.deepEqual(parsed.bindings['keyboard-wizard'], ['k']);
   assert.deepEqual(parsed.bindings['list-links'], ['l']);
   assert.deepEqual(parsed.bindings['list-addresses'], ['A']);
   assert.deepEqual(parsed.bindings['document-info'], ['=']);

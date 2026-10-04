@@ -2240,6 +2240,9 @@ async function handleBrowseKey(chunk, state, page) {
     return;
   }
 
+  if (action === 'help' && state.interface === 'lynx') return openHelp(state, page);
+  if (action === 'main-menu' && state.interface === 'lynx') return openMainMenu(state, page);
+
   if (action === 'keyboard-wizard') {
     // The live ticker must not paint into the wizard's alternate screen. Let
     // an in-flight refresh finish before switching screens, then hold later
@@ -3096,6 +3099,45 @@ function showLibrary(state, page, filter) {
   relayout(state);
   render(state, page, { force: true });
   setStatus(state, libraryStatus(state));
+}
+
+function openHelp(state, page) {
+  const rows = [
+    'Lynx Help for TAWB',
+    '',
+    'Arrow keys: move to links and controls; Right or Enter activates.',
+    'Space / b: next / previous screen.',
+    'g / G: enter a new address / edit the current address.',
+    '/, n, N: search / next match / previous match.',
+    'l / A: list references / list reference addresses.',
+    'a / v: add a bookmark / view bookmarks.',
+    'd: download the current link.',
+    'o: options menu.  k: keymap and keyboard bindings.',
+    'm: return to the main screen.  \\: toggle source.',
+    'q: quit.  Left: return from this help page.',
+  ];
+  if (state.keys.unsupported && state.keys.unsupported.length) {
+    rows.push('', `Unavailable Lynx functions: ${state.keys.unsupported.join(', ')}`);
+  }
+  state.core.live.refreshing = true;
+  state.mode = 'library';
+  state.library = {
+    kind: 'info', label: 'Lynx Help', filter: '',
+    rows: rows.map((text) => ({ text, entry: null })), blocks: [], empty: false,
+    place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
+  };
+  state.title = 'Lynx Help';
+  showLibrary(state, page, '');
+}
+
+async function openMainMenu(state, page) {
+  const home = state.homeUrl || START_URL;
+  if (page.url() === home) {
+    setStatus(state, 'You are already at the main screen.');
+    return;
+  }
+  const load = state.loadAddress || loadAddress;
+  return load(state, page, home);
 }
 
 function showOptions(state, page) {
@@ -4854,7 +4896,7 @@ module.exports = {
   restoreInvocationDirectory, onExternalNavigation, readTitle, drawTitle,
   navigate, navigateInterruptibly, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
-  openLibrary, openLinkList, openDocumentInfo, openOptions,
+  openLibrary, openLinkList, openDocumentInfo, openOptions, openHelp, openMainMenu,
   closeLibrary, showLibrary, showOptions, handleLibraryKey, handleOptionsKey,
   handleChooseKey,
   askForLine, bookmarkPage, downloadCurrentLink, drawLinePrompt,

@@ -452,7 +452,7 @@ test('Lynx context navigation follows imported vi browse bindings', () => {
     terminfo: {}, profile: 'lynx', load: false,
     bindings: {
       'history-back': ['h'], 'next-focusable': ['j'],
-      'previous-focusable': ['k'], activate: ['l'], 'list-links': ['L'],
+      'previous-focusable': ['k'], activate: ['l'], 'list-links': ['L'], help: [],
       'next-screen': ['Ctrl+F'], top: ['Ctrl+A'], bottom: ['Ctrl+E'],
     },
   });

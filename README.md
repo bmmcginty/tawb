@@ -211,8 +211,10 @@ The common Lynx commands include:
 | `l` / `A` | List references by name / by address |
 | `=` | Information about the current document and selected item |
 | `o`, `O` | Lynx options menu |
+| `h`, `H`, `?` | Lynx help |
+| `k`, `K` | Lynx-profile keymap and keyboard bindings |
+| `m`, `M` | Return to the main screen |
 | `\\` | Toggle source and presentation |
-| `k`, `?`, `H` | Lynx-profile keyboard help |
 | `q` | Quit |
 
 Links and controls use Lynx-like terminal forms and the current control is

@@ -49,7 +49,7 @@ test('effective standard, vi, and Emacs Lynx maps drive their familiar keys', ()
   assert.equal(standard.actionFor('G'), 'location-edit');
   assert.equal(standard.actionFor('0'), 'link-number');
   assert.equal(standard.actionFor('l'), 'list-links');
-  assert.equal(standard.actionFor('\x1bOP'), 'keyboard-wizard',
+  assert.equal(standard.actionFor('\x1bOP'), 'help',
     'an imported function-key binding resolves through the Lynx vocabulary');
 
   const vi = new Keymap({

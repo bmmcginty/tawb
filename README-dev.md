@@ -871,8 +871,11 @@ activate whichever unrelated block inherited that index. Links continue
 through `activateCurrent`. Numbered form controls and the `g` suffix only move
 the terminal selection.
 
-The reference and information commands reuse the internal-list buffer while
-holding live rebuilds. Reference entries likewise retain original block
+The reference, information, and Lynx help commands reuse the internal-list
+buffer while holding live rebuilds. Help is a read-only internal page, while
+`k`/`K` retain the configurable keymap wizard. `m`/`M` loads the same initial
+address used for the session rather than mistaking the top of the current page
+for Lynx's main screen. Reference entries likewise retain original block
 objects and activate through the page after the list closes. This preserves
 fragment handling, authentication, focus observation, and history instead of
 turning every reference into a fresh address-bar navigation.

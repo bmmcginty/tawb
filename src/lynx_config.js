@@ -20,7 +20,8 @@ const BROWSE_FUNCTIONS = {
   INFO: 'document-info', OPTIONS: 'options', F_LINK_NUM: 'link-number',
   WHEREIS: 'find-forward', NEXT: 'repeat-find-forward', PREV: 'repeat-find-backward',
   REFRESH: 'refresh', RELOAD: 'reload-page',
-  SOURCE: 'source-view', KEYMAP: 'keyboard-wizard', HELP: 'keyboard-wizard', DWIMHELP: 'keyboard-wizard',
+  SOURCE: 'source-view', KEYMAP: 'keyboard-wizard', HELP: 'help', DWIMHELP: 'help',
+  MAIN_MENU: 'main-menu',
   NEXT_LINK: 'next-focusable', FASTFORW_LINK: 'next-focusable', DOWN_LINK: 'next-focusable',
   PREV_LINK: 'previous-focusable', FASTBACKW_LINK: 'previous-focusable', UP_LINK: 'previous-focusable',
 };
