@@ -28,6 +28,9 @@ const WIZARD_ACTIONS = new Set([
 function wizardRows(keymap) {
   return [
     ...keymap.actions.map((action) => ({ type: 'action', action })),
+    ...(keymap.unsupported || []).map((name) => ({
+      type: 'unsupported', label: `Imported Lynx command ${name}, unsupported`,
+    })),
     { type: 'reset', label: 'Restore default bindings' },
     { type: 'exit', label: 'Exit keyboard wizard' },
   ];
@@ -292,6 +295,8 @@ async function runKeyWizard({
         } else if (row.type === 'reset') {
           keymap.reset();
           status = 'Default bindings restored. They are not saved yet.';
+        } else if (row.type === 'unsupported') {
+          status = `${row.label}.`;
         } else {
           await leave();
         }

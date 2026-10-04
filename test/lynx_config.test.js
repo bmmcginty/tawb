@@ -1,0 +1,79 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert');
+
+const {
+  lynxKeySpec, parseBrowseMap, parseEditMap, readLynxConfig,
+} = require('../src/lynx_config');
+
+test('Lynx key names become portable TAWB key specifications', () => {
+  assert.equal(lynxKeySpec('^A'), 'Ctrl+A');
+  assert.equal(lynxKeySpec('<space>'), 'Space');
+  assert.equal(lynxKeySpec('Right Arrow'), 'ArrowRight');
+  assert.equal(lynxKeySpec('Back Tab'), 'Shift+Tab');
+  assert.equal(lynxKeySpec('Do key'), null);
+});
+
+test('the effective Lynx browse map is translated by function name', () => {
+  const parsed = parseBrowseMap([
+    'q           QUIT          quit the browser',
+    '^R          RELOAD        reload the current document',
+    '<space>     NEXT_PAGE     view the next page',
+    'Up Arrow    PREV_LINK     make the previous link current',
+    'Right Arrow ACTIVATE      activate the current link',
+    '!           SHELL         escape to a shell',
+  ].join('\n'));
+
+  assert.deepEqual(parsed.bindings.quit, ['q']);
+  assert.deepEqual(parsed.bindings['reload-page'], ['Ctrl+R']);
+  assert.deepEqual(parsed.bindings['next-screen'], ['Space']);
+  assert.deepEqual(parsed.bindings['previous-focusable'], ['ArrowUp']);
+  assert.deepEqual(parsed.bindings.activate, ['ArrowRight']);
+  assert.deepEqual(parsed.unsupported, ['SHELL']);
+});
+
+test('the effective Lynx line editor map is translated separately', () => {
+  const parsed = parseEditMap(`
+  DELN   Delete next/curr char        -  ^D, ^R
+  DELP   Delete prev char             -  ^H, <delete>, Remove key
+  FORWW  Word forward                 -  ^N
+  PASS   Fields only                  -  Up Arrow, Down Arrow,
+                                         Page Up, Back Tab
+  CHAR   Insert printable char        -  32-126, 128-255
+`);
+  assert.deepEqual(parsed.bindings['edit-delete'], ['Ctrl+D', 'Ctrl+R']);
+  assert.deepEqual(parsed.bindings['edit-backspace'], ['Ctrl+H', 'Backspace']);
+  assert.deepEqual(parsed.bindings['edit-next-word'], ['Ctrl+N']);
+  assert.ok(parsed.unsupported.includes('PASS'));
+});
+
+test('Lynx is queried without a shell and with its requested config', () => {
+  const calls = [];
+  const outputs = {
+    'LYNXKEYMAP:': 'j           NEXT_LINK     next link\n',
+    'LYNXEDITMAP:': '  BOL    Begin line                   -  ^A\n',
+  };
+  const imported = readLynxConfig({
+    executable: '/opt/lynx', config: '/home/me/lynx.cfg', env: { HOME: '/home/me' },
+    run: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: outputs[args[1]] };
+    },
+  });
+
+  assert.equal(imported.available, true);
+  assert.deepEqual(imported.bindings['next-focusable'], ['j']);
+  assert.deepEqual(imported.bindings['edit-line-start'], ['Ctrl+A']);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].command, '/opt/lynx');
+  assert.equal(calls[0].options.env.LYNX_CFG, '/home/me/lynx.cfg');
+  assert.equal(calls[0].options.env.LC_ALL, 'C');
+  assert.deepEqual(calls[0].options.stdio, ['ignore', 'pipe', 'ignore']);
+  assert.equal(Object.hasOwn(calls[0].options, 'shell'), false);
+});
+
+test('a missing or failing Lynx cleanly selects built-in defaults', () => {
+  const imported = readLynxConfig({ run: () => ({ status: 1, stdout: '' }) });
+  assert.deepEqual(imported, { available: false, bindings: {}, unsupported: [] });
+});

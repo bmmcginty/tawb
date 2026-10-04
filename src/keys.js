@@ -219,12 +219,18 @@ function rawSpec(sequence) {
 class Keymap {
   constructor({
     terminfo = readTerminfo(), profile = 'default', file = null, load = true,
+    bindings = {}, unsupported = [],
   } = {}) {
     this.profile = interfaceName(profile);
     this.file = file || configPath(process.env, os.homedir(), this.profile);
     this.terminfo = terminfo;
+    this.unsupported = [...unsupported];
+    this.defaultBindings = new Map(ACTIONS.map((action) => [
+      action.id,
+      Object.hasOwn(bindings, action.id) ? [...bindings[action.id]] : bindingsFor(action, this.profile),
+    ]));
     this.actions = ACTIONS.map((action) => ({
-      ...action, bindings: bindingsFor(action, this.profile),
+      ...action, bindings: [...this.defaultBindings.get(action.id)],
     }));
     this.byId = new Map(this.actions.map((action) => [action.id, action]));
     this.namedSequences = new Map();
@@ -377,7 +383,7 @@ class Keymap {
   }
 
   reset() {
-    for (const action of this.actions) action.bindings = bindingsFor(action, this.profile);
+    for (const action of this.actions) action.bindings = [...this.defaultBindings.get(action.id)];
     this.rebuild();
   }
 

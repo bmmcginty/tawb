@@ -18,6 +18,7 @@ const { capturePlace, restorePlace, exactBlockForElement } = require('./place');
 const { armActivationFocus, focusedByActivation, cancelActivationFocus } = require('./focus');
 const { Keymap } = require('./keys');
 const { interfaceName } = require('./interfaces');
+const { readLynxConfig } = require('./lynx_config');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
@@ -59,6 +60,7 @@ function parseArgs(argv, env = process.env) {
     url: null, connect: null, profile: null, engine: DEFAULT_ENGINE, keepBrowser: false,
     keyboard: false, dump: false, log: false, logDir: env.TAWB_LOG_DIR || null,
     interface: interfaceName(env.TAWB_INTERFACE || 'default'),
+    lynxExecutable: env.TAWB_LYNX || 'lynx', lynxConfig: null,
     search: env.TAWB_SEARCH || DEFAULT_SEARCH,
     linkAddress: !OFF.has(String(env.TAWB_LINK_ADDRESS || '').toLowerCase()),
     shortLinks: ON.has(String(env.TAWB_SHORT_LINKS || '').toLowerCase()),
@@ -77,6 +79,14 @@ function parseArgs(argv, env = process.env) {
       options.interface = interfaceName(argv[i + 1] || ''); i += 1;
     } else if (arg.startsWith('--interface=')) {
       options.interface = interfaceName(arg.slice('--interface='.length));
+    } else if (arg === '--lynx-executable') {
+      options.lynxExecutable = argv[i + 1] || 'lynx'; i += 1;
+    } else if (arg.startsWith('--lynx-executable=')) {
+      options.lynxExecutable = arg.slice('--lynx-executable='.length) || 'lynx';
+    } else if (arg === '--lynx-config') {
+      options.lynxConfig = argv[i + 1] || null; i += 1;
+    } else if (arg.startsWith('--lynx-config=')) {
+      options.lynxConfig = arg.slice('--lynx-config='.length) || null;
     } else if (arg === '--dump') { options.dump = true; }
     else if (arg === '--log') { options.log = true; }
     else if (arg === '--log-dir') { options.logDir = argv[i + 1] || null; i += 1; }
@@ -112,6 +122,16 @@ function restoreInvocationDirectory(env = process.env, chdir = process.chdir) {
 }
 
 const ARGS = parseArgs([...readSettings(), ...process.argv.slice(2)]);
+
+function keymapForOptions(options, { importLynx = readLynxConfig } = {}) {
+  if (options.interface !== 'lynx') return new Keymap({ profile: options.interface });
+  const imported = importLynx({
+    executable: options.lynxExecutable, config: options.lynxConfig,
+  });
+  return new Keymap({
+    profile: 'lynx', bindings: imported.bindings, unsupported: imported.unsupported,
+  });
+}
 // What is typed on the command line is read the same way as what is typed in
 // the address bar: `tawb wikipedia.org` is an address, `tawb -- braille dots`
 // is not one, and neither should have to carry a scheme to work.
@@ -3747,7 +3767,7 @@ async function handleAddressKey(chunk, state, page) {
 async function main() {
   const logPath = ARGS.log ? enableLog({ directory: ARGS.logDir }) : null;
   if (ARGS.keyboard) {
-    await runKeyWizard({ keymap: new Keymap({ profile: ARGS.interface }) });
+    await runKeyWizard({ keymap: keymapForOptions(ARGS) });
     return;
   }
 
@@ -3810,7 +3830,7 @@ async function main() {
     return;
   }
 
-  const keys = new Keymap({ profile: ARGS.interface });
+  const keys = keymapForOptions(ARGS);
 
   // When joining a browser that is already running, take over the tab it is
   // already showing rather than opening a blank one. Rejoining is usually
@@ -4150,7 +4170,8 @@ module.exports = {
   restoreHistoryPlace, acknowledgeHistoryNavigation, traversePageHistory, moveInHistory,
   switchToTab, focusAddressBar, openNewTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
-  renderRow, typingText, parseArgs, restoreInvocationDirectory, onExternalNavigation, readTitle, drawTitle,
+  renderRow, typingText, parseArgs, keymapForOptions,
+  restoreInvocationDirectory, onExternalNavigation, readTitle, drawTitle,
   navigate, navigateInterruptibly, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
   openLibrary, closeLibrary, showLibrary, handleLibraryKey,

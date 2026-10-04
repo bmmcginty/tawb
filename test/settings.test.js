@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { settingsPath, splitSettings, readSettings } = require('../src/settings');
-const { parseArgs } = require('../src/index');
+const { parseArgs, keymapForOptions } = require('../src/index');
 const { parseArgs: parseEdbArgs } = require('../src/edb');
 const { tempDir } = require('./tmpdir');
 
@@ -59,6 +59,11 @@ test('command-line options can override persistent browser settings', () => {
   assert.equal(parseArgs(['--interface=lynx'], {}).interface, 'lynx');
   assert.equal(parseArgs(['--interface', 'default'], { TAWB_INTERFACE: 'lynx' }).interface, 'default');
   assert.throws(() => parseArgs(['--interface=visual'], {}), /Unknown interface/);
+  const lynxArgs = parseArgs([
+    '--interface=lynx', '--lynx-executable=/opt/lynx', '--lynx-config', '/config/lynx.cfg',
+  ], {});
+  assert.equal(lynxArgs.lynxExecutable, '/opt/lynx');
+  assert.equal(lynxArgs.lynxConfig, '/config/lynx.cfg');
 
   assert.equal(parseArgs([], {}).escapeUnicode, false);
   assert.equal(parseArgs(['--escape-unicode'], {}).escapeUnicode, true);
@@ -71,6 +76,24 @@ test('command-line options can override persistent browser settings', () => {
   assert.equal(edbArgs.keepBrowser, false);
   assert.equal(edbArgs.log, true);
   assert.equal(edbArgs.logDir, '/host/logs');
+});
+
+test('only the Lynx interface asks Lynx for effective bindings', () => {
+  let calls = 0;
+  const importLynx = (options) => {
+    calls += 1;
+    assert.deepEqual(options, { executable: '/opt/lynx', config: '/config/lynx.cfg' });
+    return { bindings: { quit: ['x'] }, unsupported: ['SHELL'] };
+  };
+  const lynx = keymapForOptions({
+    interface: 'lynx', lynxExecutable: '/opt/lynx', lynxConfig: '/config/lynx.cfg',
+  }, { importLynx });
+  assert.equal(lynx.actionFor('x'), 'quit');
+  assert.deepEqual(lynx.unsupported, ['SHELL']);
+
+  const ordinary = keymapForOptions({ interface: 'default' }, { importLynx });
+  assert.equal(ordinary.actionFor('q'), 'quit');
+  assert.equal(calls, 1);
 });
 
 test('a malformed settings file names itself in the error', () => {

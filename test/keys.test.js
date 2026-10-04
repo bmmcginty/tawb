@@ -33,6 +33,19 @@ test('interface profiles keep their defaults and saved files separate', () => {
   assert.equal(lynx.editingActionFor('\x10'), 'edit-previous-word');
 });
 
+test('imported Lynx defaults reset cleanly and expose unsupported commands', () => {
+  const keys = new Keymap({
+    terminfo: {}, profile: 'lynx', load: false,
+    bindings: { quit: ['x'] }, unsupported: ['SHELL'],
+  });
+  assert.equal(keys.actionFor('x'), 'quit');
+  keys.assign('quit', 'z');
+  keys.reset();
+  assert.equal(keys.actionFor('x'), 'quit');
+  assert.equal(keys.actionFor('z'), null);
+  assert.ok(wizardRows(keys).some((row) => row.type === 'unsupported' && /SHELL/.test(row.label)));
+});
+
 test('the version-one default key file still loads without conversion', () => {
   const directory = tempDir('tawb-old-keys-');
   const file = path.join(directory, 'keys.json');

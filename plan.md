@@ -27,33 +27,33 @@ Compatibility requirements:
 
 ## 2. Lynx configuration import
 
-- [ ] Add a Lynx adapter that queries the effective maps with `LYNXKEYMAP:` and
+- [x] Add a Lynx adapter that queries the effective maps with `LYNXKEYMAP:` and
       `LYNXEDITMAP:` using `LC_ALL=C` and no shell.
-- [ ] Support `LYNX_CFG`, normal Lynx discovery, and an explicit `--lynx-config` path.
-- [ ] Support an explicit `--lynx-executable` and a built-in fallback when Lynx is absent.
-- [ ] Translate supported Lynx function names to semantic TAWB actions.
-- [ ] Preserve multiple bindings and deterministic last-mapping-wins behavior.
-- [ ] Report imported functions that have no safe TAWB equivalent instead of silently
+- [x] Support `LYNX_CFG`, normal Lynx discovery, and an explicit `--lynx-config` path.
+- [x] Support an explicit `--lynx-executable` and a built-in fallback when Lynx is absent.
+- [x] Translate supported Lynx function names to semantic TAWB actions.
+- [x] Preserve multiple bindings and deterministic last-mapping-wins behavior.
+- [x] Report imported functions that have no safe TAWB equivalent instead of silently
       assigning them to misleading actions.
 - [ ] Read relevant `.lynxrc` interaction preferences, including keypad mode, vi/Emacs
       keys, line-editor mode, and text-field activation.
-- [ ] Do not import browser-owned or executable settings such as cookies, proxies,
+- [x] Do not import browser-owned or executable settings such as cookies, proxies,
       credentials, viewers, printers, or shell commands.
 - [ ] Add fixture tests for custom mappings, control/function keys, includes/effective
       output, malformed output, missing Lynx, and unsupported functions.
 
 ## 3. Lynx browse behavior
 
-- [ ] Make Up/Down and imported `PREV_LINK`/`NEXT_LINK` move between interactive topics.
-- [ ] Make Left/`PREV_DOC` go back and Right/Enter/`ACTIVATE` activate.
+- [x] Make Up/Down and imported `PREV_LINK`/`NEXT_LINK` move between interactive topics.
+- [x] Make Left/`PREV_DOC` go back and Right/Enter/`ACTIVATE` activate.
 - [ ] Implement Lynx screen movement, top/bottom, address, edited-address, find, repeat
       find, refresh, reload, download, bookmarks, history, and quit semantics.
 - [ ] Add direct SOURCE selection rather than requiring view cycling.
 - [ ] Add current-page information for `INFO`.
 - [ ] Add accessible link-list and address-list views for `LIST` and `ADDRLIST`.
-- [ ] Keep an always-available recovery route from transient modes and webpage keyboard
+- [x] Keep an always-available recovery route from transient modes and webpage keyboard
       passthrough even when imported mappings are incomplete.
-- [ ] Clearly expose unsupported commands in Lynx keyboard help.
+- [x] Clearly expose unsupported commands in Lynx keyboard help.
 - [ ] Add unit and interaction tests for the standard, vi, and Emacs Lynx maps.
 
 ## 4. Numbered links and fields
