@@ -19,7 +19,7 @@ const BROWSE_FUNCTIONS = {
   LIST: 'list-links', ADDRLIST: 'list-addresses',
   INFO: 'document-info', OPTIONS: 'options', F_LINK_NUM: 'link-number',
   WHEREIS: 'find-forward', NEXT: 'repeat-find-forward', PREV: 'repeat-find-backward',
-  REFRESH: 'refresh', RELOAD: 'reload-page',
+  REFRESH: 'refresh', RELOAD: 'reload-page', NOCACHE: 'reload-no-cache', INTERRUPT: 'interrupt',
   SOURCE: 'source-view', KEYMAP: 'keyboard-wizard', HELP: 'help', DWIMHELP: 'help',
   MAIN_MENU: 'main-menu',
   NEXT_LINK: 'next-focusable', FASTFORW_LINK: 'next-focusable', DOWN_LINK: 'next-focusable',

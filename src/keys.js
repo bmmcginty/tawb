@@ -152,6 +152,8 @@ const ACTIONS = [
   ['repeat-find-backward', 'Repeat find backward', []],
   ['refresh', 'Rescan page view', ['r']],
   ['reload-page', 'Reload page', ['F5']],
+  ['reload-no-cache', 'Reload page without cache', []],
+  ['interrupt', 'Stop loading', []],
   ['cycle-view', 'Cycle view', ['\\']],
   ['source-view', 'Toggle source and presentation', []],
   ['help', 'Help', []],

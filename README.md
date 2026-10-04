@@ -217,6 +217,8 @@ The common Lynx commands include:
 | `h`, `H`, `?` | Lynx help |
 | `k`, `K` | Lynx-profile keymap and keyboard bindings |
 | `m`, `M` | Return to the main screen |
+| `x`, `X` | Reload without using the browser cache |
+| `z`, `Z` | Stop a load in progress |
 | `\\` | Toggle source and presentation |
 | `q` | Quit |
 

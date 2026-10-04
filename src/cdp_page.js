@@ -726,10 +726,10 @@ class CdpPage {
     await this.session.send('Page.stopLoading', {}, { timeout: 2000 });
   }
 
-  async reload({ waitUntil = 'load', timeout = this.navigationTimeout } = {}) {
+  async reload({ waitUntil = 'load', timeout = this.navigationTimeout, ignoreCache = false } = {}) {
     const settled = this.#awaitLifecycle(LIFECYCLE[waitUntil] || 'load', timeout);
     try {
-      await this.session.send('Page.reload');
+      await this.session.send('Page.reload', { ignoreCache });
     } catch (err) {
       settled.cancel();
       throw err;

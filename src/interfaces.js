@@ -70,6 +70,8 @@ const LYNX_BINDINGS = {
   'repeat-find-backward': ['N'],
   refresh: ['Ctrl+L', 'Ctrl+W'],
   'reload-page': ['Ctrl+R'],
+  'reload-no-cache': ['x', 'X'],
+  interrupt: ['z', 'Z'],
   'cycle-view': [],
   'source-view': ['\\'],
   help: ['h', 'H', '?'],

@@ -14,6 +14,7 @@ const assert = require('node:assert');
 const {
   navigate, navigateInterruptibly, navigationFault, settleAfterFault,
 } = require('../src/index');
+const { Keymap } = require('../src/keys');
 
 test('the engine\'s own name for the fault is picked out of a developer message', () => {
   assert.equal(
@@ -58,6 +59,21 @@ test('a navigation that fails is reported, not thrown', async () => {
 
   const fine = { goto: async () => null };
   assert.deepEqual(await navigate(fine, 'https://y/'), { ok: true, fault: null });
+});
+
+test('the Lynx interrupt command stops waiting for an address navigation', async () => {
+  let stopped = false;
+  const page = {
+    goto: () => new Promise((resolve) => setTimeout(resolve, 100)),
+    stopLoading: async () => { stopped = true; },
+  };
+  const state = {
+    interface: 'lynx', keys: new Keymap({ terminfo: {}, profile: 'lynx', load: false }),
+    keyReader: { nextOr: async () => ({ key: 'z' }) },
+  };
+  const went = await navigateInterruptibly(state, page, 'https://slow.example/');
+  assert.equal(went.cancelled, true);
+  assert.equal(stopped, true);
 });
 
 test('Escape stops waiting for an address navigation', async () => {

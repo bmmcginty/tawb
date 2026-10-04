@@ -630,13 +630,41 @@ async function navigateInterruptibly(state, page, url) {
 
     const chunk = outcome.key;
     markInput(state);
-    if (chunk !== EOF && !keyIs(chunk, 'Escape', state)) continue;
+    const action = (state.keys || FALLBACK_KEYMAP).actionFor(chunk);
+    if (chunk !== EOF && !keyIs(chunk, 'Escape', state) && action !== 'interrupt') continue;
 
     if (typeof page.stopLoading === 'function') {
       try { Promise.resolve(page.stopLoading()).catch(() => {}); } catch { /* already gone */ }
     }
     log('navigate.cancelled', { url: String(url).slice(0, 120), eof: chunk === EOF });
     return { ok: false, fault: null, cancelled: true };
+  }
+}
+
+async function reloadPage(state, page, { ignoreCache = false } = {}) {
+  const anchor = anchorFor(state);
+  const screen = screenBefore(state);
+  setStatus(state, `${ignoreCache ? 'Reloading without cache' : 'Reloading'} ${page.url()}…`);
+  try {
+    await page.reload({ waitUntil: 'domcontentloaded', ignoreCache });
+    await refresh(state, page, { anchor });
+    repaintList(state, page, screen);
+    setStatus(state, `${ignoreCache ? 'Reloaded without cache' : 'Reloaded'} ${page.url()}.`);
+  } catch (err) {
+    setStatus(state, `Could not reload the page: ${String(err.message || err).split('\n')[0]}`);
+  }
+}
+
+async function interruptLoading(state, page) {
+  if (typeof page.stopLoading !== 'function') {
+    setStatus(state, 'This browser cannot be asked to stop loading.');
+    return;
+  }
+  try {
+    await page.stopLoading();
+    setStatus(state, 'Stopped loading.');
+  } catch (err) {
+    setStatus(state, `Could not stop loading: ${String(err.message || err).split('\n')[0]}`);
   }
 }
 
@@ -2305,20 +2333,9 @@ async function handleBrowseKey(chunk, state, page) {
     return;
   }
 
-  if (action === 'reload-page') {
-    const anchor = anchorFor(state);
-    const screen = screenBefore(state);
-    setStatus(state, `Reloading ${page.url()}…`);
-    try {
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await refresh(state, page, { anchor });
-      repaintList(state, page, screen);
-      setStatus(state, `Reloaded ${page.url()}.`);
-    } catch (err) {
-      setStatus(state, `Could not reload the page: ${String(err.message || err).split('\n')[0]}`);
-    }
-    return;
-  }
+  if (action === 'reload-page') return reloadPage(state, page);
+  if (action === 'reload-no-cache') return reloadPage(state, page, { ignoreCache: true });
+  if (action === 'interrupt') return interruptLoading(state, page);
 
   // Cycle views, keeping the reader on the same content.
   //
@@ -4983,7 +5000,8 @@ module.exports = {
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, typingText, parseArgs, keymapForOptions, lynxHidesCursor,
   restoreInvocationDirectory, onExternalNavigation, readTitle, drawTitle,
-  navigate, navigateInterruptibly, navigationFault, settleAfterFault,
+  navigate, navigateInterruptibly, reloadPage, interruptLoading,
+  navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
   openLibrary, openLinkList, openDocumentInfo, openOptions, openHelp, openMainMenu,
   closeLibrary, showLibrary, showOptions, handleLibraryKey, handleOptionsKey,

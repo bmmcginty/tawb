@@ -396,11 +396,11 @@ class FirefoxPage {
     }
   }
 
-  async reload({ waitUntil = 'complete' } = {}) {
+  async reload({ waitUntil = 'complete', ignoreCache = false } = {}) {
     const wait = waitUntil === 'domcontentloaded' ? 'interactive' : 'complete';
     try {
       const result = await this.session.send('browsingContext.reload', {
-        context: this.contextId, wait,
+        context: this.contextId, wait, ignoreCache,
       });
       if (result && result.url) this.setUrl(result.url);
     } finally {

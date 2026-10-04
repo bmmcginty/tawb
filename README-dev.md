@@ -880,7 +880,10 @@ address used for the session rather than mistaking the top of the current page
 for Lynx's main screen. Bookmark entries retain the browser's opaque bookmark
 identity, so `r`/`R` removes the selected entry through Chrome's bookmarks API
 or Firefox Places rather than deleting an arbitrary bookmark with the same
-URL. Reference entries likewise retain original block objects and activate
+URL. `x`/`X` passes the protocols' native `ignoreCache` flag to reload rather
+than emulating a cache clear, and `z`/`Z` shares Escape's interrupt path while
+an address navigation owns the keyboard. Reference entries likewise retain
+original block objects and activate
 through the page after the list closes. This preserves
 fragment handling, authentication, focus observation, and history instead of
 turning every reference into a fresh address-bar navigation.
