@@ -19,8 +19,10 @@ const { openDriver } = require('../../src/driver');
 const { Core } = require('../../src/core');
 const { Keymap } = require('../../src/keys');
 const {
-  handleBrowseKey, handleNumberKey, relayout,
+  handleBrowseKey, handleNumberKey, relayout, renderRow,
 } = require('../../src/index');
+
+const ANSI_REVERSE = '\x1b[7m';
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
 const profile = tempDir('tweb-lynx-');
@@ -37,11 +39,15 @@ const PAGE = `
   <input aria-label="Query">
 `;
 
-async function openPage() {
+async function openHtml(html) {
   driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
   const page = driver.context.pages()[0] || await driver.context.newPage();
-  await page.goto('data:text/html,' + encodeURIComponent(PAGE));
+  await page.goto('data:text/html,' + encodeURIComponent(html));
   return page;
+}
+
+function openPage() {
+  return openHtml(PAGE);
 }
 
 function makeState(core, keys, options = {}) {
@@ -194,6 +200,63 @@ test('the same blocks keep TAWB markers unless the Lynx interface is selected', 
   assert.equal(core.blocks[core.blocks.indexOf(
     core.blocks.find((block) => block.item && block.item.name === 'Go'))].text,
   '{Go}', 'the core text never changed');
+});
+
+test('numbering stays in reading order, and wraps, in every view', async () => {
+  const page = await openHtml(`
+    <h1>Views</h1>
+    <p><a href="#long">A link whose name is long enough that it cannot fit on one terminal row at eighty columns</a><a href="#two">Two</a></p>
+    <input aria-label="Query">
+  `);
+
+  const sources = ['ax', 'render', 'inspect', 'source'].filter(
+    (source) => source !== 'inspect' || driver.capabilities?.ax !== false);
+  for (const source of sources) {
+    const core = new Core({ driver, page, source, sources: [source] });
+    await core.rescan();
+    const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+    keys.preferences = { numberLinks: true, numberFields: true };
+    const state = makeState(core, keys, { sources: [source] });
+    relayout(state);
+
+    // One number per block, in reading order and with no gaps. A wrapped
+    // block repeats its number on each row for the marker's sake, so only the
+    // row that starts it counts here.
+    const numbered = new Map();
+    for (const line of state.lines) {
+      if (line.continuation || !line.displayNumber) continue;
+      assert.ok(!numbered.has(line.blockIndex), `${source}: a block was numbered twice`);
+      numbered.set(line.blockIndex, line.displayNumber);
+    }
+    assert.deepEqual([...numbered.values()],
+      [...numbered.values()].map((unused, index) => index + 1),
+      `${source}: numbers are contiguous`);
+    for (const blockIndex of numbered.keys()) {
+      const block = core.blocks[blockIndex];
+      assert.ok(block && block.item, `${source}: a numbered line has an item`);
+      assert.ok(['link', 'textbox'].includes(block.item.role),
+        `${source}: ${block.item.role} was numbered`);
+    }
+
+    // The long link wraps. Its marker stays on the first row, its reverse
+    // video covers every row it occupies, and no line text carries ANSI.
+    const longBlock = core.blocks.findIndex((block) => block.item
+      && block.item.role === 'link' && /long enough/.test(block.item.name));
+    assert.ok(longBlock >= 0, `${source}: the long link was extracted`);
+    const rows = state.lines.map((line, index) => ({ line, index }))
+      .filter(({ line }) => line.blockIndex === longBlock);
+    assert.ok(rows.length > 1, `${source}: the long link did not wrap`);
+    assert.ok(rows[0].line.displayPrefix, `${source}: the first row carries the number`);
+    for (const { line } of rows.slice(1)) {
+      assert.ok(!line.displayPrefix, `${source}: a continuation row has no number`);
+    }
+    state.cursor = rows[0].index;
+    for (const { line, index } of rows) {
+      const rendered = renderRow(state, index);
+      assert.ok(rendered.includes(ANSI_REVERSE), `${source}: row ${index} was not highlighted`);
+      assert.ok(!line.text.includes('\x1b'), `${source}: ANSI entered searchable text`);
+    }
+  }
 });
 
 test('Lynx SOURCE shows the markup and returns to the presentation view', async () => {

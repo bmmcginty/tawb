@@ -87,7 +87,7 @@ Compatibility requirements:
 - [x] Make a link number activate and a field number move without submitting.
 - [x] Add the Lynx `g` suffix for move-without-activation.
 - [x] Add `p`, `+`, and `-` suffix navigation after the basic prompt is stable.
-- [ ] Test wrapping, live updates, all views, multi-digit numbers, invalid input, and fields.
+- [x] Test wrapping, live updates, all views, multi-digit numbers, invalid input, and fields.
 
 ## 6. Lynx form and editing behavior
 
