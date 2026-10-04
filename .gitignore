@@ -18,3 +18,7 @@ firefox-diagnostics/
 # carries its own .git and its own edbrowse checkout; it is not ours to
 # track.
 edbrowse-plugin/
+
+# Upstream Lynx source kept beside TAWB while the compatibility interface is
+# implemented and checked. It is a reference checkout, not vendored code.
+lynx/

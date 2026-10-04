@@ -42,7 +42,25 @@ Compatibility requirements:
 - [ ] Add fixture tests for custom mappings, control/function keys, includes/effective
       output, malformed output, missing Lynx, and unsupported functions.
 
-## 3. Lynx browse behavior
+## 3. Lynx-compatible display
+
+- [x] Keep an ignored `./lynx` upstream source checkout for implementation reference
+      (verified against snapshot commit `29d5a703b02a2c137c8c03949ccfec74d6c17b8a`).
+- [ ] Add a profile-specific renderer while leaving extracted block text and offsets intact.
+- [ ] Render headings, links, images, frames, and tables using Lynx-like text conventions.
+- [ ] Render native and ARIA buttons, checkboxes, radios, selects, text fields, passwords,
+      textareas, and file controls using their closest Lynx forms.
+- [ ] Reflow prose and inline links together where element boundaries permit it, while
+      retaining exact block and activation identities.
+- [ ] Highlight the current link or control like Lynx, including every wrapped part, without
+      putting ANSI bytes into searchable text or caret offsets.
+- [ ] Keep link and field number markers outside the active highlight when shown on the left.
+- [ ] Add display fixtures rendered by upstream Lynx and compare TAWB's structural output,
+      control markers, numbering, wrapping, and active region against them.
+- [ ] Verify monochrome, color, screen-reader, and braille behavior; highlighting must not be
+      the only indication of the current item.
+
+## 4. Lynx browse behavior
 
 - [x] Make Up/Down and imported `PREV_LINK`/`NEXT_LINK` move between interactive topics.
 - [x] Make Left/`PREV_DOC` go back and Right/Enter/`ACTIVATE` activate.
@@ -56,7 +74,7 @@ Compatibility requirements:
 - [x] Clearly expose unsupported commands in Lynx keyboard help.
 - [ ] Add unit and interaction tests for the standard, vi, and Emacs Lynx maps.
 
-## 4. Numbered links and fields
+## 5. Numbered links and fields
 
 - [ ] Add display-only numbering metadata without modifying block text or search offsets.
 - [ ] Honor links-only, fields-only, links-and-fields, and numbers-as-arrows keypad modes.
@@ -71,7 +89,7 @@ Compatibility requirements:
 - [ ] Add `p`, `+`, and `-` suffix navigation after the basic prompt is stable.
 - [ ] Test wrapping, live updates, all views, multi-digit numbers, invalid input, and fields.
 
-## 5. Lynx form and editing behavior
+## 6. Lynx form and editing behavior
 
 - [ ] Enter text fields automatically when Lynx's normal field behavior is selected.
 - [ ] Honor `TEXTFIELDS_NEED_ACTIVATION` by requiring activation before editing.
@@ -84,7 +102,7 @@ Compatibility requirements:
 - [ ] Test native fields, textareas, contenteditable controls, select popups, custom ARIA
       controls, uploads, and forms that navigate or update in place.
 
-## 6. Documentation and release verification
+## 7. Documentation and release verification
 
 - [ ] Document startup flags, environment variables, config precedence, imported settings,
       unsupported Lynx commands, and fallback behavior in `README.md`.
