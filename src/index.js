@@ -1260,6 +1260,20 @@ function anchorFor(state) {
   return state.core.anchor();
 }
 
+// What place.js needs to describe or find a place: the line list together with
+// the blocks and source those lines were numbered against. The core's source
+// changes during a view switch, so each end of the switch takes its own
+// snapshot rather than reading through the core afterwards.
+function viewOf(state) {
+  return {
+    source: state.core.source,
+    blocks: state.core.blocks,
+    lines: state.lines,
+    cursor: state.cursor,
+    col: state.col,
+  };
+}
+
 // The line a block starts on. Every block has one; a block index that is not
 // in this buffer at all answers -1.
 function lineForBlock(state, blockIndex) {
@@ -2140,8 +2154,12 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'cycle-view' || action === 'source-view') {
     const viewportRow = state.cursor - state.scroll;
     const anchor = anchorFor(state);
+    // The place code describes lines in terms of the view they came from,
+    // which is the block list and source in effect — not the core, which has
+    // already moved on by the time the place is put back.
+    const before = viewOf(state);
     const place = await withTimeout(
-      capturePlace(state, (item) => state.core.handleFor(item, page)),
+      capturePlace(before, (item) => state.core.handleFor(item, page)),
       ACTION_TIMEOUT_MS, 'Marking your place',
     ).catch(() => null);
 
@@ -2158,9 +2176,12 @@ async function handleBrowseKey(chunk, state, page) {
     }
     await refresh(state, page);
 
+    const after = viewOf(state);
     const kept = await withTimeout(
-      restorePlace(state, page, place), ACTION_TIMEOUT_MS, 'Finding your place',
+      restorePlace(after, page, place), ACTION_TIMEOUT_MS, 'Finding your place',
     ).catch(() => null);
+    state.cursor = after.cursor;
+    state.col = after.col;
     if (!kept) restoreAnchor(state, anchor);
     clampCol(state);
     preserveViewportRow(state, viewportRow);
