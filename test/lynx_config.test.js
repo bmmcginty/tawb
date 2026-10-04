@@ -126,6 +126,7 @@ test('a config path is passed through the environment and otherwise left unset',
   });
   assert.equal(imported.available, true);
   assert.equal(imported.preferences.keypadMode, 'NUMBERS_AS_ARROWS');
+  assert.equal(imported.preferences.showCursor, false, 'Lynx hides the cursor by default');
 });
 
 test('Lynx interaction preferences follow config and then .lynxrc precedence', () => {
@@ -134,7 +135,8 @@ DEFAULT_KEYPAD_MODE:LINKS_ARE_NUMBERED
 NUMBER_LINKS_ON_LEFT:FALSE
 NUMBER_FIELDS_ON_LEFT:FALSE
 TEXTFIELDS_NEED_ACTIVATION:TRUE
-`, 'keypad_mode=LINKS_AND_FORM_FIELDS_ARE_NUMBERED\n');
+SHOW_CURSOR:FALSE
+`, 'keypad_mode=LINKS_AND_FORM_FIELDS_ARE_NUMBERED\nshow_cursor=on\n');
   assert.deepEqual(preferences, {
     keypadMode: 'LINKS_AND_FIELDS_ARE_NUMBERED',
     numberLinks: true,
@@ -142,7 +144,17 @@ TEXTFIELDS_NEED_ACTIVATION:TRUE
     numberLinksOnLeft: false,
     numberFieldsOnLeft: false,
     textfieldsNeedActivation: true,
+    showCursor: true,
   });
+});
+
+test('SHOW_CURSOR is read from the configuration and from .lynxrc', () => {
+  assert.equal(parsePreferences('SHOW_CURSOR:TRUE\n').showCursor, true);
+  assert.equal(parsePreferences('SHOW_CURSOR:FALSE\n').showCursor, false);
+  assert.equal(parsePreferences('').showCursor, false, 'the Lynx default hides the cursor');
+  assert.equal(parsePreferences('', 'show_cursor=on\n').showCursor, true);
+  assert.equal(parsePreferences('SHOW_CURSOR:TRUE\n', 'show_cursor=off\n').showCursor, false,
+    '.lynxrc wins, as it does in Lynx');
 });
 
 test('Lynx is queried without a shell and with its requested config', () => {

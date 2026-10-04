@@ -825,11 +825,11 @@ lynx -show_cfg
 
 The C locale keeps function identifiers stable. Asking Lynx itself means its
 compiled defaults, `LYNX_CFG`, include processing, `.lynxrc`, vi/Emacs keys,
-and line-editor selection have already been resolved. `-show_cfg` and the
-later `.lynxrc` keypad setting provide only the interaction preferences TAWB
-needs: numbering mode, marker side, and text-field activation. Function names
-are translated to TAWB semantic action ids. Unknown or unsafe functions are
-retained as an unsupported list for keyboard help; they are never executed.
+and line-editor selection have already been resolved. `-show_cfg` and `.lynxrc`
+provide only the interaction preferences TAWB needs: numbering mode, marker
+side, text-field activation, and `SHOW_CURSOR`. Function names are translated
+to TAWB semantic action ids. Unknown or unsafe functions are retained as an
+unsupported list for keyboard help; they are never executed.
 A failed or absent binary selects `src/interfaces.js`'s built-in Lynx defaults.
 
 `Keymap` accepts the imported bindings as its reset baseline and then reads
@@ -847,6 +847,13 @@ identity therefore remain independent of numbering. `renderRow()` is the only
 place that adds reverse-video or bold ANSI attributes, keeping escape bytes out
 of searchable text and caret arithmetic. Movement repaints the old and new
 wrapped active regions when highlighting changes.
+
+Lynx hides the cursor at the bottom-right unless `SHOW_CURSOR` is on, where
+its own documentation recommends the setting for speech and braille. TAWB's
+Lynx profile follows the imported value in browse mode: off leaves the cursor
+off the page, on parks it on the reader's line the way the ordinary interface
+always does. Prompts, choosers, lists, and dialogs keep the cursor where their
+own code put it, as Lynx does.
 
 Number entry snapshots references to the numbered block objects rather than
 indexes. If a live rebuild replaces the page before entry completes, the old

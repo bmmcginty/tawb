@@ -8,7 +8,7 @@ const { layoutLines } = require('../src/layout');
 const {
   askForLine, contextNavigationAction, handleBrowseKey, handleFieldCommandKey,
   handleNumberKey, hintText, lineRow, moveSelection, openLinkNumberPrompt,
-  parseLynxNumberExpression, relativeLinkNumber, relayout, renderRow, typingText,
+  parkCursor, parseLynxNumberExpression, relativeLinkNumber, relayout, renderRow, typingText,
 } = require('../src/index');
 const { Keymap } = require('../src/keys');
 
@@ -29,6 +29,27 @@ async function captureTerminalAsync(fn) {
   try { await fn(); } finally { process.stdout.write = write; }
   return chunks.join('');
 }
+
+function cursorState(preferences) {
+  const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  keys.preferences = { ...preferences };
+  return {
+    interface: 'lynx', mode: 'browse', keys,
+    lines: [{ blockIndex: 0, text: 'A page line', displayIndent: 0 }],
+    cursor: 0, col: 0, scroll: 0,
+  };
+}
+
+test('the Lynx cursor follows SHOW_CURSOR', () => {
+  const hidden = captureTerminal(() => parkCursor(cursorState({ showCursor: false })));
+  assert.equal(hidden, '\x1b[24;80H', 'with it off the cursor hides at the bottom-right');
+
+  const shown = captureTerminal(() => parkCursor(cursorState({ showCursor: true })));
+  assert.equal(shown, '\x1b[5;1H', 'with it on the cursor sits on the reader\u2019s line');
+
+  const absent = captureTerminal(() => parkCursor(cursorState({})));
+  assert.equal(absent, '\x1b[24;80H', 'Lynx hides the cursor unless the setting says otherwise');
+});
 
 test('the Lynx browse hint uses Lynx wording', () => {
   assert.equal(hintText({ interface: 'lynx', mode: 'browse' }),

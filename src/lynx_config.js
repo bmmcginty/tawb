@@ -124,6 +124,11 @@ const DEFAULT_PREFERENCES = {
   numberLinksOnLeft: true,
   numberFieldsOnLeft: true,
   textfieldsNeedActivation: false,
+  // Lynx hides the cursor at the bottom-right by default and only moves it to
+  // the current link when SHOW_CURSOR is on. See LYrcFile.c: the setting is
+  // documented as being for speech and braille interfaces, which is why it
+  // matters here at all.
+  showCursor: false,
 };
 
 function booleanValue(value, fallback) {
@@ -150,7 +155,9 @@ function parsePreferences(showConfig, lynxrc = '') {
     if (!match) continue;
     const [, name, value] = match;
     if (name === 'DEFAULT_KEYPAD_MODE') applyKeypadMode(preferences, value);
-    else if (name === 'NUMBER_LINKS_ON_LEFT') {
+    else if (name === 'SHOW_CURSOR') {
+      preferences.showCursor = booleanValue(value, preferences.showCursor);
+    } else if (name === 'NUMBER_LINKS_ON_LEFT') {
       preferences.numberLinksOnLeft = booleanValue(value, preferences.numberLinksOnLeft);
     } else if (name === 'NUMBER_FIELDS_ON_LEFT') {
       preferences.numberFieldsOnLeft = booleanValue(value, preferences.numberFieldsOnLeft);
@@ -164,6 +171,8 @@ function parsePreferences(showConfig, lynxrc = '') {
   for (const line of String(lynxrc).split(/\r?\n/)) {
     const match = /^\s*keypad_mode\s*=\s*(\S+)/i.exec(line);
     if (match) applyKeypadMode(preferences, match[1]);
+    const cursor = /^\s*show_cursor\s*=\s*(\S+)/i.exec(line);
+    if (cursor) preferences.showCursor = booleanValue(cursor[1], preferences.showCursor);
   }
   return preferences;
 }

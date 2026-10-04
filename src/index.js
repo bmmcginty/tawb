@@ -927,6 +927,18 @@ function drawStatus(state, page) {
   writeStatusRow(state, rendered);
 }
 
+// Whether the Lynx profile asks for the cursor to be hidden rather than parked
+// on the current item. Lynx's SHOW_CURSOR is documented for speech and braille
+// interfaces; with it off, Lynx leaves the cursor at the bottom-right and marks
+// the current link with reverse video instead. The Lynx interface follows the
+// imported setting so the two behave the same way.
+function lynxHidesCursor(state) {
+  if (state.interface !== 'lynx') return false;
+  const preferences = state.keys && state.keys.preferences;
+  // Absent means Lynx's own default, which is to hide it.
+  return !(preferences && preferences.showCursor);
+}
+
 // Puts the terminal cursor back where the reader is.
 function parkCursor(state) {
   if (state.mode === 'auth') {
@@ -948,6 +960,15 @@ function parkCursor(state) {
   if (state.mode === 'type') {
     const { caretCol } = typingText(state);
     moveCursor(lineRow(state, state.cursor), caretCol);
+    return;
+  }
+  // Browsing, with SHOW_CURSOR off: hide the cursor at the bottom-right the
+  // way Lynx does. The current item is still marked by reverse video, and the
+  // status row still names the link under it. Prompts, choosers, lists and
+  // dialogs are drawn by their own code and keep the cursor where it is.
+  if (state.mode === 'browse' && lynxHidesCursor(state)) {
+    const { rows, cols } = termSize();
+    moveCursor(rows, cols);
     return;
   }
   moveCursor(lineRow(state, state.cursor), cursorCol(state));
@@ -4736,7 +4757,7 @@ module.exports = {
   browserKeyForTerminalSequence, contextNavigationAction,
   findText, runSearch,
   render, drawList, drawAddress, drawHint, hintText, drawStatus, setStatus,
-  patchEditedLine, moveSelection, repaintLynxSelection, moveScreen, preserveViewportRow,
+  patchEditedLine, moveSelection, repaintLynxSelection, moveScreen, preserveViewportRow, parkCursor,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
   spanForColumn, blockUnder, positionForBlock,
   itemUnderCursor, linkTarget, shortTarget,
@@ -4752,7 +4773,7 @@ module.exports = {
   restoreHistoryPlace, acknowledgeHistoryNavigation, traversePageHistory, moveInHistory,
   switchToTab, focusAddressBar, openNewTab, cycleTab, closeCurrentTab, onNewTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
-  renderRow, typingText, parseArgs, keymapForOptions,
+  renderRow, typingText, parseArgs, keymapForOptions, lynxHidesCursor,
   restoreInvocationDirectory, onExternalNavigation, readTitle, drawTitle,
   navigate, navigateInterruptibly, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,

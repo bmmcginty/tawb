@@ -93,6 +93,12 @@ test('numbering and text-field settings follow the configuration', { skip }, () 
   assert.equal(result.preferences.textfieldsNeedActivation, true);
 });
 
+test('SHOW_CURSOR follows the configuration', { skip }, () => {
+  assert.equal(imported().preferences.showCursor, false, 'stock Lynx hides the cursor');
+  const shown = imported(configFile('cursor.cfg', 'SHOW_CURSOR:TRUE\n'));
+  assert.equal(shown.preferences.showCursor, true, 'the configured cursor position arrived');
+});
+
 test('a custom KEYMAP is imported and an unsupported function is reported', { skip }, () => {
   const result = imported(configFile('custom.cfg', 'KEYMAP:x:QUIT\nKEYMAP:^X:SHELL\n'));
   assert.equal(result.available, true);

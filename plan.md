@@ -36,7 +36,7 @@ Compatibility requirements:
 - [x] Report imported functions that have no safe TAWB equivalent instead of silently
       assigning them to misleading actions.
 - [x] Read relevant `.lynxrc` interaction preferences, including keypad mode, vi/Emacs
-      keys, line-editor mode, and text-field activation.
+      keys, line-editor mode, text-field activation, and `SHOW_CURSOR`.
 - [x] Do not import browser-owned or executable settings such as cookies, proxies,
       credentials, viewers, printers, or shell commands.
 - [x] Add fixture tests for custom mappings, control/function keys, includes/effective
@@ -67,8 +67,9 @@ Compatibility requirements:
       numbers a frame's URL as a followable link where TAWB shows `IFRAME:` without a number.)
 - [x] Verify monochrome, color, screen-reader, and braille behavior; highlighting must not be
       the only indication of the current item. (Video attributes only — reverse for the current
-      control, bold for headings, no color — and the terminal cursor is parked on the current
-      line, which is what braille and screen readers follow.)
+      control, bold for headings, no color. As in Lynx, `SHOW_CURSOR` decides whether the terminal
+      cursor parks on the current item or hides at the bottom-right; the reverse-video highlight
+      marks the current control either way.)
 
 ## 4. Lynx browse behavior
 

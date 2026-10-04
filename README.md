@@ -231,6 +231,13 @@ Imported line-editor bindings apply in fields and TAWB prompts, including
 Lynx's one-command escape. Up, Down, Tab, or Shift-Tab moves out to another
 control.
 
+Lynx's `SHOW_CURSOR` setting is honored too. With it off — Lynx's own default
+— the terminal cursor stays at the bottom-right and the current link is shown
+in reverse video, as in Lynx; with it on, the cursor sits on the current item,
+which is what braille displays and screen readers follow. Lynx's documentation
+recommends that setting for speech and braille interfaces, and a `.lynxrc`
+that has it on is imported the same way.
+
 Lynx-specific overrides are saved to `keys-lynx.json`; ordinary TAWB bindings
 remain in the existing version-1 `keys.json`. Enabling the interface therefore
 requires no migration and never rewrites the user's normal key configuration.
