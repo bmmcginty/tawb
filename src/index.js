@@ -676,7 +676,9 @@ function drawAddress(state, page, { force = false, edit = false } = {}) {
 
 function hintText(state) {
   if (state.mode === 'address') return 'Address — Enter: go  Esc: cancel';
-  if (state.mode === 'type') return 'Typing — Tab: next control  Esc: stop  Enter: submit';
+  if (state.mode === 'type') return state.interface === 'lynx'
+    ? 'Enter text. Use arrows or Tab to move off of field.'
+    : 'Typing — Tab: next control  Esc: stop  Enter: submit';
   if (state.mode === 'forms') return 'Forms — Tab: next control  Enter: activate  Esc: browse';
   if (state.mode === 'control') return 'Control — arrows adjust  Home/End  Esc: stop';
   if (state.mode === 'page') {
@@ -2228,7 +2230,19 @@ async function handleBrowseKey(chunk, state, page) {
 
   if (QUICK_ACTIONS[action]) {
     const spec = QUICK_ACTIONS[action];
-    return jumpTo(state, page, findQuickNav(state, spec.match, spec.direction), spec.label, spec.direction);
+    const found = findQuickNav(state, spec.match, spec.direction);
+    jumpTo(state, page, found, spec.label, spec.direction);
+    if (state.interface === 'lynx' && found
+        && (action === 'next-focusable' || action === 'previous-focusable')
+        && !(state.keys && state.keys.preferences
+          && state.keys.preferences.textfieldsNeedActivation)) {
+      const block = currentBlock(state);
+      const item = block && block.item;
+      if (item && FIELD_ROLES.has(item.role) && await beginTyping(state, page, item)) {
+        setStatus(state, `Enter text. Use arrows or Tab to move off of field.`);
+      }
+    }
+    return;
   }
 
   if (action === 'browser-question') return reopenPendingDialog(state, page);
@@ -3564,8 +3578,10 @@ async function handleTypeKey(chunk, state, page) {
     return;
   }
 
-  if (keyIs(chunk, 'Tab', state) || keyIs(chunk, 'Shift+Tab', state)) {
-    const direction = keyIs(chunk, 'Shift+Tab', state) ? -1 : 1;
+  const lynxArrow = state.interface === 'lynx'
+    && (keyIs(chunk, 'ArrowUp', state) || keyIs(chunk, 'ArrowDown', state));
+  if (keyIs(chunk, 'Tab', state) || keyIs(chunk, 'Shift+Tab', state) || lynxArrow) {
+    const direction = keyIs(chunk, 'Shift+Tab', state) || keyIs(chunk, 'ArrowUp', state) ? -1 : 1;
     const screen = screenBefore(state);
     const anchor = anchorFor(state);
     state.mode = 'browse';
@@ -3588,11 +3604,16 @@ async function handleTypeKey(chunk, state, page) {
     // Tab between editable fields stays in typing mode. Buttons, links and
     // select-only widgets stay in forms mode: they are not activated merely
     // by receiving focus, but Tab can continue through the form from them.
-    if (item && FIELD_ROLES.has(item.role) && await beginTyping(state, page, item)) {
-      setStatus(state, `Typing into "${name}" — Tab: next control, Esc: stop, Enter: submit.`);
+    const needsActivation = state.interface === 'lynx'
+      && state.keys && state.keys.preferences && state.keys.preferences.textfieldsNeedActivation;
+    if (!needsActivation && item && FIELD_ROLES.has(item.role)
+        && await beginTyping(state, page, item)) {
+      setStatus(state, state.interface === 'lynx'
+        ? 'Enter text. Use arrows or Tab to move off of field.'
+        : `Typing into "${name}" — Tab: next control, Esc: stop, Enter: submit.`);
       return;
     }
-    state.mode = 'forms';
+    state.mode = state.interface === 'lynx' ? 'browse' : 'forms';
     drawHint(state);
     setStatus(state, `${direction > 0 ? 'Next' : 'Previous'} control: ${name}.`);
     return;

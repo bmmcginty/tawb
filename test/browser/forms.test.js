@@ -8,7 +8,9 @@ const { openDriver } = require('../../src/driver');
 const { Core } = require('../../src/core');
 const { layoutLines } = require('../../src/layout');
 const { Keymap } = require('../../src/keys');
-const { activateCurrent, handleTypeKey, handleFormsKey } = require('../../src/index');
+const {
+  activateCurrent, handleBrowseKey, handleTypeKey, handleFormsKey,
+} = require('../../src/index');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
 const profile = tempDir('tweb-forms-');
@@ -45,6 +47,45 @@ test('an invalid ARIA role does not erase a submit button', async () => {
     await core.activate(button.item, page);
   }
   assert.equal(await page.evaluate(() => window.submitted), 2);
+});
+
+test('the Lynx arrows enter fields unless text-field activation is required', async () => {
+  driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
+  const page = driver.context.pages()[0] || await driver.context.newPage();
+  await page.goto('data:text/html,' + encodeURIComponent(`
+    <p>Before</p><input aria-label="Query"><button>Go</button>
+  `));
+  const core = new Core({ driver, page, source: 'ax' });
+  await core.rescan();
+  const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  keys.preferences = { textfieldsNeedActivation: false };
+  const state = {
+    interface: 'lynx', core, driver, keys, lines: layoutLines(core.blocks, 79),
+    cursor: 0, col: 0, scroll: 0, mode: 'browse', typing: null,
+    historyPlaces: new WeakMap(), statusMsg: '', statusHeldUntil: 0,
+    drawn: { title: null, address: null, hint: null, status: null },
+    title: '', library: null, dialog: null, linkAddress: false,
+  };
+  const write = process.stdout.write;
+  process.stdout.write = () => true;
+  try {
+    await handleBrowseKey('\x1b[B', state, page);
+    assert.equal(state.mode, 'type');
+    assert.equal(core.blocks[state.lines[state.cursor].blockIndex].item.name, 'Query');
+
+    await handleTypeKey('\x1b[B', state, page);
+    assert.equal(state.mode, 'browse');
+    assert.equal(core.blocks[state.lines[state.cursor].blockIndex].item.name, 'Go');
+
+    state.cursor = 0;
+    keys.preferences.textfieldsNeedActivation = true;
+    await handleBrowseKey('\x1b[B', state, page);
+    assert.equal(state.mode, 'browse');
+    assert.equal(core.blocks[state.lines[state.cursor].blockIndex].item.name, 'Query');
+  } finally {
+    if (state.typing && state.typing.handle) await state.typing.handle.dispose().catch(() => {});
+    process.stdout.write = write;
+  }
 });
 
 test('Tab keeps typing between fields, then leaves editing for a combobox', async () => {
