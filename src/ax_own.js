@@ -620,6 +620,34 @@ function extractAxItems(options) {
   const cellNumbers = new WeakMap();
   let tableCount = 0;
 
+  // The nearest HTML block container is also the identity of an inline text
+  // run. Accessibility flattening keeps the text and an inline link but loses
+  // the paragraph that held both, so downstream code cannot otherwise tell
+  // an inline link from the same link in the next paragraph. This metadata is
+  // descriptive only; the default interface never reads it.
+  const FLOW_ROOTS = [
+    'body', 'p', 'div', 'section', 'article', 'header', 'footer', 'main', 'nav',
+    'aside', 'ul', 'ol', 'li', 'dl', 'dt', 'dd', 'table', 'caption', 'tr', 'td',
+    'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'form',
+    'fieldset', 'figure', 'figcaption', 'address', 'details', 'summary',
+  ].join(',');
+  const flowIds = new WeakMap();
+  let flowCount = 0;
+
+  const flowOf = (el, role) => {
+    if (!el || typeof el.closest !== 'function') return undefined;
+    const root = el.closest(FLOW_ROOTS);
+    if (!root) return undefined;
+    // A block element wearing an interactive role is still a block. Atomic
+    // links that contain a block are conservative for the same reason: their
+    // flattened name no longer records where the internal break occurred.
+    if (role !== 'text' && (el === root || (el.querySelector && el.querySelector(FLOW_ROOTS)))) {
+      return undefined;
+    }
+    if (!flowIds.has(root)) flowIds.set(root, (flowCount += 1));
+    return flowIds.get(root);
+  };
+
   const numberedTable = (table) => {
     if (!tableIds.has(table)) tableIds.set(table, (tableCount += 1));
     return tableIds.get(table);
@@ -674,9 +702,11 @@ function extractAxItems(options) {
 
   const fromElement = (item, el) => {
     const table = tableInfoOf(el);
+    const flow = flowOf(el, item.role);
     return {
       ...item,
       ...(table ? { table } : {}),
+      ...(flow ? { flow } : {}),
       markup: markupOf(el),
       shadow: insideShadow || undefined,
       nestedIn: nestedIn || undefined,
@@ -688,6 +718,10 @@ function extractAxItems(options) {
       if (!item.table && el) {
         const table = tableInfoOf(el);
         if (table) item.table = table;
+      }
+      if (!item.flow && el) {
+        const flow = flowOf(el, item.role);
+        if (flow) item.flow = flow;
       }
       if (insidePopup) item.popup = insidePopup;
       if (insideClosed) item.pierced = true;

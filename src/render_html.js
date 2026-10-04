@@ -124,6 +124,30 @@ function extractVisible() {
   const cellNumbers = new WeakMap();
   let tableCount = 0;
 
+  // Flattening turns the text and links inside a paragraph into independent
+  // entries. Keep the nearest HTML block container as their shared identity,
+  // so the Lynx display can put only genuine inline neighbours back together.
+  // The ordinary PAGE view deliberately ignores this field.
+  const FLOW_ROOTS = [
+    'body', 'p', 'div', 'section', 'article', 'header', 'footer', 'main', 'nav',
+    'aside', 'ul', 'ol', 'li', 'dl', 'dt', 'dd', 'table', 'caption', 'tr', 'td',
+    'th', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'form',
+    'fieldset', 'figure', 'figcaption', 'address', 'details', 'summary',
+  ].join(',');
+  const flowIds = new WeakMap();
+  let flowCount = 0;
+
+  const flowOf = (el, kind) => {
+    if (!el || typeof el.closest !== 'function') return undefined;
+    const root = el.closest(FLOW_ROOTS);
+    if (!root) return undefined;
+    if (kind !== 'text' && (el === root || (el.querySelector && el.querySelector(FLOW_ROOTS)))) {
+      return undefined;
+    }
+    if (!flowIds.has(root)) flowIds.set(root, (flowCount += 1));
+    return flowIds.get(root);
+  };
+
   const numberedTable = (table) => {
     if (!tableIds.has(table)) tableIds.set(table, (tableCount += 1));
     return tableIds.get(table);
@@ -180,6 +204,8 @@ function extractVisible() {
     if (el) {
       const table = tableInfoOf(el);
       if (table) entry.table = table;
+      const flow = flowOf(el, entry.kind);
+      if (flow) entry.flow = flow;
     }
     out.push(entry);
   };
@@ -628,6 +654,7 @@ async function snapshotRenderBlocks(target) {
       editable: entry.editable,
       file: entry.file,
       table: entry.table,
+      flow: entry.flow,
       renderIndex: entry.index,
       frame,
     },
