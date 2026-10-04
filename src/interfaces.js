@@ -42,6 +42,8 @@ const LYNX_BINDINGS = {
   'add-bookmark': ['a'],
   history: ['Backspace', 'Ctrl+H', 'V'],
   downloads: [],
+  'list-links': ['l'],
+  'list-addresses': ['A'],
   'download-link': ['d'],
   'browser-question': ['Alt+Q'],
   'next-tab': [],

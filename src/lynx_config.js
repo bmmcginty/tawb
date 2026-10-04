@@ -16,6 +16,7 @@ const BROWSE_FUNCTIONS = {
   HOME: 'top', END: 'bottom',
   ADD_BOOKMARK: 'add-bookmark', VIEW_BOOKMARK: 'bookmarks',
   VLINKS: 'history', HISTORY: 'history', DOWNLOAD: 'download-link',
+  LIST: 'list-links', ADDRLIST: 'list-addresses',
   INFO: 'where',
   WHEREIS: 'find-forward', NEXT: 'repeat-find-forward', PREV: 'repeat-find-backward',
   REFRESH: 'refresh', RELOAD: 'reload-page',

@@ -15,7 +15,7 @@ const {
   entryLine, matches, relativeAge, sizeText, shortAddress, orderEntries,
 } = require('../src/library');
 const {
-  openLibrary, closeLibrary, handleLibraryKey,
+  openLibrary, openLinkList, closeLibrary, handleLibraryKey,
 } = require('../src/index');
 const { Keymap } = require('../src/keys');
 
@@ -195,6 +195,46 @@ function typeInto(state, text) {
     for (const character of text) await handleLibraryKey(character, state, PAGE);
   });
 }
+
+test('a Lynx reference list keeps page order, names, addresses, and numbers', async () => {
+  const state = readerAt(HISTORY);
+  state.interface = 'lynx';
+  state.keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  state.keys.preferences = { numberLinks: true, numberFields: false };
+  const first = {
+    text: '{Alpha}', item: { role: 'link', name: 'Alpha', href: 'https://example.test/a' },
+  };
+  const second = {
+    text: '{Beta}', item: { role: 'link', name: 'Beta', href: 'https://example.test/b' },
+  };
+  state.core.blocks = [
+    { text: 'prose', item: { role: 'text', name: 'prose' } }, first, second,
+  ];
+  state.lines = [
+    { blockIndex: 0, text: 'prose' },
+    { blockIndex: 1, text: 'Alpha', displayNumber: 1 },
+    { blockIndex: 2, text: 'Beta', displayNumber: 2 },
+  ];
+  state.cursor = 1;
+  await quietly(() => openLinkList(state, PAGE, false));
+  assert.equal(state.mode, 'library');
+  assert.equal(state.title, 'References in https://example.test/page');
+  assert.deepEqual(state.library.rows.map((row) => row.text), ['[1] Alpha', '[2] Beta']);
+  assert.equal(state.library.rows[0].entry.block, first);
+
+  await quietly(() => closeLibrary(state, PAGE, null));
+  state.lines = [
+    { blockIndex: 0, text: 'prose' },
+    { blockIndex: 1, text: 'Alpha', displayNumber: 1 },
+    { blockIndex: 2, text: 'Beta', displayNumber: 2 },
+  ];
+  await quietly(() => openLinkList(state, PAGE, true));
+  assert.deepEqual(state.library.rows.map((row) => row.text), [
+    '[1] https://example.test/a', '[2] https://example.test/b',
+  ]);
+  await quietly(() => handleLibraryKey('\x1b[D', state, PAGE));
+  assert.equal(state.mode, 'browse');
+});
 
 test('opening a list replaces the buffer with what the browser answered', async () => {
   const asked = [];

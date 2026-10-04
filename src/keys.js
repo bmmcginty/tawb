@@ -76,6 +76,8 @@ const ACTIONS = [
   ['add-bookmark', 'Bookmark this page', ['Ctrl+D']],
   ['history', 'History', ['Alt+H']],
   ['downloads', 'Downloads', ['Alt+J']],
+  ['list-links', 'List page links', []],
+  ['list-addresses', 'List page link addresses', []],
   // Alt-click is both browsers' native "download this link" gesture, and the
   // letter is the one every browser files a download under. Unmodified letters
   // are reserved for moving through the page — h, l, f, b, n, p and their

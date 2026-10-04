@@ -25,6 +25,8 @@ test('the effective Lynx browse map is translated by function name', () => {
     'Up Arrow    PREV_LINK     make the previous link current',
     'Right Arrow ACTIVATE      activate the current link',
     '?           HELP          display help',
+    'l           LIST          list references',
+    'A           ADDRLIST      list reference addresses',
     '\\           SOURCE        toggle source',
     '!           SHELL         escape to a shell',
   ].join('\n'));
@@ -38,6 +40,8 @@ test('the effective Lynx browse map is translated by function name', () => {
   assert.deepEqual(parsed.bindings['previous-focusable'], ['ArrowUp']);
   assert.deepEqual(parsed.bindings.activate, ['ArrowRight']);
   assert.deepEqual(parsed.bindings['keyboard-wizard'], ['?']);
+  assert.deepEqual(parsed.bindings['list-links'], ['l']);
+  assert.deepEqual(parsed.bindings['list-addresses'], ['A']);
   assert.deepEqual(parsed.unsupported, ['SHELL']);
 });
 

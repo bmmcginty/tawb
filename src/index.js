@@ -2140,6 +2140,8 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'add-bookmark') return bookmarkPage(state, page);
   if (action === 'history') return openLibrary(state, page, 'history');
   if (action === 'downloads') return openLibrary(state, page, 'downloads');
+  if (action === 'list-links') return openLinkList(state, page, false);
+  if (action === 'list-addresses') return openLinkList(state, page, true);
   if (action === 'download-link') return downloadCurrentLink(state, page);
 
   if (action === 'new-tab') return openNewTab(state);
@@ -2847,6 +2849,46 @@ function showLibrary(state, page, filter) {
   setStatus(state, libraryStatus(state));
 }
 
+function openLinkList(state, page, addresses = false) {
+  const numbered = state.keys && state.keys.preferences
+    && (state.keys.preferences.numberLinks || state.keys.preferences.numberFields);
+  const displayNumbers = new Map();
+  for (const line of state.lines) {
+    if (line.displayNumber && !displayNumbers.has(line.blockIndex)) {
+      displayNumbers.set(line.blockIndex, line.displayNumber);
+    }
+  }
+  const rows = [];
+  for (let blockIndex = 0; blockIndex < state.core.blocks.length; blockIndex += 1) {
+    const block = state.core.blocks[blockIndex];
+    const item = block && block.item;
+    if (!item || !LINK_ROLES.has(item.role) || !item.href) continue;
+    const ordinal = displayNumbers.get(blockIndex) || rows.length + 1;
+    const marker = numbered ? `[${ordinal}]` : `${rows.length + 1}.`;
+    const description = addresses ? item.href : (item.name || item.href);
+    rows.push({
+      text: `${marker} ${description}`,
+      entry: { title: description, url: item.href, block },
+    });
+  }
+  if (!rows.length) {
+    setStatus(state, 'No references in this document.');
+    return;
+  }
+
+  state.core.live.refreshing = true;
+  state.mode = 'library';
+  const label = addresses ? 'Link addresses' : 'References';
+  state.library = {
+    kind: addresses ? 'addresses' : 'links',
+    label,
+    filter: '', rows, blocks: [], empty: false,
+    place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
+  };
+  state.title = `${label} in ${page.url()}`;
+  showLibrary(state, page, '');
+}
+
 async function openLibrary(state, page, kind) {
   const label = KIND_LABELS[kind];
   // Asking costs a round trip and, on Chromium, a tab of the browser's own
@@ -2916,6 +2958,13 @@ async function handleLibraryKey(chunk, state, page) {
     return;
   }
 
+  if (lib.kind === 'links' || lib.kind === 'addresses') {
+    if (keyIs(chunk, 'ArrowLeft', state)) {
+      closeLibrary(state, page, `Closed ${lib.label.toLowerCase()}.`);
+      return;
+    }
+  }
+
   if (chunk === '\r' || chunk === '\n') {
     const block = currentBlock(state);
     const entry = block && block.entry;
@@ -2927,6 +2976,24 @@ async function handleLibraryKey(chunk, state, page) {
       // A download whose source the browser no longer records. The file is on
       // the line; there is simply nowhere to go.
       setStatus(state, `"${entry.title}" has no address recorded.`);
+      return;
+    }
+    // A reference list points back into the current page buffer. Use the
+    // original block rather than merely loading its URL so fragments, focus,
+    // authentication, and page activation keep the same path as Enter in the
+    // document. Object identity also prevents a live page from retargeting a
+    // stale list entry to a different block at the same index.
+    if ((lib.kind === 'links' || lib.kind === 'addresses') && entry.block) {
+      const target = entry.block;
+      closeLibrary(state, page, null);
+      const blockIndex = state.core.blocks.indexOf(target);
+      const lineIndex = blockIndex < 0 ? -1 : lineForBlock(state, blockIndex);
+      if (lineIndex < 0) {
+        setStatus(state, 'That reference is no longer on the page.');
+        return;
+      }
+      moveSelection(state, lineIndex, page, 0);
+      await activateCurrent(state, page);
       return;
     }
     // The list closes before the load, so the reader is put back on the tab
@@ -4354,6 +4421,6 @@ module.exports = {
   restoreInvocationDirectory, onExternalNavigation, readTitle, drawTitle,
   navigate, navigateInterruptibly, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
-  openLibrary, closeLibrary, showLibrary, handleLibraryKey,
+  openLibrary, openLinkList, closeLibrary, showLibrary, handleLibraryKey,
   askForLine, bookmarkPage, downloadCurrentLink, drawLinePrompt,
 };

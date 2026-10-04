@@ -68,7 +68,7 @@ Compatibility requirements:
       find, refresh, reload, download, bookmarks, history, and quit semantics.
 - [x] Add direct SOURCE selection rather than requiring view cycling.
 - [ ] Add current-page information for `INFO`.
-- [ ] Add accessible link-list and address-list views for `LIST` and `ADDRLIST`.
+- [x] Add accessible link-list and address-list views for `LIST` and `ADDRLIST`.
 - [x] Keep an always-available recovery route from transient modes and webpage keyboard
       passthrough even when imported mappings are incomplete.
 - [x] Clearly expose unsupported commands in Lynx keyboard help.
