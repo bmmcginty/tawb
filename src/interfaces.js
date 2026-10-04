@@ -85,6 +85,8 @@ const LYNX_BINDINGS = {
   'previous-button': [],
   'next-focusable': ['ArrowDown', 'Tab'],
   'previous-focusable': ['ArrowUp', 'Shift+Tab'],
+  'first-focusable': ['^'],
+  'last-focusable': ['$'],
   'next-text': [],
   'previous-text': [],
   'next-paragraph': [],

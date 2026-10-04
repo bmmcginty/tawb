@@ -173,6 +173,8 @@ const ACTIONS = [
   // next *button* is worth a key of its own.
   ['next-focusable', 'Next link, button or form field', ['Tab']],
   ['previous-focusable', 'Previous link, button or form field', ['Shift+Tab']],
+  ['first-focusable', 'First link, button or form field', []],
+  ['last-focusable', 'Last link, button or form field', []],
   ['next-text', 'Next non-link text', ['n']],
   ['previous-text', 'Previous non-link text', ['N']],
   ['next-paragraph', 'Next paragraph', ['p']],

@@ -865,7 +865,9 @@ browser-owned entries remain visible and read-only rather than being migrated
 to global browser settings.
 
 Number entry snapshots references to the numbered block objects rather than
-indexes. If a live rebuild replaces the page before entry completes, the old
+indexes. `^` and `$` scan display spans as well as ordinary lines, so the first
+or last control in a reflowed paragraph retains the column of its exact browser
+block. If a live rebuild replaces the page before entry completes, the old
 object is no longer present and the command reports no such link; it cannot
 activate whichever unrelated block inherited that index. Links continue
 through `activateCurrent`. Numbered form controls and the `g` suffix only move

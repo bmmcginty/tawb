@@ -24,6 +24,7 @@ const BROWSE_FUNCTIONS = {
   MAIN_MENU: 'main-menu',
   NEXT_LINK: 'next-focusable', FASTFORW_LINK: 'next-focusable', DOWN_LINK: 'next-focusable',
   PREV_LINK: 'previous-focusable', FASTBACKW_LINK: 'previous-focusable', UP_LINK: 'previous-focusable',
+  FIRST_LINK: 'first-focusable', LAST_LINK: 'last-focusable',
 };
 
 const EDIT_FUNCTIONS = {

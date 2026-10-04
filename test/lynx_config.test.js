@@ -36,6 +36,8 @@ test('the effective Lynx browse map is translated by function name', () => {
     '=           INFO          document information',
     'o           OPTIONS       options menu',
     '0           F_LINK_NUM    follow a number',
+    '^           FIRST_LINK    first link',
+    '$           LAST_LINK     last link',
     '\\           SOURCE        toggle source',
     '!           SHELL         escape to a shell',
   ].join('\n'));
@@ -57,6 +59,8 @@ test('the effective Lynx browse map is translated by function name', () => {
   assert.deepEqual(parsed.bindings['document-info'], ['=']);
   assert.deepEqual(parsed.bindings.options, ['o']);
   assert.deepEqual(parsed.bindings['link-number'], ['0']);
+  assert.deepEqual(parsed.bindings['first-focusable'], ['^']);
+  assert.deepEqual(parsed.bindings['last-focusable'], ['$']);
   assert.deepEqual(parsed.unsupported, ['SHELL']);
 });
 

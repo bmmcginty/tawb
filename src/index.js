@@ -1150,6 +1150,31 @@ function moveCaretRight(state, page) {
   return moveSelection(state, state.cursor + 1, page, 0);
 }
 
+function focusableEdge(state, direction) {
+  const lineIndexes = direction > 0
+    ? state.lines.map((_, index) => index)
+    : state.lines.map((_, index) => index).reverse();
+  for (const lineIndex of lineIndexes) {
+    const line = state.lines[lineIndex];
+    if (line.spans) {
+      const spans = direction > 0 ? line.spans : [...line.spans].reverse();
+      for (const span of spans) {
+        const block = state.core.blocks[span.blockIndex];
+        if (block && block.item && FOCUSABLE_ROLES.has(block.item.role)) {
+          return { line: lineIndex, col: span.start };
+        }
+      }
+      continue;
+    }
+    if (line.continuation) continue;
+    const block = state.core.blocks[line.blockIndex];
+    if (block && block.item && FOCUSABLE_ROLES.has(block.item.role)) {
+      return { line: lineIndex, col: 0 };
+    }
+  }
+  return null;
+}
+
 function findQuickNav(state, match, direction) {
   const step = direction > 0 ? 1 : -1;
   for (let i = state.cursor + step; i >= 0 && i < state.lines.length; i += step) {
@@ -2464,6 +2489,17 @@ async function handleBrowseKey(chunk, state, page) {
       ? -1 : action === 'repeat-find-forward' ? 1 : state.lastFind.direction;
     state.lastFind.direction = direction;
     return runSearch(state, page, state.lastFind.text, direction);
+  }
+
+  if (action === 'first-focusable' || action === 'last-focusable') {
+    const direction = action === 'first-focusable' ? 1 : -1;
+    const found = focusableEdge(state, direction);
+    if (!found) {
+      setStatus(state, 'No links or form controls in this document.');
+      return;
+    }
+    moveSelection(state, found.line, page, found.col);
+    return;
   }
 
   if (action === 'next-paragraph' || action === 'previous-paragraph') {
@@ -4933,7 +4969,7 @@ module.exports = {
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
   spanForColumn, blockUnder, positionForBlock,
   itemUnderCursor, linkTarget, shortTarget,
-  findQuickNav, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,
+  findQuickNav, focusableEdge, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,
   clickAsHuman, reportAfterAction,
   expandPath, completePath, fileToAttach, fileSize, attachedNote,
   anchorFor, restoreAnchor, capturePlace, restorePlace, jumpToChange, activateCurrent, ALL_SOURCES,

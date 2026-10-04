@@ -63,6 +63,36 @@ test('m and M return to the Lynx main screen', async () => {
   }
 });
 
+test('caret and dollar move to the first and last browser-backed controls', async () => {
+  const state = reader();
+  state.core.blocks = [
+    { text: 'before', item: { role: 'text', name: 'before' } },
+    { text: 'First', item: { role: 'link', name: 'First' } },
+    { text: 'middle', item: { role: 'text', name: 'middle' } },
+    { text: 'Last', item: { role: 'textbox', name: 'Last' } },
+  ];
+  state.lines = [
+    { text: 'before First', blockIndex: 0, spans: [
+      { blockIndex: 0, start: 0, end: 6 }, { blockIndex: 1, start: 7, end: 12 },
+    ] },
+    { text: 'middle', blockIndex: 2 },
+    { text: 'Last', blockIndex: 3 },
+  ];
+  state.cursor = 1;
+  await quietly(() => handleBrowseKey('^', state, PAGE));
+  assert.equal(state.cursor, 0);
+  assert.equal(state.col, 7);
+  await quietly(() => handleBrowseKey('$', state, PAGE));
+  assert.equal(state.cursor, 2);
+  assert.equal(state.col, 0);
+});
+
+test('first and last link commands report a document with no controls', async () => {
+  const state = reader();
+  await quietly(() => handleBrowseKey('^', state, PAGE));
+  assert.equal(state.statusMsg, 'No links or form controls in this document.');
+});
+
 test('main menu does not reload the main screen', async () => {
   const state = reader();
   state.homeUrl = 'https://home.test/';

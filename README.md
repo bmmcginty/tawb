@@ -203,6 +203,7 @@ The common Lynx commands include:
 | Key | Action |
 | --- | --- |
 | Up / Down | Previous / next link or form control |
+| `^` / `$` | First / last link or form control |
 | Right / Enter | Activate the current item |
 | Left | Go back |
 | Space / `b` | Next / previous screen |
