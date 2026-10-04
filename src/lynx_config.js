@@ -14,7 +14,7 @@ const BROWSE_FUNCTIONS = {
   NEXT_PAGE: 'next-screen', DOWN_HALF: 'next-screen',
   PREV_PAGE: 'previous-screen', UP_HALF: 'previous-screen',
   HOME: 'top', END: 'bottom',
-  ADD_BOOKMARK: 'add-bookmark', VIEW_BOOKMARK: 'bookmarks',
+  ADD_BOOKMARK: 'add-bookmark', DEL_BOOKMARK: 'delete-bookmark', VIEW_BOOKMARK: 'bookmarks',
   VLINKS: 'history', HISTORY: 'history', DOWNLOAD: 'download-link',
   LIST: 'list-links', ADDRLIST: 'list-addresses',
   INFO: 'document-info', OPTIONS: 'options', F_LINK_NUM: 'link-number',

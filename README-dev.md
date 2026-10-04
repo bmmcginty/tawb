@@ -875,8 +875,11 @@ The reference, information, and Lynx help commands reuse the internal-list
 buffer while holding live rebuilds. Help is a read-only internal page, while
 `k`/`K` retain the configurable keymap wizard. `m`/`M` loads the same initial
 address used for the session rather than mistaking the top of the current page
-for Lynx's main screen. Reference entries likewise retain original block
-objects and activate through the page after the list closes. This preserves
+for Lynx's main screen. Bookmark entries retain the browser's opaque bookmark
+identity, so `r`/`R` removes the selected entry through Chrome's bookmarks API
+or Firefox Places rather than deleting an arbitrary bookmark with the same
+URL. Reference entries likewise retain original block objects and activate
+through the page after the list closes. This preserves
 fragment handling, authentication, focus observation, and history instead of
 turning every reference into a fresh address-bar navigation.
 

@@ -180,6 +180,19 @@ test('filing the same page twice reports the first one instead of duplicating it
   assert.equal(entries.filter((entry) => entry.url === url).length, 1);
 });
 
+test('a bookmark can be removed from the browser\'s own list', async () => {
+  const url = `${origin}/page?filed`;
+  const entries = await driver.readLibrary('bookmarks', page);
+  const filed = entries.find((entry) => entry.url === url);
+  assert.ok(filed, `no bookmark for ${url} to remove`);
+  if (ENGINE === 'chromium') assert.ok(filed.bookmarkId, 'Chromium omitted the bookmark identity');
+  else assert.ok(filed.bookmarkGuid, 'Firefox omitted the bookmark identity');
+
+  await driver.deleteBookmark(filed, page);
+  const after = await driver.readLibrary('bookmarks', page);
+  assert.equal(after.some((entry) => entry.url === url), false);
+});
+
 test('an unknown list is refused rather than answered emptily', async () => {
   await assert.rejects(() => driver.readLibrary('passwords', page));
 });

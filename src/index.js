@@ -2372,6 +2372,10 @@ async function handleBrowseKey(chunk, state, page) {
 
   if (action === 'bookmarks') return openLibrary(state, page, 'bookmarks');
   if (action === 'add-bookmark') return bookmarkPage(state, page);
+  if (action === 'delete-bookmark') {
+    setStatus(state, 'Open the bookmarks list with v, select a bookmark, then press r to remove it.');
+    return;
+  }
   if (action === 'history') return openLibrary(state, page, 'history');
   if (action === 'downloads') return openLibrary(state, page, 'downloads');
   if (action === 'list-links') return openLinkList(state, page, false);
@@ -3326,6 +3330,29 @@ function closeLibrary(state, page, note) {
   if (note) setStatus(state, note);
 }
 
+async function deleteLibraryBookmark(state, page) {
+  const block = currentBlock(state);
+  const entry = block && block.entry;
+  if (!entry) { setStatus(state, 'Move to a bookmark first.'); return; }
+  if (typeof state.driver.deleteBookmark !== 'function') {
+    setStatus(state, `${state.driver.name} cannot be asked to remove a bookmark.`);
+    return;
+  }
+  const confirmed = await askYesNo(state, `Remove bookmark "${entry.title || entry.url}"?`);
+  if (!confirmed) { setStatus(state, 'Bookmark not removed.'); return; }
+
+  try {
+    await state.driver.deleteBookmark(entry, page);
+  } catch (err) {
+    const reason = String(err.message || err).split('\n')[0];
+    setStatus(state, `Could not remove the bookmark: ${reason}`);
+    return;
+  }
+  state.library.rows = state.library.rows.filter((row) => row.entry !== entry);
+  showLibrary(state, page, state.library.filter);
+  setStatus(state, `Removed bookmark "${entry.title || entry.url}".`);
+}
+
 async function handleLibraryKey(chunk, state, page) {
   markInput(state);
   const lib = state.library;
@@ -3335,6 +3362,9 @@ async function handleLibraryKey(chunk, state, page) {
   const contextAction = contextNavigationAction(chunk, state);
 
   if (lib.kind === 'options') return handleOptionsKey(chunk, state, page);
+  if (lib.kind === 'bookmarks' && lynxAction === 'delete-bookmark') {
+    return deleteLibraryBookmark(state, page);
+  }
   if (lynxAction === 'quit') return 'quit';
   if (contextAction === 'cancel') {
     closeLibrary(state, page, `Closed ${lib.label.toLowerCase()}.`);
@@ -3606,6 +3636,29 @@ async function askForFilePaths(state, { asking, multiple = false, accept = '' } 
     state.keyReader.release(token);
     state.mode = previousMode;
     state.files = null;
+    state.statusMsg = previousStatus;
+    drawHint(state, { force: true });
+  }
+}
+
+async function askYesNo(state, question) {
+  if (!state.keyReader) return false;
+  const previousMode = state.mode;
+  const previousStatus = state.statusMsg;
+  state.mode = 'confirm';
+  const token = state.keyReader.claim();
+  drawHint(state, { force: true });
+  setStatus(state, `${question} (y/n)`);
+  moveCursor(statusRow(), Math.min(question.length + 8, termSize().cols));
+  try {
+    for (;;) {
+      const chunk = await state.keyReader.next(token);
+      if (chunk === EOF || keyIs(chunk, 'Escape', state) || /^[nN]$/.test(chunk)) return false;
+      if (/^[yY]$/.test(chunk)) return true;
+    }
+  } finally {
+    state.keyReader.release(token);
+    state.mode = previousMode;
     state.statusMsg = previousStatus;
     drawHint(state, { force: true });
   }
@@ -4899,5 +4952,6 @@ module.exports = {
   openLibrary, openLinkList, openDocumentInfo, openOptions, openHelp, openMainMenu,
   closeLibrary, showLibrary, showOptions, handleLibraryKey, handleOptionsKey,
   handleChooseKey,
-  askForLine, bookmarkPage, downloadCurrentLink, drawLinePrompt,
+  askForLine, askYesNo, bookmarkPage, deleteLibraryBookmark,
+  downloadCurrentLink, drawLinePrompt,
 };

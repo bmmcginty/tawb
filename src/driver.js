@@ -62,6 +62,9 @@
 //                     of one shape, described in library.js. The second
 //                     argument is a page to ask through, which Firefox needs
 //                     and Chromium ignores.
+//   saveBookmark()    adds a bookmark through the same browser-owned API.
+//   deleteBookmark()  removes the exact bookmark identity returned by
+//                     readLibrary(), never another entry with the same URL.
 //   realClick()       a click the browser treats as a person's, which only
 //                     the protocol can produce: real input dispatched above
 //                     content, so the events are trusted and carry user

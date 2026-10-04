@@ -190,6 +190,18 @@ async function quietly(run) {
   try { return await run(); } finally { process.stdout.write = write; }
 }
 
+function keyboard(keys) {
+  const queue = [...keys];
+  return {
+    claim() { return 'token'; },
+    release() {},
+    async next() {
+      if (!queue.length) throw new Error('the prompt asked for a key nobody pressed');
+      return queue.shift();
+    },
+  };
+}
+
 function typeInto(state, text) {
   return quietly(async () => {
     for (const character of text) await handleLibraryKey(character, state, PAGE);
@@ -281,6 +293,37 @@ test('opening a list replaces the buffer with what the browser answered', async 
 // A browser that cannot answer — an older Firefox, or one this session only
 // attached to — must say so on the status line and leave the reader where they
 // were, not drop them into an empty list.
+test('r removes the selected bookmark through the browser after confirmation', async () => {
+  const entry = {
+    bookmarkId: '42', title: 'Braille', url: 'https://example.test/braille', folder: 'Reading',
+  };
+  const state = readerAt([entry]);
+  state.interface = 'lynx';
+  state.keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  state.keyReader = keyboard(['y']);
+  const removed = [];
+  state.driver.deleteBookmark = async (selected) => removed.push(selected);
+  await quietly(() => openLibrary(state, PAGE, 'bookmarks'));
+  await quietly(() => handleLibraryKey('r', state, PAGE));
+  assert.deepEqual(removed, [entry]);
+  assert.equal(state.library.rows.length, 0);
+  assert.equal(state.library.empty, true);
+  assert.equal(state.statusMsg, 'Removed bookmark "Braille".');
+});
+
+test('a declined bookmark deletion leaves the browser and list unchanged', async () => {
+  const entry = { title: 'Braille', url: 'https://example.test/braille' };
+  const state = readerAt([entry]);
+  state.interface = 'lynx';
+  state.keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  state.keyReader = keyboard(['n']);
+  state.driver.deleteBookmark = async () => assert.fail('declined deletion reached the browser');
+  await quietly(() => openLibrary(state, PAGE, 'bookmarks'));
+  await quietly(() => handleLibraryKey('R', state, PAGE));
+  assert.equal(state.library.rows.length, 1);
+  assert.equal(state.statusMsg, 'Bookmark not removed.');
+});
+
 test('a browser that cannot answer says why and leaves the page alone', async () => {
   const state = readerAt(async () => { throw new Error('this Firefox was already running'); });
   await quietly(() => openLibrary(state, PAGE, 'bookmarks'));

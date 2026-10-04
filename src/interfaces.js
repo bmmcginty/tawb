@@ -41,6 +41,7 @@ const LYNX_BINDINGS = {
   'new-tab': [],
   bookmarks: ['v'],
   'add-bookmark': ['a'],
+  'delete-bookmark': ['r', 'R'],
   history: ['Backspace', 'Ctrl+H', 'V'],
   downloads: [],
   'list-links': ['l'],

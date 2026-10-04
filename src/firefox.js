@@ -714,6 +714,7 @@ const LIBRARY_PARENT_BODY = `
       if (node.guid === PlacesUtils.bookmarks.tagsGuid) return;
       if (node.uri) {
         out.push({
+          bookmarkGuid: String(node.guid || ""),
           title: String(node.title || ""),
           url: String(node.uri),
           folder: trail.join("/"),
@@ -778,6 +779,12 @@ const LIBRARY_PARENT_BODY = `
     };
   };
 
+  const remove = async function ({ bookmarkGuid }) {
+    if (!bookmarkGuid) throw new Error("bookmark has no browser identity");
+    await PlacesUtils.bookmarks.remove(bookmarkGuid);
+    return { removed: true };
+  };
+
   // Some Firefox releases appear to publish automation state again while a
   // BiDi session starts. This agent outlives the Marionette session that
   // installed it, so diagnostics can observe each transition and the reader
@@ -804,7 +811,7 @@ const LIBRARY_PARENT_BODY = `
   };
 
   const answer = {
-    bookmarks, history, downloads, save, automationState, clearAutomation,
+    bookmarks, history, downloads, save, remove, automationState, clearAutomation,
   };
   const { require: devtoolsRequire } = ChromeUtils.importESModule(
     "resource://devtools/shared/loader/Loader.sys.mjs");
@@ -838,6 +845,8 @@ const LIBRARY_PARENT_BODY = `
             max: Math.max(1, Math.min(5000, Number(data.max) || 1000)),
             url: data.url == null ? null : String(data.url).slice(0, 10000),
             title: data.title == null ? null : String(data.title).slice(0, 1000),
+            bookmarkGuid: data.bookmarkGuid == null
+              ? null : String(data.bookmarkGuid).slice(0, 100),
           };
           try {
             transport.send({ result: await ask(request) });

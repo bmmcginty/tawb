@@ -96,6 +96,7 @@ const ACTIONS = [
   // shell, but nothing is reading a line here, and the editing actions have
   // their own Ctrl+D for the character under the cursor while typing.
   ['add-bookmark', 'Bookmark this page', ['Ctrl+D']],
+  ['delete-bookmark', 'Delete the selected bookmark', []],
   ['history', 'History', ['Alt+H']],
   ['downloads', 'Downloads', ['Alt+J']],
   ['list-links', 'List page links', []],

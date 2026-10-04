@@ -73,6 +73,7 @@ function readBookmarks() {
         if (!node) return;
         if (node.url) {
           out.push({
+            bookmarkId: String(node.id || ''),
             title: String(node.title || ''),
             url: String(node.url),
             folder: trail.join('/'),
@@ -215,6 +216,16 @@ function saveBookmark(entry) {
   });
 }
 
+function removeBookmark(id) {
+  return new Promise((resolve, reject) => {
+    chrome.bookmarks.remove(String(id || ''), () => {
+      const error = chrome.runtime.lastError;
+      if (error) { reject(new Error(error.message || 'refused')); return; }
+      resolve({ removed: true });
+    });
+  });
+}
+
 const READERS = { bookmarks: readBookmarks, history: readHistory, downloads: readDownloads };
 
 // The one thing each reader has to be told, since a function sent into a page
@@ -260,4 +271,18 @@ async function saveChromiumBookmark(context, entry, { timeout = READY_TIMEOUT_MS
   }
 }
 
-module.exports = { readChromiumLibrary, saveChromiumBookmark, PAGES };
+async function removeChromiumBookmark(context, entry, { timeout = READY_TIMEOUT_MS } = {}) {
+  if (!entry || !entry.bookmarkId) throw new Error('bookmark has no browser identity');
+  const page = await context.newInternalPage();
+  try {
+    await page.goto(PAGES.bookmarks, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(READY.bookmarks, undefined, { timeout, polling: POLL_MS });
+    return await page.evaluate(removeBookmark, entry.bookmarkId);
+  } finally {
+    await context.closePage(page).catch(() => { /* it is removed either way */ });
+  }
+}
+
+module.exports = {
+  readChromiumLibrary, saveChromiumBookmark, removeChromiumBookmark, PAGES,
+};

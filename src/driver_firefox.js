@@ -1004,6 +1004,7 @@ async function openFirefox({
       max: params.max || 0,
       url: params.url || null,
       title: params.title || null,
+      bookmarkGuid: params.bookmarkGuid || null,
     });
   }
 
@@ -1130,6 +1131,12 @@ async function openFirefox({
       return askAgent('save', {
         url: String(entry.url || ''), title: String(entry.title || ''),
       }, scope, 'add to them');
+    },
+
+    async deleteBookmark(entry, scope) {
+      return askAgent('remove', {
+        bookmarkGuid: String(entry.bookmarkGuid || ''),
+      }, scope, 'remove one');
     },
 
     // Which views this engine can offer.
