@@ -12,7 +12,7 @@ const { armFrame, refreshDue, pulse, TICK_MS } = require('./live');
 const { log, timed, count, flushCounters, enableLog } = require('./log');
 const { layoutLines } = require('./layout');
 const {
-  clipField, renderLynxBlock, lynxFocusable, numberLynxBlocks,
+  clipField, renderLynxBlock, lynxFocusable, numberLynxBlocks, groupLynxTableRows,
 } = require('./lynx_display');
 const { normaliseEndpoint } = require('./browser');
 const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
@@ -360,9 +360,46 @@ function activeBlocks(state) {
   return state.core.blocks;
 }
 
+// The span of a merged table row the caret is standing in. A line that is not
+// a merged row has no spans and no answer here.
+function spanForColumn(line, col) {
+  const spans = line && line.spans;
+  if (!spans || !spans.length) return null;
+  let chosen = spans[0];
+  for (const span of spans) {
+    if (span.start <= (col || 0)) chosen = span;
+  }
+  return chosen;
+}
+
+// The block under a caret on one line, whether that line is one block or a
+// table row holding several.
+function blockUnder(state, line, col) {
+  if (!line) return null;
+  const blocks = activeBlocks(state);
+  const span = spanForColumn(line, col);
+  if (span) return blocks[span.blockIndex] || null;
+  return blocks[line.blockIndex] || null;
+}
+
+// Where a block starts on screen. -1 when the current view has no line for it.
+function positionForBlock(state, blockIndex) {
+  for (let i = 0; i < state.lines.length; i += 1) {
+    const line = state.lines[i];
+    if (line.continuation) continue;
+    if (line.spans) {
+      const span = line.spans.find((one) => one.blockIndex === blockIndex);
+      if (span) return { line: i, col: span.start };
+      continue;
+    }
+    if (line.blockIndex === blockIndex) return { line: i, col: 0 };
+  }
+  return null;
+}
+
 function currentBlock(state) {
   const line = currentLine(state);
-  return line ? activeBlocks(state)[line.blockIndex] : null;
+  return blockUnder(state, line, state.col);
 }
 
 function itemUnderCursor(state) {
@@ -431,7 +468,10 @@ function displayBlocks(state) {
   const transform = state.escapeUnicode && pageBlocks ? escapeNonAscii : String;
   if (state.interface === 'lynx' && pageBlocks) {
     const rendered = blocks.map((block) => renderLynxBlock(block, transform));
-    return numberLynxBlocks(rendered, state.keys && state.keys.preferences);
+    const numbered = numberLynxBlocks(rendered, state.keys && state.keys.preferences);
+    // A table row reads as one line in the compatibility interface. The row's
+    // spans are what keep every cell reachable once they share a line.
+    return groupLynxTableRows(numbered);
   }
   if (!state.escapeUnicode || !pageBlocks) return blocks;
   // Keep Core's original text intact. It uses that text to resolve live
@@ -770,6 +810,27 @@ function renderRow(state, lineIndex) {
   const prefix = indent + (line ? line.displayPrefix || '' : '');
   const suffix = line ? line.displaySuffix || '' : '';
   const selected = state.lines[state.cursor];
+
+  // A merged table row holds several blocks on one line, so the row is not
+  // the current item: only the span the caret is in is. The number marker is
+  // outside the span and so outside the highlight, which is what keeps a
+  // marker from being read as part of the thing it numbers.
+  if (line && line.spans && line.spans.length) {
+    const current = selected ? currentBlock(state) : null;
+    if (!current || !lynxFocusable(current)) return prefix + text + suffix;
+    const currentIndex = activeBlocks(state).indexOf(current);
+    let out = '';
+    let at = 0;
+    for (const span of line.spans) {
+      if (span.blockIndex !== currentIndex) continue;
+      out += text.slice(at, span.start)
+        + ANSI_REVERSE + text.slice(span.start, span.end) + ANSI_RESET;
+      at = span.end;
+    }
+    if (!out) return prefix + text + suffix;
+    return prefix + out + text.slice(at) + suffix;
+  }
+
   const block = line && activeBlocks(state)[line.blockIndex];
   // Lynx highlights every visible part of a wrapped current link. ANSI lives
   // only in the terminal write; line text, searches, offsets, and the number
@@ -788,8 +849,16 @@ function typingText(state) {
   const value = pageText(state, state.typing.text);
   if (state.interface === 'lynx') {
     const line = state.lines ? currentLine(state) : null;
+    // On a merged table row the marker lives in the span, not on the line, so
+    // the field being edited keeps the number it had in the row.
+    const span = line && line.spans
+      ? line.spans.find((one) => activeBlocks(state)[one.blockIndex]
+        && activeBlocks(state)[one.blockIndex].item === item)
+      : null;
+    const marker = span && span.displayNumber ? `[${span.displayNumber}]` : '';
     const number = line
-      ? ' '.repeat(line.displayIndent || 0) + (line.displayPrefix || '') : '';
+      ? ' '.repeat(line.displayIndent || 0) + marker + (line.displayPrefix || '')
+      : '';
     const suffix = line ? line.displaySuffix || '' : '';
     const label = number + (item.name ? `${pageText(state, item.name)} ` : '');
     return {
@@ -931,20 +1000,41 @@ function repaintList(state, page, before) {
 // Movement
 // ---------------------------------------------------------------------------
 
-function repaintLynxSelection(state, oldCursor) {
+function repaintLynxSelection(state, oldCursor, oldCol = 0) {
   if (state.interface !== 'lynx') return;
   const oldLine = state.lines[oldCursor];
   const newLine = state.lines[state.cursor];
-  if (!oldLine || !newLine || oldLine.blockIndex === newLine.blockIndex) return;
-  const blocks = activeBlocks(state);
+  if (!oldLine || !newLine) return;
+
+  const oldBlock = blockUnder(state, oldLine, oldCol);
+  const newBlock = blockUnder(state, newLine, state.col);
+  if (oldLine === newLine && oldBlock === newBlock) return;
+
+  // A merged table row carries several blocks on one line, so a line index is
+  // not a block identity and a row's own highlight may move between cells
+  // without the line changing at all. Repaint the whole row on both sides;
+  // rows are short and this is the rare case.
+  const rows = new Set();
+  if (oldLine.spans) rows.add(oldCursor);
+  if (newLine.spans) rows.add(state.cursor);
+  if (rows.size) {
+    const end = Math.min(state.lines.length, state.scroll + viewportHeight());
+    for (let lineIndex = state.scroll; lineIndex < end; lineIndex += 1) {
+      if (!rows.has(lineIndex)) continue;
+      writeLine(lineRow(state, lineIndex), renderRow(state, lineIndex));
+    }
+    return;
+  }
+
+  if (oldLine.blockIndex === newLine.blockIndex) return;
   const changed = new Set();
-  if (lynxFocusable(blocks[oldLine.blockIndex])) changed.add(oldLine.blockIndex);
-  if (lynxFocusable(blocks[newLine.blockIndex])) changed.add(newLine.blockIndex);
+  if (lynxFocusable(oldBlock)) changed.add(oldBlock);
+  if (lynxFocusable(newBlock)) changed.add(newBlock);
   if (!changed.size) return;
 
   const end = Math.min(state.lines.length, state.scroll + viewportHeight());
   for (let lineIndex = state.scroll; lineIndex < end; lineIndex += 1) {
-    if (!changed.has(state.lines[lineIndex].blockIndex)) continue;
+    if (!changed.has(activeBlocks(state)[state.lines[lineIndex].blockIndex])) continue;
     writeLine(lineRow(state, lineIndex), renderRow(state, lineIndex));
   }
 }
@@ -954,6 +1044,7 @@ function moveSelection(state, newCursor, page, newCol = 0) {
   if (target === state.cursor && newCol === state.col) return;
 
   const oldCursor = state.cursor;
+  const oldCol = state.col;
   const oldScroll = state.scroll;
   state.cursor = target;
   state.col = newCol;
@@ -970,7 +1061,7 @@ function moveSelection(state, newCursor, page, newCol = 0) {
   drawStatus(state, page);
 
   if (scrolledBy === 0) {
-    repaintLynxSelection(state, oldCursor);
+    repaintLynxSelection(state, oldCursor, oldCol);
     moveCursor(lineRow(state, target), cursorCol(state));
   } else if (state.interface === 'lynx') {
     // Scrolling moves the old highlight to another terminal row. Redrawing is
@@ -1031,6 +1122,15 @@ function findQuickNav(state, match, direction) {
   for (let i = state.cursor + step; i >= 0 && i < state.lines.length; i += step) {
     const line = state.lines[i];
     if (line.continuation) continue;
+    // A merged table row holds several blocks; look at each cell's own span,
+    // and land on the cell rather than the start of the row.
+    if (line.spans) {
+      for (const span of line.spans) {
+        const block = state.core.blocks[span.blockIndex];
+        if (block && block.item && match(block.item)) return { line: i, col: span.start };
+      }
+      continue;
+    }
     const block = state.core.blocks[line.blockIndex];
     if (block.item && match(block.item)) return { line: i, col: 0 };
   }
@@ -1278,7 +1378,8 @@ function viewOf(state) {
 // in this buffer at all answers -1.
 function lineForBlock(state, blockIndex) {
   if (blockIndex < 0) return -1;
-  return state.lines.findIndex((l) => l.blockIndex === blockIndex && !l.continuation);
+  const position = positionForBlock(state, blockIndex);
+  return position ? position.line : -1;
 }
 
 function restoreAnchor(state, anchor) {
@@ -2028,17 +2129,25 @@ function drawLinkNumberPrompt(state) {
 function openLinkNumberPrompt(state, digits = '') {
   const map = new Map();
   const targets = [];
+  const add = (number, block, line, col) => {
+    if (!number || !block || map.has(number)) return;
+    map.set(number, block);
+    targets.push({ number, block, line, col });
+  };
   for (let lineIndex = 0; lineIndex < state.lines.length; lineIndex += 1) {
     const line = state.lines[lineIndex];
-    if (!line.displayNumber || map.has(line.displayNumber)) continue;
-    const block = state.core.blocks[line.blockIndex];
-    map.set(line.displayNumber, block);
-    targets.push({ number: line.displayNumber, block, line: lineIndex });
+    // A merged table row numbers each cell separately, so the row's numbers
+    // come from its spans rather than from the line.
+    if (line.spans) {
+      for (const span of line.spans) add(span.displayNumber, state.core.blocks[span.blockIndex], lineIndex, span.start);
+      continue;
+    }
+    if (line.displayNumber) add(line.displayNumber, state.core.blocks[line.blockIndex], lineIndex, 0);
   }
   state.mode = 'number';
   state.linkNumber = {
     text: digits === '0' ? '' : digits,
-    map, targets, cursor: state.cursor,
+    map, targets, cursor: state.cursor, col: state.col || 0,
   };
   drawHint(state);
   drawLinkNumberPrompt(state);
@@ -2058,11 +2167,15 @@ function parseLynxNumberExpression(text) {
 
 function relativeLinkNumber(prompt, amount, direction) {
   const targets = prompt.targets || [];
-  const current = targets.find((target) => target.line === prompt.cursor);
-  if (current) return current.number + (direction * amount);
-  const previous = targets.filter((target) => target.line < prompt.cursor).at(-1);
-  if (direction > 0) return (previous ? previous.number : 0) + amount;
-  if (previous) return previous.number + 1 - amount;
+  // The numbered item on the reader's own line, or the nearest one before it.
+  // On a merged table row several numbers share a line, so the column breaks
+  // the tie that the line alone cannot.
+  const before = targets.filter((target) => target.line < prompt.cursor
+    || (target.line === prompt.cursor && (target.col || 0) <= (prompt.col || 0)));
+  const current = before.at(-1);
+  if (current && current.line === prompt.cursor) return current.number + (direction * amount);
+  if (direction > 0) return (current ? current.number : 0) + amount;
+  if (current) return current.number + 1 - amount;
   return targets.length ? targets[0].number - amount : -1;
 }
 
@@ -2770,13 +2883,19 @@ function chooserLines(state) {
 }
 
 function openChooser(state, page, item, listing) {
-  const blockIndex = state.lines[state.cursor] ? state.lines[state.cursor].blockIndex : 0;
-  state.core.openChooser(blockIndex, listing);
+  const line = state.lines[state.cursor];
+  // A control in a table row shares its line with other cells, and the
+  // chooser's entries are spliced into the block list after the control. Put
+  // them after the whole row so they do not land between the row's cells.
+  const at = line && line.spans && line.spans.length
+    ? line.spans[line.spans.length - 1].blockIndex
+    : (line ? line.blockIndex : 0);
+  state.core.openChooser(at, listing);
   // Hold off live rebuilds while the list is open: a refresh would replace
   // the block list and take the entries with it, mid-choice.
   state.core.live.refreshing = true;
   state.mode = 'choose';
-  state.chooser = { item, from: blockIndex };
+  state.chooser = { item, from: line ? line.blockIndex : 0 };
 
   relayout(state);
   const range = chooserLines(state);
@@ -4092,13 +4211,12 @@ async function handleNumberKey(chunk, state, page) {
     : expression.number;
   const block = prompt.map.get(number);
   const blockIndex = block ? state.core.blocks.indexOf(block) : -1;
-  const lineIndex = blockIndex < 0 ? -1 : state.lines.findIndex(
-    (line) => line.blockIndex === blockIndex && !line.continuation);
-  if (lineIndex < 0) {
+  const position = blockIndex < 0 ? null : positionForBlock(state, blockIndex);
+  if (!position) {
     setStatus(state, `No link ${number || 0} on this page.`);
     return;
   }
-  moveSelection(state, lineIndex, page, 0);
+  moveSelection(state, position.line, page, position.col);
   const item = block.item;
   if (expression.command === 'move' || !item || !LINK_ROLES.has(item.role)) {
     setStatus(state, `Link ${number}.`);
@@ -4618,6 +4736,7 @@ module.exports = {
   render, drawList, drawAddress, drawHint, hintText, drawStatus, setStatus,
   patchEditedLine, moveSelection, repaintLynxSelection, moveScreen, preserveViewportRow,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
+  spanForColumn, blockUnder, positionForBlock,
   itemUnderCursor, linkTarget, shortTarget,
   findQuickNav, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,
   clickAsHuman, reportAfterAction,

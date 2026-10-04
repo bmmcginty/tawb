@@ -80,9 +80,30 @@ function wrapWithOffsets(text, width) {
   return out;
 }
 
+// The part of each span that falls on one wrapped row, with its offsets made
+// relative to that row's text. A merged table row is one block whose spans
+// point at the blocks the cells came from, and wrapping it must not lose that:
+// the same mapping is what activation, search and the number prompt read.
+function spansWithin(spans, start, end) {
+  const out = [];
+  for (const span of spans) {
+    if (span.end <= start || span.start >= end) continue;
+    out.push({
+      ...span,
+      start: Math.max(span.start, start) - start,
+      end: Math.min(span.end, end) - start,
+    });
+  }
+  return out;
+}
+
 function layoutLines(blocks, width) {
   const lines = [];
-  blocks.forEach((block, blockIndex) => {
+  blocks.forEach((block, position) => {
+    // A merged table row was built from several blocks; its declared index is
+    // the first of them, so a line still names a real block in the list the
+    // reader's cursor, searches and activation resolve against.
+    const blockIndex = block.sourceIndex != null ? block.sourceIndex : position;
     const prefix = block.displayPrefix || '';
     const suffix = block.displaySuffix || '';
     const indent = block.displayIndent || 0;
@@ -91,7 +112,7 @@ function layoutLines(blocks, width) {
     const wrapped = wrapWithOffsets(
       block.text, Math.max(1, width - indent - prefix.length - suffix.length));
     wrapped.forEach((w, i) => {
-      lines.push({
+      const line = {
         blockIndex,
         text: w.text,
         start: w.start,
@@ -102,10 +123,12 @@ function layoutLines(blocks, width) {
           ? Math.max(0, Math.floor((width - w.text.length) / 2)) : indent,
         displayPrefix: i === 0 ? prefix : '',
         displaySuffix: i === wrapped.length - 1 ? suffix : '',
-      });
+      };
+      if (block.spans && block.spans.length) line.spans = spansWithin(block.spans, w.start, w.end);
+      lines.push(line);
     });
   });
   return lines;
 }
 
-module.exports = { layoutLines, wrapWithOffsets };
+module.exports = { layoutLines, wrapWithOffsets, spansWithin };

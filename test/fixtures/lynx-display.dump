@@ -10,4 +10,9 @@ Second heading
    Query [3]lynx___ [4][X] Checked box [5][ ] Unchecked box [6](*) Chosen
    radio [7]( ) Other radio Country [8][(2)__France] [9]Send
 
-   IFRAME: [10]about:blank
+   CAPTION: Numbers
+
+     Name   Value
+   [10]four 4
+
+   IFRAME: [11]about:blank

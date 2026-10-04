@@ -277,3 +277,71 @@ test('Lynx SOURCE shows the markup and returns to the presentation view', async 
   assert.ok(!state.lines.some((line) => line.text.includes('<a')),
     'the presentation view came back');
 });
+
+test('a table row is one line, and its cells stay reachable in every view', async () => {
+  const page = await openHtml(`
+    <table>
+      <tr><th>Name</th><th>Detail</th></tr>
+      <tr><td><a href="#" onclick="window.clicked = 'yes'; event.preventDefault()">Go</a></td><td>Plain</td></tr>
+      <tr><td><input aria-label="Cell field"></td><td>Other</td></tr>
+    </table>
+  `);
+
+  for (const source of ['ax', 'render']) {
+    const core = new Core({ driver, page, source, sources: [source] });
+    await core.rescan();
+    await page.evaluate(() => { window.clicked = null; });
+
+    const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+    keys.preferences = { numberLinks: true, numberFields: true, textfieldsNeedActivation: true };
+    const state = makeState(core, keys, { sources: [source, 'source'] });
+    relayout(state);
+
+    const rowWith = (name) => state.lines.find((line) => (line.spans || [])
+      .some((span) => core.blocks[span.blockIndex].item.name === name));
+    const spanNamed = (line, name) => line.spans
+      .find((span) => core.blocks[span.blockIndex].item.name === name);
+
+    const header = rowWith('Name');
+    const data = rowWith('Go');
+    assert.ok(header && header.spans.length === 2, `${source}: the header row is one line`);
+    assert.equal(spanNamed(header, 'Detail').start, spanNamed(data, 'Plain').start,
+      `${source}: the second column lines up`);
+
+    // The number precedes the cell text and is not part of the span.
+    const go = spanNamed(data, 'Go');
+    assert.equal(data.text.slice(go.start, go.end), 'Go');
+    assert.match(data.text.slice(0, go.start), /\[\d+\]$/);
+
+    // Following the number activates the real element in the cell rather than
+    // merely moving to the row.
+    await quietly(async () => {
+      await handleBrowseKey('1', state, page);
+      await handleNumberKey('\r', state, page);
+    });
+    assert.equal(await page.evaluate(() => window.clicked), 'yes', `${source}: the cell link ran`);
+
+    // A field's number moves without submitting, and lands in its own cell.
+    await quietly(async () => {
+      await handleBrowseKey('2', state, page);
+      await handleNumberKey('g', state, page);
+    });
+    // Activation may have rebuilt the block list, so find the field in the
+    // current one rather than holding the object from before.
+    const field = core.blocks.find((block) => block.item
+      && block.item.role === 'textbox' && block.item.name === 'Cell field');
+    const current = state.lines[state.cursor];
+    const span = current.spans && current.spans
+      .find((one) => core.blocks[one.blockIndex] === field);
+    assert.ok(span, `${source}: the number moved to the field's row`);
+    assert.equal(state.col, span.start, `${source}: and to the field's own cell`);
+
+    // SOURCE and back: a place captured on a merged row still comes back to
+    // the table rather than to a line number that no longer means anything.
+    await quietly(async () => { await handleBrowseKey('\\', state, page); });
+    assert.equal(core.source, 'source', `${source}: reached SOURCE`);
+    await quietly(async () => { await handleBrowseKey('\\', state, page); });
+    assert.equal(core.source, source, `${source}: returned from SOURCE`);
+    assert.ok(state.lines.some((line) => line.spans), `${source}: the table is a row again`);
+  }
+});

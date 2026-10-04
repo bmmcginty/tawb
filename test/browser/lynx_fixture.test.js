@@ -74,10 +74,14 @@ test('the recorded fixture is what upstream Lynx prints', () => {
   assert.ok(flat.includes('[ ] Unchecked box'));
   assert.ok(flat.includes('(*) Chosen radio'));
   assert.ok(flat.includes('( ) Other radio'));
-  assert.ok(flat.includes('IFRAME: [10]about:blank'));
+  assert.ok(flat.includes('CAPTION: Numbers'));
+  // Lynx puts both cells of a row on one line, header and data alike.
+  assert.ok(flat.includes('Name Value'));
+  assert.ok(flat.includes('[10]four 4'));
+  assert.ok(flat.includes('IFRAME: [11]about:blank'));
   assert.deepEqual(
     [...dump.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1])),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   assert.match(html, /alt="A map"/);
   assert.match(html, /<iframe/);
 });
@@ -106,28 +110,61 @@ test('the Lynx renderer uses the same control markers as the dump', async () => 
 
 test('the numbering order is the dump’s reading order', async () => {
   const state = await rendered();
-  const numbered = state.lines
-    .filter((line) => line.displayNumber && !line.continuation)
-    .map((line) => state.core.blocks[line.blockIndex].item);
+  // A numbered item in a laid-out table row lives on the row's span, not on
+  // the line, so read both places the way the number prompt does.
+  const numbered = [];
+  for (const line of state.lines) {
+    if (line.continuation) continue;
+    if (line.spans) {
+      for (const span of line.spans) {
+        if (span.displayNumber) numbered.push({ number: span.displayNumber, block: state.core.blocks[span.blockIndex] });
+      }
+      continue;
+    }
+    if (line.displayNumber) numbered.push({ number: line.displayNumber, block: state.core.blocks[line.blockIndex] });
+  }
+  numbered.sort((a, b) => a.number - b.number);
 
-  assert.deepEqual(numbered.map((item) => item.role), [
-    'link', 'link', 'textbox', 'checkbox', 'checkbox', 'radio', 'radio', 'combobox', 'button',
+  assert.deepEqual(numbered.map((entry) => entry.block.item.role), [
+    'link', 'link', 'textbox', 'checkbox', 'checkbox', 'radio', 'radio', 'combobox', 'button', 'link',
   ]);
-  assert.deepEqual(numbered.map((item) => item.name), [
+  assert.deepEqual(numbered.map((entry) => entry.block.item.name), [
     'first link', 'second link', 'Query',
     'Checked box', 'Unchecked box', 'Chosen radio', 'Other radio',
-    'Country', 'Send',
+    'Country', 'Send', 'four',
   ]);
-  assert.deepEqual(numbered.map((line, index) => index + 1),
+  assert.deepEqual(numbered.map((entry) => entry.number),
     numbered.map((unused, index) => index + 1), 'numbers are contiguous from 1');
 
   // The known difference at the end: Lynx numbers the frame's URL as the
-  // tenth link and a reader can follow it. TAWB shows IFRAME: and does not,
+  // eleventh link and a reader can follow it. TAWB shows IFRAME: and does not,
   // because a frame element is not something its activation path can follow.
   const frame = state.core.blocks.find((block) => block.item && block.item.role === 'iframe');
   assert.ok(frame, 'the frame was shown');
   const frameLine = state.lines.find((line) => line.blockIndex === state.core.blocks.indexOf(frame));
   assert.equal(frameLine.displayNumber, null, 'the frame is shown but not numbered');
+});
+
+test('a table row is laid out as a row, as the dump does', async () => {
+  const state = await rendered();
+  const caption = state.lines.find((line) => line.text.startsWith('CAPTION:'));
+  assert.equal(caption.text, 'CAPTION: Numbers');
+
+  const named = (line, name) => line.spans
+    && line.spans.find((span) => state.core.blocks[span.blockIndex].item.name === name);
+  const header = state.lines.find((line) => named(line, 'Name'));
+  const data = state.lines.find((line) => named(line, 'four'));
+
+  // Both cells of each row are on one line, and the second column starts at
+  // the same place in both.
+  assert.ok(named(header, 'Value'), 'the header kept both cells');
+  assert.equal(named(header, 'Value').start, named(data, '4').start,
+    'the second column lines up between the header and the data');
+
+  // The number precedes the cell text and is not part of it.
+  const link = named(data, 'four');
+  assert.equal(data.text.slice(link.start, link.end), 'four');
+  assert.match(data.text.slice(0, link.start), /\[\d+\]$/);
 });
 
 test('the heading and document margins follow the dump', async () => {
