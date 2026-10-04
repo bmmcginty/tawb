@@ -17,6 +17,7 @@ const { claimedTargets, releaseTab } = require('./session');
 const { capturePlace, restorePlace, exactBlockForElement } = require('./place');
 const { armActivationFocus, focusedByActivation, cancelActivationFocus } = require('./focus');
 const { Keymap } = require('./keys');
+const { interfaceName } = require('./interfaces');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
@@ -57,6 +58,7 @@ function parseArgs(argv, env = process.env) {
   const options = {
     url: null, connect: null, profile: null, engine: DEFAULT_ENGINE, keepBrowser: false,
     keyboard: false, dump: false, log: false, logDir: env.TAWB_LOG_DIR || null,
+    interface: interfaceName(env.TAWB_INTERFACE || 'default'),
     search: env.TAWB_SEARCH || DEFAULT_SEARCH,
     linkAddress: !OFF.has(String(env.TAWB_LINK_ADDRESS || '').toLowerCase()),
     shortLinks: ON.has(String(env.TAWB_SHORT_LINKS || '').toLowerCase()),
@@ -71,7 +73,11 @@ function parseArgs(argv, env = process.env) {
     else if (arg === '--keep-browser') { options.keepBrowser = true; }
     else if (arg === '--no-keep-browser') { options.keepBrowser = false; }
     else if (arg === '--keyboard') { options.keyboard = true; }
-    else if (arg === '--dump') { options.dump = true; }
+    else if (arg === '--interface') {
+      options.interface = interfaceName(argv[i + 1] || ''); i += 1;
+    } else if (arg.startsWith('--interface=')) {
+      options.interface = interfaceName(arg.slice('--interface='.length));
+    } else if (arg === '--dump') { options.dump = true; }
     else if (arg === '--log') { options.log = true; }
     else if (arg === '--log-dir') { options.logDir = argv[i + 1] || null; i += 1; }
     else if (arg.startsWith('--log-dir=')) { options.logDir = arg.slice('--log-dir='.length) || null; }
@@ -196,6 +202,7 @@ function actionKeyLabel(state, id, fallback = '') {
 function browserKeyForTerminalSequence(chunk, keys = FALLBACK_KEYMAP) {
   const name = keys.nameForSequence(chunk);
   if (!name || name.startsWith('raw:')) return null;
+  if (name === 'Space') return ' ';
   return name.replace(/^Ctrl\+/, 'Control+');
 }
 
@@ -3740,7 +3747,7 @@ async function handleAddressKey(chunk, state, page) {
 async function main() {
   const logPath = ARGS.log ? enableLog({ directory: ARGS.logDir }) : null;
   if (ARGS.keyboard) {
-    await runKeyWizard();
+    await runKeyWizard({ keymap: new Keymap({ profile: ARGS.interface }) });
     return;
   }
 
@@ -3753,6 +3760,7 @@ async function main() {
 
   log('start', {
     url: dumpTarget || START_URL, logPath, connect: ARGS.connect || null, engine: ARGS.engine,
+    interface: ARGS.interface,
   });
 
   // Either attach to a browser the user is already running, or start an
@@ -3802,7 +3810,7 @@ async function main() {
     return;
   }
 
-  const keys = new Keymap();
+  const keys = new Keymap({ profile: ARGS.interface });
 
   // When joining a browser that is already running, take over the tab it is
   // already showing rather than opening a blank one. Rejoining is usually
@@ -3839,6 +3847,7 @@ async function main() {
   const state = {
     core,
     keys,
+    interface: ARGS.interface,
     keyReader: null,
     credentials: null,
     sources,

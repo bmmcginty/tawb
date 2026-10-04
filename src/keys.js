@@ -4,11 +4,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { bindingsFor, interfaceName } = require('./interfaces');
 
 const KEY_DEFINITIONS = {
   Escape: { sequences: ['\x1b'] },
   Enter: { sequences: ['\r', '\n'] },
   Backspace: { sequences: ['\x7f', '\x08'] },
+  Space: { sequences: [' '] },
   Delete: { cap: 'kdch1', sequences: ['\x1b[3~'] },
   ArrowUp: { cap: 'kcuu1', sequences: ['\x1b[A', '\x1bOA'] },
   ArrowDown: { cap: 'kcud1', sequences: ['\x1b[B', '\x1bOB'] },
@@ -184,9 +186,10 @@ function sharesKeyboard(id, otherId) {
   return keyboardsFor(id).some((keyboard) => keyboards.includes(keyboard));
 }
 
-function configPath(env = process.env, home = os.homedir()) {
+function configPath(env = process.env, home = os.homedir(), profile = 'default') {
   const base = env.XDG_CONFIG_HOME || path.join(home, '.config');
-  return path.join(base, 'tawb', 'keys.json');
+  const name = interfaceName(profile) === 'default' ? 'keys.json' : `keys-${profile}.json`;
+  return path.join(base, 'tawb', name);
 }
 
 function readTerminfo({ env = process.env, run = spawnSync } = {}) {
@@ -214,10 +217,15 @@ function rawSpec(sequence) {
 }
 
 class Keymap {
-  constructor({ terminfo = readTerminfo(), file = configPath(), load = true } = {}) {
-    this.file = file;
+  constructor({
+    terminfo = readTerminfo(), profile = 'default', file = null, load = true,
+  } = {}) {
+    this.profile = interfaceName(profile);
+    this.file = file || configPath(process.env, os.homedir(), this.profile);
     this.terminfo = terminfo;
-    this.actions = ACTIONS.map((action) => ({ ...action, bindings: [...action.defaults] }));
+    this.actions = ACTIONS.map((action) => ({
+      ...action, bindings: bindingsFor(action, this.profile),
+    }));
     this.byId = new Map(this.actions.map((action) => [action.id, action]));
     this.namedSequences = new Map();
     this.sequenceNames = new Map();
@@ -369,7 +377,7 @@ class Keymap {
   }
 
   reset() {
-    for (const action of this.actions) action.bindings = [...action.defaults];
+    for (const action of this.actions) action.bindings = bindingsFor(action, this.profile);
     this.rebuild();
   }
 

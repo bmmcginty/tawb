@@ -99,7 +99,7 @@ async function runKeyWizard({
       drawn.list = [];
     }
 
-    const heading = 'Keyboard bindings';
+    const heading = keymap.profile === 'lynx' ? 'Lynx keyboard bindings' : 'Keyboard bindings';
     if (drawn.heading !== heading) {
       line(output, 1, heading);
       drawn.heading = heading;

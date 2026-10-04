@@ -8,8 +8,41 @@ const { PassThrough } = require('node:stream');
 
 const { tempDir } = require('./tmpdir');
 
-const { Keymap, readTerminfo } = require('../src/keys');
+const { Keymap, configPath, readTerminfo } = require('../src/keys');
 const { runKeyWizard, wizardRows } = require('../src/key_wizard');
+
+test('interface profiles keep their defaults and saved files separate', () => {
+  const home = '/home/reader';
+  const env = { XDG_CONFIG_HOME: '/config' };
+  assert.equal(configPath(env, home), '/config/tawb/keys.json');
+  assert.equal(configPath(env, home, 'lynx'), '/config/tawb/keys-lynx.json');
+
+  const ordinary = new Keymap({ terminfo: {}, load: false });
+  const lynx = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  assert.equal(ordinary.actionFor('g'), 'top');
+  assert.equal(lynx.actionFor('g'), 'location-bar');
+  assert.equal(lynx.actionFor('\x1b[D'), 'history-back');
+  assert.equal(lynx.actionFor('\x1b[C'), 'activate');
+  assert.equal(lynx.actionFor(' '), 'next-screen');
+  assert.equal(lynx.actionFor('b'), 'previous-screen');
+  assert.equal(lynx.actionFor('\x1b[B'), 'next-focusable');
+  assert.equal(lynx.actionFor('\x1b[A'), 'previous-focusable');
+  assert.equal(lynx.actionFor('k'), 'keyboard-wizard');
+  assert.equal(lynx.editingActionFor('\x01'), 'edit-line-start');
+  assert.equal(lynx.editingActionFor('\x0e'), 'edit-next-word');
+  assert.equal(lynx.editingActionFor('\x10'), 'edit-previous-word');
+});
+
+test('the version-one default key file still loads without conversion', () => {
+  const directory = tempDir('tawb-old-keys-');
+  const file = path.join(directory, 'keys.json');
+  fs.writeFileSync(file, JSON.stringify({ version: 1, actions: { quit: ['x'] } }));
+
+  const keys = new Keymap({ terminfo: {}, file });
+  assert.equal(keys.actionFor('x'), 'quit');
+  assert.equal(keys.actionFor('q'), null);
+  assert.equal(keys.actionFor('j'), 'next-line');
+});
 
 test('terminfo key sequences are added to the portable fallbacks', () => {
   const calls = [];
