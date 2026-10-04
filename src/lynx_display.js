@@ -68,6 +68,25 @@ function lynxFocusable(block) {
   return !!(block && block.item && FOCUSABLE_ROLES.has(block.item.role));
 }
 
+function numberLynxBlocks(blocks, preferences = {}) {
+  let number = 0;
+  return blocks.map((block) => {
+    const role = block.item && block.item.role;
+    const link = LINK_ROLES.has(role);
+    const field = role !== 'option' && (BUTTON_ROLES.has(role) || FIELD_ROLES.has(role));
+    if ((!link || !preferences.numberLinks) && (!field || !preferences.numberFields)) return block;
+    number += 1;
+    const marker = `[${number}]`;
+    const left = link ? preferences.numberLinksOnLeft !== false : preferences.numberFieldsOnLeft !== false;
+    return {
+      ...block,
+      displayNumber: number,
+      displayPrefix: left ? marker : '',
+      displaySuffix: left ? '' : marker,
+    };
+  });
+}
+
 module.exports = {
-  FIELD_WIDTH, clipField, renderLynxItem, renderLynxBlock, lynxFocusable,
+  FIELD_WIDTH, clipField, renderLynxItem, renderLynxBlock, lynxFocusable, numberLynxBlocks,
 };

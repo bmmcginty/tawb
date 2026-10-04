@@ -11,7 +11,9 @@ const {
 const { armFrame, refreshDue, pulse, TICK_MS } = require('./live');
 const { log, timed, count, flushCounters, enableLog } = require('./log');
 const { layoutLines } = require('./layout');
-const { clipField, renderLynxBlock, lynxFocusable } = require('./lynx_display');
+const {
+  clipField, renderLynxBlock, lynxFocusable, numberLynxBlocks,
+} = require('./lynx_display');
 const { normaliseEndpoint } = require('./browser');
 const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
 const { claimedTargets, releaseTab } = require('./session');
@@ -131,6 +133,7 @@ function keymapForOptions(options, { importLynx = readLynxConfig } = {}) {
   });
   return new Keymap({
     profile: 'lynx', bindings: imported.bindings, unsupported: imported.unsupported,
+    preferences: imported.preferences,
   });
 }
 // What is typed on the command line is read the same way as what is typed in
@@ -407,7 +410,8 @@ function displayBlocks(state) {
   const pageBlocks = blocks === state.core.blocks;
   const transform = state.escapeUnicode && pageBlocks ? escapeNonAscii : String;
   if (state.interface === 'lynx' && pageBlocks) {
-    return blocks.map((block) => renderLynxBlock(block, transform));
+    const rendered = blocks.map((block) => renderLynxBlock(block, transform));
+    return numberLynxBlocks(rendered, state.keys && state.keys.preferences);
   }
   if (!state.escapeUnicode || !pageBlocks) return blocks;
   // Keep Core's original text intact. It uses that text to resolve live
@@ -679,6 +683,7 @@ function hintText(state) {
     return `Webpage keyboard — every other key goes to the page  ${actionKeyLabel(state, 'page-keyboard', 'Alt+K')}: stop`;
   }
   if (state.mode === 'find') return 'Find — Enter: search  Esc: cancel';
+  if (state.mode === 'number') return 'Follow link number — Enter: follow  g: move  Esc: cancel';
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
   if (state.mode === 'library') {
     return `${state.library.label} — type: filter  Enter: open  Esc: close`;
@@ -738,27 +743,32 @@ function renderRow(state, lineIndex) {
   if (state.interface !== 'lynx') return text;
 
   const line = state.lines[lineIndex];
+  const prefix = line ? line.displayPrefix || '' : '';
+  const suffix = line ? line.displaySuffix || '' : '';
   const selected = state.lines[state.cursor];
   const block = line && activeBlocks(state)[line.blockIndex];
   // Lynx highlights every visible part of a wrapped current link. ANSI lives
   // only in the terminal write; line text, searches, offsets, and the number
   // map remain free of escape bytes.
   if (line && selected && line.blockIndex === selected.blockIndex && lynxFocusable(block)) {
-    return `${ANSI_REVERSE}${text}${ANSI_RESET}`;
+    return `${prefix}${ANSI_REVERSE}${text}${ANSI_RESET}${suffix}`;
   }
   if (block && block.item && block.item.role === 'heading') {
-    return `${ANSI_BOLD}${text}${ANSI_RESET}`;
+    return `${prefix}${ANSI_BOLD}${text}${ANSI_RESET}${suffix}`;
   }
-  return text;
+  return prefix + text + suffix;
 }
 
 function typingText(state) {
   const item = state.typing.item;
   const value = pageText(state, state.typing.text);
   if (state.interface === 'lynx') {
-    const label = item.name ? `${pageText(state, item.name)} ` : '';
+    const line = state.lines ? currentLine(state) : null;
+    const number = line ? line.displayPrefix || '' : '';
+    const suffix = line ? line.displaySuffix || '' : '';
+    const label = number + (item.name ? `${pageText(state, item.name)} ` : '');
     return {
-      text: label + clipField(value, Math.max(20, value.length)),
+      text: label + clipField(value, Math.max(20, value.length)) + suffix,
       caretCol: GUTTER + label.length
         + (state.escapeUnicode
           ? escapedOffset(state.typing.text, state.typing.caret)
@@ -1966,8 +1976,32 @@ function jumpToChange(state, page, direction = 1) {
 // Key handling
 // ---------------------------------------------------------------------------
 
+function drawLinkNumberPrompt(state) {
+  const text = `Follow link (or goto link or page) number: ${state.linkNumber.text}`;
+  writeStatusRow(state, text);
+  moveCursor(statusRow(), Math.min(text.length + 1, termSize().cols));
+}
+
+function openLinkNumberPrompt(state, digits = '') {
+  const map = new Map();
+  for (const line of state.lines) {
+    if (!line.displayNumber || map.has(line.displayNumber)) continue;
+    map.set(line.displayNumber, state.core.blocks[line.blockIndex]);
+  }
+  state.mode = 'number';
+  state.linkNumber = { text: digits === '0' ? '' : digits, map, cursor: state.cursor };
+  drawHint(state);
+  drawLinkNumberPrompt(state);
+}
+
 async function handleBrowseKey(chunk, state, page) {
   markInput(state);
+  const preferences = state.keys && state.keys.preferences;
+  if (state.interface === 'lynx' && preferences
+      && (preferences.numberLinks || preferences.numberFields) && /^\d+$/.test(chunk)) {
+    openLinkNumberPrompt(state, chunk);
+    return;
+  }
   const action = (state.keys || FALLBACK_KEYMAP).actionFor(chunk);
   if (action === 'quit') return 'quit';
 
@@ -3728,6 +3762,52 @@ async function handlePageKey(chunk, state, page) {
   }
 }
 
+async function handleNumberKey(chunk, state, page) {
+  markInput(state);
+  const prompt = state.linkNumber;
+  if (!prompt) { state.mode = 'browse'; return; }
+
+  if (keyIs(chunk, 'Escape', state) || keyIs(chunk, 'Ctrl+C', state)) {
+    state.mode = 'browse';
+    state.linkNumber = null;
+    drawHint(state);
+    setStatus(state, 'Cancelled.');
+    return;
+  }
+  if (keyIs(chunk, 'Backspace', state)) {
+    prompt.text = prompt.text.slice(0, -1);
+    drawLinkNumberPrompt(state);
+    return;
+  }
+  if (/^\d+$/.test(chunk)) {
+    prompt.text += chunk;
+    drawLinkNumberPrompt(state);
+    return;
+  }
+  const moveOnly = chunk === 'g' || chunk === 'G';
+  if (!moveOnly && chunk !== '\r' && chunk !== '\n') return;
+
+  const number = Number(prompt.text);
+  const block = prompt.map.get(number);
+  state.mode = 'browse';
+  state.linkNumber = null;
+  drawHint(state);
+  const blockIndex = block ? state.core.blocks.indexOf(block) : -1;
+  const lineIndex = blockIndex < 0 ? -1 : state.lines.findIndex(
+    (line) => line.blockIndex === blockIndex && !line.continuation);
+  if (lineIndex < 0) {
+    setStatus(state, `No link ${prompt.text || 0} on this page.`);
+    return;
+  }
+  moveSelection(state, lineIndex, page, 0);
+  const item = block.item;
+  if (moveOnly || !item || !LINK_ROLES.has(item.role)) {
+    setStatus(state, `Link ${number}.`);
+    return;
+  }
+  return activateCurrent(state, page);
+}
+
 async function handleFindKey(chunk, state, page) {
   markInput(state);
   const find = state.find;
@@ -3963,7 +4043,7 @@ async function main() {
     scroll: 0,
     statusMsg: '',
     // 'browse' | 'choose' | 'library' | 'type' | 'control' | 'page' | 'address'
-    // | 'find' | 'auth' | 'dialog' | 'line' | 'keyboard'
+    // | 'find' | 'number' | 'auth' | 'dialog' | 'line' | 'keyboard'
     mode: 'browse',
     typing: null,
     controlling: null,
@@ -3987,6 +4067,7 @@ async function main() {
     address: null,
     find: null,
     lastFind: null,
+    linkNumber: null,
     auth: null,
     title: '',
     drawn: { title: null, address: null, hint: null, status: null },
@@ -4133,6 +4214,7 @@ async function main() {
     else if (state.mode === 'page') result = await handlePageKey(chunk, state, current);
     else if (state.mode === 'address') result = await handleAddressKey(chunk, state, current);
     else if (state.mode === 'find') result = await handleFindKey(chunk, state, current);
+    else if (state.mode === 'number') result = await handleNumberKey(chunk, state, current);
     else result = await handleBrowseKey(chunk, state, current);
     const ms = Date.now() - t0;
 
@@ -4228,7 +4310,8 @@ if (require.main === module) {
 
 module.exports = {
   handleBrowseKey, handleTypeKey, handleFormsKey, handleControlKey, handlePageKey,
-  handleAddressKey, handleFindKey, browserKeyForTerminalSequence,
+  handleAddressKey, handleFindKey, handleNumberKey, openLinkNumberPrompt,
+  browserKeyForTerminalSequence,
   findText, runSearch,
   render, drawList, drawAddress, drawHint, hintText, drawStatus, setStatus,
   patchEditedLine, moveSelection, repaintLynxSelection, moveScreen, preserveViewportRow,

@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const {
-  lynxKeySpec, parseBrowseMap, parseEditMap, readLynxConfig,
+  lynxKeySpec, parseBrowseMap, parseEditMap, parsePreferences, readLynxConfig,
 } = require('../src/lynx_config');
 
 test('Lynx key names become portable TAWB key specifications', () => {
@@ -56,6 +56,23 @@ test('the effective Lynx line editor map is translated separately', () => {
   assert.ok(parsed.unsupported.includes('PASS'));
 });
 
+test('Lynx interaction preferences follow config and then .lynxrc precedence', () => {
+  const preferences = parsePreferences(`
+DEFAULT_KEYPAD_MODE:LINKS_ARE_NUMBERED
+NUMBER_LINKS_ON_LEFT:FALSE
+NUMBER_FIELDS_ON_LEFT:FALSE
+TEXTFIELDS_NEED_ACTIVATION:TRUE
+`, 'keypad_mode=LINKS_AND_FORM_FIELDS_ARE_NUMBERED\n');
+  assert.deepEqual(preferences, {
+    keypadMode: 'LINKS_AND_FIELDS_ARE_NUMBERED',
+    numberLinks: true,
+    numberFields: true,
+    numberLinksOnLeft: false,
+    numberFieldsOnLeft: false,
+    textfieldsNeedActivation: true,
+  });
+});
+
 test('Lynx is queried without a shell and with its requested config', () => {
   const calls = [];
   const outputs = {
@@ -66,22 +83,30 @@ test('Lynx is queried without a shell and with its requested config', () => {
     executable: '/opt/lynx', config: '/home/me/lynx.cfg', env: { HOME: '/home/me' },
     run: (command, args, options) => {
       calls.push({ command, args, options });
-      return { status: 0, stdout: outputs[args[1]] };
+      return { status: 0, stdout: args[0] === '-show_cfg'
+        ? 'TEXTFIELDS_NEED_ACTIVATION:TRUE\n'
+        : outputs[args[1]] };
     },
+    readFile: () => 'keypad_mode=LINKS_ARE_NUMBERED\n',
   });
 
   assert.equal(imported.available, true);
   assert.deepEqual(imported.bindings['next-focusable'], ['j']);
   assert.deepEqual(imported.bindings['edit-line-start'], ['Ctrl+A']);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   assert.equal(calls[0].command, '/opt/lynx');
   assert.equal(calls[0].options.env.LYNX_CFG, '/home/me/lynx.cfg');
   assert.equal(calls[0].options.env.LC_ALL, 'C');
   assert.deepEqual(calls[0].options.stdio, ['ignore', 'pipe', 'ignore']);
   assert.equal(Object.hasOwn(calls[0].options, 'shell'), false);
+  assert.equal(imported.preferences.keypadMode, 'LINKS_ARE_NUMBERED');
+  assert.equal(imported.preferences.numberLinks, true);
+  assert.equal(imported.preferences.textfieldsNeedActivation, true);
 });
 
 test('a missing or failing Lynx cleanly selects built-in defaults', () => {
   const imported = readLynxConfig({ run: () => ({ status: 1, stdout: '' }) });
-  assert.deepEqual(imported, { available: false, bindings: {}, unsupported: [] });
+  assert.equal(imported.available, false);
+  assert.deepEqual(imported.bindings, {});
+  assert.equal(imported.preferences.keypadMode, 'NUMBERS_AS_ARROWS');
 });

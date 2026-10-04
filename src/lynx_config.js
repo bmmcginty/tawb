@@ -1,5 +1,8 @@
 'use strict';
 
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const BROWSE_FUNCTIONS = {
@@ -112,8 +115,60 @@ function importedDefaults(browse, edit) {
   };
 }
 
+const DEFAULT_PREFERENCES = {
+  keypadMode: 'NUMBERS_AS_ARROWS',
+  numberLinks: false,
+  numberFields: false,
+  numberLinksOnLeft: true,
+  numberFieldsOnLeft: true,
+  textfieldsNeedActivation: false,
+};
+
+function booleanValue(value, fallback) {
+  if (/^(true|on|yes|1)$/i.test(value)) return true;
+  if (/^(false|off|no|0)$/i.test(value)) return false;
+  return fallback;
+}
+
+function applyKeypadMode(preferences, value) {
+  const mode = String(value || '').trim().toUpperCase()
+    .replace('LINKS_AND_FORM_FIELDS_ARE_NUMBERED', 'LINKS_AND_FIELDS_ARE_NUMBERED')
+    .replace('LINKS_ARE_NOT_NUMBERED', 'NUMBERS_AS_ARROWS');
+  if (!['NUMBERS_AS_ARROWS', 'LINKS_ARE_NUMBERED', 'FIELDS_ARE_NUMBERED',
+    'LINKS_AND_FIELDS_ARE_NUMBERED'].includes(mode)) return;
+  preferences.keypadMode = mode;
+  preferences.numberLinks = mode === 'LINKS_ARE_NUMBERED' || mode === 'LINKS_AND_FIELDS_ARE_NUMBERED';
+  preferences.numberFields = mode === 'FIELDS_ARE_NUMBERED' || mode === 'LINKS_AND_FIELDS_ARE_NUMBERED';
+}
+
+function parsePreferences(showConfig, lynxrc = '') {
+  const preferences = { ...DEFAULT_PREFERENCES };
+  for (const line of String(showConfig).split(/\r?\n/)) {
+    const match = /^([A-Z][A-Z0-9_]*):(.*)$/.exec(line.trim());
+    if (!match) continue;
+    const [, name, value] = match;
+    if (name === 'DEFAULT_KEYPAD_MODE') applyKeypadMode(preferences, value);
+    else if (name === 'NUMBER_LINKS_ON_LEFT') {
+      preferences.numberLinksOnLeft = booleanValue(value, preferences.numberLinksOnLeft);
+    } else if (name === 'NUMBER_FIELDS_ON_LEFT') {
+      preferences.numberFieldsOnLeft = booleanValue(value, preferences.numberFieldsOnLeft);
+    } else if (name === 'TEXTFIELDS_NEED_ACTIVATION') {
+      preferences.textfieldsNeedActivation = booleanValue(value, preferences.textfieldsNeedActivation);
+    }
+  }
+  // Lynx reads .lynxrc after lynx.cfg. Only settings relevant to this adapter
+  // are considered; browser, cookie, proxy, viewer, and command settings stay
+  // entirely with Lynx.
+  for (const line of String(lynxrc).split(/\r?\n/)) {
+    const match = /^\s*keypad_mode\s*=\s*(\S+)/i.exec(line);
+    if (match) applyKeypadMode(preferences, match[1]);
+  }
+  return preferences;
+}
+
 function readLynxConfig({
   executable = 'lynx', config = null, env = process.env, run = spawnSync,
+  readFile = fs.readFileSync,
 } = {}) {
   const childEnv = { ...env, LC_ALL: 'C', LANG: 'C' };
   if (config) childEnv.LYNX_CFG = config;
@@ -124,15 +179,27 @@ function readLynxConfig({
   const browse = dump('LYNXKEYMAP:');
   const edit = dump('LYNXEDITMAP:');
   if (!browse || browse.status !== 0 || !edit || edit.status !== 0) {
-    return { available: false, bindings: {}, unsupported: [] };
+    return {
+      available: false, bindings: {}, unsupported: [], preferences: { ...DEFAULT_PREFERENCES },
+    };
   }
+  const shown = run(executable, ['-show_cfg'], {
+    env: childEnv, encoding: 'utf8', timeout: 3000,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  let lynxrc = '';
+  try {
+    lynxrc = readFile(path.join(childEnv.HOME || os.homedir(), '.lynxrc'), 'utf8');
+  } catch { /* a user options file is optional */ }
   return {
     available: true,
     ...importedDefaults(parseBrowseMap(browse.stdout), parseEditMap(edit.stdout)),
+    preferences: parsePreferences(shown && shown.status === 0 ? shown.stdout : '', lynxrc),
   };
 }
 
 module.exports = {
+  DEFAULT_PREFERENCES, parsePreferences,
   BROWSE_FUNCTIONS, EDIT_FUNCTIONS, lynxKeySpec,
   parseBrowseMap, parseEditMap, readLynxConfig,
 };

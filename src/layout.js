@@ -83,7 +83,11 @@ function wrapWithOffsets(text, width) {
 function layoutLines(blocks, width) {
   const lines = [];
   blocks.forEach((block, blockIndex) => {
-    const wrapped = wrapWithOffsets(block.text, width);
+    const prefix = block.displayPrefix || '';
+    const suffix = block.displaySuffix || '';
+    // Markers are display metadata rather than block text. Reserve their
+    // cells while wrapping, but leave offsets in the original rendered item.
+    const wrapped = wrapWithOffsets(block.text, Math.max(1, width - prefix.length - suffix.length));
     wrapped.forEach((w, i) => {
       lines.push({
         blockIndex,
@@ -91,6 +95,9 @@ function layoutLines(blocks, width) {
         start: w.start,
         end: w.end,
         continuation: i > 0,
+        displayNumber: block.displayNumber || null,
+        displayPrefix: i === 0 ? prefix : '',
+        displaySuffix: i === wrapped.length - 1 ? suffix : '',
       });
     });
   });

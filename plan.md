@@ -35,7 +35,7 @@ Compatibility requirements:
 - [x] Preserve multiple bindings and deterministic last-mapping-wins behavior.
 - [x] Report imported functions that have no safe TAWB equivalent instead of silently
       assigning them to misleading actions.
-- [ ] Read relevant `.lynxrc` interaction preferences, including keypad mode, vi/Emacs
+- [x] Read relevant `.lynxrc` interaction preferences, including keypad mode, vi/Emacs
       keys, line-editor mode, and text-field activation.
 - [x] Do not import browser-owned or executable settings such as cookies, proxies,
       credentials, viewers, printers, or shell commands.
@@ -54,7 +54,7 @@ Compatibility requirements:
       retaining exact block and activation identities.
 - [x] Highlight the current link or control like Lynx, including every wrapped part, without
       putting ANSI bytes into searchable text or caret offsets.
-- [ ] Keep link and field number markers outside the active highlight when shown on the left.
+- [x] Keep link and field number markers outside the active highlight when shown on the left.
 - [ ] Add display fixtures rendered by upstream Lynx and compare TAWB's structural output,
       control markers, numbering, wrapping, and active region against them.
 - [ ] Verify monochrome, color, screen-reader, and braille behavior; highlighting must not be
@@ -76,16 +76,16 @@ Compatibility requirements:
 
 ## 5. Numbered links and fields
 
-- [ ] Add display-only numbering metadata without modifying block text or search offsets.
-- [ ] Honor links-only, fields-only, links-and-fields, and numbers-as-arrows keypad modes.
-- [ ] Honor left/right placement for link and field numbers where practical in TAWB's
+- [x] Add display-only numbering metadata without modifying block text or search offsets.
+- [x] Honor links-only, fields-only, links-and-fields, and numbers-as-arrows keypad modes.
+- [x] Honor left/right placement for link and field numbers where practical in TAWB's
       one-control-per-line layout.
-- [ ] Add a status-line number prompt with editing, cancellation, and invalid-number
+- [x] Add a status-line number prompt with editing, cancellation, and invalid-number
       feedback.
-- [ ] Snapshot the number-to-block map when the prompt opens so live updates cannot retarget
+- [x] Snapshot the number-to-block map when the prompt opens so live updates cannot retarget
       partially entered numbers.
-- [ ] Make a link number activate and a field number move without submitting.
-- [ ] Add the Lynx `g` suffix for move-without-activation.
+- [x] Make a link number activate and a field number move without submitting.
+- [x] Add the Lynx `g` suffix for move-without-activation.
 - [ ] Add `p`, `+`, and `-` suffix navigation after the basic prompt is stable.
 - [ ] Test wrapping, live updates, all views, multi-digit numbers, invalid input, and fields.
 

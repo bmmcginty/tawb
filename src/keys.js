@@ -224,12 +224,13 @@ function rawSpec(sequence) {
 class Keymap {
   constructor({
     terminfo = readTerminfo(), profile = 'default', file = null, load = true,
-    bindings = {}, unsupported = [],
+    bindings = {}, unsupported = [], preferences = {},
   } = {}) {
     this.profile = interfaceName(profile);
     this.file = file || configPath(process.env, os.homedir(), this.profile);
     this.terminfo = terminfo;
     this.unsupported = [...unsupported];
+    this.preferences = { ...preferences };
     this.defaultBindings = new Map(ACTIONS.map((action) => [
       action.id,
       Object.hasOwn(bindings, action.id) ? [...bindings[action.id]] : bindingsFor(action, this.profile),
