@@ -258,6 +258,10 @@ test('a Lynx reference list keeps page order, names, addresses, and numbers', as
   assert.deepEqual(state.library.rows.map((row) => row.text), [
     '[1] https://example.test/a', '[2] https://example.test/b',
   ]);
+  await quietly(() => handleLibraryKey('\x1b[B', state, PAGE));
+  assert.equal(state.cursor, 1);
+  assert.equal(state.library.filter, '', 'Lynx commands do not become filter text');
+  assert.equal(await quietly(() => handleLibraryKey('q', state, PAGE)), 'quit');
   await quietly(() => handleLibraryKey('\x1b[D', state, PAGE));
   assert.equal(state.mode, 'browse');
 });

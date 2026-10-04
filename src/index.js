@@ -2991,7 +2991,14 @@ async function handleLibraryKey(chunk, state, page) {
   markInput(state);
   const lib = state.library;
   if (!lib) { state.mode = 'browse'; return; }
+  const lynxAction = state.interface === 'lynx'
+    ? (state.keys || FALLBACK_KEYMAP).actionFor(chunk) : null;
 
+  if (lynxAction === 'quit') return 'quit';
+  if (state.interface === 'lynx' && lynxAction === 'history-back') {
+    closeLibrary(state, page, `Closed ${lib.label.toLowerCase()}.`);
+    return;
+  }
   if (keyIs(chunk, 'Escape', state)) {
     closeLibrary(state, page, `Closed ${lib.label.toLowerCase()}.`);
     return;
@@ -3004,7 +3011,7 @@ async function handleLibraryKey(chunk, state, page) {
     }
   }
 
-  if (chunk === '\r' || chunk === '\n') {
+  if (chunk === '\r' || chunk === '\n' || lynxAction === 'activate') {
     const block = currentBlock(state);
     const entry = block && block.entry;
     if (!entry) {
@@ -3044,12 +3051,21 @@ async function handleLibraryKey(chunk, state, page) {
   }
 
   const last = state.lines.length - 1;
-  if (keyIs(chunk, 'ArrowDown', state)) return moveSelection(state, Math.min(state.cursor + 1, last), page);
-  if (keyIs(chunk, 'ArrowUp', state)) return moveSelection(state, Math.max(state.cursor - 1, 0), page);
-  if (keyIs(chunk, 'PageDown', state)) return moveScreen(state, 1, page);
-  if (keyIs(chunk, 'PageUp', state)) return moveScreen(state, -1, page);
-  if (keyIs(chunk, 'Home', state)) return moveSelection(state, 0, page);
-  if (keyIs(chunk, 'End', state)) return moveSelection(state, last, page);
+  if (keyIs(chunk, 'ArrowDown', state) || lynxAction === 'next-focusable') {
+    return moveSelection(state, Math.min(state.cursor + 1, last), page);
+  }
+  if (keyIs(chunk, 'ArrowUp', state) || lynxAction === 'previous-focusable') {
+    return moveSelection(state, Math.max(state.cursor - 1, 0), page);
+  }
+  if (keyIs(chunk, 'PageDown', state) || lynxAction === 'next-screen') return moveScreen(state, 1, page);
+  if (keyIs(chunk, 'PageUp', state) || lynxAction === 'previous-screen') return moveScreen(state, -1, page);
+  if (keyIs(chunk, 'Home', state) || lynxAction === 'top') return moveSelection(state, 0, page);
+  if (keyIs(chunk, 'End', state) || lynxAction === 'bottom') return moveSelection(state, last, page);
+
+  // A Lynx internal page uses the Lynx browse map. Printable commands must
+  // not unexpectedly become TAWB's list filter; commands without an internal
+  // page equivalent simply do nothing here.
+  if (state.interface === 'lynx') return;
 
   if (keyIs(chunk, 'Backspace', state)) {
     if (!lib.filter) return;
