@@ -52,6 +52,8 @@ test('command-line options can override persistent browser settings', () => {
   assert.equal(args.log, true);
   assert.equal(args.logDir, '/host/logs');
 
+  assert.equal(parseArgs([], {}).dump, false);
+  assert.equal(parseArgs(['--dump', 'message.html'], {}).dump, true);
   assert.equal(parseArgs([], {}).escapeUnicode, false);
   assert.equal(parseArgs(['--escape-unicode'], {}).escapeUnicode, true);
   assert.equal(parseArgs(['--escape-unicode', '--no-escape-unicode'], {}).escapeUnicode, false);

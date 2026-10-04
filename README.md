@@ -254,6 +254,29 @@ leaves the question unanswered; `Alt+Q` returns to it later.
 Pressing `Enter` on a file control opens a terminal path prompt. `Tab` completes
 file names, `Enter` attaches the file, and `Escape` cancels.
 
+## Print a page without the terminal interface
+
+`--dump` opens one address or local HTML file, writes its AX view as plain
+text, and exits. It writes no terminal controls, headings of its own, line
+numbers, or startup progress, so it can be used by programs expecting a text
+filter:
+
+```sh
+tawb --dump message.html
+tawb --dump https://example.com
+```
+
+For example, use it as a Mutt HTML autoviewer with this `mailcap` entry:
+
+```mailcap
+text/html; tawb --dump %s; copiousoutput
+```
+
+Add `--keep-browser` to make repeated previews rejoin the same browser more
+quickly. The temporary page used for each preview is still closed after it is
+read. `--dump` uses an ordinary browser: scripts run and remote resources may
+be fetched, just as they are during an interactive TAWB session.
+
 ## Common options
 
 ### Defaults for every run

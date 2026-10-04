@@ -25,6 +25,7 @@ const { entryLine, matches, shortAddress, KIND_LABELS } = require('./library');
 const { resolveAddress, DEFAULT_SEARCH } = require('./address');
 const { readSettings } = require('./settings');
 const { startupStatus } = require('./startup');
+const { dumpAx, resolveDumpTarget } = require('./dump');
 const { escapeNonAscii, escapedOffset } = require('./unicode_escape');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -55,7 +56,7 @@ const ON = new Set(['on', 'yes', 'true', '1']);
 function parseArgs(argv, env = process.env) {
   const options = {
     url: null, connect: null, profile: null, engine: DEFAULT_ENGINE, keepBrowser: false,
-    keyboard: false, log: false, logDir: env.TAWB_LOG_DIR || null,
+    keyboard: false, dump: false, log: false, logDir: env.TAWB_LOG_DIR || null,
     search: env.TAWB_SEARCH || DEFAULT_SEARCH,
     linkAddress: !OFF.has(String(env.TAWB_LINK_ADDRESS || '').toLowerCase()),
     shortLinks: ON.has(String(env.TAWB_SHORT_LINKS || '').toLowerCase()),
@@ -70,6 +71,7 @@ function parseArgs(argv, env = process.env) {
     else if (arg === '--keep-browser') { options.keepBrowser = true; }
     else if (arg === '--no-keep-browser') { options.keepBrowser = false; }
     else if (arg === '--keyboard') { options.keyboard = true; }
+    else if (arg === '--dump') { options.dump = true; }
     else if (arg === '--log') { options.log = true; }
     else if (arg === '--log-dir') { options.logDir = argv[i + 1] || null; i += 1; }
     else if (arg.startsWith('--log-dir=')) { options.logDir = arg.slice('--log-dir='.length) || null; }
@@ -166,11 +168,14 @@ function contentWidth() {
   return Math.max(20, termSize().cols - GUTTER - 1);
 }
 
+let terminalOwned = false;
+
 function setupRawInput() {
   const stdin = process.stdin;
   if (stdin.isTTY) stdin.setRawMode(true);
   stdin.resume();
   stdin.setEncoding('utf8');
+  terminalOwned = true;
 }
 
 function keyIs(chunk, name, state) {
@@ -3739,9 +3744,15 @@ async function main() {
     return;
   }
 
-  const keys = new Keymap();
+  // Resolve this before starting a browser. Unlike the interactive default,
+  // a batch invocation with no input is an error rather than a request to
+  // open a search page.
+  const dumpTarget = ARGS.dump
+    ? resolveDumpTarget(ARGS.url, { search: ARGS.search || DEFAULT_SEARCH })
+    : null;
+
   log('start', {
-    url: START_URL, logPath, connect: ARGS.connect || null, engine: ARGS.engine,
+    url: dumpTarget || START_URL, logPath, connect: ARGS.connect || null, engine: ARGS.engine,
   });
 
   // Either attach to a browser the user is already running, or start an
@@ -3753,7 +3764,11 @@ async function main() {
   // lasts ten seconds, give it one stable, screen-reader-friendly status line;
   // browser-specific startup phases replace it as they advance. A normal
   // quick start stays quiet.
-  const startup = startupStatus();
+  // Batch output is a data stream: even a slow startup must not put a status
+  // line in it. Interactive startup retains its delayed progress reporting.
+  const startup = ARGS.dump
+    ? { update: () => {}, finish: () => {} }
+    : startupStatus();
   startup.update(`Starting ${ARGS.engine === 'firefox' ? 'Firefox' : 'Chromium'}…`);
   let driver;
   try {
@@ -3773,6 +3788,21 @@ async function main() {
   const { browser, context } = driver;
   const browserPort = driver.port;
   const rejoined = driver.rejoined;
+
+  if (ARGS.dump) {
+    try {
+      await dumpAx({
+        driver,
+        target: dumpTarget,
+        escapeUnicode: ARGS.escapeUnicode,
+      });
+    } finally {
+      try { await driver.close(); } finally { setCurrentDriver(null); }
+    }
+    return;
+  }
+
+  const keys = new Keymap();
 
   // When joining a browser that is already running, take over the tab it is
   // already showing rather than opening a blank one. Rejoining is usually
@@ -4027,6 +4057,8 @@ async function main() {
 // A scroll region outlives the process, so leaving one set would give the
 // user a terminal that only scrolls in the top few rows.
 function restoreTerminal() {
+  if (!terminalOwned) return;
+  terminalOwned = false;
   resetScrollRegion();
   moveCursor(termSize().rows, 1);
   writeTerminal('\n');
