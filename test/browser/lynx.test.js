@@ -105,6 +105,65 @@ test('a numbered Lynx link activates the element it numbered', async () => {
   assert.equal(state.mode, 'browse');
 });
 
+test('a live update renumbers but cannot retarget an open number prompt', async () => {
+  const page = await openPage();
+  const core = new Core({ driver, page, source: 'ax' });
+  await core.rescan();
+
+  const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  keys.preferences = { numberLinks: true, numberFields: false };
+  const state = makeState(core, keys);
+  relayout(state);
+
+  const two = core.blocks.findIndex((block) => block.item
+    && block.item.role === 'link' && block.item.name === 'Go');
+  const twoLine = state.lines.findIndex((entry) => entry.blockIndex === two);
+  const captured = state.lines[twoLine].displayNumber;
+  assert.ok(captured >= 1);
+
+  // The reader opens the prompt on that number. Then the page puts a link in
+  // front of it, which is exactly what a live update on a busy page does.
+  await quietly(async () => {
+    await handleBrowseKey(String(captured), state, page);
+    assert.equal(state.mode, 'number');
+
+    await page.evaluate(() => {
+      const early = document.createElement('a');
+      early.href = '#';
+      early.textContent = 'Inserted';
+      early.addEventListener('click', (event) => {
+        window.clicked = 'inserted';
+        event.preventDefault();
+      });
+      document.body.insertBefore(early, document.body.firstChild);
+    });
+    // The accessibility tree picks the new link up on its own schedule.
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await core.rescan();
+      if (core.blocks.some((block) => block.item && block.item.name === 'Inserted')) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(core.blocks.some((block) => block.item && block.item.name === 'Inserted'),
+      'the inserted link never appeared in the rebuilt view');
+    relayout(state);
+
+    await handleNumberKey('\r', state, page);
+  });
+
+  assert.equal(await page.evaluate(() => window.clicked), undefined,
+    'the freshly inserted link was not activated by the old number');
+  assert.equal(state.statusMsg, `No link ${captured} on this page.`);
+
+  // The numbering itself did follow the new order: reading order, no gaps,
+  // and the link that used to hold 1 now holds 2.
+  const numbered = state.lines.filter((line) => line.displayNumber).map((line) => line.displayNumber);
+  assert.deepEqual(numbered, [1, 2]);
+  const goLine = state.lines.find((line) => state.core.blocks[line.blockIndex]
+    && state.core.blocks[line.blockIndex].item
+    && state.core.blocks[line.blockIndex].item.name === 'Go');
+  assert.equal(goLine.displayNumber, 2);
+});
+
 test('the same blocks keep TAWB markers unless the Lynx interface is selected', async () => {
   const page = await openPage();
   const core = new Core({ driver, page, source: 'ax' });
