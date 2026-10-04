@@ -85,9 +85,11 @@ function layoutLines(blocks, width) {
   blocks.forEach((block, blockIndex) => {
     const prefix = block.displayPrefix || '';
     const suffix = block.displaySuffix || '';
-    // Markers are display metadata rather than block text. Reserve their
-    // cells while wrapping, but leave offsets in the original rendered item.
-    const wrapped = wrapWithOffsets(block.text, Math.max(1, width - prefix.length - suffix.length));
+    const indent = block.displayIndent || 0;
+    // Markers and margins are display metadata rather than block text. Reserve
+    // their cells while wrapping, but leave offsets in the rendered item.
+    const wrapped = wrapWithOffsets(
+      block.text, Math.max(1, width - indent - prefix.length - suffix.length));
     wrapped.forEach((w, i) => {
       lines.push({
         blockIndex,
@@ -96,6 +98,8 @@ function layoutLines(blocks, width) {
         end: w.end,
         continuation: i > 0,
         displayNumber: block.displayNumber || null,
+        displayIndent: block.displayAlign === 'center'
+          ? Math.max(0, Math.floor((width - w.text.length) / 2)) : indent,
         displayPrefix: i === 0 ? prefix : '',
         displaySuffix: i === wrapped.length - 1 ? suffix : '',
       });

@@ -55,13 +55,26 @@ function renderLynxItem(item, fallback = '', transform = String) {
   if (FIELD_ROLES.has(role)) return labelAndControl(name, clipField(value));
 
   if (role === 'img') return name || '[IMAGE]';
-  if (role === 'iframe') return name ? `[FRAME: ${name}]` : '[FRAME]';
+  if (role === 'iframe') return name ? `IFRAME: ${name}` : 'IFRAME:';
   if (role === 'video' || role === 'audio') return name ? `[${name}]` : `[${role}]`;
   return name || transform(fallback);
 }
 
 function renderLynxBlock(block, transform = String) {
-  return { ...block, text: renderLynxItem(block.item, block.text, transform) };
+  const item = block.item || {};
+  const rendered = { ...block, text: renderLynxItem(item, block.text, transform) };
+  // Lynx's default styles use a three-cell document margin, with section
+  // headings pulled left. H1 is centered; lower heading levels gain a small
+  // indent. Keep that whitespace as layout metadata so searches still begin
+  // at the first real character.
+  if (item.role === 'heading') {
+    const level = Number(item.level) || 2;
+    if (level === 1) rendered.displayAlign = 'center';
+    else rendered.displayIndent = level >= 3 ? 2 : 0;
+  } else {
+    rendered.displayIndent = 3;
+  }
+  return rendered;
 }
 
 function lynxFocusable(block) {

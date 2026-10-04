@@ -49,6 +49,7 @@ test('the Lynx renderer uses Lynx form markers', () => {
     'Country [Canada]');
   assert.equal(renderLynxItem(item('img', 'Map')), 'Map');
   assert.equal(renderLynxItem(item('img', '')), '[IMAGE]');
+  assert.equal(renderLynxItem(item('iframe', 'about:blank')), 'IFRAME: about:blank');
 });
 
 test('Lynx presentation is a display copy rather than changed core text', () => {
@@ -67,7 +68,21 @@ test('Lynx relayout uses the profile renderer without changing core blocks', () 
   };
   relayout(state);
   assert.equal(state.lines[0].text, 'Save');
+  assert.equal(state.lines[0].displayIndent, 3);
+  assert.equal(renderRow(state, 0), '   \x1b[7mSave\x1b[0m');
   assert.equal(blocks[0].text, '[*Save]');
+});
+
+test('Lynx layout uses its default margins and heading alignment as metadata', () => {
+  const blocks = [
+    { text: 'One', item: item('heading', 'One', { level: 1 }) },
+    { text: 'Two', item: item('heading', 'Two', { level: 2 }) },
+    { text: 'Three', item: item('heading', 'Three', { level: 3 }) },
+    { text: 'text', item: item('text', 'text') },
+  ].map((block) => renderLynxBlock(block));
+  const lines = layoutLines(blocks, 40);
+  assert.deepEqual(lines.map((line) => line.displayIndent), [18, 0, 2, 3]);
+  assert.deepEqual(lines.map((line) => line.text), ['One', 'Two', 'Three', 'text']);
 });
 
 test('Lynx numbers links and fields in one reading-order sequence', () => {

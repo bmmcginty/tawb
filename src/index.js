@@ -746,7 +746,8 @@ function renderRow(state, lineIndex) {
   if (state.interface !== 'lynx') return text;
 
   const line = state.lines[lineIndex];
-  const prefix = line ? line.displayPrefix || '' : '';
+  const indent = line ? ' '.repeat(line.displayIndent || 0) : '';
+  const prefix = indent + (line ? line.displayPrefix || '' : '');
   const suffix = line ? line.displaySuffix || '' : '';
   const selected = state.lines[state.cursor];
   const block = line && activeBlocks(state)[line.blockIndex];
@@ -767,7 +768,8 @@ function typingText(state) {
   const value = pageText(state, state.typing.text);
   if (state.interface === 'lynx') {
     const line = state.lines ? currentLine(state) : null;
-    const number = line ? line.displayPrefix || '' : '';
+    const number = line
+      ? ' '.repeat(line.displayIndent || 0) + (line.displayPrefix || '') : '';
     const suffix = line ? line.displaySuffix || '' : '';
     const label = number + (item.name ? `${pageText(state, item.name)} ` : '');
     return {
