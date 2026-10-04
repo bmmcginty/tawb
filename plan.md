@@ -104,8 +104,10 @@ Compatibility requirements:
       buttons.
 - [x] Keep checkboxes, radios, selects, sliders, file inputs, and submit buttons on TAWB's
       existing browser-backed activation paths.
-- [ ] Test native fields, textareas, contenteditable controls, select popups, custom ARIA
-      controls, uploads, and forms that navigate or update in place.
+- [x] Test native fields, textareas, contenteditable controls, select popups, custom ARIA
+      controls, uploads, and forms that navigate or update in place. (Lynx interface:
+      `test/browser/forms.test.js` and `test/browser/lynx_forms.test.js`; uploads:
+      `test/browser/files.test.js`.)
 
 ## 7. Documentation and release verification
 

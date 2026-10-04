@@ -136,6 +136,49 @@ test('Lynx arrows enter a textarea and Tab moves on to the next control', async 
   assert.equal(await page.evaluate(() => document.querySelector('textarea').value), 'hi');
 });
 
+test('Lynx arrows enter a contenteditable host and Tab leaves it', async () => {
+  const page = await readFixture(`
+    <p>Before</p>
+    <div contenteditable aria-label="Message">alpha</div>
+    <button>Send</button>
+  `);
+  // Put the browser's caret at the end of the host, so where the typed
+  // character lands is the page's answer rather than a default.
+  await page.evaluate(() => {
+    const host = document.querySelector('[contenteditable]');
+    const range = document.createRange();
+    range.selectNodeContents(host);
+    range.collapse(false);
+    const selection = getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+
+  const core = new Core({ driver, page, source: 'ax' });
+  await core.rescan();
+  const state = makeState(core);
+  relayout(state);
+
+  await quietly(async () => {
+    await handleBrowseKey('\x1b[B', state, page);
+  });
+  assert.equal(state.mode, 'type', 'the contenteditable host was entered for editing');
+  assert.equal(core.blocks[state.lines[state.cursor].blockIndex].item.name, 'Message');
+  assert.equal(state.typing.text, 'alpha');
+
+  await quietly(async () => {
+    await handleTypeKey('X', state, page);
+  });
+  assert.equal(await page.evaluate(() => document.querySelector('[contenteditable]').innerText),
+    'alphaX');
+
+  await quietly(async () => {
+    await handleTypeKey('\t', state, page);
+  });
+  assert.equal(state.mode, 'browse');
+  assert.equal(core.blocks[state.lines[state.cursor].blockIndex].item.name, 'Send');
+});
+
 test('Lynx Enter opens a native select and the Lynx keys choose and cancel', async () => {
   const page = await readFixture(`
     <select aria-label="Country">
