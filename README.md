@@ -215,9 +215,12 @@ The common Lynx commands include:
 | `q` | Quit |
 
 Links and controls use Lynx-like terminal forms and the current control is
-shown in reverse video. Checkboxes appear as `[ ]` or `[X]`, radios as `( )`
-or `(*)`, selects in brackets, and text entries as underscore fields. Lynx
-link/field numbering preferences and left/right marker placement are honored.
+shown in reverse video. Prose and inline links from one HTML block reflow
+on shared terminal rows, while each link still activates its exact browser
+element. Table captions and aligned rows follow Lynx's text conventions.
+Checkboxes appear as `[ ]` or `[X]`, radios as `( )` or `(*)`, selects in
+brackets, and text entries as underscore fields. Lynx link/field numbering
+preferences and left/right marker placement are honored.
 Typing a number opens the familiar status-line prompt; Enter follows a link,
 while `g` moves to it without activation. Numbering a form control moves to it
 without pressing or submitting it.
@@ -234,10 +237,10 @@ requires no migration and never rewrites the user's normal key configuration.
 The keyboard screen lists imported Lynx functions that have no safe TAWB
 equivalent rather than silently assigning them different behavior.
 
-The display intentionally still uses TAWB's semantic extraction. Some visual
-flow, old parser toggles, shell commands, external programs, and advanced
-number expressions have no equivalent yet; `plan.md` tracks that remaining
-compatibility work.
+The display intentionally still uses TAWB's semantic extraction. Old parser
+toggles, shell commands, external programs, and advanced number expressions
+have no equivalent; browser-backed activation and TAWB's safety boundaries
+remain in force.
 
 ## Four ways to read a page
 

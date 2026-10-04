@@ -81,9 +81,9 @@ function wrapWithOffsets(text, width) {
 }
 
 // The part of each span that falls on one wrapped row, with its offsets made
-// relative to that row's text. A merged table row is one block whose spans
-// point at the blocks the cells came from, and wrapping it must not lose that:
-// the same mapping is what activation, search and the number prompt read.
+// relative to that row's text. A reflowed paragraph or table row is one
+// display block whose spans point at the core blocks it came from, and wrapping
+// it must not lose that mapping: activation, highlighting and numbering read it.
 function spansWithin(spans, start, end) {
   const out = [];
   for (const span of spans) {
@@ -100,8 +100,8 @@ function spansWithin(spans, start, end) {
 function layoutLines(blocks, width) {
   const lines = [];
   blocks.forEach((block, position) => {
-    // A merged table row was built from several blocks; its declared index is
-    // the first of them, so a line still names a real block in the list the
+    // A composite display block was built from several core blocks; its
+    // declared index is the first of them, so a line still names a real block in the list the
     // reader's cursor, searches and activation resolve against.
     const blockIndex = block.sourceIndex != null ? block.sourceIndex : position;
     const prefix = block.displayPrefix || '';

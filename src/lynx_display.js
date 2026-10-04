@@ -1,6 +1,7 @@
 'use strict';
 
 const { LINK_ROLES, BUTTON_ROLES, FIELD_ROLES, FOCUSABLE_ROLES } = require('./aria');
+const { joinProse } = require('./blocks');
 
 const FIELD_WIDTH = 20;
 
@@ -92,6 +93,83 @@ function markerWidth(block) {
   return (block.displayPrefix || '').length + block.text.length + (block.displaySuffix || '').length;
 }
 
+function blockSourceIndex(block, position) {
+  return block.sourceIndex != null ? block.sourceIndex : position;
+}
+
+// Put text and links that the extractor proved came from one HTML flow back
+// into one display paragraph. Each original block owns only its text range;
+// number markers and the joining space sit outside every span. That keeps a
+// link activatable and keeps its highlight off both its number and surrounding
+// prose even after the paragraph wraps.
+function groupLynxFlows(blocks) {
+  const out = [];
+  let index = 0;
+
+  while (index < blocks.length) {
+    const first = blocks[index];
+    const flow = first.item && first.item.flow;
+    const role = first.item && first.item.role;
+    const inline = flow && (role === 'text' || LINK_ROLES.has(role));
+    if (!inline) {
+      out.push({ ...first, sourceIndex: blockSourceIndex(first, index) });
+      index += 1;
+      continue;
+    }
+
+    let end = index + 1;
+    while (end < blocks.length) {
+      const item = blocks[end].item;
+      if (!item || item.flow !== flow || (item.role !== 'text' && !LINK_ROLES.has(item.role))) break;
+      end += 1;
+    }
+    if (end === index + 1) {
+      out.push({ ...first, sourceIndex: blockSourceIndex(first, index) });
+      index = end;
+      continue;
+    }
+
+    let text = '';
+    let previous = '';
+    const spans = [];
+    for (let at = index; at < end; at += 1) {
+      const block = blocks[at];
+      const joined = previous ? joinProse(previous, block.text) : block.text;
+      if (previous && joined.length > previous.length + block.text.length) text += ' ';
+      text += block.displayPrefix || '';
+      const start = text.length;
+      text += block.text;
+      if (block.spans && block.spans.length) {
+        for (const span of block.spans) {
+          spans.push({ ...span, start: start + span.start, end: start + span.end });
+        }
+      } else {
+        spans.push({
+          blockIndex: blockSourceIndex(block, at),
+          start,
+          end: text.length,
+          displayNumber: block.displayNumber || null,
+        });
+      }
+      text += block.displaySuffix || '';
+      previous = block.text;
+    }
+
+    out.push({
+      ...first,
+      text,
+      spans,
+      sourceIndex: blockSourceIndex(first, index),
+      displayPrefix: '',
+      displaySuffix: '',
+      displayNumber: null,
+      merged: true,
+    });
+    index = end;
+  }
+  return out;
+}
+
 function spannedWidth(widths, from, colspan) {
   let total = 0;
   for (let column = from; column < from + colspan; column += 1) total += widths[column] || 0;
@@ -106,10 +184,11 @@ function spannedWidth(widths, from, colspan) {
 // `spans` says which character range belongs to which original block so that
 // activation, search and the number prompt still resolve to the real element.
 //
-// A row with a cell holding several blocks — a list, or prose around a link —
-// is left as it is. Lynx stacks such a row too (a multi-line cell pushes the
-// rest of the row down), and guessing where the columns go would be worse than
-// showing the cells in reading order. Nested tables fall out of the same rule:
+// Inline prose and links have already become one display block per cell. A
+// cell holding several block-level runs — a list, for example — is left as it
+// is. Lynx stacks such a row too (a multi-line cell pushes the rest of the row
+// down), and guessing where the columns go would be worse than showing the
+// cells in reading order. Nested tables fall out of the same rule:
 // the inner table's items carry the inner table's identity, so its rows are
 // laid out first and the outer row around them is stacked.
 function groupLynxTableRows(blocks) {
@@ -175,7 +254,9 @@ function groupLynxTableRows(blocks) {
   const out = [];
   for (const run of runs) {
     if (!run.merged) {
-      for (let at = run.from; at < run.to; at += 1) out.push({ ...blocks[at], sourceIndex: at });
+      for (let at = run.from; at < run.to; at += 1) {
+        out.push({ ...blocks[at], sourceIndex: blockSourceIndex(blocks[at], at) });
+      }
       continue;
     }
     const layout = layouts.get(run.id);
@@ -189,18 +270,24 @@ function groupLynxTableRows(blocks) {
       text += block.displayPrefix || '';
       const start = text.length;
       text += block.text;
-      spans.push({
-        blockIndex: at,
-        start,
-        end: text.length,
-        displayNumber: block.displayNumber || null,
-      });
+      if (block.spans && block.spans.length) {
+        for (const span of block.spans) {
+          spans.push({ ...span, start: start + span.start, end: start + span.end });
+        }
+      } else {
+        spans.push({
+          blockIndex: blockSourceIndex(block, at),
+          start,
+          end: text.length,
+          displayNumber: block.displayNumber || null,
+        });
+      }
       text += block.displaySuffix || '';
     }
     out.push({
       text,
       spans,
-      sourceIndex: order[0],
+      sourceIndex: blockSourceIndex(blocks[order[0]], order[0]),
       displayIndent: 3,
       startsBlock: true,
       merged: true,
@@ -230,5 +317,5 @@ function numberLynxBlocks(blocks, preferences = {}) {
 
 module.exports = {
   FIELD_WIDTH, TABLE_GAP, clipField, renderLynxItem, renderLynxBlock,
-  lynxFocusable, numberLynxBlocks, groupLynxTableRows,
+  lynxFocusable, numberLynxBlocks, groupLynxFlows, groupLynxTableRows,
 };

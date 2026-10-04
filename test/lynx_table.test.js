@@ -152,7 +152,30 @@ test('a number in a row prompts, moves, and names the cell it moved to', async (
   assert.equal(state.statusMsg, 'Link 2.');
 });
 
-test('a row whose cell holds several blocks is left in reading order', () => {
+test('inline prose and a link make one cell before its row is laid out', () => {
+  const blocks = [
+    { text: 'Heading', item: item('text', 'Heading', { table: at(0, 0, { header: true }) }) },
+    { text: 'Value', item: item('text', 'Value', { table: at(0, 1, { header: true }) }) },
+    { text: 'Before', item: item('text', 'Before', { flow: 10, table: at(1, 0) }) },
+    { text: '{Alpha}', item: item('link', 'Alpha', { flow: 10, href: '#one', table: at(1, 0) }) },
+    { text: 'after', item: item('text', 'after', { flow: 10, table: at(1, 0) }) },
+    { text: 'Four', item: item('text', 'Four', { flow: 11, table: at(1, 1) }) },
+  ];
+  const state = lynxState(blocks);
+  relayout(state);
+
+  assert.equal(state.lines.length, 2);
+  const [header, row] = state.lines;
+  assert.equal(row.text.slice(row.spans[0].start, row.spans[0].end), 'Before');
+  assert.equal(row.text.slice(row.spans[1].start, row.spans[1].end), 'Alpha');
+  assert.equal(row.text.slice(row.spans[2].start, row.spans[2].end), 'after');
+  assert.equal(row.text.slice(row.spans[3].start, row.spans[3].end), 'Four');
+  assert.equal(row.spans[3].start, header.spans[1].start,
+    'the second cell still lines up after its first cell was reflowed');
+  assert.equal(row.text.slice(row.spans[1].start - 3, row.spans[1].start), '[1]');
+});
+
+test('a row whose cell holds several block-level runs is left in reading order', () => {
   const blocks = [
     { text: 'List cell', item: item('text', 'List cell', { table: at(0, 0) }) },
     { text: 'Second item', item: item('text', 'Second item', { table: at(0, 0) }) },

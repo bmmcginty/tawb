@@ -137,9 +137,15 @@ function extractVisible() {
   const flowIds = new WeakMap();
   let flowCount = 0;
 
+  const flowRootOf = (el) => (el && typeof el.closest === 'function'
+    ? el.closest(FLOW_ROOTS) : null);
+  const breakFlow = (el) => {
+    const root = flowRootOf(el);
+    if (root) flowIds.delete(root);
+  };
+
   const flowOf = (el, kind) => {
-    if (!el || typeof el.closest !== 'function') return undefined;
-    const root = el.closest(FLOW_ROOTS);
+    const root = flowRootOf(el);
     if (!root) return undefined;
     if (kind !== 'text' && (el === root || (el.querySelector && el.querySelector(FLOW_ROOTS)))) {
       return undefined;
@@ -390,6 +396,7 @@ function extractVisible() {
 
   walk = (el, inheritedBlock) => {
     const tag = el.tagName.toLowerCase();
+    if (tag === 'br') { breakFlow(el); return; }
     if (SKIP.has(tag)) return;
     const visibility = visibilityOf(el);
     if (visibility === GONE) return;

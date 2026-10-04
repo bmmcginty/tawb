@@ -634,9 +634,15 @@ function extractAxItems(options) {
   const flowIds = new WeakMap();
   let flowCount = 0;
 
+  const flowRootOf = (el) => (el && typeof el.closest === 'function'
+    ? el.closest(FLOW_ROOTS) : null);
+  const breakFlow = (el) => {
+    const root = flowRootOf(el);
+    if (root) flowIds.delete(root);
+  };
+
   const flowOf = (el, role) => {
-    if (!el || typeof el.closest !== 'function') return undefined;
-    const root = el.closest(FLOW_ROOTS);
+    const root = flowRootOf(el);
     if (!root) return undefined;
     // A block element wearing an interactive role is still a block. Atomic
     // links that contain a block are conservative for the same reason: their
@@ -795,6 +801,9 @@ function extractAxItems(options) {
 
   const walkInner = (el) => {
     const tag = el.tagName.toLowerCase();
+    // A <br> emits no ordinary item, but it does end the inline run on both
+    // sides. Give what follows a new identity without changing default blocks.
+    if (tag === 'br') { breakFlow(el); return; }
     if (SKIP.has(tag)) return;
     const visibility = visibilityOf(el);
     if (visibility === GONE) return;

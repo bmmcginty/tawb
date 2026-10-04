@@ -12,11 +12,10 @@
 // on another machine does not change what this compares against: the dump is
 // the record, and the test fails if either side stops agreeing with it.
 //
-// What is compared is structural. TAWB puts each item on its own line where
-// Lynx reflows a paragraph, and a frame is shown but not numbered, so the
-// test compares the conventions the two must share — the control markers, the
-// reading-order numbering, and the heading and document margins — and states
-// the known differences rather than pretending they are not there.
+// What is compared is structural. TAWB now reflows prose and inline links by
+// the block-container identity retained during extraction, as Lynx does. A
+// frame is still shown but not numbered, so the test states that remaining
+// difference rather than pretending it is not there.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -106,6 +105,17 @@ test('the Lynx renderer uses the same control markers as the dump', async () => 
   assert.match(text, /lynx_+/);
   assert.match(text, /Country/);
   assert.match(text, /France/);
+});
+
+test('the inline paragraph is one display row, as it is in the dump', async () => {
+  const state = await rendered();
+  const linkIndex = state.core.blocks.findIndex((block) => block.item && block.item.name === 'first link');
+  const row = state.lines.find((line) => (line.spans || []).some((span) => span.blockIndex === linkIndex));
+  assert.ok(row, 'the first link has a display row');
+  assert.equal(row.text, 'Prose before a [1]first link and after it.');
+  const link = row.spans.find((span) => span.blockIndex === linkIndex);
+  assert.equal(row.text.slice(link.start, link.end), 'first link');
+  assert.match(row.text.slice(0, link.start), /\[1\]$/);
 });
 
 test('the numbering order is the dump’s reading order', async () => {

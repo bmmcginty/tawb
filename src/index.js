@@ -12,7 +12,8 @@ const { armFrame, refreshDue, pulse, TICK_MS } = require('./live');
 const { log, timed, count, flushCounters, enableLog } = require('./log');
 const { layoutLines } = require('./layout');
 const {
-  clipField, renderLynxBlock, lynxFocusable, numberLynxBlocks, groupLynxTableRows,
+  clipField, renderLynxBlock, lynxFocusable, numberLynxBlocks, groupLynxFlows,
+  groupLynxTableRows,
 } = require('./lynx_display');
 const { normaliseEndpoint } = require('./browser');
 const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
@@ -360,8 +361,8 @@ function activeBlocks(state) {
   return state.core.blocks;
 }
 
-// The span of a merged table row the caret is standing in. A line that is not
-// a merged row has no spans and no answer here.
+// The span of a composite display line the caret is standing in. A line that
+// came from only one core block has no spans and no answer here.
 function spanForColumn(line, col) {
   const spans = line && line.spans;
   if (!spans || !spans.length) return null;
@@ -373,7 +374,7 @@ function spanForColumn(line, col) {
 }
 
 // The block under a caret on one line, whether that line is one block or a
-// table row holding several.
+// reflowed paragraph/table row holding several.
 function blockUnder(state, line, col) {
   if (!line) return null;
   const blocks = activeBlocks(state);
@@ -386,12 +387,12 @@ function blockUnder(state, line, col) {
 function positionForBlock(state, blockIndex) {
   for (let i = 0; i < state.lines.length; i += 1) {
     const line = state.lines[i];
-    if (line.continuation) continue;
     if (line.spans) {
       const span = line.spans.find((one) => one.blockIndex === blockIndex);
       if (span) return { line: i, col: span.start };
       continue;
     }
+    if (line.continuation) continue;
     if (line.blockIndex === blockIndex) return { line: i, col: 0 };
   }
   return null;
@@ -455,7 +456,8 @@ function syncCursor(state) {
   // twelfth block would let a text patch land where they are not.
   if (state.library || state.dialog) return;
   const line = state.lines[state.cursor];
-  state.core.at(line ? line.blockIndex : -1);
+  const block = blockUnder(state, line, state.col);
+  state.core.at(block ? activeBlocks(state).indexOf(block) : -1);
 }
 
 function pageText(state, text) {
@@ -469,9 +471,10 @@ function displayBlocks(state) {
   if (state.interface === 'lynx' && pageBlocks) {
     const rendered = blocks.map((block) => renderLynxBlock(block, transform));
     const numbered = numberLynxBlocks(rendered, state.keys && state.keys.preferences);
-    // A table row reads as one line in the compatibility interface. The row's
-    // spans are what keep every cell reachable once they share a line.
-    return groupLynxTableRows(numbered);
+    // Rejoin only items the extractor proved shared one HTML flow, then lay
+    // table cells out as a row. Both transformations retain source spans, so
+    // a link inside either composite still resolves to its browser element.
+    return groupLynxTableRows(groupLynxFlows(numbered));
   }
   if (!state.escapeUnicode || !pageBlocks) return blocks;
   // Keep Core's original text intact. It uses that text to resolve live
@@ -811,8 +814,8 @@ function renderRow(state, lineIndex) {
   const suffix = line ? line.displaySuffix || '' : '';
   const selected = state.lines[state.cursor];
 
-  // A merged table row holds several blocks on one line, so the row is not
-  // the current item: only the span the caret is in is. The number marker is
+  // A composite paragraph or table row holds several blocks on one line, so
+  // the row is not the current item: only the span the caret is in is. The number marker is
   // outside the span and so outside the highlight, which is what keeps a
   // marker from being read as part of the thing it numbers.
   if (line && line.spans && line.spans.length) {
@@ -1010,17 +1013,16 @@ function repaintLynxSelection(state, oldCursor, oldCol = 0) {
   const newBlock = blockUnder(state, newLine, state.col);
   if (oldLine === newLine && oldBlock === newBlock) return;
 
-  // A merged table row carries several blocks on one line, so a line index is
-  // not a block identity and a row's own highlight may move between cells
-  // without the line changing at all. Repaint the whole row on both sides;
-  // rows are short and this is the rare case.
-  const rows = new Set();
-  if (oldLine.spans) rows.add(oldCursor);
-  if (newLine.spans) rows.add(state.cursor);
-  if (rows.size) {
+  // A composite paragraph or table row carries several blocks, so a line
+  // index is not a block identity. Repaint every visible fragment of the old
+  // and new blocks: an inline link can wrap over several composite rows.
+  if (oldLine.spans || newLine.spans) {
+    const blocks = activeBlocks(state);
+    const changed = new Set([blocks.indexOf(oldBlock), blocks.indexOf(newBlock)]);
     const end = Math.min(state.lines.length, state.scroll + viewportHeight());
     for (let lineIndex = state.scroll; lineIndex < end; lineIndex += 1) {
-      if (!rows.has(lineIndex)) continue;
+      const line = state.lines[lineIndex];
+      if (!(line.spans || []).some((span) => changed.has(span.blockIndex))) continue;
       writeLine(lineRow(state, lineIndex), renderRow(state, lineIndex));
     }
     return;
@@ -1121,9 +1123,8 @@ function findQuickNav(state, match, direction) {
   const step = direction > 0 ? 1 : -1;
   for (let i = state.cursor + step; i >= 0 && i < state.lines.length; i += step) {
     const line = state.lines[i];
-    if (line.continuation) continue;
-    // A merged table row holds several blocks; look at each cell's own span,
-    // and land on the cell rather than the start of the row.
+    // A composite line holds several blocks; look at each item's own span,
+    // even when the item begins on a wrapped continuation row.
     if (line.spans) {
       for (const span of line.spans) {
         const block = state.core.blocks[span.blockIndex];
@@ -1131,6 +1132,7 @@ function findQuickNav(state, match, direction) {
       }
       continue;
     }
+    if (line.continuation) continue;
     const block = state.core.blocks[line.blockIndex];
     if (block.item && match(block.item)) return { line: i, col: 0 };
   }
@@ -2136,7 +2138,7 @@ function openLinkNumberPrompt(state, digits = '') {
   };
   for (let lineIndex = 0; lineIndex < state.lines.length; lineIndex += 1) {
     const line = state.lines[lineIndex];
-    // A merged table row numbers each cell separately, so the row's numbers
+    // A composite paragraph or table row can hold several numbers, so they
     // come from its spans rather than from the line.
     if (line.spans) {
       for (const span of line.spans) add(span.displayNumber, state.core.blocks[span.blockIndex], lineIndex, span.start);
@@ -2168,7 +2170,7 @@ function parseLynxNumberExpression(text) {
 function relativeLinkNumber(prompt, amount, direction) {
   const targets = prompt.targets || [];
   // The numbered item on the reader's own line, or the nearest one before it.
-  // On a merged table row several numbers share a line, so the column breaks
+  // On a composite line several numbers can share a row, so the column breaks
   // the tie that the line alone cannot.
   const before = targets.filter((target) => target.line < prompt.cursor
     || (target.line === prompt.cursor && (target.col || 0) <= (prompt.col || 0)));

@@ -19,7 +19,7 @@ const { openDriver } = require('../../src/driver');
 const { Core } = require('../../src/core');
 const { Keymap } = require('../../src/keys');
 const {
-  handleBrowseKey, handleNumberKey, relayout, renderRow,
+  handleBrowseKey, handleNumberKey, itemUnderCursor, relayout, renderRow,
 } = require('../../src/index');
 
 const ANSI_REVERSE = '\x1b[7m';
@@ -82,6 +82,34 @@ function quietly(fn) {
   return Promise.resolve().then(fn).finally(() => { process.stdout.write = write; });
 }
 
+function displayPartsForBlock(state, blockIndex) {
+  const found = [];
+  state.lines.forEach((line, lineIndex) => {
+    if (line.spans) {
+      for (const span of line.spans) {
+        if (span.blockIndex === blockIndex) found.push({ line, lineIndex, span });
+      }
+    } else if (line.blockIndex === blockIndex) {
+      found.push({ line, lineIndex, span: null });
+    }
+  });
+  return found;
+}
+
+function numberedTargets(state) {
+  const found = new Map();
+  for (const line of state.lines) {
+    if (line.spans) {
+      for (const span of line.spans) {
+        if (span.displayNumber && !found.has(span.blockIndex)) found.set(span.blockIndex, span.displayNumber);
+      }
+    } else if (!line.continuation && line.displayNumber) {
+      found.set(line.blockIndex, line.displayNumber);
+    }
+  }
+  return found;
+}
+
 test('a numbered Lynx link activates the element it numbered', async () => {
   const page = await openPage();
   const core = new Core({ driver, page, source: 'ax' });
@@ -95,11 +123,13 @@ test('a numbered Lynx link activates the element it numbered', async () => {
   const blockIndex = core.blocks.findIndex((block) => block.item
     && block.item.role === 'link' && block.item.name === 'Go');
   assert.ok(blockIndex >= 0, 'the link was not extracted');
-  const line = state.lines.findIndex((entry) => entry.blockIndex === blockIndex);
-  state.cursor = line;
-  const number = state.lines[line].displayNumber;
+  const [{ line, lineIndex, span }] = displayPartsForBlock(state, blockIndex);
+  state.cursor = lineIndex;
+  state.col = span ? span.start : 0;
+  const number = span ? span.displayNumber : line.displayNumber;
   assert.ok(number >= 1, 'the link was not numbered');
-  assert.equal(state.lines[line].text, 'Go', 'the Lynx copy carries no markers');
+  assert.equal(span ? line.text.slice(span.start, span.end) : line.text, 'Go',
+    'the Lynx copy carries the link text without its marker');
 
   await quietly(async () => {
     await handleBrowseKey(String(number), state, page);
@@ -109,6 +139,50 @@ test('a numbered Lynx link activates the element it numbered', async () => {
 
   assert.equal(await page.evaluate(() => window.clicked), 1);
   assert.equal(state.mode, 'browse');
+});
+
+test('inline prose reflows while each link stays reachable in every view', async () => {
+  const page = await openHtml(`
+    <p>Before <a href="#" onclick="window.clicked = 'one'; event.preventDefault()">one</a>
+      middle <a href="#" onclick="window.clicked = 'two'; event.preventDefault()">two</a> after.</p>
+  `);
+
+  for (const source of ['ax', 'render']) {
+    await page.evaluate(() => { window.clicked = null; });
+    const core = new Core({ driver, page, source, sources: [source, 'source'] });
+    await core.rescan();
+    const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+    keys.preferences = { numberLinks: true, numberFields: false };
+    const state = makeState(core, keys, { sources: [source, 'source'] });
+    relayout(state);
+
+    const oneIndex = core.blocks.findIndex((block) => block.item && block.item.name === 'one');
+    const twoIndex = core.blocks.findIndex((block) => block.item && block.item.name === 'two');
+    const [one] = displayPartsForBlock(state, oneIndex);
+    const [two] = displayPartsForBlock(state, twoIndex);
+    assert.equal(one.lineIndex, two.lineIndex, `${source}: both links share the prose line`);
+    assert.equal(one.line.text, 'Before [1]one middle [2]two after.');
+    assert.equal(one.line.text.slice(one.span.start, one.span.end), 'one');
+    assert.equal(two.line.text.slice(two.span.start, two.span.end), 'two');
+
+    state.cursor = two.lineIndex;
+    state.col = two.span.start;
+    assert.match(renderRow(state, two.lineIndex), /middle \[2\]\x1b\[7mtwo\x1b\[0m after/,
+      `${source}: only the second link is highlighted`);
+
+    await quietly(async () => {
+      await handleBrowseKey('\\', state, page);
+      await handleBrowseKey('\\', state, page);
+    });
+    assert.equal(core.source, source, `${source}: returned from SOURCE`);
+    assert.equal(itemUnderCursor(state).name, 'two', `${source}: retained the exact inline link`);
+
+    await quietly(async () => {
+      await handleBrowseKey('2', state, page);
+      await handleNumberKey('\r', state, page);
+    });
+    assert.equal(await page.evaluate(() => window.clicked), 'two', `${source}: the second element ran`);
+  }
 });
 
 test('a live update renumbers but cannot retarget an open number prompt', async () => {
@@ -123,8 +197,8 @@ test('a live update renumbers but cannot retarget an open number prompt', async 
 
   const two = core.blocks.findIndex((block) => block.item
     && block.item.role === 'link' && block.item.name === 'Go');
-  const twoLine = state.lines.findIndex((entry) => entry.blockIndex === two);
-  const captured = state.lines[twoLine].displayNumber;
+  const [{ line: twoLine, span: twoSpan }] = displayPartsForBlock(state, two);
+  const captured = twoSpan ? twoSpan.displayNumber : twoLine.displayNumber;
   assert.ok(captured >= 1);
 
   // The reader opens the prompt on that number. Then the page puts a link in
@@ -162,12 +236,10 @@ test('a live update renumbers but cannot retarget an open number prompt', async 
 
   // The numbering itself did follow the new order: reading order, no gaps,
   // and the link that used to hold 1 now holds 2.
-  const numbered = state.lines.filter((line) => line.displayNumber).map((line) => line.displayNumber);
-  assert.deepEqual(numbered, [1, 2]);
-  const goLine = state.lines.find((line) => state.core.blocks[line.blockIndex]
-    && state.core.blocks[line.blockIndex].item
-    && state.core.blocks[line.blockIndex].item.name === 'Go');
-  assert.equal(goLine.displayNumber, 2);
+  const numbered = numberedTargets(state);
+  assert.deepEqual([...numbered.values()], [1, 2]);
+  const goIndex = state.core.blocks.findIndex((block) => block.item && block.item.name === 'Go');
+  assert.equal(numbered.get(goIndex), 2);
 });
 
 test('the same blocks keep TAWB markers unless the Lynx interface is selected', async () => {
@@ -190,13 +262,11 @@ test('the same blocks keep TAWB markers unless the Lynx interface is selected', 
   const lynx = makeState(core, new Keymap({ terminfo: {}, profile: 'lynx', load: false }));
   lynx.keys.preferences = { numberLinks: true, numberFields: false };
   relayout(lynx);
-  const lynxLine = lynx.lines.find((entry) => {
-    const block = core.blocks[entry.blockIndex];
-    return block && block.item && block.item.name === 'Go';
-  });
-  assert.equal(lynxLine.text, 'Go');
-  assert.equal(lynxLine.displayNumber, 1);
-  assert.equal(lynxLine.displayPrefix, '[1]');
+  const goIndex = core.blocks.findIndex((block) => block.item && block.item.name === 'Go');
+  const [{ line: lynxLine, span: lynxSpan }] = displayPartsForBlock(lynx, goIndex);
+  assert.equal(lynxLine.text.slice(lynxSpan.start, lynxSpan.end), 'Go');
+  assert.equal(lynxSpan.displayNumber, 1);
+  assert.equal(lynxLine.text.slice(lynxSpan.start - 3, lynxSpan.start), '[1]');
   assert.equal(core.blocks[core.blocks.indexOf(
     core.blocks.find((block) => block.item && block.item.name === 'Go'))].text,
   '{Go}', 'the core text never changed');
@@ -222,12 +292,7 @@ test('numbering stays in reading order, and wraps, in every view', async () => {
     // One number per block, in reading order and with no gaps. A wrapped
     // block repeats its number on each row for the marker's sake, so only the
     // row that starts it counts here.
-    const numbered = new Map();
-    for (const line of state.lines) {
-      if (line.continuation || !line.displayNumber) continue;
-      assert.ok(!numbered.has(line.blockIndex), `${source}: a block was numbered twice`);
-      numbered.set(line.blockIndex, line.displayNumber);
-    }
+    const numbered = numberedTargets(state);
     assert.deepEqual([...numbered.values()],
       [...numbered.values()].map((unused, index) => index + 1),
       `${source}: numbers are contiguous`);
@@ -243,14 +308,13 @@ test('numbering stays in reading order, and wraps, in every view', async () => {
     const longBlock = core.blocks.findIndex((block) => block.item
       && block.item.role === 'link' && /long enough/.test(block.item.name));
     assert.ok(longBlock >= 0, `${source}: the long link was extracted`);
-    const rows = state.lines.map((line, index) => ({ line, index }))
-      .filter(({ line }) => line.blockIndex === longBlock);
+    const rows = displayPartsForBlock(state, longBlock)
+      .map(({ line, lineIndex, span }) => ({ line, index: lineIndex, span }));
     assert.ok(rows.length > 1, `${source}: the long link did not wrap`);
-    assert.ok(rows[0].line.displayPrefix, `${source}: the first row carries the number`);
-    for (const { line } of rows.slice(1)) {
-      assert.ok(!line.displayPrefix, `${source}: a continuation row has no number`);
-    }
+    const firstNumber = rows[0].span ? rows[0].span.displayNumber : rows[0].line.displayNumber;
+    assert.ok(firstNumber, `${source}: the first row carries the number`);
     state.cursor = rows[0].index;
+    state.col = rows[0].span ? rows[0].span.start : 0;
     for (const { line, index } of rows) {
       const rendered = renderRow(state, index);
       assert.ok(rendered.includes(ANSI_REVERSE), `${source}: row ${index} was not highlighted`);

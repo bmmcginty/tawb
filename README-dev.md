@@ -902,9 +902,13 @@ a node of its own in the accessibility tree, so `teenagers are just
 <em>really</em> dumb` would otherwise become three lines — and a one-word
 line reads as a heading or a link when you are arrowing through, a
 structural break that is not in the page. Runs of prose are joined back
-into one line; links are not, so their position stays predictable, and a
-paragraph boundary still ends the line. `[INSPECT]` keeps AX's item boundaries
-so each semantic line stays paired with its producer, and `[SOURCE]` shows the
+into one line. In the default interface links remain separate, so their
+position stays predictable. The Lynx interface additionally retains the
+nearest HTML block-container identity during extraction and uses it to reflow
+inline links with that prose. Character spans still resolve every displayed
+link to its original browser-backed block, while a paragraph, list-item, or
+cell boundary ends the run. `[INSPECT]` keeps AX's item boundaries so each
+semantic line stays paired with its producer, and `[SOURCE]` shows the
 emphasis itself.
 
 A line longer than the terminal wraps, and each wrapped row is navigable in

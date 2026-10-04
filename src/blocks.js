@@ -96,6 +96,10 @@ function buildBlocks(items) {
       const addition = pendingPrefix ? `${pendingPrefix} ${text}` : text;
       previous.text = joinProse(previous.text, addition);
       previous.item.name = joinProse(previous.item.name, item.name);
+      // Metadata may say the text straddled a non-emitting boundary such as
+      // <br>. The default block remains joined exactly as before, but it no
+      // longer claims to be one safe inline flow for the Lynx display.
+      if (previous.item.flow !== item.flow) delete previous.item.flow;
       pendingPrefix = '';
       continue;
     }
@@ -147,6 +151,7 @@ function foldSeparatorBlocks(blocks) {
     if (continuesProse(block.item, previous, block.startsBlock)) {
       previous.text = joinProse(previous.text, block.text);
       previous.item.name = joinProse(previous.item.name, block.item.name);
+      if (previous.item.flow !== block.item.flow) delete previous.item.flow;
       continue;
     }
 

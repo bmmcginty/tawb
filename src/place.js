@@ -141,13 +141,41 @@ function hasElement(source, item) {
   return source === 'ax' && !!item.role && item.role !== 'text' && !!item.name;
 }
 
-function lineOfBlock(state, blockIndex) {
-  return state.lines.findIndex((line) => line.blockIndex === blockIndex && !line.continuation);
+function positionsAtLine(state, lineIndex) {
+  const line = state.lines[lineIndex];
+  if (!line) return [];
+  if (line.spans && line.spans.length) {
+    return line.spans.map((span) => ({
+      line: lineIndex, col: span.start, end: span.end,
+      blockIndex: span.blockIndex, block: state.blocks[span.blockIndex],
+    }));
+  }
+  if (line.continuation) return [];
+  return [{
+    line: lineIndex, col: 0, end: line.text.length,
+    blockIndex: line.blockIndex, block: state.blocks[line.blockIndex],
+  }];
 }
 
-function blockAtLine(state, lineIndex) {
-  const line = state.lines[lineIndex];
-  return line ? state.blocks[line.blockIndex] : null;
+function positionOfBlock(state, blockIndex) {
+  for (let line = 0; line < state.lines.length; line += 1) {
+    const found = positionsAtLine(state, line).find((position) => position.blockIndex === blockIndex);
+    if (found) return found;
+  }
+  return null;
+}
+
+function blockIndexAtLine(state, lineIndex, col = 0) {
+  const positions = positionsAtLine(state, lineIndex);
+  if (!positions.length) {
+    const line = state.lines[lineIndex];
+    return line ? line.blockIndex : -1;
+  }
+  let chosen = positions[0];
+  for (const position of positions) {
+    if (position.col <= col) chosen = position;
+  }
+  return chosen.blockIndex;
 }
 
 // The element the reader is on, or the nearest one above it, described well
@@ -158,11 +186,13 @@ async function capturePlace(state, resolveHandle) {
   const line = state.lines[state.cursor];
   if (!line) return null;
 
-  const block = state.blocks[line.blockIndex];
+  const blockIndex = blockIndexAtLine(state, state.cursor, state.col || 0);
+  const block = state.blocks[blockIndex];
+  const position = positionOfBlock(state, blockIndex);
   const place = {
     source: state.source,
     text: block ? block.text : '',
-    col: state.col || 0,
+    col: Math.max(0, (state.col || 0) - (position ? position.col : 0)),
     ratio: state.lines.length ? state.cursor / state.lines.length : 0,
     handle: null,
     frame: null,
@@ -173,7 +203,7 @@ async function capturePlace(state, resolveHandle) {
   };
 
   let anchor = null;
-  for (let i = line.blockIndex; i >= 0 && line.blockIndex - i <= LOOKBACK_BLOCKS; i -= 1) {
+  for (let i = blockIndex; i >= 0 && blockIndex - i <= LOOKBACK_BLOCKS; i -= 1) {
     if (hasElement(state.source, state.blocks[i].item)) { anchor = state.blocks[i]; break; }
   }
   if (!anchor) return place;
@@ -200,23 +230,24 @@ async function capturePlace(state, resolveHandle) {
 // on prose rather than on the element itself — looks down from there for the
 // text they were actually reading.
 function landOn(state, blockIndex, place, exactElement) {
-  const line = lineOfBlock(state, blockIndex);
-  if (line < 0) return null;
+  const position = positionOfBlock(state, blockIndex);
+  if (!position) return null;
 
   if (place.onElement) {
-    state.cursor = line;
-    state.col = sameLineText(state, line, place) ? place.col : 0;
+    state.cursor = position.line;
+    state.col = position.col + (sameLineText(state, blockIndex, place)
+      ? Math.min(place.col, Math.max(position.end - position.col - 1, 0)) : 0);
     return exactElement ? 'exact' : 'near';
   }
 
-  const refined = refineToText(state, line, place);
+  const refined = refineToText(state, position.line, place);
   state.cursor = refined.line;
   state.col = refined.col;
   return exactElement && refined.exact ? 'exact' : 'near';
 }
 
-function sameLineText(state, lineIndex, place) {
-  const block = blockAtLine(state, lineIndex);
+function sameLineText(state, blockIndex, place) {
+  const block = state.blocks[blockIndex];
   return !!block && block.text === place.text;
 }
 
@@ -226,10 +257,14 @@ function refineToText(state, from, place) {
 
   const limit = Math.min(state.lines.length, from + REFINE_LINES);
   for (let i = from; i < limit; i += 1) {
-    const line = state.lines[i];
-    if (line.continuation) continue;
-    if (state.blocks[line.blockIndex].text === place.text) {
-      return { line: i, col: Math.min(place.col, Math.max(line.text.length - 1, 0)), exact: true };
+    for (const position of positionsAtLine(state, i)) {
+      if (position.block && position.block.text === place.text) {
+        return {
+          line: i,
+          col: position.col + Math.min(place.col, Math.max(position.end - position.col - 1, 0)),
+          exact: true,
+        };
+      }
     }
   }
 
@@ -288,13 +323,13 @@ function nearestLine(state, test, estimate) {
   let best = null;
   for (let i = 0; i < state.lines.length; i += 1) {
     const line = state.lines[i];
-    if (line.continuation) continue;
-    const block = state.blocks[line.blockIndex];
-    if (!test(block, line)) continue;
-    const distance = Math.abs(i - estimate);
-    if (!best || distance < best.distance) best = { line: i, distance };
+    for (const position of positionsAtLine(state, i)) {
+      if (!test(position.block, line)) continue;
+      const distance = Math.abs(i - estimate);
+      if (!best || distance < best.distance) best = { ...position, distance };
+    }
   }
-  return best ? best.line : -1;
+  return best;
 }
 
 // For a view with no element references to match against — Playwright's
@@ -315,21 +350,21 @@ function locateByText(state, place) {
 
   if (text) {
     const same = nearestLine(state, (block) => block.text === place.text, estimate);
-    if (same >= 0) return land(same, place.col, 'exact');
+    if (same) return land(same.line, same.col + place.col, 'exact');
   }
 
   if (label.length >= MIN_NEEDLE) {
     const named = nearestLine(
       state, (block) => block.item && String(block.item.name).trim() === label, estimate);
-    if (named >= 0) return land(named, 0, 'exact');
+    if (named) return land(named.line, named.col, 'exact');
 
     const within = nearestLine(state, (block) => block.text.includes(label), estimate);
-    if (within >= 0) return land(within, Math.max(state.lines[within].text.indexOf(label), 0), 'near');
+    if (within) return land(within.line, within.col, 'near');
   }
 
   if (text.length >= MIN_NEEDLE) {
     const within = nearestLine(state, (block) => block.text.includes(text), estimate);
-    if (within >= 0) return land(within, Math.max(state.lines[within].text.indexOf(text), 0), 'near');
+    if (within) return land(within.line, within.col, 'near');
   }
 
   if (place.total != null) {
