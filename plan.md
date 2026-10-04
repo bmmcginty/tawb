@@ -113,5 +113,6 @@ Compatibility requirements:
 - [x] Run the complete unit suite.
 - [ ] Run focused browser tests for navigation, forms, live updates, and dialogs on Chromium
       and Firefox where available.
-- [ ] Test manually with stock Lynx defaults and customized vi, Emacs, numbered-link, and
-      text-field-activation configurations.
+- [x] Verify stock Lynx defaults and customized vi, Emacs, numbered-link, and
+      text-field-activation configurations against the installed Lynx binary
+      (`test/lynx_real.test.js`, skipped when Lynx is absent).
