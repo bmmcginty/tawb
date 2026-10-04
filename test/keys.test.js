@@ -8,7 +8,9 @@ const { PassThrough } = require('node:stream');
 
 const { tempDir } = require('./tmpdir');
 
-const { Keymap, configPath, readTerminfo } = require('../src/keys');
+const {
+  Keymap, configPath, readTerminfo, rawSpec, LYNX_KEY_DEFINITIONS,
+} = require('../src/keys');
 const { parseBrowseMap } = require('../src/lynx_config');
 const { runKeyWizard, wizardRows } = require('../src/key_wizard');
 
@@ -47,6 +49,8 @@ test('effective standard, vi, and Emacs Lynx maps drive their familiar keys', ()
   assert.equal(standard.actionFor('G'), 'location-edit');
   assert.equal(standard.actionFor('0'), 'link-number');
   assert.equal(standard.actionFor('l'), 'list-links');
+  assert.equal(standard.actionFor('\x1bOP'), 'keyboard-wizard',
+    'an imported function-key binding resolves through the Lynx vocabulary');
 
   const vi = new Keymap({
     terminfo: {}, profile: 'lynx', load: false, bindings: imported('vi'),
@@ -125,6 +129,31 @@ test('terminfo key sequences are added to the portable fallbacks', () => {
   assert.equal(keys.nameForSequence('\x1b[15~'), 'F5');
 });
 
+test('function keys are named only for the Lynx profile', () => {
+  const ordinary = new Keymap({ terminfo: {}, load: false });
+  assert.equal(ordinary.nameForSequence('\x1bOQ'), rawSpec('\x1bOQ'));
+  assert.deepEqual(ordinary.sequencesFor('F2'), []);
+
+  const lynx = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  assert.equal(lynx.nameForSequence('\x1bOQ'), 'F2');
+  assert.deepEqual(lynx.sequencesFor('F2'), ['\x1bOQ', '\x1b[12~', '\x1b[[B']);
+  assert.equal(lynx.actionFor('\x1bOP'), null, 'having a name is not a binding');
+});
+
+test('the shared terminfo table never asks for the Lynx-only function keys', () => {
+  const asked = [];
+  readTerminfo({
+    env: { TERM: 'friend-terminal' },
+    run: (_command, [capability]) => {
+      asked.push(capability);
+      return { status: 1, stdout: Buffer.alloc(0) };
+    },
+  });
+  assert.ok(asked.includes('knp'));
+  assert.ok(!asked.includes('kf2'));
+  assert.equal(LYNX_KEY_DEFINITIONS.F2.cap, 'kf2');
+});
+
 test('replacing and adding bindings resolves conflicts', () => {
   const keys = new Keymap({ terminfo: {}, load: false });
   const replaced = keys.assign('next-screen', 'x');
@@ -196,6 +225,22 @@ test('the wizard does not ask about a key held only by the other keyboard', asyn
   assert.deepEqual(keymap.byId.get('edit-line-start').bindings, ['Ctrl+A']);
   assert.equal(keymap.actionFor('\x01'), 'quit');
   assert.equal(keymap.editingActionFor('\x01'), 'edit-line-start');
+});
+
+test('the wizard names the interface whose keys it edits', async () => {
+  for (const [profile, heading] of [['default', 'Keyboard bindings'], ['lynx', 'Lynx keyboard bindings']]) {
+    const keymap = new Keymap({ terminfo: {}, profile, load: false });
+    const output = new PassThrough();
+    output.rows = 12;
+    output.columns = 200;
+    const writes = [];
+    const write = output.write.bind(output);
+    output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
+    const queued = ['\x1b', 'n'];
+    const reader = { next: () => Promise.resolve(queued.shift()) };
+    await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
+    assert.ok(writes.join('').includes(heading), `${profile} wizard heading`);
+  }
 });
 
 test('bindings are saved atomically and loaded over defaults', () => {

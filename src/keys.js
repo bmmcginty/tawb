@@ -22,11 +22,27 @@ const KEY_DEFINITIONS = {
   PageDown: { cap: 'knp', sequences: ['\x1b[6~'] },
   Home: { cap: 'khome', sequences: ['\x1b[H', '\x1bOH', '\x1b[1~'] },
   End: { cap: 'kend', sequences: ['\x1b[F', '\x1bOF', '\x1b[4~'] },
+  F5: { cap: 'kf5', sequences: ['\x1b[15~', '\x1b[[E'] },
+  'Shift+F4': { cap: 'kf16', sequences: ['\x1b[1;2S', '\x1bO2S', '\x1b[14;2~', '\x1b[26~'] },
+  // Tab is a control character rather than an escape sequence, so it is named
+  // here only to be displayed as Tab instead of Ctrl+I. Shift+Tab has no such
+  // luck: terminals disagree, so terminfo's back-tab is asked for first.
+  Tab: { sequences: ['\t'] },
+  'Shift+Tab': { cap: 'kcbt', sequences: ['\x1b[Z'] },
+};
+
+// Function keys beyond F5 are named only for the Lynx profile, because nothing
+// in TAWB's own bindings uses them. Importing an effective Lynx map is the one
+// caller that can: upstream binds F1 to context help and a customized map can
+// put any function key on any command. Keeping them out of the shared table
+// means a reader who has not asked for the Lynx interface gets exactly the
+// startup it had before, with no extra terminfo lookups and no page key that
+// suddenly has a name.
+const LYNX_KEY_DEFINITIONS = {
   F1: { cap: 'kf1', sequences: ['\x1bOP', '\x1b[11~', '\x1b[[A'] },
   F2: { cap: 'kf2', sequences: ['\x1bOQ', '\x1b[12~', '\x1b[[B'] },
   F3: { cap: 'kf3', sequences: ['\x1bOR', '\x1b[13~', '\x1b[[C'] },
   F4: { cap: 'kf4', sequences: ['\x1bOS', '\x1b[14~', '\x1b[[D'] },
-  F5: { cap: 'kf5', sequences: ['\x1b[15~', '\x1b[[E'] },
   F6: { cap: 'kf6', sequences: ['\x1b[17~'] },
   F7: { cap: 'kf7', sequences: ['\x1b[18~'] },
   F8: { cap: 'kf8', sequences: ['\x1b[19~'] },
@@ -34,12 +50,6 @@ const KEY_DEFINITIONS = {
   F10: { cap: 'kf10', sequences: ['\x1b[21~'] },
   F11: { cap: 'kf11', sequences: ['\x1b[23~'] },
   F12: { cap: 'kf12', sequences: ['\x1b[24~'] },
-  'Shift+F4': { cap: 'kf16', sequences: ['\x1b[1;2S', '\x1bO2S', '\x1b[14;2~', '\x1b[26~'] },
-  // Tab is a control character rather than an escape sequence, so it is named
-  // here only to be displayed as Tab instead of Ctrl+I. Shift+Tab has no such
-  // luck: terminals disagree, so terminfo's back-tab is asked for first.
-  Tab: { sequences: ['\t'] },
-  'Shift+Tab': { cap: 'kcbt', sequences: ['\x1b[Z'] },
 };
 
 const ACTIONS = [
@@ -213,10 +223,10 @@ function configPath(env = process.env, home = os.homedir(), profile = 'default')
   return path.join(base, 'tawb', name);
 }
 
-function readTerminfo({ env = process.env, run = spawnSync } = {}) {
+function readTerminfo({ env = process.env, run = spawnSync, definitions = KEY_DEFINITIONS } = {}) {
   const found = {};
   if (!env.TERM) return found;
-  for (const [name, definition] of Object.entries(KEY_DEFINITIONS)) {
+  for (const [name, definition] of Object.entries(definitions)) {
     if (!definition.cap) continue;
     const result = run('tput', [definition.cap], {
       env, encoding: null, timeout: 500, stdio: ['ignore', 'pipe', 'ignore'],
@@ -239,12 +249,18 @@ function rawSpec(sequence) {
 
 class Keymap {
   constructor({
-    terminfo = readTerminfo(), profile = 'default', file = null, load = true,
+    terminfo = null, profile = 'default', file = null, load = true,
     bindings = {}, unsupported = [], preferences = {},
   } = {}) {
     this.profile = interfaceName(profile);
     this.file = file || configPath(process.env, os.homedir(), this.profile);
-    this.terminfo = terminfo;
+    // A compatibility profile may name terminal keys TAWB itself never binds.
+    // They are added to this profile's vocabulary only, so the shared table and
+    // the default profile's terminfo lookups are unchanged.
+    this.definitions = this.profile === 'lynx'
+      ? { ...KEY_DEFINITIONS, ...LYNX_KEY_DEFINITIONS }
+      : KEY_DEFINITIONS;
+    this.terminfo = terminfo || readTerminfo({ definitions: this.definitions });
     this.unsupported = [...unsupported];
     this.preferences = { ...preferences };
     this.defaultBindings = new Map(ACTIONS.map((action) => [
@@ -263,7 +279,7 @@ class Keymap {
   }
 
   buildNames() {
-    for (const [name, definition] of Object.entries(KEY_DEFINITIONS)) {
+    for (const [name, definition] of Object.entries(this.definitions)) {
       const sequences = [...definition.sequences];
       if (this.terminfo[name]) sequences.unshift(this.terminfo[name]);
       this.namedSequences.set(name, [...new Set(sequences)]);
@@ -421,5 +437,6 @@ class Keymap {
 }
 
 module.exports = {
-  ACTIONS, EDITING_ACTIONS, KEY_DEFINITIONS, Keymap, configPath, readTerminfo, rawSpec,
+  ACTIONS, EDITING_ACTIONS, KEY_DEFINITIONS, LYNX_KEY_DEFINITIONS,
+  Keymap, configPath, readTerminfo, rawSpec,
 };
