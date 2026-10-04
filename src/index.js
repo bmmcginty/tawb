@@ -3203,14 +3203,17 @@ function openHelp(state, page) {
     'Lynx Help for TAWB',
     '',
     'Arrow keys: move to links and controls; Right or Enter activates.',
+    '^ / $: first / last link or form control.',
     'Space / b: next / previous screen.',
     'g / G: enter a new address / edit the current address.',
     '/, n, N: search / next match / previous match.',
     'l / A: list references / list reference addresses.',
-    'a / v: add a bookmark / view bookmarks.',
+    'a / v: add a bookmark / view bookmarks; r removes the selected bookmark.',
     'd: download the current link.',
     'o: options menu.  k: keymap and keyboard bindings.',
     'm: return to the main screen.  \\: toggle source.',
+    'x: reload without cache.  z: stop loading.',
+    'Ctrl+T: toggle tracing.  ;: view the trace log.',
     'q: quit.  Left: return from this help page.',
   ];
   if (state.keys.unsupported && state.keys.unsupported.length) {

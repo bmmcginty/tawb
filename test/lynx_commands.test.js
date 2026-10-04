@@ -44,6 +44,11 @@ test('h, H, and question mark open Lynx help while k opens the keymap', async ()
     assert.equal(state.library.kind, 'info');
     assert.equal(state.title, 'Lynx Help');
     assert.match(state.library.rows[0].text, /Lynx Help/);
+    const help = state.library.rows.map((row) => row.text).join('\n');
+    assert.match(help, /\^ \/ \$: first \/ last/);
+    assert.match(help, /r removes the selected bookmark/);
+    assert.match(help, /x: reload without cache/);
+    assert.match(help, /Ctrl\+T: toggle tracing/);
     await quietly(() => handleLibraryKey('\x1b[D', state, PAGE));
     assert.equal(state.mode, 'browse');
   }
