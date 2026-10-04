@@ -20,7 +20,7 @@ Compatibility requirements:
 - [x] Give each interface separate browse and editing defaults.
 - [x] Store Lynx overrides in `keys-lynx.json`; retain version-1 `keys.json` compatibility.
 - [x] Make keyboard help identify the active interface and edit the corresponding keymap.
-- [ ] Move form, chooser, prompt, and library commands that Lynx must customize out of
+- [x] Move form, chooser, prompt, and library commands that Lynx must customize out of
       hard-coded byte checks and into context-aware actions.
 - [x] Add regression tests proving the default profile and existing `keys.json` files are
       unchanged.

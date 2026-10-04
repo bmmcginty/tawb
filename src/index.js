@@ -212,6 +212,26 @@ function keyIs(chunk, name, state) {
   return (state.keys || FALLBACK_KEYMAP).isKey(chunk, name);
 }
 
+const LYNX_CONTEXT_ACTIONS = {
+  activate: 'accept',
+  'history-back': 'cancel',
+  'close-popup': 'cancel',
+  'next-focusable': 'next',
+  'next-line': 'next',
+  'previous-focusable': 'previous',
+  'previous-line': 'previous',
+  'next-screen': 'page-next',
+  'previous-screen': 'page-previous',
+  top: 'first',
+  bottom: 'last',
+};
+
+function contextNavigationAction(chunk, state) {
+  if (state.interface !== 'lynx') return null;
+  const action = (state.keys || FALLBACK_KEYMAP).actionFor(chunk);
+  return LYNX_CONTEXT_ACTIONS[action] || null;
+}
+
 function actionKeyLabel(state, id, fallback = '') {
   const keys = state.keys || FALLBACK_KEYMAP;
   const action = keys.byId && keys.byId.get(id);
@@ -2766,13 +2786,14 @@ async function handleChooseKey(chunk, state, page) {
   markInput(state);
   const chooser = state.core.chooser;
   if (!chooser) { state.mode = 'browse'; return; }
+  const contextAction = contextNavigationAction(chunk, state);
 
-  if (keyIs(chunk, 'Escape', state)) {
+  if (keyIs(chunk, 'Escape', state) || contextAction === 'cancel') {
     closeChooser(state, page, { note: `Left "${state.chooser.item.name}" as it was.` });
     return;
   }
 
-  if (chunk === '\r' || chunk === '\n') {
+  if (chunk === '\r' || chunk === '\n' || contextAction === 'accept') {
     const line = state.lines[state.cursor];
     const item = line ? state.core.blocks[line.blockIndex].item : null;
     if (!item || item.chooserIndex == null) {
@@ -2804,22 +2825,24 @@ async function handleChooseKey(chunk, state, page) {
   }
 
   const range = chooserLines(state);
-  if (keyIs(chunk, 'ArrowDown', state)) {
+  if (keyIs(chunk, 'ArrowDown', state) || contextAction === 'next') {
     if (range) moveSelection(state, Math.min(state.cursor + 1, range.last), page);
     return;
   }
-  if (keyIs(chunk, 'ArrowUp', state)) {
+  if (keyIs(chunk, 'ArrowUp', state) || contextAction === 'previous') {
     if (range) moveSelection(state, Math.max(state.cursor - 1, range.first), page);
     return;
   }
-  if (keyIs(chunk, 'PageDown', state)) {
+  if (keyIs(chunk, 'PageDown', state) || contextAction === 'page-next') {
     if (range) moveSelection(state, Math.min(state.cursor + viewportHeight(), range.last), page);
     return;
   }
-  if (keyIs(chunk, 'PageUp', state)) {
+  if (keyIs(chunk, 'PageUp', state) || contextAction === 'page-previous') {
     if (range) moveSelection(state, Math.max(state.cursor - viewportHeight(), range.first), page);
     return;
   }
+  if (contextAction === 'first' && range) return moveSelection(state, range.first, page);
+  if (contextAction === 'last' && range) return moveSelection(state, range.last, page);
 
   if (keyIs(chunk, 'Backspace', state)) {
     refilter(state, page, chooser.filter.slice(0, -1));
@@ -3028,9 +3051,10 @@ async function handleLibraryKey(chunk, state, page) {
   if (!lib) { state.mode = 'browse'; return; }
   const lynxAction = state.interface === 'lynx'
     ? (state.keys || FALLBACK_KEYMAP).actionFor(chunk) : null;
+  const contextAction = contextNavigationAction(chunk, state);
 
   if (lynxAction === 'quit') return 'quit';
-  if (state.interface === 'lynx' && lynxAction === 'history-back') {
+  if (contextAction === 'cancel') {
     closeLibrary(state, page, `Closed ${lib.label.toLowerCase()}.`);
     return;
   }
@@ -3046,7 +3070,7 @@ async function handleLibraryKey(chunk, state, page) {
     }
   }
 
-  if (chunk === '\r' || chunk === '\n' || lynxAction === 'activate') {
+  if (chunk === '\r' || chunk === '\n' || contextAction === 'accept') {
     const block = currentBlock(state);
     const entry = block && block.entry;
     if (!entry) {
@@ -3086,16 +3110,16 @@ async function handleLibraryKey(chunk, state, page) {
   }
 
   const last = state.lines.length - 1;
-  if (keyIs(chunk, 'ArrowDown', state) || lynxAction === 'next-focusable') {
+  if (keyIs(chunk, 'ArrowDown', state) || contextAction === 'next') {
     return moveSelection(state, Math.min(state.cursor + 1, last), page);
   }
-  if (keyIs(chunk, 'ArrowUp', state) || lynxAction === 'previous-focusable') {
+  if (keyIs(chunk, 'ArrowUp', state) || contextAction === 'previous') {
     return moveSelection(state, Math.max(state.cursor - 1, 0), page);
   }
-  if (keyIs(chunk, 'PageDown', state) || lynxAction === 'next-screen') return moveScreen(state, 1, page);
-  if (keyIs(chunk, 'PageUp', state) || lynxAction === 'previous-screen') return moveScreen(state, -1, page);
-  if (keyIs(chunk, 'Home', state) || lynxAction === 'top') return moveSelection(state, 0, page);
-  if (keyIs(chunk, 'End', state) || lynxAction === 'bottom') return moveSelection(state, last, page);
+  if (keyIs(chunk, 'PageDown', state) || contextAction === 'page-next') return moveScreen(state, 1, page);
+  if (keyIs(chunk, 'PageUp', state) || contextAction === 'page-previous') return moveScreen(state, -1, page);
+  if (keyIs(chunk, 'Home', state) || contextAction === 'first') return moveSelection(state, 0, page);
+  if (keyIs(chunk, 'End', state) || contextAction === 'last') return moveSelection(state, last, page);
 
   // A Lynx internal page uses the Lynx browse map. Printable commands must
   // not unexpectedly become TAWB's list filter; commands without an internal
@@ -3645,8 +3669,9 @@ async function answerNativeDialog(state, dialog) {
         return;
       }
       markInput(state);
+      const contextAction = contextNavigationAction(chunk, state);
 
-      if (keyIs(chunk, 'Escape', state)) {
+      if (keyIs(chunk, 'Escape', state) || contextAction === 'cancel') {
         // Nothing is pressed. Escaping used to press whichever button the
         // dialog had focused, on the grounds that it was the browser's own
         // safe answer — and on Chrome's extension prompt it is, since that
@@ -3660,7 +3685,7 @@ async function answerNativeDialog(state, dialog) {
         return;
       }
 
-      if (chunk === '\r' || chunk === '\n') {
+      if (chunk === '\r' || chunk === '\n' || contextAction === 'accept') {
         const block = currentBlock(state);
         // An option is ticked in place and the dialog stays up: it is part of
         // the question, not an answer to it.
@@ -3692,12 +3717,24 @@ async function answerNativeDialog(state, dialog) {
       }
 
       const last = state.lines.length - 1;
-      if (keyIs(chunk, 'ArrowDown', state)) { moveSelection(state, Math.min(state.cursor + 1, last), page); continue; }
-      if (keyIs(chunk, 'ArrowUp', state)) { moveSelection(state, Math.max(state.cursor - 1, 0), page); continue; }
-      if (keyIs(chunk, 'PageDown', state)) { moveScreen(state, 1, page); continue; }
-      if (keyIs(chunk, 'PageUp', state)) { moveScreen(state, -1, page); continue; }
-      if (keyIs(chunk, 'Home', state)) { moveSelection(state, 0, page); continue; }
-      if (keyIs(chunk, 'End', state)) { moveSelection(state, last, page); continue; }
+      if (keyIs(chunk, 'ArrowDown', state) || contextAction === 'next') {
+        moveSelection(state, Math.min(state.cursor + 1, last), page); continue;
+      }
+      if (keyIs(chunk, 'ArrowUp', state) || contextAction === 'previous') {
+        moveSelection(state, Math.max(state.cursor - 1, 0), page); continue;
+      }
+      if (keyIs(chunk, 'PageDown', state) || contextAction === 'page-next') {
+        moveScreen(state, 1, page); continue;
+      }
+      if (keyIs(chunk, 'PageUp', state) || contextAction === 'page-previous') {
+        moveScreen(state, -1, page); continue;
+      }
+      if (keyIs(chunk, 'Home', state) || contextAction === 'first') {
+        moveSelection(state, 0, page); continue;
+      }
+      if (keyIs(chunk, 'End', state) || contextAction === 'last') {
+        moveSelection(state, last, page); continue;
+      }
 
       // Every other key, including the ones that would do something on a
       // page. A reader who presses `q` at a question the browser is holding
@@ -3868,19 +3905,22 @@ async function handleFieldCommandKey(chunk, state, page) {
 
 async function handleFormsKey(chunk, state, page) {
   markInput(state);
-  if (keyIs(chunk, 'Escape', state)) {
+  const contextAction = contextNavigationAction(chunk, state);
+  if (keyIs(chunk, 'Escape', state) || contextAction === 'cancel') {
     state.mode = 'browse';
     drawHint(state);
     setStatus(state, 'Left forms mode.');
     return;
   }
-  if (chunk === '\r' || chunk === '\n') {
+  if (chunk === '\r' || chunk === '\n' || contextAction === 'accept') {
     await activateCurrent(state, page);
     return;
   }
-  if (!keyIs(chunk, 'Tab', state) && !keyIs(chunk, 'Shift+Tab', state)) return;
+  const previous = keyIs(chunk, 'Shift+Tab', state) || contextAction === 'previous';
+  const next = keyIs(chunk, 'Tab', state) || contextAction === 'next';
+  if (!previous && !next) return;
 
-  const direction = keyIs(chunk, 'Shift+Tab', state) ? -1 : 1;
+  const direction = previous ? -1 : 1;
   const screen = screenBefore(state);
   const anchor = anchorFor(state);
   await refresh(state, page, { anchor });
@@ -4552,7 +4592,7 @@ module.exports = {
   handleFormsKey, handleControlKey, handlePageKey,
   handleAddressKey, handleFindKey, handleNumberKey, openLinkNumberPrompt,
   parseLynxNumberExpression, relativeLinkNumber,
-  browserKeyForTerminalSequence,
+  browserKeyForTerminalSequence, contextNavigationAction,
   findText, runSearch,
   render, drawList, drawAddress, drawHint, hintText, drawStatus, setStatus,
   patchEditedLine, moveSelection, repaintLynxSelection, moveScreen, preserveViewportRow,

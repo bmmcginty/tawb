@@ -6,7 +6,8 @@ const assert = require('node:assert');
 const { numberLynxBlocks, renderLynxItem, renderLynxBlock } = require('../src/lynx_display');
 const { layoutLines } = require('../src/layout');
 const {
-  handleBrowseKey, handleNumberKey, hintText, moveSelection, openLinkNumberPrompt,
+  contextNavigationAction, handleBrowseKey, handleNumberKey, hintText,
+  moveSelection, openLinkNumberPrompt,
   parseLynxNumberExpression, relativeLinkNumber, relayout, renderRow, typingText,
 } = require('../src/index');
 const { Keymap } = require('../src/keys');
@@ -138,6 +139,26 @@ test('moving between Lynx links removes the old highlight and draws the new one'
   const output = captureTerminal(() => moveSelection(state, 1, { url: () => 'https://example.test/' }));
   assert.ok(output.includes('\x1b[2KFirst'), JSON.stringify(output));
   assert.ok(output.includes('\x1b[2K\x1b[7mSecond\x1b[0m'), JSON.stringify(output));
+});
+
+test('Lynx context navigation follows imported vi browse bindings', () => {
+  const keys = new Keymap({
+    terminfo: {}, profile: 'lynx', load: false,
+    bindings: {
+      'history-back': ['h'], 'next-focusable': ['j'],
+      'previous-focusable': ['k'], activate: ['l'], 'list-links': ['L'],
+      'next-screen': ['Ctrl+F'], top: ['Ctrl+A'], bottom: ['Ctrl+E'],
+    },
+  });
+  const state = { interface: 'lynx', keys };
+  assert.equal(contextNavigationAction('h', state), 'cancel');
+  assert.equal(contextNavigationAction('j', state), 'next');
+  assert.equal(contextNavigationAction('k', state), 'previous');
+  assert.equal(contextNavigationAction('l', state), 'accept');
+  assert.equal(contextNavigationAction('\x06', state), 'page-next');
+  assert.equal(contextNavigationAction('\x01', state), 'first');
+  assert.equal(contextNavigationAction('\x05', state), 'last');
+  assert.equal(contextNavigationAction('j', { ...state, interface: 'default' }), null);
 });
 
 test('zero explicitly opens the Lynx number prompt when numbering is hidden', async () => {
