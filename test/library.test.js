@@ -15,7 +15,7 @@ const {
   entryLine, matches, relativeAge, sizeText, shortAddress, orderEntries,
 } = require('../src/library');
 const {
-  openLibrary, openLinkList, closeLibrary, handleLibraryKey,
+  openLibrary, openLinkList, openDocumentInfo, closeLibrary, handleLibraryKey,
 } = require('../src/index');
 const { Keymap } = require('../src/keys');
 
@@ -195,6 +195,32 @@ function typeInto(state, text) {
     for (const character of text) await handleLibraryKey(character, state, PAGE);
   });
 }
+
+test('Lynx document information describes the page and selected link', async () => {
+  const state = readerAt(HISTORY);
+  state.interface = 'lynx';
+  state.lines = [{ blockIndex: 0, text: 'About' }];
+  state.cursor = 0;
+  state.core.blocks = [{
+    text: '{About}', item: { role: 'link', name: 'About', href: 'https://example.test/about' },
+  }];
+  await quietly(() => openDocumentInfo(state, PAGE));
+  assert.equal(state.mode, 'library');
+  assert.equal(state.title, 'Information about current document');
+  assert.deepEqual(state.library.rows.map((row) => row.text), [
+    'File that you are currently viewing',
+    'Linkname: The page they were reading',
+    'URL: https://example.test/page',
+    'size: 1 lines',
+    'mode: normal',
+    'Link that you currently have selected',
+    'Linkname: About',
+    'URL: https://example.test/about',
+  ]);
+  assert.ok(state.library.blocks.every((block) => block.item.role === 'text'));
+  await quietly(() => handleLibraryKey('\x1b[D', state, PAGE));
+  assert.equal(state.mode, 'browse');
+});
 
 test('a Lynx reference list keeps page order, names, addresses, and numbers', async () => {
   const state = readerAt(HISTORY);

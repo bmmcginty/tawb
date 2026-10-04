@@ -27,6 +27,7 @@ test('the effective Lynx browse map is translated by function name', () => {
     '?           HELP          display help',
     'l           LIST          list references',
     'A           ADDRLIST      list reference addresses',
+    '=           INFO          document information',
     '\\           SOURCE        toggle source',
     '!           SHELL         escape to a shell',
   ].join('\n'));
@@ -42,6 +43,7 @@ test('the effective Lynx browse map is translated by function name', () => {
   assert.deepEqual(parsed.bindings['keyboard-wizard'], ['?']);
   assert.deepEqual(parsed.bindings['list-links'], ['l']);
   assert.deepEqual(parsed.bindings['list-addresses'], ['A']);
+  assert.deepEqual(parsed.bindings['document-info'], ['=']);
   assert.deepEqual(parsed.unsupported, ['SHELL']);
 });
 

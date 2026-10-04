@@ -2152,6 +2152,8 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'next-change') return jumpToChange(state, page, 1);
   if (action === 'previous-change') return jumpToChange(state, page, -1);
 
+  if (action === 'document-info') return openDocumentInfo(state, page);
+
   if (action === 'where') {
     const block = currentBlock(state);
     const total = state.lines.length;
@@ -2836,7 +2838,11 @@ function showLibrary(state, page, filter) {
   lib.filter = filter;
   lib.blocks = lib.rows
     .filter((row) => matches(row.text, filter))
-    .map((row) => ({ text: row.text, item: { role: 'link', name: row.text }, entry: row.entry }));
+    .map((row) => ({
+      text: row.text,
+      item: lib.kind === 'info' ? { role: 'text', name: row.text } : { role: 'link', name: row.text },
+      entry: row.entry,
+    }));
   lib.empty = lib.blocks.length === 0;
   if (lib.empty) {
     lib.blocks = [{ text: libraryStatus(state), item: null, entry: null }];
@@ -2847,6 +2853,34 @@ function showLibrary(state, page, filter) {
   relayout(state);
   render(state, page, { force: true });
   setStatus(state, libraryStatus(state));
+}
+
+function openDocumentInfo(state, page) {
+  const block = currentBlock(state);
+  const item = block && block.item;
+  const rows = [
+    { text: 'File that you are currently viewing', entry: null },
+    { text: `Linkname: ${state.title || '(no title)'}`, entry: null },
+    { text: `URL: ${page.url()}`, entry: null },
+    { text: `size: ${state.lines.length} lines`, entry: null },
+    { text: `mode: ${state.core.source === 'source' ? 'source' : 'normal'}`, entry: null },
+  ];
+  if (item && FOCUSABLE_ROLES.has(item.role)) {
+    rows.push(
+      { text: 'Link that you currently have selected', entry: null },
+      { text: `Linkname: ${item.name || '(unnamed)'}`, entry: null },
+    );
+    if (item.href) rows.push({ text: `URL: ${item.href}`, entry: null });
+  }
+  state.core.live.refreshing = true;
+  state.mode = 'library';
+  state.library = {
+    kind: 'info', label: 'Information about current document', filter: '',
+    rows, blocks: [], empty: false,
+    place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
+  };
+  state.title = 'Information about current document';
+  showLibrary(state, page, '');
 }
 
 function openLinkList(state, page, addresses = false) {
@@ -2958,7 +2992,7 @@ async function handleLibraryKey(chunk, state, page) {
     return;
   }
 
-  if (lib.kind === 'links' || lib.kind === 'addresses') {
+  if (lib.kind === 'links' || lib.kind === 'addresses' || lib.kind === 'info') {
     if (keyIs(chunk, 'ArrowLeft', state)) {
       closeLibrary(state, page, `Closed ${lib.label.toLowerCase()}.`);
       return;
@@ -4421,6 +4455,6 @@ module.exports = {
   restoreInvocationDirectory, onExternalNavigation, readTitle, drawTitle,
   navigate, navigateInterruptibly, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
-  openLibrary, openLinkList, closeLibrary, showLibrary, handleLibraryKey,
+  openLibrary, openLinkList, openDocumentInfo, closeLibrary, showLibrary, handleLibraryKey,
   askForLine, bookmarkPage, downloadCurrentLink, drawLinePrompt,
 };
