@@ -124,6 +124,7 @@ const DEFAULT_PREFERENCES = {
   numberLinksOnLeft: true,
   numberFieldsOnLeft: true,
   textfieldsNeedActivation: false,
+  searchCase: 'CASE_INSENSITIVE',
   // Lynx hides the cursor at the bottom-right by default and only moves it to
   // the current link when SHOW_CURSOR is on. See LYrcFile.c: the setting is
   // documented as being for speech and braille interfaces, which is why it

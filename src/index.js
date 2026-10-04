@@ -23,6 +23,7 @@ const { armActivationFocus, focusedByActivation, cancelActivationFocus } = requi
 const { Keymap } = require('./keys');
 const { interfaceName } = require('./interfaces');
 const { readLynxConfig } = require('./lynx_config');
+const { readLynxSettings, mergeLynxSettings } = require('./lynx_settings');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
@@ -127,14 +128,20 @@ function restoreInvocationDirectory(env = process.env, chdir = process.chdir) {
 
 const ARGS = parseArgs([...readSettings(), ...process.argv.slice(2)]);
 
-function keymapForOptions(options, { importLynx = readLynxConfig } = {}) {
+function keymapForOptions(options, {
+  importLynx = readLynxConfig, readLynx = readLynxSettings,
+} = {}) {
   if (options.interface !== 'lynx') return new Keymap({ profile: options.interface });
   const imported = importLynx({
     executable: options.lynxExecutable, config: options.lynxConfig,
   });
+  // TAWB's saved choices are the last word, just as Lynx's own .lynxrc is the
+  // last word over lynx.cfg. They live in a separate file and are not even
+  // opened for the ordinary interface.
+  const preferences = mergeLynxSettings(imported.preferences, readLynx());
   return new Keymap({
     profile: 'lynx', bindings: imported.bindings, unsupported: imported.unsupported,
-    preferences: imported.preferences,
+    preferences,
   });
 }
 // What is typed on the command line is read the same way as what is typed in

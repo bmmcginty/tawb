@@ -144,6 +144,7 @@ SHOW_CURSOR:FALSE
     numberLinksOnLeft: false,
     numberFieldsOnLeft: false,
     textfieldsNeedActivation: true,
+    searchCase: 'CASE_INSENSITIVE',
     showCursor: true,
   });
 });
