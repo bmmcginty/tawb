@@ -6,7 +6,8 @@ const assert = require('node:assert');
 const { numberLynxBlocks, renderLynxItem, renderLynxBlock } = require('../src/lynx_display');
 const { layoutLines } = require('../src/layout');
 const {
-  handleNumberKey, hintText, moveSelection, openLinkNumberPrompt, relayout, renderRow, typingText,
+  handleNumberKey, hintText, moveSelection, openLinkNumberPrompt,
+  parseLynxNumberExpression, relativeLinkNumber, relayout, renderRow, typingText,
 } = require('../src/index');
 const { Keymap } = require('../src/keys');
 
@@ -139,12 +140,39 @@ test('moving between Lynx links removes the old highlight and draws the new one'
   assert.ok(output.includes('\x1b[2K\x1b[7mSecond\x1b[0m'), JSON.stringify(output));
 });
 
+test('Lynx number expressions accept page, relative, and move suffixes', () => {
+  assert.deepEqual(parseLynxNumberExpression('12'),
+    { number: 12, command: 'follow', relative: 0 });
+  assert.deepEqual(parseLynxNumberExpression('3p'),
+    { number: 3, command: 'page', relative: 0 });
+  assert.deepEqual(parseLynxNumberExpression('2+p'),
+    { number: 2, command: 'page', relative: 1 });
+  assert.deepEqual(parseLynxNumberExpression('2p-'),
+    { number: 2, command: 'page', relative: -1 });
+  assert.deepEqual(parseLynxNumberExpression('4-g'),
+    { number: 4, command: 'move', relative: -1 });
+  assert.equal(parseLynxNumberExpression('3pg'), null);
+
+  const prompt = {
+    cursor: 4,
+    targets: [
+      { number: 1, line: 0 }, { number: 2, line: 3 }, { number: 3, line: 6 },
+    ],
+  };
+  assert.equal(relativeLinkNumber(prompt, 1, 1), 3);
+  assert.equal(relativeLinkNumber(prompt, 1, -1), 2);
+  prompt.cursor = 3;
+  assert.equal(relativeLinkNumber(prompt, 1, 1), 3);
+  assert.equal(relativeLinkNumber(prompt, 1, -1), 1);
+});
+
 test('the number prompt snapshots targets and moves to numbered fields', async () => {
   const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
   keys.preferences = { numberLinks: true, numberFields: true };
   const blocks = [
     { text: 'News', item: item('link', 'News') },
     { text: 'Search', item: item('textbox', 'Search') },
+    { text: 'More', item: item('textbox', 'More') },
   ];
   const state = {
     interface: 'lynx', mode: 'browse', cursor: 0, scroll: 0, col: 0,
@@ -154,6 +182,7 @@ test('the number prompt snapshots targets and moves to numbered fields', async (
     lines: [
       { blockIndex: 0, text: 'News', displayNumber: 1, displayPrefix: '[1]' },
       { blockIndex: 1, text: 'Search', displayNumber: 2, displayPrefix: '[2]' },
+      { blockIndex: 2, text: 'More', displayNumber: 3, displayPrefix: '[3]' },
     ],
   };
   const page = { url: () => 'https://example.test/' };
@@ -167,11 +196,52 @@ test('the number prompt snapshots targets and moves to numbered fields', async (
   assert.equal(state.statusMsg, 'Link 2.');
 
   await captureTerminalAsync(async () => {
+    openLinkNumberPrompt(state, '1+');
+    await handleNumberKey('g', state, page);
+  });
+  assert.equal(state.cursor, 2, 'relative g moved without activating the field');
+  assert.equal(state.statusMsg, 'Link 3.');
+
+  await captureTerminalAsync(async () => {
     openLinkNumberPrompt(state, '9');
     await handleNumberKey('\r', state, page);
   });
-  assert.equal(state.cursor, 1, 'an invalid number did not move the cursor');
+  assert.equal(state.cursor, 2, 'an invalid number did not move the cursor');
   assert.equal(state.statusMsg, 'No link 9 on this page.');
+});
+
+test('the p number suffix moves to an absolute or relative screen page', async () => {
+  const blocks = Array.from({ length: 45 }, (_, index) => ({
+    text: `Line ${index + 1}`, item: item(index === 0 ? 'link' : 'text', `Line ${index + 1}`),
+  }));
+  const state = {
+    interface: 'lynx', mode: 'browse', cursor: 0, scroll: 0, col: 0,
+    keyReader: null, inputSeen: false, library: null, dialog: null,
+    linkAddress: false, statusMsg: '', drawn: {},
+    core: { blocks, at() {}, markInput() {} },
+    lines: blocks.map((block, blockIndex) => ({
+      blockIndex, text: block.text,
+      ...(blockIndex === 0 ? { displayNumber: 1 } : {}),
+    })),
+  };
+  const page = { url: () => 'https://example.test/' };
+  await captureTerminalAsync(async () => {
+    openLinkNumberPrompt(state, '2p');
+    await handleNumberKey('\r', state, page);
+  });
+  const height = Math.max(1, (process.stdout.rows || 24) - 6);
+  const pages = Math.ceil(state.lines.length / height);
+  const second = Math.min(2, pages);
+  assert.equal(state.cursor, (second - 1) * height);
+  assert.equal(state.statusMsg, `Page ${second} of ${pages}.`);
+
+  await captureTerminalAsync(async () => {
+    openLinkNumberPrompt(state, '1p+');
+    await handleNumberKey('\r', state, page);
+  });
+  const next = Math.min(second + 1, pages);
+  assert.equal(state.cursor, (next - 1) * height);
+  assert.equal(state.statusMsg, `Page ${next} of ${pages}.`);
 });
 
 test('the number prompt keeps its captured block identity across page changes', async () => {

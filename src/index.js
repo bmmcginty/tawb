@@ -1993,14 +1993,43 @@ function drawLinkNumberPrompt(state) {
 
 function openLinkNumberPrompt(state, digits = '') {
   const map = new Map();
-  for (const line of state.lines) {
+  const targets = [];
+  for (let lineIndex = 0; lineIndex < state.lines.length; lineIndex += 1) {
+    const line = state.lines[lineIndex];
     if (!line.displayNumber || map.has(line.displayNumber)) continue;
-    map.set(line.displayNumber, state.core.blocks[line.blockIndex]);
+    const block = state.core.blocks[line.blockIndex];
+    map.set(line.displayNumber, block);
+    targets.push({ number: line.displayNumber, block, line: lineIndex });
   }
   state.mode = 'number';
-  state.linkNumber = { text: digits === '0' ? '' : digits, map, cursor: state.cursor };
+  state.linkNumber = {
+    text: digits === '0' ? '' : digits,
+    map, targets, cursor: state.cursor,
+  };
   drawHint(state);
   drawLinkNumberPrompt(state);
+}
+
+function parseLynxNumberExpression(text) {
+  const match = /^(\d+)([gGpP]?)([+-]?)$/.exec(text)
+    || /^(\d+)([+-])([gGpP]?)$/.exec(text);
+  if (!match) return null;
+  const [, digits, first = '', second = ''] = match;
+  const suffixes = first + second;
+  const command = /[pP]/.test(suffixes) ? 'page'
+    : /[gG]/.test(suffixes) ? 'move' : 'follow';
+  const relative = suffixes.includes('+') ? 1 : suffixes.includes('-') ? -1 : 0;
+  return { number: Number(digits), command, relative };
+}
+
+function relativeLinkNumber(prompt, amount, direction) {
+  const targets = prompt.targets || [];
+  const current = targets.find((target) => target.line === prompt.cursor);
+  if (current) return current.number + (direction * amount);
+  const previous = targets.filter((target) => target.line < prompt.cursor).at(-1);
+  if (direction > 0) return (previous ? previous.number : 0) + amount;
+  if (previous) return previous.number + 1 - amount;
+  return targets.length ? targets[0].number - amount : -1;
 }
 
 async function handleBrowseKey(chunk, state, page) {
@@ -3964,29 +3993,49 @@ async function handleNumberKey(chunk, state, page) {
     drawLinkNumberPrompt(state);
     return;
   }
-  if (/^\d+$/.test(chunk)) {
+  if (/^\d+$/.test(chunk) || /^[pP+-]$/.test(chunk)) {
     prompt.text += chunk;
     drawLinkNumberPrompt(state);
     return;
   }
-  const moveOnly = chunk === 'g' || chunk === 'G';
-  if (!moveOnly && chunk !== '\r' && chunk !== '\n') return;
+  const typedGo = chunk === 'g' || chunk === 'G';
+  if (!typedGo && chunk !== '\r' && chunk !== '\n') return;
 
-  const number = Number(prompt.text);
-  const block = prompt.map.get(number);
+  const expression = parseLynxNumberExpression(prompt.text + (typedGo ? chunk : ''));
   state.mode = 'browse';
   state.linkNumber = null;
   drawHint(state);
+  if (!expression) {
+    setStatus(state, `Invalid link number: ${prompt.text || 0}.`);
+    return;
+  }
+
+  if (expression.command === 'page') {
+    const height = Math.max(1, viewportHeight());
+    const pageCount = Math.max(1, Math.ceil(state.lines.length / height));
+    const currentPage = Math.floor(prompt.cursor / height) + 1;
+    const requested = expression.relative
+      ? currentPage + (expression.relative * expression.number) : expression.number;
+    const pageNumber = Math.max(1, Math.min(requested || 1, pageCount));
+    moveSelection(state, Math.min((pageNumber - 1) * height, state.lines.length - 1), page, 0);
+    setStatus(state, `Page ${pageNumber} of ${pageCount}.`);
+    return;
+  }
+
+  const number = expression.relative
+    ? relativeLinkNumber(prompt, expression.number, expression.relative)
+    : expression.number;
+  const block = prompt.map.get(number);
   const blockIndex = block ? state.core.blocks.indexOf(block) : -1;
   const lineIndex = blockIndex < 0 ? -1 : state.lines.findIndex(
     (line) => line.blockIndex === blockIndex && !line.continuation);
   if (lineIndex < 0) {
-    setStatus(state, `No link ${prompt.text || 0} on this page.`);
+    setStatus(state, `No link ${number || 0} on this page.`);
     return;
   }
   moveSelection(state, lineIndex, page, 0);
   const item = block.item;
-  if (moveOnly || !item || !LINK_ROLES.has(item.role)) {
+  if (expression.command === 'move' || !item || !LINK_ROLES.has(item.role)) {
     setStatus(state, `Link ${number}.`);
     return;
   }
@@ -4498,6 +4547,7 @@ module.exports = {
   handleBrowseKey, handleTypeKey, handleFieldCommandKey,
   handleFormsKey, handleControlKey, handlePageKey,
   handleAddressKey, handleFindKey, handleNumberKey, openLinkNumberPrompt,
+  parseLynxNumberExpression, relativeLinkNumber,
   browserKeyForTerminalSequence,
   findText, runSearch,
   render, drawList, drawAddress, drawHint, hintText, drawStatus, setStatus,
