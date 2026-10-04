@@ -68,6 +68,8 @@ test('command-line options can override persistent browser settings', () => {
   assert.equal(parseArgs([], {}).dump, false);
   assert.equal(parseArgs(['--dump', 'message.html'], {}).dump, true);
   assert.equal(parseArgs([], {}).interface, 'default');
+  assert.equal(parseArgs([], {}).lynxExecutable, 'lynx');
+  assert.equal(parseArgs([], { TAWB_LYNX: '/opt/lynx' }).lynxExecutable, '/opt/lynx');
   assert.equal(parseArgs([], { TAWB_INTERFACE: 'lynx' }).interface, 'lynx');
   assert.equal(parseArgs(['--interface=lynx'], {}).interface, 'lynx');
   assert.equal(parseArgs(['--interface', 'default'], { TAWB_INTERFACE: 'lynx' }).interface, 'default');

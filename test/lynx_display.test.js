@@ -6,8 +6,8 @@ const assert = require('node:assert');
 const { numberLynxBlocks, renderLynxItem, renderLynxBlock } = require('../src/lynx_display');
 const { layoutLines } = require('../src/layout');
 const {
-  contextNavigationAction, handleBrowseKey, handleFieldCommandKey, handleNumberKey,
-  hintText, moveSelection, openLinkNumberPrompt,
+  askForLine, contextNavigationAction, handleBrowseKey, handleFieldCommandKey,
+  handleNumberKey, hintText, moveSelection, openLinkNumberPrompt,
   parseLynxNumberExpression, relativeLinkNumber, relayout, renderRow, typingText,
 } = require('../src/index');
 const { Keymap } = require('../src/keys');
@@ -226,6 +226,33 @@ test('the Lynx one-command escape cancels or refuses an unknown command', async 
   await captureTerminalAsync(() => handleFieldCommandKey('z', state, page));
   assert.equal(state.mode, 'type');
   assert.equal(state.statusMsg, 'That is not a Lynx browse command.');
+});
+
+test('imported Lynx line-editor bindings apply in TAWB text prompts', async () => {
+  const keys = new Keymap({
+    terminfo: {}, profile: 'lynx', load: false,
+    bindings: { 'edit-line-start': ['Ctrl+Y'] },
+  });
+  const queued = ['\x19', 'X', '\r'];
+  const keyReader = {
+    claimed: 0,
+    claim() { this.claimed += 1; return 'token'; },
+    release() { this.claimed -= 1; },
+    async next() { return queued.shift(); },
+  };
+  const state = {
+    keys, keyReader, mode: 'browse', statusMsg: '', drawn: {},
+    lines: [], cursor: 0, col: 0, scroll: 0, line: null,
+    core: { markInput() {} },
+  };
+  let answer;
+  await captureTerminalAsync(async () => {
+    answer = await askForLine(state, { label: 'Bookmark', initial: 'ab' });
+  });
+  assert.equal(answer, 'Xab', 'the imported start-of-line key moved the prompt caret');
+  assert.equal(state.mode, 'browse');
+  assert.equal(state.line, null);
+  assert.equal(keyReader.claimed, 0, 'the keyboard was given back');
 });
 
 test('Lynx source toggling restores the presentation view it came from', async () => {
