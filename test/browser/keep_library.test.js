@@ -30,7 +30,7 @@ const { tempDir, removeTempDir } = require('../tmpdir');
 const { openDriver } = require('../../src/driver');
 const { readEndpointRecord } = require('../../src/endpoint');
 const { readRegistry, forgetBrowser, stopBrowserCompanion } = require('../../src/registry');
-const { killProcessGroup } = require('../../src/proc');
+const { killProcessGroup, processAlive } = require('../../src/proc');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
 const profile = tempDir('tweb-keep-library-');
@@ -40,6 +40,8 @@ const profile = tempDir('tweb-keep-library-');
 const fetched = new Set();
 
 let rejoined = null;
+let keptPort = null;
+let keptPid = null;
 let page = null;
 let server = null;
 let origin = '';
@@ -91,6 +93,8 @@ test.before(async () => {
     engine: ENGINE, profile, keepBrowser: true, log: () => {},
   });
   const first = kept.context.pages()[0] || await kept.context.newPage();
+  keptPort = kept.port;
+  keptPid = kept.child && kept.child.pid;
   await fill(kept, first);
   // The browser stays; only this reader of it goes away. From here on nothing
   // that answers is owned by the process that started the browser.
@@ -131,8 +135,11 @@ test.after(async () => {
 test('a browser that was kept is joined rather than started again', () => {
   const record = readEndpointRecord(profile);
   assert.ok(record && record.port, 'the kept browser left no endpoint record');
-  assert.equal(rejoined.port, record.port,
+  assert.ok(keptPid && processAlive(keptPid), 'the first session lost the browser it kept');
+  assert.equal(rejoined.rejoined, true, 'the second session started a replacement browser');
+  assert.equal(rejoined.port, keptPort,
     'the joining session is not reading the browser that was kept');
+  assert.equal(record.port, keptPort, 'a replacement browser overwrote the endpoint record');
 });
 
 test('a page the first session visited is still in the kept browser\'s history', async () => {

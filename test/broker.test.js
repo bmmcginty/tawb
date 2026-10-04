@@ -11,7 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 
-const { startBroker, acceptWebSocket } = require('../src/broker');
+const { startBroker, acceptWebSocket, RETAIN_SESSION } = require('../src/broker');
 
 // A browser that speaks BiDi's shape and nothing else.
 async function fakeBrowser() {
@@ -232,6 +232,40 @@ test('a challenge nobody is listening for is cancelled rather than left paused',
     const cancelled = browser.commands.find((c) => c.method === 'network.continueWithAuth');
     assert.ok(cancelled, 'the request was left paused with nobody to answer it');
     assert.deepEqual(cancelled.params, { request: 'req-9', action: 'cancel' });
+  } finally {
+    await broker.close({ endSession: false });
+    browser.close();
+  }
+});
+
+test('a retained session waits in the broker for the next reader', async () => {
+  const browser = await fakeBrowser();
+  let idle = false;
+  const { broker, url } = await brokerOn(browser, { idleMs: 50, onIdle: () => { idle = true; } });
+  const one = await reader(url);
+  try {
+    one.send(1, 'session.new');
+    await one.until((m) => m.id === 1);
+    one.send(2, RETAIN_SESSION);
+    await one.until((m) => m.id === 2);
+    one.close();
+    await new Promise((r) => setTimeout(r, 300));
+
+    assert.equal(idle, false, 'the broker discarded a deliberately kept session');
+    assert.equal(browser.commands.some((c) => c.method === RETAIN_SESSION), false,
+      'the broker exposed its private command to Firefox');
+    assert.equal(browser.commands.some((c) => c.method === 'session.end'), false,
+      'retaining the session ended it upstream');
+
+    const two = await reader(url);
+    two.send(1, 'session.new');
+    const replayed = await two.until((m) => m.id === 1);
+    assert.equal(replayed.result.capabilities['tawb:brokerSession'], 'replayed');
+    assert.equal(browser.commands.filter((c) => c.method === 'session.new').length, 1,
+      'the joining reader replaced rather than reused the retained session');
+    two.send(2, 'session.end');
+    await two.until((m) => m.id === 2);
+    two.close();
   } finally {
     await broker.close({ endSession: false });
     browser.close();

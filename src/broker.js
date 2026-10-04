@@ -60,6 +60,10 @@ const STARTUP_GRACE_MS = 30000;
 // challenge itself: cancelling loads the 401's own body, and a page always
 // beats a tab that never finishes.
 const AUTH_EVENT = 'network.authRequired';
+// A local command, consumed by the broker and never sent to Firefox. A reader
+// that deliberately leaves the browser running also leaves its one allowed
+// BiDi session here, so the next reader can rejoin instead of cold-starting.
+const RETAIN_SESSION = 'tawb.retainSession';
 
 // --- the little of WebSocket this needs -------------------------------------
 
@@ -179,6 +183,7 @@ function startBroker({
   let nextUpstreamId = 1000000; // clear of anything a reader is likely to use
   const routes = new Map();     // our id -> the reader waiting for that reply
   let sessionResult = null;     // what session.new answered, replayed for later readers
+  let retained = false;         // an idle broker still owns a deliberately kept session
   let everHadClient = false;
   let idleTimer = null;
   let closed = false;
@@ -319,6 +324,11 @@ function startBroker({
       }));
       return;
     }
+    if (method === RETAIN_SESSION) {
+      retained = true;
+      client.peer.send(JSON.stringify({ type: 'success', id, result: {} }));
+      return;
+    }
     // One reader leaving is not the browser closing: session.end from any
     // connection deletes the session for everybody sharing it.
     if (method === 'session.end') {
@@ -331,6 +341,7 @@ function startBroker({
       // give up must be given a new session, not the id of the one that has
       // just gone — which the browser would answer with "invalid session id"
       // for everything it was asked afterwards.
+      retained = false;
       sessionResult = null;
     }
     if (method === 'session.subscribe') {
@@ -359,8 +370,8 @@ function startBroker({
     client.peer = acceptWebSocket(req, socket, (text) => { fromClient(client, text); }, () => {
       if (!clients.delete(client)) return;
       for (const [ours, route] of routes) if (route.client === client) routes.delete(ours);
-      log('broker.reader.left', { readers: clients.size });
-      if (!clients.size) idle();
+      log('broker.reader.left', { readers: clients.size, retained });
+      if (!clients.size && !retained) idle();
     });
     clients.add(client);
     everHadClient = true;
@@ -529,5 +540,5 @@ if (require.main === module) {
 
 module.exports = {
   startBroker, ensureBroker, readBrokerRecord, clearBrokerRecord, brokerRecordPath, brokerUrl,
-  acceptWebSocket, IDLE_EXIT_MS,
+  acceptWebSocket, IDLE_EXIT_MS, RETAIN_SESSION,
 };

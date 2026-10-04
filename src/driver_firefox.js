@@ -3,7 +3,7 @@
 const bidi = require('./bidi');
 const { launchFirefox, defaultProfileDir, releaseStrandedSession } = require('./firefox');
 const { readEndpointRecord, writeEndpointRecord, portOfEndpoint } = require('./endpoint');
-const { ensureBroker, clearBrokerRecord } = require('./broker');
+const { ensureBroker, clearBrokerRecord, RETAIN_SESSION } = require('./broker');
 const { processAlive, killProcessGroup, compactDiagnostic } = require('./proc');
 const { otherReadersOn } = require('./session');
 const { forgetBrowser, markKept } = require('./registry');
@@ -761,6 +761,7 @@ async function openFirefox({
   // start one of our own and try again.
   try { onStartup('Starting the Firefox browsing session…'); } catch { /* display only */ }
   let session = null;
+  let brokerSession = null;
   for (let attempt = 0; ; attempt += 1) {
     endpoint = brokered
       ? await ensureBroker({ profileDir, endpoint: browserEndpoint, log })
@@ -772,9 +773,10 @@ async function openFirefox({
         session, { profileDir, marionettePort, log, brokered },
       );
       const capabilities = (sessionResult && sessionResult.capabilities) || {};
+      brokerSession = capabilities['tawb:brokerSession'] || (brokered ? 'unknown' : 'direct');
       log('firefox.session.started', {
         brokered,
-        brokerSession: capabilities['tawb:brokerSession'] || (brokered ? 'unknown' : 'direct'),
+        brokerSession,
         browserName: capabilities.browserName || null,
         browserVersion: capabilities.browserVersion || null,
         platformName: capabilities.platformName || null,
@@ -792,16 +794,27 @@ async function openFirefox({
     }
   }
 
-  await readAutomationState(libraryPort, 'after-session-new', { log });
+  const replayedSession = brokerSession === 'replayed';
+  if (!replayedSession) await readAutomationState(libraryPort, 'after-session-new', { log });
 
   const tree = await session.send('browsingContext.getTree', {});
   const top = tree.contexts[0];
   if (!top) throw new Error('Firefox exposed no browsing context');
-  await probeExistingContext(session, top.context, 'existing-before-session-clear', log);
-
-  await clearWebdriverAfterSession(libraryPort, { log });
-  await readAutomationState(libraryPort, 'before-page-probe', { log });
-  await probeExistingContext(session, top.context, 'existing-after-session-clear', log);
+  let replayedState = null;
+  if (replayedSession) {
+    // The broker kept the already-cleared session alive. One cheap read from
+    // its existing document proves that remains true; creating another probe
+    // and clearing parent-process state again would turn every rejoin into a
+    // substantial fraction of a cold start.
+    replayedState = await probeExistingContext(
+      session, top.context, 'existing-replayed-session', log,
+    );
+  } else {
+    await probeExistingContext(session, top.context, 'existing-before-session-clear', log);
+    await clearWebdriverAfterSession(libraryPort, { log });
+    await readAutomationState(libraryPort, 'before-page-probe', { log });
+    await probeExistingContext(session, top.context, 'existing-after-session-clear', log);
+  }
 
   // Pages are kept by browsing-context id rather than rebuilt on demand,
   // because a page owns things that must not be thrown away and remade: its
@@ -934,7 +947,16 @@ async function openFirefox({
   };
 
   try { onStartup('Checking Firefox bot-detection state…'); } catch { /* display only */ }
-  const webdriverFlag = await verifyWebdriverFlag(browserContext, { log });
+  let webdriverFlag;
+  if (replayedSession && replayedState && replayedState.webdriver === false) {
+    webdriverFlag = false;
+  } else {
+    // A retained session should already be clear. If its existing document
+    // disagrees or could not be read, restore and verify it by the full path
+    // rather than weakening the bot-detection guarantee for a fast startup.
+    if (replayedSession) await clearWebdriverAfterSession(libraryPort, { log });
+    webdriverFlag = await verifyWebdriverFlag(browserContext, { log });
+  }
   // The startup clear already logged its own full report under
   // firefox.automation.cleared, so only what it changed is repeated here.
   const { report: _clearReport, ...clearedSummary } = cleared || {};
@@ -1495,13 +1517,25 @@ async function openFirefox({
       // own body, exactly as escaping the prompt does.
       await cancelPendingAuth();
       if (nativeWatch) nativeWatch.stop();
-      // The accessibility bus, and the session bus under it if this session
-      // started one. A name claimed there is released here.
-      if (a11y) await a11y.close().catch(() => {});
-      // End the session but leave the browser: Firefox serves one BiDi session
-      // at a time and does not release it just because the socket went away,
-      // so a session left hanging locks out the next reader entirely.
-      await session.send('session.end', {}).catch(() => {});
+      // A browser deliberately kept, rejoined from an earlier reader, or
+      // still shared with another reader must retain Firefox's one allowed
+      // BiDi session in the broker. Ending it makes current Firefox versions
+      // quit the browser, defeating --keep-browser before process cleanup even
+      // gets a say. The retained broker replays session.new to the next reader.
+      const browserStays = !child || keepBrowser || otherReadersOn(port);
+      if (browserStays && brokered) {
+        await session.send(RETAIN_SESSION, {}).catch(() => {});
+      } else {
+        await session.send('session.end', {}).catch(() => {});
+      }
+
+      // A private accessibility bus is another browser-lifetime resource.
+      // Transfer it with a kept browser rather than taking the browser's GTK
+      // accessibility bridge away as its first reader exits.
+      if (a11y) {
+        if (browserStays && child && a11y.owned) await a11y.leaveRunning().catch(() => {});
+        else await a11y.close().catch(() => {});
+      }
       const dir = profile || defaultProfileDir();
       const record = readEndpointRecord(dir);
       if (record && record.readerPid === process.pid) {

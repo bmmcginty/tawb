@@ -1044,18 +1044,22 @@ async function launchFirefox({
   // correctness fix as much as a speed one — and it is the whole of the
   // startup difference against Chromium, which has been quietly rejoining a
   // running browser in 50ms while Firefox cold-started every time.
-  // Somewhere for the browser to describe its own windows to. Firefox needs
-  // no command-line flag for this, but a private headless bus also gives its
-  // GTK bridge the standard GNOME_ACCESSIBILITY startup signal; otherwise no
-  // AT-SPI tree is registered. See a11y_bus.js and native_prompt.js.
-  const a11y = await openAccessibilityBus({ log });
-  if (!a11y.available) log('a11y.unavailable', { reason: a11y.reason });
-
   const running = await runningEndpoint(profileDir);
   if (running) {
     sayStartup(onStartup, 'Joining the running Firefox…');
     const record = readEndpointRecord(profileDir) || {};
     log('firefox.rejoin', { port: running, marionette: record.marionettePort || null, profileDir });
+    // The first reader transferred a private bus to the browser registry, or
+    // recorded the desktop bus it found. A joining reader needs only its
+    // address; it must not start and then tear down an unrelated replacement.
+    const a11y = {
+      available: !!record.a11yAddress,
+      address: record.a11yAddress || null,
+      reason: record.a11yAddress ? null : 'the running browser recorded no accessibility bus',
+      owned: false,
+      close: async () => {},
+      leaveRunning: async () => {},
+    };
     return {
       child: null,
       port: running,
@@ -1070,6 +1074,13 @@ async function launchFirefox({
       a11y,
     };
   }
+
+  // Somewhere for the browser to describe its own windows to. Firefox needs
+  // no command-line flag for this, but a private headless bus also gives its
+  // GTK bridge the standard GNOME_ACCESSIBILITY startup signal; otherwise no
+  // AT-SPI tree is registered. See a11y_bus.js and native_prompt.js.
+  const a11y = await openAccessibilityBus({ log });
+  if (!a11y.available) log('a11y.unavailable', { reason: a11y.reason });
 
   // Only the launch path asks this: a Firefox already serving the profile has
   // opened it successfully, whatever version wrote it before.
@@ -1144,8 +1155,14 @@ async function launchFirefox({
 
   writeEndpointRecord(profileDir, {
     port, marionettePort, pid: child.pid, startedAt: Date.now(),
+    a11yAddress: a11y.available ? a11y.address : null,
+    a11yPid: a11y.owned ? a11y.pid : null,
   });
-  recordBrowser({ pid: child.pid, port, profileDir, engine: 'firefox' });
+  recordBrowser({
+    pid: child.pid, port, profileDir, engine: 'firefox',
+    a11yPid: a11y.owned ? a11y.pid : null,
+    a11yAddress: a11y.owned ? a11y.address : null,
+  });
 
   let cleared = null;
   const clearStarted = Date.now();

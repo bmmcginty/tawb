@@ -240,18 +240,20 @@ view or a compatibility option.
 
 ### Startup, and why it looks worse than it is
 
-A cold start is 3.7s for Chromium and 5.3s for Firefox, the difference being
+A cold start is about 4s for Chromium and 6s for Firefox, the difference being
 the automation clear. What makes Firefox *look* far slower is that a browser
-already running is rejoined in tens of milliseconds, and Chromium has usually
-left one running:
+already running can retain its cleared BiDi session in the broker and rejoin
+without repeating that work:
 
 | | cold start | rejoin |
 | --- | --- | --- |
-| chromium | ~3.7s | ~50ms |
-| firefox | ~5.3s | ~35ms |
+| chromium | ~4s | ~50ms |
+| firefox | ~6s | ~90ms |
 
-`--keep-browser` leaves the browser running when you quit, so the next session
-rejoins it instead of paying the cold start again.
+`--keep-browser` leaves the browser and Firefox's brokered session running when
+you quit, so the next session rejoins them instead of paying the cold start
+again. The Firefox figure is driver startup; a complete local `--dump`,
+including navigation, AX extraction and shutdown, takes about 0.4s.
 
 ### Browsers that outlive their session
 
