@@ -55,8 +55,11 @@ Compatibility requirements:
 - [x] Highlight the current link or control like Lynx, including every wrapped part, without
       putting ANSI bytes into searchable text or caret offsets.
 - [x] Keep link and field number markers outside the active highlight when shown on the left.
-- [ ] Add display fixtures rendered by upstream Lynx and compare TAWB's structural output,
+- [x] Add display fixtures rendered by upstream Lynx and compare TAWB's structural output,
       control markers, numbering, wrapping, and active region against them.
+      (`test/fixtures/lynx-display.html` and its checked-in Lynx 2.9.3 dump; known differences:
+      an associated label is printed once by Lynx but as its own line as well by TAWB, and Lynx
+      numbers a frame's URL as a followable link where TAWB shows `IFRAME:` without a number.)
 - [x] Verify monochrome, color, screen-reader, and braille behavior; highlighting must not be
       the only indication of the current item. (Video attributes only — reverse for the current
       control, bold for headings, no color — and the terminal cursor is parked on the current
