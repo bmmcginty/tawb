@@ -11,6 +11,7 @@ const {
 const { armFrame, refreshDue, pulse, TICK_MS } = require('./live');
 const { log, timed, count, flushCounters, enableLog } = require('./log');
 const { layoutLines } = require('./layout');
+const { clipField, renderLynxBlock, lynxFocusable } = require('./lynx_display');
 const { normaliseEndpoint } = require('./browser');
 const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
 const { claimedTargets, releaseTab } = require('./session');
@@ -403,10 +404,15 @@ function pageText(state, text) {
 
 function displayBlocks(state) {
   const blocks = activeBlocks(state);
-  if (!state.escapeUnicode || blocks !== state.core.blocks) return blocks;
+  const pageBlocks = blocks === state.core.blocks;
+  const transform = state.escapeUnicode && pageBlocks ? escapeNonAscii : String;
+  if (state.interface === 'lynx' && pageBlocks) {
+    return blocks.map((block) => renderLynxBlock(block, transform));
+  }
+  if (!state.escapeUnicode || !pageBlocks) return blocks;
   // Keep Core's original text intact. It uses that text to resolve live
   // patches, preserve the reader's place, and identify page controls.
-  return blocks.map((block) => ({ ...block, text: escapeNonAscii(block.text) }));
+  return blocks.map((block) => ({ ...block, text: transform(block.text) }));
 }
 
 function relayout(state) {
@@ -719,15 +725,44 @@ function drawList(state) {
   setScrollRegion();
 }
 
+const ANSI_REVERSE = '\x1b[7m';
+const ANSI_BOLD = '\x1b[1m';
+const ANSI_RESET = '\x1b[0m';
+
 function renderRow(state, lineIndex) {
   if (state.mode === 'type' && lineIndex === state.cursor) return typingText(state).text;
-  return lineText(state, lineIndex);
+  const text = lineText(state, lineIndex);
+  if (state.interface !== 'lynx') return text;
+
+  const line = state.lines[lineIndex];
+  const selected = state.lines[state.cursor];
+  const block = line && activeBlocks(state)[line.blockIndex];
+  // Lynx highlights every visible part of a wrapped current link. ANSI lives
+  // only in the terminal write; line text, searches, offsets, and the number
+  // map remain free of escape bytes.
+  if (line && selected && line.blockIndex === selected.blockIndex && lynxFocusable(block)) {
+    return `${ANSI_REVERSE}${text}${ANSI_RESET}`;
+  }
+  if (block && block.item && block.item.role === 'heading') {
+    return `${ANSI_BOLD}${text}${ANSI_RESET}`;
+  }
+  return text;
 }
 
 function typingText(state) {
   const item = state.typing.item;
-  const label = `[${pageText(state, item.name)}: `;
   const value = pageText(state, state.typing.text);
+  if (state.interface === 'lynx') {
+    const label = item.name ? `${pageText(state, item.name)} ` : '';
+    return {
+      text: label + clipField(value, Math.max(20, value.length)),
+      caretCol: GUTTER + label.length
+        + (state.escapeUnicode
+          ? escapedOffset(state.typing.text, state.typing.caret)
+          : state.typing.caret) + 1,
+    };
+  }
+  const label = `[${pageText(state, item.name)}: `;
   return {
     text: label + value + ']',
     caretCol: GUTTER + label.length
@@ -854,10 +889,29 @@ function repaintList(state, page, before) {
 // Movement
 // ---------------------------------------------------------------------------
 
+function repaintLynxSelection(state, oldCursor) {
+  if (state.interface !== 'lynx') return;
+  const oldLine = state.lines[oldCursor];
+  const newLine = state.lines[state.cursor];
+  if (!oldLine || !newLine || oldLine.blockIndex === newLine.blockIndex) return;
+  const blocks = activeBlocks(state);
+  const changed = new Set();
+  if (lynxFocusable(blocks[oldLine.blockIndex])) changed.add(oldLine.blockIndex);
+  if (lynxFocusable(blocks[newLine.blockIndex])) changed.add(newLine.blockIndex);
+  if (!changed.size) return;
+
+  const end = Math.min(state.lines.length, state.scroll + viewportHeight());
+  for (let lineIndex = state.scroll; lineIndex < end; lineIndex += 1) {
+    if (!changed.has(state.lines[lineIndex].blockIndex)) continue;
+    writeLine(lineRow(state, lineIndex), renderRow(state, lineIndex));
+  }
+}
+
 function moveSelection(state, newCursor, page, newCol = 0) {
   const target = Math.min(Math.max(newCursor, 0), Math.max(state.lines.length - 1, 0));
   if (target === state.cursor && newCol === state.col) return;
 
+  const oldCursor = state.cursor;
   const oldScroll = state.scroll;
   state.cursor = target;
   state.col = newCol;
@@ -874,7 +928,14 @@ function moveSelection(state, newCursor, page, newCol = 0) {
   drawStatus(state, page);
 
   if (scrolledBy === 0) {
+    repaintLynxSelection(state, oldCursor);
     moveCursor(lineRow(state, target), cursorCol(state));
+  } else if (state.interface === 'lynx') {
+    // Scrolling moves the old highlight to another terminal row. Redrawing is
+    // cheaper and less error-prone than trying to repair a multi-line link on
+    // both sides of the scroll boundary.
+    drawList(state);
+    parkCursor(state);
   } else if (Math.abs(scrolledBy) === 1) {
     const newRow = scrollRegion(scrolledBy);
     writeLine(newRow, renderRow(state, target));
@@ -4155,7 +4216,7 @@ module.exports = {
   handleAddressKey, handleFindKey, browserKeyForTerminalSequence,
   findText, runSearch,
   render, drawList, drawAddress, drawHint, drawStatus, setStatus,
-  patchEditedLine, moveSelection, moveScreen, preserveViewportRow,
+  patchEditedLine, moveSelection, repaintLynxSelection, moveScreen, preserveViewportRow,
   moveCaretLeft, moveCaretRight, lineRow, relayout, viewportHeight,
   itemUnderCursor, linkTarget, shortTarget,
   findQuickNav, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,

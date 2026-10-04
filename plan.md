@@ -46,13 +46,13 @@ Compatibility requirements:
 
 - [x] Keep an ignored `./lynx` upstream source checkout for implementation reference
       (verified against snapshot commit `29d5a703b02a2c137c8c03949ccfec74d6c17b8a`).
-- [ ] Add a profile-specific renderer while leaving extracted block text and offsets intact.
+- [x] Add a profile-specific renderer while leaving extracted block text and offsets intact.
 - [ ] Render headings, links, images, frames, and tables using Lynx-like text conventions.
-- [ ] Render native and ARIA buttons, checkboxes, radios, selects, text fields, passwords,
+- [x] Render native and ARIA buttons, checkboxes, radios, selects, text fields, passwords,
       textareas, and file controls using their closest Lynx forms.
 - [ ] Reflow prose and inline links together where element boundaries permit it, while
       retaining exact block and activation identities.
-- [ ] Highlight the current link or control like Lynx, including every wrapped part, without
+- [x] Highlight the current link or control like Lynx, including every wrapped part, without
       putting ANSI bytes into searchable text or caret offsets.
 - [ ] Keep link and field number markers outside the active highlight when shown on the left.
 - [ ] Add display fixtures rendered by upstream Lynx and compare TAWB's structural output,
