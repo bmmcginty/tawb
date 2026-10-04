@@ -790,6 +790,9 @@ function hintText(state) {
   if (state.mode === 'number') return 'Follow link number — Enter: follow  g: move  Esc: cancel';
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
   if (state.mode === 'library') {
+    if (state.library.kind === 'options') {
+      return "Options Menu — capital letter: change  >: save  r: return  Left: cancel";
+    }
     return `${state.library.label} — type: filter  Enter: open  Esc: close`;
   }
   if (state.mode === 'line') return `${state.line.label} — Enter: save  Esc: cancel`;

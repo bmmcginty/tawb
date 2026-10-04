@@ -8,7 +8,7 @@ const path = require('node:path');
 const { tempDir } = require('./tmpdir');
 const { Keymap } = require('../src/keys');
 const {
-  openOptions, handleBrowseKey, handleLibraryKey, findText,
+  openOptions, handleBrowseKey, handleLibraryKey, findText, hintText,
 } = require('../src/index');
 
 const PAGE = { url: () => 'https://example.test/page' };
@@ -49,6 +49,8 @@ test('the Lynx options page uses the classic letters and return prompt', async (
   assert.equal(state.library.rows.at(-1).text,
     "Select capital letter of option to change; '>' to save, or 'r' to return.");
   assert.ok(state.library.blocks.every((block) => block.item.role === 'text'));
+  assert.equal(hintText(state),
+    'Options Menu — capital letter: change  >: save  r: return  Left: cancel');
 });
 
 test('option letters change only the supported Lynx preferences', async () => {
@@ -63,6 +65,10 @@ test('option letters change only the supported Lynx preferences', async () => {
   assert.equal(state.keys.preferences.numberLinks, true);
   assert.equal(state.keys.preferences.numberFields, false);
   assert.match(state.library.rows.find((row) => row.text.includes('show cursor')).text, /ON$/);
+
+  await quietly(() => handleLibraryKey('k', state, PAGE));
+  assert.equal(state.keys.preferences.keypadMode, 'LINKS_ARE_NUMBERED',
+    'the classic menu requires its displayed capital option letter');
 
   await quietly(() => handleLibraryKey('E', state, PAGE));
   assert.match(state.statusMsg, /belongs to Lynx or the browser/);

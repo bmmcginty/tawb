@@ -52,7 +52,7 @@ function optionRows(preferences = {}) {
 }
 
 function cycleOption(preferences, key) {
-  const option = String(key).toUpperCase();
+  const option = String(key);
   if (option === '@') {
     preferences.showCursor = !preferences.showCursor;
     return 'show cursor';
