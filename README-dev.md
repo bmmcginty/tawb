@@ -855,6 +855,15 @@ off the page, on parks it on the reader's line the way the ordinary interface
 always does. Prompts, choosers, lists, and dialogs keep the cursor where their
 own code put it, as Lynx does.
 
+`src/lynx_settings.js` owns `$XDG_CONFIG_HOME/tawb/settings.lynx.json`. Its
+versioned document requires every preference below a `lynx` key; misplaced,
+unknown, or malformed values are errors. `keymapForOptions()` opens it only for
+the Lynx interface and overlays it on imported Lynx preferences. Writes use a
+0600 temporary file and rename. `src/lynx_options.js` describes the classic
+letter-driven options screen. It changes only options TAWB implements, while
+browser-owned entries remain visible and read-only rather than being migrated
+to global browser settings.
+
 Number entry snapshots references to the numbered block objects rather than
 indexes. If a live rebuild replaces the page before entry completes, the old
 object is no longer present and the command reports no such link; it cannot

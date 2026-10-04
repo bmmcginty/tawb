@@ -17,7 +17,7 @@ const BROWSE_FUNCTIONS = {
   ADD_BOOKMARK: 'add-bookmark', VIEW_BOOKMARK: 'bookmarks',
   VLINKS: 'history', HISTORY: 'history', DOWNLOAD: 'download-link',
   LIST: 'list-links', ADDRLIST: 'list-addresses',
-  INFO: 'document-info', F_LINK_NUM: 'link-number',
+  INFO: 'document-info', OPTIONS: 'options', F_LINK_NUM: 'link-number',
   WHEREIS: 'find-forward', NEXT: 'repeat-find-forward', PREV: 'repeat-find-backward',
   REFRESH: 'refresh', RELOAD: 'reload-page',
   SOURCE: 'source-view', KEYMAP: 'keyboard-wizard', HELP: 'keyboard-wizard', DWIMHELP: 'keyboard-wizard',

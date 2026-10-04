@@ -31,6 +31,7 @@ test('the effective Lynx browse map is translated by function name', () => {
     'l           LIST          list references',
     'A           ADDRLIST      list reference addresses',
     '=           INFO          document information',
+    'o           OPTIONS       options menu',
     '0           F_LINK_NUM    follow a number',
     '\\           SOURCE        toggle source',
     '!           SHELL         escape to a shell',
@@ -48,6 +49,7 @@ test('the effective Lynx browse map is translated by function name', () => {
   assert.deepEqual(parsed.bindings['list-links'], ['l']);
   assert.deepEqual(parsed.bindings['list-addresses'], ['A']);
   assert.deepEqual(parsed.bindings['document-info'], ['=']);
+  assert.deepEqual(parsed.bindings.options, ['o']);
   assert.deepEqual(parsed.bindings['link-number'], ['0']);
   assert.deepEqual(parsed.unsupported, ['SHELL']);
 });

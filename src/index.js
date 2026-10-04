@@ -23,7 +23,10 @@ const { armActivationFocus, focusedByActivation, cancelActivationFocus } = requi
 const { Keymap } = require('./keys');
 const { interfaceName } = require('./interfaces');
 const { readLynxConfig } = require('./lynx_config');
-const { readLynxSettings, mergeLynxSettings } = require('./lynx_settings');
+const {
+  readLynxSettings, writeLynxSettings, mergeLynxSettings,
+} = require('./lynx_settings');
+const { optionRows, cycleOption, persistableOptions } = require('./lynx_options');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
@@ -1214,9 +1217,13 @@ function findText(state, needle, direction) {
   const total = state.lines.length;
   if (!total || !needle) return null;
 
-  // Smart case: a capital anywhere means the reader meant it.
+  // Ordinary TAWB uses smart case. Lynx has an explicit Searching Type option,
+  // so its choice is absolute and remains isolated to that interface.
   const displayedNeedle = pageText(state, needle);
-  const sensitive = /[A-Z]/.test(displayedNeedle);
+  const searchCase = state.interface === 'lynx' && state.keys && state.keys.preferences
+    ? state.keys.preferences.searchCase : null;
+  const sensitive = searchCase === 'CASE_SENSITIVE'
+    || (searchCase !== 'CASE_INSENSITIVE' && /[A-Z]/.test(displayedNeedle));
   const want = sensitive ? displayedNeedle : displayedNeedle.toLowerCase();
   const textAt = (index) => {
     const text = lineText(state, index);
@@ -2377,6 +2384,7 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'previous-change') return jumpToChange(state, page, -1);
 
   if (action === 'document-info') return openDocumentInfo(state, page);
+  if (action === 'options' && state.interface === 'lynx') return openOptions(state, page);
 
   if (action === 'where') {
     const block = currentBlock(state);
@@ -3056,7 +3064,8 @@ function refilter(state, page, filter) {
 // ---------------------------------------------------------------------------
 
 function libraryStatus(state) {
-  const { rows, blocks, filter, empty } = state.library;
+  const { rows, blocks, filter, empty, kind } = state.library;
+  if (kind === 'options') return "Select capital letter of option to change; '>' to save, or 'r' to return.";
   if (empty) return filter ? `Nothing matching "${filter}".` : 'Nothing here yet.';
   if (filter) return `${blocks.length} of ${rows.length} matching "${filter}".`;
   return `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} — type to filter.`;
@@ -3073,7 +3082,8 @@ function showLibrary(state, page, filter) {
     .filter((row) => matches(row.text, filter))
     .map((row) => ({
       text: row.text,
-      item: lib.kind === 'info' ? { role: 'text', name: row.text } : { role: 'link', name: row.text },
+      item: lib.kind === 'info' || lib.kind === 'options'
+        ? { role: 'text', name: row.text } : { role: 'link', name: row.text },
       entry: row.entry,
     }));
   lib.empty = lib.blocks.length === 0;
@@ -3086,6 +3096,65 @@ function showLibrary(state, page, filter) {
   relayout(state);
   render(state, page, { force: true });
   setStatus(state, libraryStatus(state));
+}
+
+function showOptions(state, page) {
+  state.library.rows = optionRows(state.keys.preferences);
+  showLibrary(state, page, '');
+}
+
+function openOptions(state, page) {
+  state.core.live.refreshing = true;
+  state.mode = 'library';
+  state.library = {
+    kind: 'options', label: 'Options Menu', filter: '', rows: [], blocks: [], empty: false,
+    originalPreferences: { ...state.keys.preferences },
+    place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
+  };
+  state.title = 'Options Menu';
+  showOptions(state, page);
+}
+
+function restoreOptionPreferences(state) {
+  state.keys.preferences = { ...state.library.originalPreferences };
+}
+
+function handleOptionsKey(chunk, state, page) {
+  const cancel = keyIs(chunk, 'ArrowLeft', state) || keyIs(chunk, 'Escape', state);
+  if (cancel) {
+    restoreOptionPreferences(state);
+    closeLibrary(state, page, 'Options unchanged.');
+    return;
+  }
+  if (chunk === 'r' || chunk === 'R') {
+    closeLibrary(state, page, 'Options accepted for this session.');
+    return;
+  }
+  if (chunk === '>') {
+    try {
+      const write = state.writeLynxSettings || writeLynxSettings;
+      write(persistableOptions(state.keys.preferences), state.lynxSettingsFile
+        ? { file: state.lynxSettingsFile } : {});
+    } catch (err) {
+      setStatus(state, `Could not save options: ${String(err.message || err).split('\n')[0]}`);
+      return;
+    }
+    closeLibrary(state, page, 'Options saved.');
+    return;
+  }
+
+  const changed = cycleOption(state.keys.preferences, chunk);
+  if (changed) {
+    showOptions(state, page);
+    setStatus(state, `${changed} changed.`);
+    return;
+  }
+
+  const optionLetters = new Set(['E', 'D', 'L', 'B', 'F', 'P', 'C', 'G', 'H',
+    'O', '&', 'V', 'M', 'W', 'T', 'N', 'Y', 'I', 'U', '!', 'A', 'X']);
+  if (chunk === '\x01' || optionLetters.has(String(chunk).toUpperCase())) {
+    setStatus(state, 'That option belongs to Lynx or the browser and is not changed by TAWB.');
+  }
 }
 
 function openDocumentInfo(state, page) {
@@ -3223,6 +3292,7 @@ async function handleLibraryKey(chunk, state, page) {
     ? (state.keys || FALLBACK_KEYMAP).actionFor(chunk) : null;
   const contextAction = contextNavigationAction(chunk, state);
 
+  if (lib.kind === 'options') return handleOptionsKey(chunk, state, page);
   if (lynxAction === 'quit') return 'quit';
   if (contextAction === 'cancel') {
     closeLibrary(state, page, `Closed ${lib.label.toLowerCase()}.`);
@@ -4784,7 +4854,8 @@ module.exports = {
   restoreInvocationDirectory, onExternalNavigation, readTitle, drawTitle,
   navigate, navigateInterruptibly, navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
-  openLibrary, openLinkList, openDocumentInfo, closeLibrary, showLibrary, handleLibraryKey,
+  openLibrary, openLinkList, openDocumentInfo, openOptions,
+  closeLibrary, showLibrary, showOptions, handleLibraryKey, handleOptionsKey,
   handleChooseKey,
   askForLine, bookmarkPage, downloadCurrentLink, drawLinePrompt,
 };

@@ -210,6 +210,7 @@ The common Lynx commands include:
 | `/`, `n`, `N` | Find / next match / previous match |
 | `l` / `A` | List references by name / by address |
 | `=` | Information about the current document and selected item |
+| `o`, `O` | Lynx options menu |
 | `\\` | Toggle source and presentation |
 | `k`, `?`, `H` | Lynx-profile keyboard help |
 | `q` | Quit |
@@ -238,7 +239,17 @@ which is what braille displays and screen readers follow. Lynx's documentation
 recommends that setting for speech and braille interfaces, and a `.lynxrc`
 that has it on is imported the same way.
 
-Lynx-specific overrides are saved to `keys-lynx.json`; ordinary TAWB bindings
+Press `o` for the classic Lynx options menu. Its capital-letter commands change
+the settings TAWB can safely implement: `S` changes search case, `@` changes
+cursor visibility, and `K` changes link and field numbering. `r` returns with
+the choices in effect for this session, Left or Escape cancels them, and `>`
+saves them to `$XDG_CONFIG_HOME/tawb/settings.lynx.json` (or
+`~/.config/tawb/settings.lynx.json`). The file keeps every value below its
+`lynx` key and is never read by the default interface. Browser-owned options
+remain visible but cannot be changed, so an unavailable Lynx facility is named
+rather than silently becoming a different browser setting.
+
+Lynx-specific key overrides are saved to `keys-lynx.json`; ordinary TAWB bindings
 remain in the existing version-1 `keys.json`. Enabling the interface therefore
 requires no migration and never rewrites the user's normal key configuration.
 The keyboard screen lists imported Lynx functions that have no safe TAWB
