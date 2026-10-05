@@ -140,6 +140,20 @@ test('--browser-timeout is per-run seconds and validates its value', () => {
   assert.throws(() => parseArgs(['--browser-timeout=-1'], {}), /positive number of seconds/);
 });
 
+test('Lynx preferences cannot be set through the command line or main settings', () => {
+  // They live in settings.lynx.json and are changed on the options screen. The
+  // main settings file is read as command-line arguments, so its vocabulary
+  // must refuse these names too, however they are spelled.
+  const names = [
+    'show-cursor', 'number-links-on-left', 'number-fields-on-left',
+    'textfields-need-activation', 'keypad-mode', 'search-case',
+  ];
+  for (const name of names) {
+    assert.throws(() => parseArgs([`--${name}`], {}), /Unknown option/, name);
+    assert.throws(() => parseArgs([`--${name}=on`], {}), /Unknown option/, name);
+  }
+});
+
 test('only the Lynx interface asks Lynx for effective bindings', () => {
   let calls = 0;
   const importLynx = (options) => {
