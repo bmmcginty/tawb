@@ -12,6 +12,7 @@ const {
   profilesFor, keyPolicy,
 } = require('../src/interfaces');
 const { KEY_DEFINITIONS, Keymap } = require('../src/keys');
+const { wizardRows, rowText } = require('../src/key_wizard');
 
 test('an action belongs to the interface that can reach it', () => {
   // A Lynx-only function is not offered to the ordinary interface.
@@ -64,4 +65,21 @@ test('a Keymap draws its vocabulary and codec from the policy', () => {
   const ordinary = new Keymap({ terminfo: {}, load: false });
   assert.equal(ordinary.namedSequences.has('F2'), false);
   assert.equal(ordinary.functionNames.size, 0);
+});
+
+test('the wizard words come from the interface policy', () => {
+  const lynx = new Keymap({
+    terminfo: {}, profile: 'lynx', load: false, unsupported: ['SHELL'],
+  });
+  assert.equal(lynx.labels.keyboardTitle, 'Lynx keyboard bindings');
+  const heading = wizardRows(lynx).find((row) => row.type === 'heading');
+  assert.equal(heading.label, 'Lynx commands with no TAWB equivalent (cannot be bound):');
+  const unsupported = wizardRows(lynx).find((row) => row.type === 'unsupported');
+  assert.equal(unsupported.label, 'Imported Lynx command SHELL, unsupported');
+  // A Lynx action row leads with the function it acts on.
+  const list = wizardRows(lynx).find((row) => row.action && row.action.id === 'list-links');
+  assert.match(rowText(list, lynx), /^LIST — /);
+
+  const ordinary = new Keymap({ terminfo: {}, load: false });
+  assert.equal(ordinary.labels.keyboardTitle, 'Keyboard bindings');
 });

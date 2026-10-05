@@ -26,18 +26,19 @@ const WIZARD_ACTIONS = new Set([
 ]);
 
 function wizardRows(keymap) {
-  // The unsupported commands are Lynx functions with no TAWB equivalent. They
-  // are listed so the screen is a complete picture of what the reader's Lynx
-  // configuration asked for, and headed so it is plain that they are an
-  // inventory rather than something to put a key on.
+  // Imported commands with no TAWB equivalent are listed so the screen is a
+  // complete picture of what the reader's configuration asked for, and headed
+  // so it is plain that they are an inventory rather than something to bind.
   const unsupported = keymap.unsupported || [];
+  const labels = keymap.labels || {};
   return [
     ...keymap.actions.map((action) => ({ type: 'action', action })),
     ...(unsupported.length
-      ? [{ type: 'heading', label: 'Lynx commands with no TAWB equivalent (cannot be bound):' }]
+      ? [{ type: 'heading', label: labels.unsupportedHeading || 'Commands with no TAWB equivalent:' }]
       : []),
     ...unsupported.map((name) => ({
-      type: 'unsupported', label: `Imported Lynx command ${name}, unsupported`,
+      type: 'unsupported',
+      label: `${labels.unsupportedPrefix || 'Imported command'} ${name}, unsupported`,
     })),
     { type: 'reset', label: 'Restore default bindings' },
     { type: 'exit', label: 'Exit keyboard wizard' },
@@ -49,10 +50,10 @@ function rowText(row, keymap) {
   const bindings = row.action.bindings.length
     ? row.action.bindings.map((binding) => keymap.display(binding)).join(', ')
     : '(unbound)';
-  // In the Lynx interface the row leads with the Lynx function it acts on, so
-  // a reader can find their own KEYMAP entry by name.
-  const lynx = keymap.functionNames && keymap.functionNames.get(row.action.id);
-  const name = lynx ? `${lynx} — ${row.action.label}` : row.action.label;
+  // In an interface that names its functions the row leads with the function
+  // it acts on, so a reader can find their own entry by name.
+  const functionName = keymap.functionNames && keymap.functionNames.get(row.action.id);
+  const name = functionName ? `${functionName} — ${row.action.label}` : row.action.label;
   return `${name}, ${bindings}`;
 }
 
@@ -114,7 +115,7 @@ async function runKeyWizard({
       drawn.list = [];
     }
 
-    const heading = keymap.profile === 'lynx' ? 'Lynx keyboard bindings' : 'Keyboard bindings';
+    const heading = (keymap.labels && keymap.labels.keyboardTitle) || 'Keyboard bindings';
     if (drawn.heading !== heading) {
       line(output, 1, heading);
       drawn.heading = heading;

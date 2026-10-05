@@ -184,14 +184,28 @@ function profilesFor(id) {
   return ['default', 'lynx'];
 }
 
+// The words an interface uses on the keyboard screen. The ordinary interface
+// has only a title; Lynx names its own functions and lists imported commands
+// it cannot bind.
+const DEFAULT_LABELS = { keyboardTitle: 'Keyboard bindings' };
+const LYNX_LABELS = {
+  keyboardTitle: 'Lynx keyboard bindings',
+  unsupportedHeading: 'Lynx commands with no TAWB equivalent (cannot be bound):',
+  unsupportedPrefix: 'Imported Lynx command',
+};
+
 // The parts of key handling an interface owns: terminal keys only it names
-// (the Lynx function keys), and the key-file format it reads and writes. The
-// ordinary interface has neither, which is what leaves Keymap generic.
+// (the Lynx function keys), the key-file format it reads and writes, and the
+// words its keyboard screen uses. The ordinary interface has no extra keys and
+// no file format, which is what leaves Keymap generic.
 function keyPolicy(profile = 'default') {
-  if (profile !== 'lynx') return { keyDefinitions: null, keyFile: null };
+  if (profile !== 'lynx') {
+    return { keyDefinitions: null, keyFile: null, labels: DEFAULT_LABELS };
+  }
   return {
     keyDefinitions: LYNX_KEY_DEFINITIONS,
     keyFile: { parse: parseKeyFile, serialise: serialiseKeyFile, functionNames },
+    labels: LYNX_LABELS,
   };
 }
 

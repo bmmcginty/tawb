@@ -276,6 +276,7 @@ class Keymap {
     // neither, which is what keeps this class generic.
     const policy = keyPolicy(this.profile);
     this.keyFile = policy.keyFile;
+    this.labels = policy.labels;
     // A compatibility profile may name terminal keys TAWB itself never binds.
     // They are added to this profile's vocabulary only, so the shared table and
     // the default profile's terminfo lookups are unchanged.
