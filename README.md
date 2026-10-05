@@ -216,6 +216,8 @@ The common Lynx commands include:
 | `/`, `n`, `N` | Find / next match / previous match |
 | `l` / `A` | List references by name / by address |
 | `a` / `v` | Add a bookmark / view bookmarks |
+| `V` | Links followed in this session |
+| `Backspace` / `Ctrl+H` | Documents held in this session |
 | `r`, `R` | Remove the selected bookmark while viewing bookmarks |
 | `=` | Information about the current document and selected item |
 | `o`, `O` | Lynx options menu |

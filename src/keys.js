@@ -100,6 +100,8 @@ const ACTIONS = [
   // their own Ctrl+D for the character under the cursor while typing.
   ['add-bookmark', 'Bookmark this page', ['Ctrl+D']],
   ['delete-bookmark', 'Delete the selected bookmark', []],
+  ['visited-links', 'Links visited in this session', []],
+  ['session-history', 'Documents held in this session', []],
   ['history', 'History', ['Alt+H']],
   ['downloads', 'Downloads', ['Alt+J']],
   ['list-links', 'List page links', []],
@@ -234,6 +236,7 @@ const LYNX_ONLY_ACTIONS = new Set([
   'fast-forward-link', 'fast-backward-link', 'down-link', 'up-link',
   'next-half-screen', 'previous-half-screen',
   'confirm-quit', 'abort', 'link-address', 'context-help',
+  'visited-links', 'session-history',
 ]);
 
 // A default-only action is one the Lynx interface deliberately leaves out, so
@@ -242,7 +245,7 @@ const LYNX_ONLY_ACTIONS = new Set([
 // through a page with numbers and pages, and a reader who wants h/l/f/b/n/p
 // uses the ordinary interface for it.
 const DEFAULT_ONLY_ACTIONS = new Set([
-  'quit',
+  'quit', 'history',
   'location-bar', 'next-character', 'previous-character', 'line-start', 'line-end',
   'next-change', 'previous-change', 'where', 'toggle-live', 'toggle-link-address',
   'toggle-short-links', 'find-backward', 'repeat-find', 'downloads',

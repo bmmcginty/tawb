@@ -889,6 +889,12 @@ the link under the cursor where `location-edit` edits the document's, and
 help page. `askYesNo()` takes a default answer, so Enter accepts Lynx's own
 `(y)` prompt.
 
+`VLINKS` (`V`) and `HISTORY` (`Backspace`, `Ctrl+H`) are session lists rather
+than the browser's own. `noteVisitedLink()` records a followed link once and at
+the top, `notePageVisit()` records each page read, and both are capped at 200
+entries. The browser-wide history and downloads lists remain the ordinary
+interface's, so `history` is a default-only action.
+
 The Lynx interface's own extensions — cycling views, the webpage keyboard,
 clicking and hovering, returning to a browser question — live on control keys
 Lynx never binds (`^O`, `^\`, `^Y`, `^]`, `^_`), not on Alt. Tabs are offered

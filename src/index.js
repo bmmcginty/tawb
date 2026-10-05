@@ -224,6 +224,36 @@ const TITLE_ROW = 1;
 const ADDRESS_ROW = 2;
 const HINT_ROW = 3;
 
+// How many links and pages a session remembers for Lynx's VLINKS and HISTORY.
+// A session is not a browser profile: what matters is the recent past, and a
+// list nobody can reach the bottom of is not more useful for being longer.
+const VISITED_LIMIT = 200;
+
+// Lynx's VLINKS: the links followed in this session, newest first, each one
+// once. What identifies it is where it goes, so following the same link twice
+// moves it to the top rather than listing it twice.
+function noteVisitedLink(state, item) {
+  const href = item.href;
+  if (!state.visitedLinks) state.visitedLinks = [];
+  const list = state.visitedLinks;
+  const at = list.findIndex((entry) => entry.href === href);
+  if (at >= 0) list.splice(at, 1);
+  list.unshift({ name: item.name || href, href });
+  if (list.length > VISITED_LIMIT) list.length = VISITED_LIMIT;
+}
+
+// Lynx's HISTORY is the stack of documents it is holding. The browser owns the
+// real one, and this is the session's own record of what has been read, which
+// is what a reader is looking for when they press the key.
+function notePageVisit(state, url, title) {
+  if (!url || /^about:blank$/i.test(url)) return;
+  if (!state.pageLog) state.pageLog = [];
+  const log = state.pageLog;
+  if (log.length && log[0].url === url) log[0].title = title || log[0].title;
+  else log.unshift({ url, title: title || url });
+  if (log.length > VISITED_LIMIT) log.length = VISITED_LIMIT;
+}
+
 // No selection marker: the terminal cursor already marks the focused line,
 // and a screen reader / braille display tracks it there. A printed marker
 // would only add a column of noise to every line and shift the text.
@@ -1551,6 +1581,7 @@ function restoreAnchor(state, anchor) {
 async function refresh(state, page, { resetCursor = false, anchor = null } = {}) {
   await state.core.rescan({ page });
   state.title = await readTitle(page);
+  notePageVisit(state, typeof page.url === 'function' ? page.url() : '', state.title);
   if (state.core.live) state.core.live.snapshotCostMs = state.core.snapshotCostMs;
   if (resetCursor) { state.cursor = 0; state.scroll = 0; state.col = 0; }
   relayout(state);
@@ -2568,6 +2599,8 @@ async function handleBrowseKey(chunk, state, page) {
 
   if (action === 'bookmarks') return openLibrary(state, page, 'bookmarks');
   if (action === 'add-bookmark') return bookmarkPage(state, page);
+  if (action === 'visited-links') return openVisitedLinks(state, page);
+  if (action === 'session-history') return openSessionHistory(state, page);
   if (action === 'delete-bookmark') {
     setStatus(state, 'Open the bookmarks list with v, select a bookmark, then press r to remove it.');
     return;
@@ -2804,6 +2837,8 @@ async function activateCurrent(state, page) {
   const anchor = anchorFor(state);
   const screen = screenBefore(state);
   const fragment = LINK_ROLES.has(item.role) ? await state.core.fragmentOf(item, page) : null;
+  // Lynx remembers the links followed during a session; VLINKS lists them.
+  if (LINK_ROLES.has(item.role) && item.href) noteVisitedLink(state, item);
   let focused = null;
 
   try {
@@ -3546,6 +3581,49 @@ function openDocumentInfo(state, page) {
   };
   state.title = 'Information about current document';
   showLibrary(state, page, '');
+}
+
+// The two lists Lynx keeps about the reader rather than about the page: the
+// links followed this session, and the documents it has been through. Both are
+// addresses, so Enter goes there, and both are empty on a fresh session, which
+// is said rather than shown as an empty screen.
+function openAddressList(state, page, { kind, label, rows, empty }) {
+  if (!rows.length) {
+    setStatus(state, empty);
+    return;
+  }
+  state.core.live.refreshing = true;
+  state.mode = 'library';
+  state.library = {
+    kind, label, filter: '', rows, blocks: [], empty: false,
+    place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
+  };
+  state.title = `${label} — ${rows.length}`;
+  showLibrary(state, page, '');
+}
+
+function openVisitedLinks(state, page) {
+  openAddressList(state, page, {
+    kind: 'visited',
+    label: 'Links visited in this session',
+    empty: 'No links followed in this session yet.',
+    rows: (state.visitedLinks || []).map((entry) => ({
+      text: `${entry.name} — ${shortAddress(entry.href)}`,
+      entry: { title: entry.name, url: entry.href },
+    })),
+  });
+}
+
+function openSessionHistory(state, page) {
+  openAddressList(state, page, {
+    kind: 'history',
+    label: 'Documents held in this session',
+    empty: 'Nothing read in this session yet.',
+    rows: (state.pageLog || []).map((entry, index) => ({
+      text: `${index === 0 ? 'here: ' : ''}${entry.title} — ${shortAddress(entry.url)}`,
+      entry: { title: entry.title, url: entry.url },
+    })),
+  });
 }
 
 function openLinkList(state, page, addresses = false) {
@@ -5008,6 +5086,11 @@ async function main() {
     shortLinks: ARGS.shortLinks,
     escapeUnicode: ARGS.escapeUnicode,
     logDir: ARGS.logDir,
+    // Lynx keeps two lists about the reader rather than the page: the links
+    // followed in this session, and the documents it has been through. Both
+    // are for VLINKS and HISTORY. See noteVisitedLink().
+    visitedLinks: [],
+    pageLog: [],
     statusHeldUntil: 0,
     loadingMore: false,
     pageKeyboardExitUntil: 0,
@@ -5276,6 +5359,8 @@ module.exports = {
   navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
   openLibrary, openLinkList, openDocumentInfo, openOptions, openHelp, openTraceLog, openMainMenu,
+  openVisitedLinks, openSessionHistory, openAddressList,
+  noteVisitedLink, notePageVisit,
   closeLibrary, showLibrary, showOptions, handleLibraryKey, handleOptionsKey,
   handleChooseKey,
   askForLine, askYesNo, bookmarkPage, deleteLibraryBookmark,

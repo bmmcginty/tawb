@@ -16,6 +16,7 @@ const {
 } = require('../src/library');
 const {
   openLibrary, openLinkList, openDocumentInfo, closeLibrary, handleLibraryKey,
+  openVisitedLinks, openSessionHistory,
 } = require('../src/index');
 const { Keymap } = require('../src/keys');
 
@@ -428,4 +429,77 @@ test('an entry with no address says so rather than going nowhere quietly', async
 
   assert.equal(state.mode, 'library');
   assert.match(state.statusMsg, /"gone\.bin" has no address recorded/);
+});
+
+// ---------------------------------------------------------------------------
+// The two lists Lynx keeps about the reader
+// ---------------------------------------------------------------------------
+
+test('VLINKS lists the links followed this session, newest first and once each', async () => {
+  const state = readerAt([]);
+  state.visitedLinks = [
+    { name: 'Beta', href: 'https://example.test/b' },
+    { name: 'Alpha', href: 'https://example.test/a' },
+  ];
+  await quietly(() => openVisitedLinks(state, PAGE));
+  assert.equal(state.mode, 'library');
+  assert.equal(state.library.kind, 'visited');
+  assert.deepEqual(state.library.rows.map((row) => row.text), [
+    'Beta — https://example.test/b',
+    'Alpha — https://example.test/a',
+  ]);
+  // The entry carries the address, so Enter goes there rather than nowhere.
+  assert.equal(state.library.rows[0].entry.url, 'https://example.test/b');
+});
+
+test('a session that has followed no links says so', async () => {
+  const state = readerAt([]);
+  state.visitedLinks = [];
+  await quietly(() => openVisitedLinks(state, PAGE));
+  assert.equal(state.mode, 'browse');
+  assert.match(state.statusMsg, /No links followed in this session yet/);
+});
+
+test('HISTORY lists the documents held this session, current one first', async () => {
+  const state = readerAt([]);
+  state.pageLog = [
+    { url: 'https://example.test/now', title: 'Now' },
+    { url: 'https://example.test/before', title: 'Before' },
+  ];
+  await quietly(() => openSessionHistory(state, PAGE));
+  assert.equal(state.library.kind, 'history');
+  assert.deepEqual(state.library.rows.map((row) => row.text), [
+    'here: Now — https://example.test/now',
+    'Before — https://example.test/before',
+  ]);
+});
+
+test('V, Backspace and Ctrl+H reach the two session lists in Lynx mode', () => {
+  const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  assert.equal(keys.actionFor('V'), 'visited-links');
+  assert.equal(keys.actionFor('\x7f'), 'session-history');
+  assert.equal(keys.actionFor('\x08'), 'session-history');
+  // The browser-wide list is the ordinary interface's, and stays there.
+  assert.equal(keys.byId.get('history'), undefined);
+});
+
+test('a followed link is remembered once, at the top', () => {
+  const { noteVisitedLink, notePageVisit } = require('../src/index');
+  const state = {};
+  noteVisitedLink(state, { name: 'Alpha', href: 'https://example.test/a' });
+  noteVisitedLink(state, { name: 'Beta', href: 'https://example.test/b' });
+  assert.deepEqual(state.visitedLinks.map((entry) => entry.name), ['Beta', 'Alpha']);
+  // The same address followed again moves to the top rather than repeating.
+  noteVisitedLink(state, { name: 'Alpha again', href: 'https://example.test/a' });
+  assert.deepEqual(state.visitedLinks.map((entry) => entry.name), ['Alpha again', 'Beta']);
+
+  notePageVisit(state, 'https://example.test/a', 'Alpha');
+  notePageVisit(state, 'https://example.test/b', 'Beta');
+  assert.deepEqual(state.pageLog.map((entry) => entry.title), ['Beta', 'Alpha']);
+  // Reading the same page again is not a new place to go back to.
+  notePageVisit(state, 'https://example.test/b', 'Beta reloaded');
+  assert.deepEqual(state.pageLog.map((entry) => entry.title), ['Beta reloaded', 'Alpha']);
+  // A blank tab is not a document anybody wants listed.
+  notePageVisit(state, 'about:blank', 'blank');
+  assert.equal(state.pageLog.length, 2);
 });
