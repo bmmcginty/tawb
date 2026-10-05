@@ -34,6 +34,7 @@ const {
   CHOICE_LIST, COMMAND_PROMPT, NOT_CHANGEABLE,
 } = require('./lynx_options');
 const { noteVisitedLink, notePageVisit } = require('./lynx_session');
+const { parseLynxNumberExpression, relativeLinkNumber } = require('./lynx_number');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
@@ -2312,32 +2313,6 @@ function openLinkNumberPrompt(state, digits = '') {
   };
   drawHint(state);
   drawLinkNumberPrompt(state);
-}
-
-function parseLynxNumberExpression(text) {
-  const match = /^(\d+)([gGpP]?)([+-]?)$/.exec(text)
-    || /^(\d+)([+-])([gGpP]?)$/.exec(text);
-  if (!match) return null;
-  const [, digits, first = '', second = ''] = match;
-  const suffixes = first + second;
-  const command = /[pP]/.test(suffixes) ? 'page'
-    : /[gG]/.test(suffixes) ? 'move' : 'follow';
-  const relative = suffixes.includes('+') ? 1 : suffixes.includes('-') ? -1 : 0;
-  return { number: Number(digits), command, relative };
-}
-
-function relativeLinkNumber(prompt, amount, direction) {
-  const targets = prompt.targets || [];
-  // The numbered item on the reader's own line, or the nearest one before it.
-  // On a composite line several numbers can share a row, so the column breaks
-  // the tie that the line alone cannot.
-  const before = targets.filter((target) => target.line < prompt.cursor
-    || (target.line === prompt.cursor && (target.col || 0) <= (prompt.col || 0)));
-  const current = before.at(-1);
-  if (current && current.line === prompt.cursor) return current.number + (direction * amount);
-  if (direction > 0) return (current ? current.number : 0) + amount;
-  if (current) return current.number + 1 - amount;
-  return targets.length ? targets[0].number - amount : -1;
 }
 
 // ---------------------------------------------------------------------------
