@@ -161,7 +161,6 @@ function extractAxItems(options) {
     .trim();
 
   const nodes = [];
-  window[Symbol.for('tweb.ax')] = nodes;
   const out = [];
 
   // The flattened tree — what the browser actually renders, and what it
@@ -1022,6 +1021,15 @@ function extractAxItems(options) {
     collapsed.push(item);
   }
   while (collapsed.length && collapsed[collapsed.length - 1].role === '__break__') collapsed.pop();
+
+  // Publish the node list only once the walk has finished. Each item names its
+  // element by position in this list, so a walk that throws partway through
+  // would otherwise leave a short list behind while the caller falls back to
+  // the complete previous extraction — every index in it pointing off the end.
+  // A page with media controls asks for a second, privileged walk; on Firefox
+  // that walk can be refused by the page's own frames, and the refusal used to
+  // erase the good list. Only a finished walk is a usable one.
+  window[Symbol.for('tweb.ax')] = nodes;
   return collapsed;
 }
 
