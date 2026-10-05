@@ -158,6 +158,26 @@ test('main menu does not reload the main screen', async () => {
   assert.equal(state.statusMsg, 'You are already at the main screen.');
 });
 
+test('the Lynx keyboard\'s own extensions stay off the letters Lynx uses', () => {
+  const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  // The extensions TAWB needs and Lynx has no function for live on control
+  // keys Lynx never binds, so a reader's own KEYMAP cannot be shadowed by one.
+  assert.equal(keys.actionFor('\x0f'), 'cycle-view');
+  assert.equal(keys.actionFor('\x1c'), 'page-keyboard');
+  assert.equal(keys.actionFor('\x19'), 'real-click');
+  assert.equal(keys.actionFor('\x1d'), 'hover-line');
+  assert.equal(keys.actionFor('\x1f'), 'browser-question');
+  // Tabs are a browser idea Lynx has none of, and no Lynx-free key is worth
+  // spending on them by default. They are bindable, not bound.
+  for (const id of ['new-tab', 'next-tab', 'previous-tab', 'close-tab']) {
+    assert.ok(keys.byId.get(id), `${id} is not offered by the Lynx wizard`);
+    assert.deepEqual(keys.byId.get(id).bindings, [], `${id} is bound by default`);
+  }
+  // < and > are UP_LINK and DOWN_LINK in Lynx, so no extension may sit there.
+  assert.equal(keys.actionFor('<'), 'up-link');
+  assert.equal(keys.actionFor('>'), 'down-link');
+});
+
 test('the default interface has none of the Lynx-only actions at all', () => {
   const keys = new Keymap({ terminfo: {}, load: false });
   for (const id of ['help', 'main-menu', 'options', 'document-info', 'list-links']) {

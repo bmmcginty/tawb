@@ -2363,9 +2363,10 @@ function popupIsOpen(state) {
 // What a key means while that popup is open: close it, quit for real, or fall
 // through to the browse map. Lynx's popup cancels on its quit and abort
 // functions, so all three readings of "leave" close the menu; only the
-// terminal's own interrupt leaves the program.
-function popupKey({ action, chunk, contextAction }) {
-  if (action === 'close-popup') return 'close';
+// terminal's own interrupt leaves the program. Escape closes it whatever it is
+// bound to, because a menu that could not be shut would be a trap.
+function popupKey({ action, chunk, contextAction, escape = false }) {
+  if (escape || action === 'close-popup') return 'close';
   if (contextAction === 'cancel') return 'close';
   if (action === 'quit' || action === 'confirm-quit' || action === 'abort') {
     return chunk === ALWAYS_QUIT ? 'quit' : 'close';
@@ -2384,7 +2385,9 @@ async function handleBrowseKey(chunk, state, page) {
   const action = (state.keys || FALLBACK_KEYMAP).actionFor(chunk);
   if (popupIsOpen(state)) {
     const contextAction = contextNavigationAction(chunk, state);
-    const popup = popupKey({ action, chunk, contextAction });
+    const popup = popupKey({
+      action, chunk, contextAction, escape: keyIs(chunk, 'Escape', state),
+    });
     if (popup === 'quit') return 'quit';
     if (popup === 'close') return closePopup(state, page);
   }
@@ -5137,6 +5140,9 @@ async function main() {
     // state.core.page, not the page this loop began with: `<` and `>` move the
     // reader between tabs and every handler must act on the one they are on.
     const current = state.core.page;
+    // The terminal's own interrupt gets out of anything — a page, a prompt, a
+    // page's own keyboard — and no mode may take it.
+    if (chunk === ALWAYS_QUIT) { log('input.interrupt', {}); running = false; break; }
     if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
     else if (state.mode === 'library') result = await handleLibraryKey(chunk, state, current);
     else if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);

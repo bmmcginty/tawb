@@ -225,6 +225,10 @@ The common Lynx commands include:
 | `m`, `M` | Return to the main screen |
 | `x`, `X` | Reload without using the browser cache |
 | `z`, `Z` | Stop a load in progress |
+| `Ctrl+O` | Cycle the page views |
+| `Ctrl+\` | Send keys to the webpage |
+| `Ctrl+Y` / `Ctrl+]` | Click / hover the line under the cursor |
+| `Ctrl+_` | Return to a question the browser asked |
 | `Ctrl+T` / `;` | Toggle TAWB tracing / view its trace log |
 | `\\` | Toggle source and presentation |
 | `q` | Quit |

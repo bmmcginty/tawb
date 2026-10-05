@@ -889,6 +889,13 @@ the link under the cursor where `location-edit` edits the document's, and
 help page. `askYesNo()` takes a default answer, so Enter accepts Lynx's own
 `(y)` prompt.
 
+The Lynx interface's own extensions — cycling views, the webpage keyboard,
+clicking and hovering, returning to a browser question — live on control keys
+Lynx never binds (`^O`, `^\`, `^Y`, `^]`, `^_`), not on Alt. Tabs are offered
+but unbound, because no Lynx-free key is worth spending on them. An open popup
+closes on q, Left or Escape whatever Escape is bound to, and the terminal's own
+interrupt leaves every mode.
+
 Number entry snapshots references to the numbered block objects rather than
 indexes. `^` and `$` scan display spans as well as ordinary lines, so the first
 or last control in a reflowed paragraph retains the column of its exact browser

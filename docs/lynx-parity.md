@@ -135,6 +135,28 @@ The rows matter because TAWB's Lynx presentation reflows a paragraph or a table
 row onto one display row, which is exactly the case where "the next link" and
 "the link below" come apart.
 
+## The Lynx keyboard's own extensions
+
+Five things TAWB can do and Lynx cannot get a control key that Lynx never
+binds, so a reader's own `KEYMAP` can never be shadowed by one:
+
+| Operation | Key |
+| --- | --- |
+| cycle the page views (TAWB has four, Lynx two) | `^O` |
+| send keys to the webpage | `^\` |
+| click the line under the cursor | `^Y` |
+| hover the line under the cursor | `^]` |
+| return to a question the browser asked | `^_` |
+
+Tabs are a browser idea Lynx has none of, and no Lynx-free key is worth
+spending on them, so new-tab, next-tab, previous-tab and close-tab are offered
+by the Lynx keyboard screen but unbound. `<` and `>` are `UP_LINK` and
+`DOWN_LINK` and are never used for anything else. Alt is not used at all: Lynx
+is built for terminals and DOS environments where Alt is spoken for.
+
+An open popup closes on `q`, on Left, and on Escape, whatever Escape is bound
+to, and the terminal's own interrupt gets out of every mode.
+
 Other Lynx functions that were once folded together are separate too: `QUIT`
 (`q`) asks before quitting where `ABORT` (`Q`, `^D`) does not, `ELGOTO` (`E`)
 edits the address of the link under the cursor where `ECGOTO` (`G`) edits the
