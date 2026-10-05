@@ -30,6 +30,13 @@ test('the effective Lynx browse map is translated by function name', () => {
     ';           TRACE_LOG     view trace',
     '<space>     NEXT_PAGE     view the next page',
     'Up Arrow    PREV_LINK     make the previous link current',
+    'Down Arrow  NEXT_LINK     make the next link current',
+    '<tab>       FASTFORW_LINK next link or text area',
+    'Back Tab    FASTBACKW_LINK previous link or text area',
+    '>           DOWN_LINK     move down the page to another link',
+    '<           UP_LINK       move up the page to a previous link',
+    ')           DOWN_HALF     move down half a page',
+    '(           UP_HALF       move up half a page',
     'Right Arrow ACTIVATE      activate the current link',
     '?           HELP          display help',
     'm           MAIN_MENU     return to main screen',
@@ -57,6 +64,15 @@ test('the effective Lynx browse map is translated by function name', () => {
   assert.deepEqual(parsed.bindings['trace-log'], [';']);
   assert.deepEqual(parsed.bindings['next-screen'], ['Space']);
   assert.deepEqual(parsed.bindings['previous-focusable'], ['ArrowUp']);
+  assert.deepEqual(parsed.bindings['next-focusable'], ['ArrowDown']);
+  // Lynx's link movements are separate functions, and stay separate here: the
+  // six of them do not become one "next focusable".
+  assert.deepEqual(parsed.bindings['fast-forward-link'], ['Tab']);
+  assert.deepEqual(parsed.bindings['fast-backward-link'], ['Shift+Tab']);
+  assert.deepEqual(parsed.bindings['down-link'], ['>']);
+  assert.deepEqual(parsed.bindings['up-link'], ['<']);
+  assert.deepEqual(parsed.bindings['next-half-screen'], [')']);
+  assert.deepEqual(parsed.bindings['previous-half-screen'], ['(']);
   assert.deepEqual(parsed.bindings.activate, ['ArrowRight']);
   assert.deepEqual(parsed.bindings.help, ['?']);
   assert.deepEqual(parsed.bindings['main-menu'], ['m']);

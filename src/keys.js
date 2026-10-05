@@ -177,6 +177,12 @@ const ACTIONS = [
   // next *button* is worth a key of its own.
   ['next-focusable', 'Next link, button or form field', ['Tab']],
   ['previous-focusable', 'Previous link, button or form field', ['Shift+Tab']],
+  ['fast-forward-link', 'Next link or button', []],
+  ['fast-backward-link', 'Previous link or button', []],
+  ['down-link', 'Link on the next row', []],
+  ['up-link', 'Link on the previous row', []],
+  ['next-half-screen', 'Down half a screen', []],
+  ['previous-half-screen', 'Up half a screen', []],
   ['first-focusable', 'First link, button or form field', []],
   ['last-focusable', 'Last link, button or form field', []],
   ['next-text', 'Next non-link text', ['n']],
@@ -221,6 +227,8 @@ const LYNX_ONLY_ACTIONS = new Set([
   'repeat-find-forward', 'repeat-find-backward', 'reload-no-cache',
   'interrupt', 'toggle-trace', 'trace-log', 'source-view', 'help',
   'main-menu', 'first-focusable', 'last-focusable',
+  'fast-forward-link', 'fast-backward-link', 'down-link', 'up-link',
+  'next-half-screen', 'previous-half-screen',
 ]);
 
 // A default-only action is one the Lynx interface deliberately leaves out, so

@@ -23,8 +23,9 @@ const BROWSE_FUNCTIONS = {
   TRACE_TOGGLE: 'toggle-trace', TRACE_LOG: 'trace-log',
   SOURCE: 'source-view', KEYMAP: 'keyboard-wizard', HELP: 'help', DWIMHELP: 'help',
   MAIN_MENU: 'main-menu',
-  NEXT_LINK: 'next-focusable', FASTFORW_LINK: 'next-focusable', DOWN_LINK: 'next-focusable',
-  PREV_LINK: 'previous-focusable', FASTBACKW_LINK: 'previous-focusable', UP_LINK: 'previous-focusable',
+  NEXT_LINK: 'next-focusable', FASTFORW_LINK: 'fast-forward-link', DOWN_LINK: 'down-link',
+  PREV_LINK: 'previous-focusable', FASTBACKW_LINK: 'fast-backward-link', UP_LINK: 'up-link',
+  DOWN_HALF: 'next-half-screen', UP_HALF: 'previous-half-screen',
   FIRST_LINK: 'first-focusable', LAST_LINK: 'last-focusable',
 };
 

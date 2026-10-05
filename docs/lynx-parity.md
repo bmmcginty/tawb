@@ -117,6 +117,24 @@ handleOptionsKey(chunk)
         list option    -> enter the chooser layer on its row
 ```
 
+## Movement functions are not collapsed
+
+Lynx has six link movements and TAWB keeps all six, because a reader's
+`lynx.cfg` may bind any of them and each has to behave as it does in Lynx:
+
+| Lynx function | Default key | What it does |
+| --- | --- | --- |
+| `NEXT_LINK` | Down | next link or field, walking the current row first |
+| `PREV_LINK` | Up | the same backwards |
+| `FASTFORW_LINK` | Tab | next link or button, skipping form fields |
+| `FASTBACKW_LINK` | Shift+Tab | the same backwards |
+| `DOWN_LINK` | `>` | the next row that holds a link, at the reader's column |
+| `UP_LINK` | `<` | the same upwards |
+
+The rows matter because TAWB's Lynx presentation reflows a paragraph or a table
+row onto one display row, which is exactly the case where "the next link" and
+"the link below" come apart.
+
 ## Cursor placement
 
 | Situation | Lynx | TAWB |

@@ -203,6 +203,9 @@ The common Lynx commands include:
 | Key | Action |
 | --- | --- |
 | Up / Down | Previous / next link or form control |
+| Tab / Shift+Tab | Next / previous link, skipping form fields |
+| `<` / `>` | Link on the previous / next row |
+| `(` / `)` | Up / down half a screen |
 | `^` / `$` | First / last link or form control |
 | Right / Enter | Activate the current item |
 | Left | Go back |

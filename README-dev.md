@@ -874,6 +874,14 @@ compares the reading-order position, the words and the saved settings.
 `docs/lynx-parity.md` is the map of the two keymap stacks, the cursor rules,
 the screen layouts, and the differences that remain.
 
+Lynx's link movements are kept as separate actions rather than folded into
+one: NEXT_LINK and PREV_LINK walk the links and fields on the row the reader
+is standing on before another row, DOWN_LINK and UP_LINK move a row at a time,
+and FASTFORW_LINK and FASTBACKW_LINK stop only on links and buttons. The
+distinction is visible wherever a reflowed paragraph or table row puts several
+items on one display row, and `findQuickNav()` takes a column as it crosses
+rows, as Lynx does. DOWN_HALF and UP_HALF are a step of half the viewport.
+
 Number entry snapshots references to the numbered block objects rather than
 indexes. `^` and `$` scan display spans as well as ordinary lines, so the first
 or last control in a reflowed paragraph retains the column of its exact browser

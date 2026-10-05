@@ -167,6 +167,12 @@ let setCurrentDriver = () => {};
 const ESC = '\x1b';
 const FALLBACK_KEYMAP = new Keymap({ terminfo: {}, load: false });
 
+// What Lynx means by a link when it says a movement stops only on links: the
+// things that are activated rather than typed into. A button is one of them.
+function matchesActivatable(item) {
+  return LINK_ROLES.has(item.role) || BUTTON_ROLES.has(item.role);
+}
+
 // Quick navigation follows the JAWS vocabulary: h headings, f form fields,
 // b buttons, n non-link text, p paragraphs. Uppercase goes backwards except
 // for links, whose L is the live-update switch. JAWS puts links on k, which is
@@ -184,9 +190,32 @@ const QUICK_ACTIONS = {
   'next-text': { label: 'non-link text', direction: 1, match: (item) => item.role === 'text' },
   'previous-text': { label: 'non-link text', direction: -1, match: (item) => item.role === 'text' },
   // Tab and Shift+Tab: the three sets above at once, in document order, which
-  // is what Tab does in a graphical browser.
-  'next-focusable': { label: 'control', direction: 1, match: (item) => FOCUSABLE_ROLES.has(item.role) },
-  'previous-focusable': { label: 'control', direction: -1, match: (item) => FOCUSABLE_ROLES.has(item.role) },
+  // is what Tab does in a graphical browser. Lynx splits the same ground more
+  // finely, and the four actions below are its own: NEXT_LINK/PREV_LINK walk
+  // the links and fields on the row the reader is standing on before moving to
+  // another row, DOWN_LINK/UP_LINK move a row at a time, and
+  // FASTFORW_LINK/FASTBACKW_LINK stop only on things that are activated rather
+  // than typed into. `sameLine` is which of the two readings to use; the
+  // current row holds several items only where a paragraph or a table row was
+  // reflowed, which is Lynx's own presentation.
+  'next-focusable': {
+    label: 'control', direction: 1, sameLine: true, match: (item) => FOCUSABLE_ROLES.has(item.role),
+  },
+  'previous-focusable': {
+    label: 'control', direction: -1, sameLine: true, match: (item) => FOCUSABLE_ROLES.has(item.role),
+  },
+  'fast-forward-link': {
+    label: 'link', direction: 1, sameLine: true, match: matchesActivatable,
+  },
+  'fast-backward-link': {
+    label: 'link', direction: -1, sameLine: true, match: matchesActivatable,
+  },
+  'down-link': {
+    label: 'link below', direction: 1, sameLine: false, match: (item) => FOCUSABLE_ROLES.has(item.role),
+  },
+  'up-link': {
+    label: 'link above', direction: -1, sameLine: false, match: (item) => FOCUSABLE_ROLES.has(item.role),
+  },
 };
 
 const HEADER_ROWS = 4;   // title line, address line, hint line, blank line
@@ -1155,8 +1184,8 @@ function moveSelection(state, newCursor, page, newCol = 0) {
 // Move the document and cursor together, preserving the cursor's row on the
 // screen. One line remains visible from the previous screen so the reader has
 // context at the join rather than landing in entirely unfamiliar text.
-function moveScreen(state, direction, page, height = viewportHeight()) {
-  const step = Math.max(1, height - 1);
+function moveScreen(state, direction, page, height = viewportHeight(), lines = height - 1) {
+  const step = Math.max(1, lines);
   const lastLine = Math.max(state.lines.length - 1, 0);
   const maxScroll = Math.max(0, state.lines.length - height);
   const targetCursor = Math.min(Math.max(state.cursor + direction * step, 0), lastLine);
@@ -1215,18 +1244,45 @@ function focusableEdge(state, direction) {
   return null;
 }
 
-function findQuickNav(state, match, direction) {
+function findQuickNav(state, match, direction, { sameLine = false } = {}) {
   const step = direction > 0 ? 1 : -1;
+
+  // The row the reader is standing on first, when the movement asks for it. A
+  // reflowed paragraph or table row holds several blocks on one display row,
+  // and Lynx's NEXT_LINK walks those before it looks at another row — which is
+  // the whole of what distinguishes it from DOWN_LINK.
+  if (sameLine) {
+    const line = state.lines[state.cursor];
+    if (line && line.spans && line.spans.length) {
+      const spans = direction > 0 ? line.spans : [...line.spans].reverse();
+      for (const span of spans) {
+        if (direction > 0 && span.start <= state.col) continue;
+        if (direction < 0 && span.start >= state.col) continue;
+        const block = state.core.blocks[span.blockIndex];
+        if (block && block.item && match(block.item)) return { line: state.cursor, col: span.start };
+      }
+    }
+  }
+
   for (let i = state.cursor + step; i >= 0 && i < state.lines.length; i += step) {
     const line = state.lines[i];
     // A composite line holds several blocks; look at each item's own span,
-    // even when the item begins on a wrapped continuation row.
+    // even when the item begins on a wrapped continuation row. Lynx keeps the
+    // reader's column as it crosses rows, so the item at or after that column
+    // is taken going forwards and at or before it going backwards, and the
+    // nearest one either way when the row has nothing on that side.
     if (line.spans) {
+      const matching = [];
       for (const span of line.spans) {
         const block = state.core.blocks[span.blockIndex];
-        if (block && block.item && match(block.item)) return { line: i, col: span.start };
+        if (block && block.item && match(block.item)) matching.push(span);
       }
-      continue;
+      if (!matching.length) continue;
+      const preferred = direction > 0
+        ? matching.find((span) => span.start >= state.col)
+        : [...matching].reverse().find((span) => span.start <= state.col);
+      const chosen = preferred || (direction > 0 ? matching[0] : matching[matching.length - 1]);
+      return { line: i, col: chosen.start };
     }
     if (line.continuation) continue;
     const block = state.core.blocks[line.blockIndex];
@@ -2463,6 +2519,15 @@ async function handleBrowseKey(chunk, state, page) {
     return moveScreen(state, 1, page);
   }
   if (action === 'previous-screen') return moveScreen(state, -1, page);
+  // Lynx moves half a page with '(' and ')'. The step is counted in lines,
+  // where a screen's step is one line short of its height so that the reader
+  // keeps a line of context across the join.
+  if (action === 'next-half-screen') {
+    return moveScreen(state, 1, page, viewportHeight(), Math.max(1, Math.floor(viewportHeight() / 2)));
+  }
+  if (action === 'previous-half-screen') {
+    return moveScreen(state, -1, page, viewportHeight(), Math.max(1, Math.floor(viewportHeight() / 2)));
+  }
   if (action === 'top') return moveSelection(state, 0, page);
   if (action === 'bottom') return moveSelection(state, state.lines.length - 1, page);
   if (action === 'line-start') return moveSelection(state, state.cursor, page, 0);
@@ -2588,10 +2653,9 @@ async function handleBrowseKey(chunk, state, page) {
 
   if (QUICK_ACTIONS[action]) {
     const spec = QUICK_ACTIONS[action];
-    const found = findQuickNav(state, spec.match, spec.direction);
+    const found = findQuickNav(state, spec.match, spec.direction, { sameLine: spec.sameLine });
     jumpTo(state, page, found, spec.label, spec.direction);
     if (state.interface === 'lynx' && found
-        && (action === 'next-focusable' || action === 'previous-focusable')
         && !(state.keys && state.keys.preferences
           && state.keys.preferences.textfieldsNeedActivation)) {
       const block = currentBlock(state);
@@ -4325,7 +4389,7 @@ async function handleTypeKey(chunk, state, page) {
 
     const action = direction > 0 ? 'next-focusable' : 'previous-focusable';
     const spec = QUICK_ACTIONS[action];
-    const found = findQuickNav(state, spec.match, direction);
+    const found = findQuickNav(state, spec.match, direction, { sameLine: spec.sameLine });
     if (!found) {
       setStatus(state, `No ${direction > 0 ? 'next' : 'previous'} control.`);
       return;
