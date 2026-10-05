@@ -17,6 +17,13 @@ const assert = require('node:assert');
 
 const { tempDir, removeTempDir } = require('../tmpdir');
 
+// The server publishes its address under the user's data directory, and this
+// test must not write to the real one. As in tabs.test.js, this is set before
+// anything that reads it is asked; a read-only home is otherwise a failed
+// write here rather than the no-op it is for the registry and tab claims.
+const stateDir = tempDir('tweb-edb-state-');
+process.env.XDG_DATA_HOME = stateDir;
+
 const { openDriver } = require('../../src/driver');
 const { startEdbServer } = require('../../src/edb_server');
 const { start: startTestPage } = require('../../tools/serve');
@@ -31,14 +38,23 @@ const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
 const profile = tempDir('tweb-edb-');
 
 let shared = null;
+// What is open, tracked as it opens rather than only on success. If setup
+// throws partway, the browser and the page server are still running, and a
+// process that does not close them never exits: node then waits on this file
+// forever and never reports the failure that caused it.
+const opened = { pageServer: null, driver: null, server: null };
+
 async function browser() {
   if (shared) return shared;
   const pageServer = await startTestPage(0);
+  opened.pageServer = pageServer;
   const driver = await openDriver({ engine: ENGINE, profile, log: () => {} });
+  opened.driver = driver;
   const page = driver.context.pages()[0] || await driver.context.newPage();
   await page.goto(pageServer.url, { waitUntil: 'domcontentloaded' });
   await new Promise((r) => setTimeout(r, 1500));
   const server = await startEdbServer({ driver, port: 0, token: 'browsertest' });
+  opened.server = server;
   shared = { pageServer, driver, page, server, base: `http://127.0.0.1:${server.port}/t/browsertest` };
   return shared;
 }
@@ -46,11 +62,11 @@ async function browser() {
 // Everything opened has to be closed, or the process never exits and node
 // holds the whole file's output back waiting for it.
 test.after(async () => {
-  if (!shared) return;
-  await Promise.resolve(shared.server.close?.()).catch(() => {});
-  await shared.driver.close().catch(() => {});
-  shared.pageServer.server.close();
+  if (opened.server) await Promise.resolve(opened.server.close?.()).catch(() => {});
+  if (opened.driver) await opened.driver.close().catch(() => {});
+  if (opened.pageServer) opened.pageServer.server.close();
   removeTempDir(profile);
+  removeTempDir(stateDir);
 });
 
 const get = async (url) => {
