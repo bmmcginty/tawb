@@ -37,6 +37,36 @@ function available() {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// The tmux server exits when its last session does. Two test files run side by
+// side, so one killing its last session can race the other asking for a new
+// one, and the loser is told "server exited unexpectedly". A session running a
+// sleeping command holds the server up for the life of this file, and is
+// cleaned up when the process ends.
+const KEEPALIVE = `tawb-probe-keepalive-${process.pid}`;
+let keepaliveReady = false;
+
+function keepalive() {
+  if (keepaliveReady) return;
+  const started = run('tmux', ['new-session', '-d', '-s', KEEPALIVE, 'sleep 3600']);
+  if (started.status !== 0) return;
+  keepaliveReady = true;
+  process.on('exit', () => { run('tmux', ['kill-session', '-t', KEEPALIVE]); });
+}
+
+// A session, with a moment's patience for the server having just been started
+// or just lost.
+async function newSession(args, { attempts = 4 } = {}) {
+  let last = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    keepalive();
+    const started = run('tmux', args);
+    if (started.status === 0) return started;
+    last = started;
+    await sleep(150 * (attempt + 1));
+  }
+  throw new Error(`could not start tmux: ${(last && (last.stderr || last.error)) || 'unknown'} `);
+}
+
 // One Lynx in one tmux pane.
 //
 // The session name is supplied by the caller so that two test files cannot
@@ -71,7 +101,7 @@ class LynxTty {
       ...this.extraArgs,
       this.page,
     ].join(' ');
-    const started = run('tmux', [
+    const started = await newSession([
       'new-session', '-d', '-s', this.session,
       '-x', String(this.cols), '-y', String(this.rows), command,
     ]);
