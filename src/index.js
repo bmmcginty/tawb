@@ -4765,6 +4765,14 @@ async function main() {
     return;
   }
 
+  // --dump and --keyboard are flags on a reader front end, not front ends of
+  // their own: one prints the page and the other edits the keymap, and a
+  // single run cannot do both. Without this the wizard ran and the dump was
+  // silently ignored.
+  if (ARGS.dump && ARGS.keyboard) {
+    throw new Error('--keyboard cannot be combined with --dump');
+  }
+
   const logPath = ARGS.log ? enableLog({ directory: ARGS.logDir }) : null;
   if (ARGS.keyboard) {
     // Standalone there is no session screen, so the wizard takes the one the

@@ -105,6 +105,25 @@ test('dump mode requires an input without writing terminal output', () => {
   assert.doesNotMatch(result.stderr, /\x1b/);
 });
 
+test('a front end refuses the reader flags it cannot use', () => {
+  const run = (args) => spawnSync(process.execPath, ['src/index.js', ...args], {
+    cwd: path.join(__dirname, '..'),
+    env: { ...process.env, XDG_CONFIG_HOME: path.join(__dirname, 'missing-config') },
+    encoding: 'utf8',
+  });
+
+  const both = run(['--dump', '--keyboard']);
+  assert.equal(both.status, 1);
+  assert.match(both.stderr, /--keyboard cannot be combined with --dump/);
+
+  // edbrowse has neither a keymap nor a reading buffer for these to act on.
+  for (const flag of ['--keyboard', '--dump']) {
+    const edb = run(['--front-end', 'edb', flag]);
+    assert.equal(edb.status, 1);
+    assert.match(edb.stderr, /--front-end edb cannot be combined/);
+  }
+});
+
 test('dump mode closes its temporary tab when extraction fails', async () => {
   let closed = false;
   const page = {

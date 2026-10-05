@@ -391,6 +391,10 @@ tawb --dump https://example.com
 tawb --front-end=lynx --dump https://example.com
 ```
 
+`--dump` and `--keyboard` are flags on a reader front end, not front ends of
+their own, and cannot be combined with each other. The `edb` front end has
+neither a keymap nor a reading buffer, so it refuses both.
+
 For example, use it as a Mutt HTML autoviewer with this `mailcap` entry:
 
 ```mailcap
