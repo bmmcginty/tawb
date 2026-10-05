@@ -177,7 +177,7 @@ function recordedAccessibilityBus(record) {
 // running on this profile. The profile persists between runs, so logins and
 // cookies survive — which is most of what makes the web usable.
 async function launchOwnBrowser({
-  profileDir = defaultProfileDir(), log = () => {}, onStartup = () => {},
+  profileDir = defaultProfileDir(), browserTimeoutMs = null, log = () => {}, onStartup = () => {},
 } = {}) {
   const found = findBrowserExecutable();
   if (!found) {
@@ -264,7 +264,9 @@ async function launchOwnBrowser({
 
   // Stop waiting when the process exits, but do not guess why. A profile clash
   // is only one possible quick exit; the browser's own stderr is the evidence.
-  const timeoutMs = startupTimeoutMs(STARTUP_TIMEOUT_MS);
+  // The flag wins over TAWB_BROWSER_TIMEOUT when it is given; otherwise the
+  // environment, then the engine's own default.
+  const timeoutMs = browserTimeoutMs || startupTimeoutMs(STARTUP_TIMEOUT_MS);
   const startedAt = Date.now();
   const deadline = startedAt + timeoutMs;
   let nextNotice = startedAt + 10000;

@@ -703,7 +703,7 @@ const BROWSER_NAMES = ['Firefox', 'Mozilla Firefox', 'firefox'];
 
 async function openFirefox({
   profile = null, connect = null, keepBrowser = false, broker = true, log = () => {},
-  onStartup = () => {}, diagnoseAutomation = false,
+  onStartup = () => {}, diagnoseAutomation = false, browserTimeoutMs = null,
 } = {}) {
   let child = null;
   let endpoint = connect;
@@ -724,7 +724,7 @@ async function openFirefox({
 
   if (!endpoint) {
     const started = await launchFirefox({
-      profileDir: profile || defaultProfileDir(), keepBrowser, log, onStartup,
+      profileDir: profile || defaultProfileDir(), keepBrowser, browserTimeoutMs, log, onStartup,
     });
     child = started.child;
     endpoint = started.endpoint;

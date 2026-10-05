@@ -594,9 +594,11 @@ is made, or run Firefox once yourself with `--allow-downgrade -profile <dir>`,
 which keeps the profile and can lose what the newer Firefox saved in it.
 
 If a browser is unusually slow to create its profile, increase the startup
-timeout:
+timeout. `--browser-timeout` takes seconds and applies to one run;
+`TAWB_BROWSER_TIMEOUT` sets the default for a machine or a container image:
 
 ```sh
+npm start -- --browser-timeout 120 https://example.com
 TAWB_BROWSER_TIMEOUT=120 npm start -- https://example.com
 ```
 

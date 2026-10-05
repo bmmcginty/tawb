@@ -1027,7 +1027,8 @@ function releaseStrandedSession(port, { timeout = MARIONETTE_TIMEOUT_MS } = {}) 
 // Starts an ordinary Firefox, silences the announcement, and returns where to
 // attach. The caller verifies from inside a page before trusting any of it.
 async function launchFirefox({
-  profileDir = defaultProfileDir(), keepBrowser = false, log = () => {}, onStartup = () => {},
+  profileDir = defaultProfileDir(), keepBrowser = false, browserTimeoutMs = null,
+  log = () => {}, onStartup = () => {},
 } = {}) {
   const found = findFirefox();
   if (!found) {
@@ -1134,7 +1135,9 @@ async function launchFirefox({
   child.unref();
 
   const spawnedAt = Date.now();
-  const timeoutMs = startupTimeoutMs(STARTUP_TIMEOUT_MS);
+  // The flag wins over TAWB_BROWSER_TIMEOUT when it is given; otherwise the
+  // environment, then the engine's own default.
+  const timeoutMs = browserTimeoutMs || startupTimeoutMs(STARTUP_TIMEOUT_MS);
   const deadline = spawnedAt + timeoutMs;
   let ready = false;
   let nextNotice = spawnedAt + STARTUP_NOTICE_MS;

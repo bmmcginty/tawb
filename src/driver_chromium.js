@@ -41,6 +41,7 @@ const BROWSER_NAMES = ['Chromium', 'Chrome', 'Google Chrome', 'Chromium-browser'
 
 async function openChromium({
   connect = null, profile = null, keepBrowser = false, log = () => {}, onStartup = () => {},
+  browserTimeoutMs = null,
 } = {}) {
   let browser;
   let context;
@@ -62,7 +63,7 @@ async function openChromium({
     a11y = connected.a11y;
   } else {
     const started = await launchOwnBrowser({
-      profileDir: profile || defaultProfileDir(), log, onStartup,
+      profileDir: profile || defaultProfileDir(), browserTimeoutMs, log, onStartup,
     });
     ({ browser, context } = started);
     child = started.child;

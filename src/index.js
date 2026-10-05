@@ -66,6 +66,9 @@ const { parseArgs: parseArgv } = require('node:util');
 // and this is meant to read like one.
 // --escape-unicode represents non-ASCII page text with ASCII-only Unicode
 // escapes, for Speakup review on a physical Linux console.
+// --browser-timeout <seconds> is how long to wait for a browser to open its
+// port. It defaults to TAWB_BROWSER_TIMEOUT, which is the value a container or
+// a slow machine sets once; the flag is for overriding it for one run.
 // The alternate screen is the default because it hands the terminal back,
 // scrollback and all, exactly as it was when the session ends — which is what
 // a parent full-screen program or a mailcap viewer wants. --no-alt-screen
@@ -104,7 +107,19 @@ const OPTION_SPEC = {
   'escape-unicode': { type: 'boolean' },
   'alt-screen': { type: 'boolean' },
   'close-initial-tab-on-exit': { type: 'boolean' },
+  'browser-timeout': { type: 'string' },
 };
+
+// The flag takes seconds, like TAWB_BROWSER_TIMEOUT, and is kept as
+// milliseconds because that is the unit the browser launch waits in.
+function browserTimeoutMs(value) {
+  if (value == null) return null;
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new Error(`--browser-timeout needs a positive number of seconds, not ${value}`);
+  }
+  return Math.round(seconds * 1000);
+}
 
 function parseArgs(argv, env = process.env) {
   const { values, positionals } = parseArgv({
@@ -136,6 +151,7 @@ function parseArgs(argv, env = process.env) {
     escapeUnicode: values['escape-unicode'] ?? false,
     altScreen: values['alt-screen'] ?? true,
     closeInitialTabOnExit: values['close-initial-tab-on-exit'] ?? false,
+    browserTimeoutMs: browserTimeoutMs(values['browser-timeout']),
   };
 }
 
@@ -4806,6 +4822,7 @@ async function main() {
         connect: ARGS.connect,
         profile: ARGS.profile,
         keepBrowser: ARGS.keepBrowser,
+        browserTimeoutMs: ARGS.browserTimeoutMs,
         log,
         onStartup: startup.update,
       }));

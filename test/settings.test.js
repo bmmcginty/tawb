@@ -132,6 +132,14 @@ test('the link preferences are not set from the environment', () => {
   assert.equal(parseArgs(['--short-links'], {}).shortLinks, true);
 });
 
+test('--browser-timeout is per-run seconds and validates its value', () => {
+  assert.equal(parseArgs([], {}).browserTimeoutMs, null);
+  assert.equal(parseArgs(['--browser-timeout', '120'], {}).browserTimeoutMs, 120000);
+  assert.equal(parseArgs(['--browser-timeout=45'], {}).browserTimeoutMs, 45000);
+  assert.throws(() => parseArgs(['--browser-timeout', 'soon'], {}), /positive number of seconds/);
+  assert.throws(() => parseArgs(['--browser-timeout=-1'], {}), /positive number of seconds/);
+});
+
 test('only the Lynx interface asks Lynx for effective bindings', () => {
   let calls = 0;
   const importLynx = (options) => {
