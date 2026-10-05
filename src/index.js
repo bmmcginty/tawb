@@ -816,8 +816,11 @@ function hintText(state) {
       + ' — Enter: next  Esc: cancel';
   }
   if (state.interface === 'lynx') {
-    return "Commands: Use arrow keys to move, '?' for help, 'q' to quit, '<-' to go back.";
+    return popupIsOpen(state)
+      ? "Popup open — q or Left closes it; Enter chooses."
+      : "Commands: Use arrow keys to move, '?' for help, 'q' to quit, '<-' to go back.";
   }
+  if (popupIsOpen(state)) return 'Popup open — q or Esc closes it; Enter chooses.';
   return 'j/k line  h/l/f/b/n/p nav  / find  m click  \\ view  ^L address  c changes  q quit';
 }
 
@@ -2278,6 +2281,38 @@ function relativeLinkNumber(prompt, amount, direction) {
   return targets.length ? targets[0].number - amount : -1;
 }
 
+// ---------------------------------------------------------------------------
+// A popup is a mode
+//
+// A menu the page drew is a window with its own keys, and in Lynx q closes it
+// rather than quitting the browser. Here it lives in the buffer like anything
+// else, so the browse map would otherwise read q as quit and take the reader
+// out of the program while they meant to shut the menu they are standing in.
+//
+// Only the closing keys are taken. Movement, activation and everything else
+// fall through to the ordinary map, so a reader who wants to walk away from an
+// open menu still can, and a page cannot trap them by drawing one.
+// ---------------------------------------------------------------------------
+
+// Ctrl+C is the terminal's own interrupt, and no page may swallow it: with it
+// the reader can always get out, whatever has been drawn over the screen.
+const ALWAYS_QUIT = '\x03';
+
+// Whether a popup is open and still has entries to stand in. The core holds
+// the control that opened it; the entries are blocks tagged with its id.
+function popupIsOpen(state) {
+  return !!(state.core && state.core.popup && state.core.popupAt() >= 0);
+}
+
+// What a key means while that popup is open: close it, quit for real, or fall
+// through to the browse map.
+function popupKey({ action, chunk, contextAction }) {
+  if (action === 'close-popup') return 'close';
+  if (contextAction === 'cancel') return 'close';
+  if (action === 'quit') return chunk === ALWAYS_QUIT ? 'quit' : 'close';
+  return null;
+}
+
 async function handleBrowseKey(chunk, state, page) {
   markInput(state);
   const preferences = state.keys && state.keys.preferences;
@@ -2287,6 +2322,12 @@ async function handleBrowseKey(chunk, state, page) {
     return;
   }
   const action = (state.keys || FALLBACK_KEYMAP).actionFor(chunk);
+  if (popupIsOpen(state)) {
+    const contextAction = contextNavigationAction(chunk, state);
+    const popup = popupKey({ action, chunk, contextAction });
+    if (popup === 'quit') return 'quit';
+    if (popup === 'close') return closePopup(state, page);
+  }
   if (action === 'quit') return 'quit';
   if (action === 'link-number') {
     openLinkNumberPrompt(state);
@@ -2787,7 +2828,7 @@ function moveToPopup(state, page, item) {
   const line = lineForBlock(state, state.core.popupAt());
   if (line < 0) return;
   moveSelection(state, line, page, 0);
-  setStatus(state, `"${item.name}" opened — Esc closes it.`);
+  setStatus(state, `"${item.name}" opened — ${state.interface === 'lynx' ? 'q or Left' : 'q or Esc'} closes it.`);
 }
 
 // What happened after something was pressed: a different page, a part of this
@@ -5102,7 +5143,7 @@ module.exports = {
   expandPath, completePath, fileToAttach, fileSize, attachedNote,
   anchorFor, restoreAnchor, capturePlace, restorePlace, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
-  markInput, keepLivePlace,
+  markInput, keepLivePlace, popupIsOpen, popupKey,
   screenBefore, repaintList, visibleRowsNow,
   applyTextPatches, loadMore, atEnd,
   historyEntryIdentity, rememberHistoryPlace, rememberCurrentHistoryPlace,
