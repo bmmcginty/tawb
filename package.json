@@ -13,6 +13,7 @@
     "firefox": "node src/index.js --browser firefox",
     "edb": "node src/edb.js",
     "testpage": "node tools/serve.js",
+    "coverage": "node tools/serve.js --page coverage",
     "authpage": "node tools/authserve.js",
     "dump": "node tools/dump.js",
     "probe": "node tools/probe.js",

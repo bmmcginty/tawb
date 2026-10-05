@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TAWB content coverage</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 54rem; padding: 0 1rem; }
+  section { border-top: 1px solid #999; padding-top: 1rem; margin-top: 2rem; }
+  section > h2 { margin-top: 0; }
+  table { border-collapse: collapse; }
+  th, td { border: 1px solid #999; padding: .2rem .5rem; text-align: left; }
+  caption { font-weight: bold; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .contents { display: contents; }
+  .painted { background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiBmaWxsPSIjM2I2Ii8+PHBhdGggZD0iTTMgMTJMOCAzbDUgOXoiIGZpbGw9IiNmZmYiLz48L3N2Zz4="); width: 2rem; height: 2rem; display: inline-block; }
+  .hidden-visibility { visibility: hidden; }
+  .hidden-opacity { opacity: 0; }
+  .hidden-display { display: none; }
+  .hidden-content-visibility { content-visibility: hidden; }
+  .offscreen { position: absolute; left: -9999px; }
+  .zero-box { width: 0; height: 0; overflow: hidden; }
+  pre { overflow-x: auto; background: rgba(127,127,127,.12); padding: .5rem; }
+  #coverage-log { font-family: monospace; white-space: pre-wrap; background: rgba(127,127,127,.12); padding: .5rem; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TAWB content coverage</h1>
+  <p>This page carries every kind of content TAWB's extractors, views, and Lynx
+  interface claim to support. It is served over loopback http like an ordinary
+  page, talks to nothing, and changes nothing until a control is pressed.</p>
+  <p>Read it in each browser and in each interface, and cycle the four views
+  with <code>\</code>. The sections are numbered <code>C01</code> onward and
+  each control has a stable name, so a reader can check them one at a time and
+  a test can assert them by name.</p>
+  <details>
+    <summary>How each marker reads (TAWB vocabulary and Lynx vocabulary)</summary>
+    <table>
+      <caption>Control vocabulary by interface</caption>
+      <thead><tr><th>Content</th><th>Default interface</th><th>Lynx interface</th></tr></thead>
+      <tbody>
+        <tr><td>Heading</td><td><code>## Text</code></td><td>bold text</td></tr>
+        <tr><td>Link</td><td><code>{Text}</code></td><td>text, numbered <code>[1]</code></td></tr>
+        <tr><td>Button</td><td><code>[*Text]</code></td><td>text, numbered or <code>BUTTON</code></td></tr>
+        <tr><td>Checkbox</td><td><code>[*Text, checked]</code></td><td><code>[X] Text</code></td></tr>
+        <tr><td>Radio</td><td><code>[*Text, selected]</code></td><td><code>(*) Text</code></td></tr>
+        <tr><td>Select</td><td><code>[Label: value]</code></td><td><code>Label [value]</code></td></tr>
+        <tr><td>Text field</td><td><code>[Label: value]</code></td><td><code>Label ____________________</code></td></tr>
+        <tr><td>Slider / number</td><td><code>[Label: value]</code></td><td><code>Label [value]</code></td></tr>
+        <tr><td>Image</td><td><code>(image) Name</code></td><td><code>Name</code></td></tr>
+        <tr><td>Painted picture (PAGE view)</td><td><code>(image: name)</code></td><td><code>name</code></td></tr>
+        <tr><td>Frame</td><td><code>&lt;frame: name&gt;</code></td><td><code>IFRAME: name</code></td></tr>
+        <tr><td>Media</td><td><code>(audio) paused, 0:00 of 0:00</code></td><td><code>[name]</code></td></tr>
+      </tbody>
+    </table>
+  </details>
+</header>
+
+<main>
+
+<section id="c01-headings" data-coverage="C01">
+  <h2>C01 Headings</h2>
+  <h1>An h1 used as a section heading</h1>
+  <h2>An h2 used as a section heading</h2>
+  <h3>An h3 used as a section heading</h3>
+  <h4>An h4 used as a section heading</h4>
+  <h5>An h5 used as a section heading</h5>
+  <h6>An h6 used as a section heading</h6>
+  <div role="heading" aria-level="2">An ARIA heading at level two</div>
+</section>
+
+<section id="c02-inline" data-coverage="C02">
+  <h2>C02 Inline text semantics</h2>
+  <p><em>emphasis</em>, <i>italic</i>, <strong>strong</strong>, <b>bold</b>,
+  <code>inline code</code>, <kbd>Ctrl</kbd>+<kbd>C</kbd>, <samp>sample output</samp>,
+  <var>variable</var>, <sub>subscript</sub>, <sup>superscript</sup>,
+  <del>deleted</del>, <ins>inserted</ins>, <mark>marked</mark>, <small>small</small>,
+  <abbr title="Accessible Rich Internet Applications">ARIA</abbr>,
+  <q>a short quotation</q>, <cite>a citation</cite>, <dfn>a definition</dfn>,
+  <time datetime="2026-10-05">5 October 2026</time>,
+  <bdi>bidi isolate</bdi> and <bdo dir="rtl">bdo reversed</bdo>.</p>
+</section>
+
+<section id="c03-prose" data-coverage="C03">
+  <h2>C03 Prose, quotation, and separators</h2>
+  <p>A plain paragraph with a second sentence. A wrapper that generates no box
+  follows it.</p>
+  <div class="contents"><p>Prose read through a display:contents wrapper.</p></div>
+  <blockquote cite="https://example.com/source"><p>A block quotation with an
+  attribution.</p></blockquote>
+  <pre><code>preformatted
+  text
+    retained</code></pre>
+  <address>An address element with contact detail.</address>
+  <hr>
+  <p>Prose after a horizontal rule.</p>
+</section>
+
+<section id="c04-links" data-coverage="C04">
+  <h2>C04 Links</h2>
+  <p><a href="#c04-links">An ordinary in-page link</a></p>
+  <p><a href="https://example.com/" target="_blank" rel="noopener">A link that opens a new window</a></p>
+  <p><a href="mailto:reader@example.com">A mail link</a> and
+     <a href="tel:+15551234567">a telephone link</a></p>
+  <p><a href="/downloads/coverage.txt" download>An attributed download link</a></p>
+  <p><a href="#c04-links" aria-current="page">A link marked current</a></p>
+  <p><span role="link" tabindex="0" id="c04-role-link">An ARIA link on a span</span></p>
+  <p><a href="#c04-links"><span aria-hidden="true">→ </span>A link with a hidden prefix</a></p>
+  <p><a href="#c04-links"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiBmaWxsPSIjM2I2Ii8+PHBhdGggZD0iTTMgMTJMOCAzbDUgOXoiIGZpbGw9IiNmZmYiLz48L3N2Zz4=" alt="A named logo" width="16" height="16"></a> a link around a named image</p>
+  <p><a href="#c04-links"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PGNpcmNsZSBjeD0iOCIgY3k9IjgiIHI9IjciIGZpbGw9IiNmODAiLz48L3N2Zz4=" width="16" height="16"></a> a link around an unnamed image</p>
+  <p><a id="c04-empty" href="#c04-links"></a> a link with no text of its own is deliberately empty</p>
+  <map name="c04-map" title="An image map">
+    <area shape="rect" coords="0,0,16,16" href="#c04-links" alt="Left area">
+    <area shape="rect" coords="16,0,32,16" href="#c04-links" alt="Right area">
+  </map>
+  <p><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjE2IiBmaWxsPSIjNjY5Ii8+PC9zdmc+" usemap="#c04-map" alt="A mapped image" width="32" height="16"></p>
+</section>
+
+<section id="c05-buttons" data-coverage="C05">
+  <h2>C05 Buttons</h2>
+  <p><button type="button" id="c05-pressed" aria-pressed="false">Mute</button></p>
+  <p><button type="button" id="c05-expand" aria-expanded="false" aria-controls="c05-expanded">Show details</button></p>
+  <p id="c05-expanded" hidden>A panel the button expands.</p>
+  <p><button type="button" disabled>A disabled button</button></p>
+  <p><input type="button" value="Input button"></p>
+  <p><input type="submit" value="Input submit"></p>
+  <p><input type="reset" value="Input reset"></p>
+  <p><input type="image" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PGNpcmNsZSBjeD0iOCIgY3k9IjgiIHI9IjciIGZpbGw9IiNmODAiLz48L3N2Zz4=" alt="Input image button"></p>
+  <p><span role="button" tabindex="0" id="c05-role-button">An ARIA button on a span</span></p>
+  <p><button type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="c05-menu">A menu button</button></p>
+  <ul id="c05-menu" role="menu" hidden>
+    <li role="menuitem">A menu item</li>
+    <li role="menuitemcheckbox" aria-checked="true">A checked menu item</li>
+    <li role="menuitemradio" aria-checked="false">An unchecked menu radio</li>
+  </ul>
+</section>
+
+<section id="c06-text-fields" data-coverage="C06">
+  <h2>C06 Text fields</h2>
+  <p><label for="c06-text">Text field</label>
+     <input id="c06-text" type="text" value="Typed text"></p>
+  <p><label for="c06-search">Search field</label>
+     <input id="c06-search" type="search" placeholder="Search terms"></p>
+  <p><label for="c06-email">Email field</label>
+     <input id="c06-email" type="email" autocomplete="email"></p>
+  <p><label for="c06-tel">Telephone field</label>
+     <input id="c06-tel" type="tel" autocomplete="tel"></p>
+  <p><label for="c06-url">URL field</label>
+     <input id="c06-url" type="url" value="https://example.com/"></p>
+  <p><label for="c06-password">Password field</label>
+     <input id="c06-password" type="password" value="secret"></p>
+  <p><label for="c06-required">Required field</label>
+     <input id="c06-required" type="text" required></p>
+  <p><label for="c06-readonly">Read-only field</label>
+     <input id="c06-readonly" type="text" value="Cannot be edited" readonly></p>
+  <p><label for="c06-disabled">Disabled field</label>
+     <input id="c06-disabled" type="text" value="Unavailable" disabled></p>
+  <p><label for="c06-invalid">Invalid field</label>
+     <input id="c06-invalid" type="text" aria-invalid="true" value="Wrong"></p>
+  <p><label for="c06-area">Text area</label>
+     <textarea id="c06-area" rows="2">A text area with content.</textarea></p>
+  <p><span id="c06-editable-label">Content editable</span>
+     <span id="c06-editable" contenteditable="true" style="border:1px solid #999">An editable region.</span></p>
+  <p><span role="textbox" tabindex="0" aria-label="ARIA textbox" aria-multiline="false" contenteditable="true">An ARIA textbox.</span></p>
+  <p><input id="c06-labelledby" aria-labelledby="c06-labelledby-name">
+     <span id="c06-labelledby-name">Named by reference</span></p>
+  <p><input id="c06-describedby" aria-label="Described field" aria-describedby="c06-describedby-text">
+     <span id="c06-describedby-text">A description the reader should also hear.</span></p>
+</section>
+
+<section id="c07-checks-radios" data-coverage="C07">
+  <h2>C07 Checkboxes, radios, and switches</h2>
+  <p><input type="checkbox" id="c07-check" checked>
+     <label for="c07-check">A checked checkbox</label></p>
+  <p><input type="checkbox" id="c07-uncheck">
+     <label for="c07-uncheck">An unchecked checkbox</label></p>
+  <p><input type="checkbox" id="c07-disabled" disabled>
+     <label for="c07-disabled">A disabled checkbox</label></p>
+  <p><input type="checkbox" id="c07-mixed">
+     <label for="c07-mixed">A mixed checkbox (script sets indeterminate)</label></p>
+  <p><span role="checkbox" tabindex="0" aria-checked="true" aria-label="ARIA checkbox">An ARIA checkbox</span></p>
+  <p><span role="switch" tabindex="0" aria-checked="false" aria-label="ARIA switch">An ARIA switch</span></p>
+  <fieldset>
+    <legend>A native radio group</legend>
+    <p><input type="radio" name="c07-radio" id="c07-radio-a" checked>
+       <label for="c07-radio-a">Native radio one</label></p>
+    <p><input type="radio" name="c07-radio" id="c07-radio-b">
+       <label for="c07-radio-b">Native radio two</label></p>
+  </fieldset>
+  <div role="radiogroup" aria-label="An ARIA radio group">
+    <p><span role="radio" tabindex="0" aria-checked="true" aria-label="ARIA radio one">An ARIA radio</span></p>
+    <p><span role="radio" tabindex="0" aria-checked="false" aria-label="ARIA radio two">Another ARIA radio</span></p>
+  </div>
+</section>
+
+<section id="c08-selects" data-coverage="C08">
+  <h2>C08 Selects, listboxes, and comboboxes</h2>
+  <p><label for="c08-select">A native select</label>
+     <select id="c08-select">
+       <option>A select option one</option>
+       <option selected>A select option two</option>
+       <option>A select option three</option>
+     </select></p>
+  <p><label for="c08-disabled-option">A select with a disabled option</label>
+     <select id="c08-disabled-option">
+       <option>Available option</option>
+       <option disabled>Unavailable option</option>
+     </select></p>
+  <p><label for="c08-optgroup">A grouped select</label>
+     <select id="c08-optgroup">
+       <optgroup label="Group one">
+         <option>Group one option</option>
+       </optgroup>
+       <optgroup label="Group two">
+         <option>Group two option</option>
+       </optgroup>
+     </select></p>
+  <p><label for="c08-multiple">A multiple select</label>
+     <select id="c08-multiple" multiple size="3">
+       <option selected>Multiple option one</option>
+       <option>Multiple option two</option>
+     </select></p>
+  <p><input id="c08-combobox" role="combobox" aria-expanded="false" aria-controls="c08-listbox" aria-label="Fruit" value="">
+     <span id="c08-listbox" role="listbox" aria-label="Fruit options" hidden>
+       <span role="option" aria-selected="false">Apricot</span>
+       <span role="option" aria-selected="true">Blackcurrant</span>
+     </span></p>
+</section>
+
+<section id="c09-range" data-coverage="C09">
+  <h2>C09 Range, number, progress, and meter</h2>
+  <p><label for="c09-range">A native range</label>
+     <input id="c09-range" type="range" min="0" max="100" value="35"></p>
+  <p><label for="c09-number">A native number</label>
+     <input id="c09-number" type="number" min="0" max="10" value="3"></p>
+  <p><span role="slider" tabindex="0" aria-label="ARIA slider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="35" aria-orientation="vertical">An ARIA slider</span></p>
+  <p><span role="spinbutton" tabindex="0" aria-label="ARIA spinbutton" aria-valuemin="1" aria-valuemax="9" aria-valuenow="5">An ARIA spinbutton</span></p>
+  <p><span role="scrollbar" tabindex="0" aria-label="ARIA scrollbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="20" aria-controls="c09-range">An ARIA scrollbar</span></p>
+  <p><label for="c09-progress">A native progress</label>
+     <progress id="c09-progress" max="100" value="60">60%</progress></p>
+  <p><span role="progressbar" aria-label="ARIA progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="40">An ARIA progressbar</span></p>
+  <p><label for="c09-meter">A native meter</label>
+     <meter id="c09-meter" min="0" max="100" value="70">70%</meter></p>
+  <p><span role="meter" aria-label="An ARIA meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="70">An ARIA meter</span></p>
+  <p><label for="c09-output">A calculated output</label>
+     <output id="c09-output" for="c09-range">35</output></p>
+</section>
+
+<section id="c10-datetime" data-coverage="C10">
+  <h2>C10 Date, time, and colour inputs</h2>
+  <p><label for="c10-date">Date</label> <input id="c10-date" type="date" value="2026-10-05"></p>
+  <p><label for="c10-time">Time</label> <input id="c10-time" type="time" value="09:30"></p>
+  <p><label for="c10-month">Month</label> <input id="c10-month" type="month" value="2026-10"></p>
+  <p><label for="c10-week">Week</label> <input id="c10-week" type="week" value="2026-W40"></p>
+  <p><label for="c10-datetime">Local date and time</label> <input id="c10-datetime" type="datetime-local" value="2026-10-05T09:30"></p>
+  <p><label for="c10-color">Colour</label> <input id="c10-color" type="color" value="#336699"></p>
+</section>
+
+<section id="c11-file" data-coverage="C11">
+  <h2>C11 File inputs</h2>
+  <p><label for="c11-file">A single file</label> <input id="c11-file" type="file"></p>
+  <p><label for="c11-multiple">Several files</label> <input id="c11-multiple" type="file" multiple></p>
+</section>
+
+<section id="c12-forms" data-coverage="C12">
+  <h2>C12 Forms, fieldsets, and labels</h2>
+  <form action="#c12-forms" method="get" id="c12-form">
+    <fieldset>
+      <legend>A fieldset legend</legend>
+      <p><label for="c12-name">Name</label> <input id="c12-name" name="name" value="Ada"></p>
+      <p><button type="submit">A submit button</button> <button type="reset">A reset button</button></p>
+    </fieldset>
+  </form>
+  <p><input id="c12-standalone" type="text" value="A field with no form around it"></p>
+</section>
+
+<section id="c13-details" data-coverage="C13">
+  <h2>C13 Details, dialogs, and popovers</h2>
+  <details>
+    <summary>A closed disclosure summary</summary>
+    <p>Body of the closed disclosure, which must not be read while closed.</p>
+  </details>
+  <details open>
+    <summary>An open disclosure summary</summary>
+    <p>Body of the open disclosure, which must be read.</p>
+  </details>
+  <dialog open id="c13-dialog"><p>A non-modal dialog with <button type="button">a button inside it</button>.</p></dialog>
+  <dialog id="c13-closed-dialog"><p>A closed dialog that must not be read.</p></dialog>
+  <p><button type="button" id="c13-popover-button" popovertarget="c13-popover">A popover trigger</button></p>
+  <div id="c13-popover" popover><p>A popover panel, closed until the trigger is pressed.</p></div>
+</section>
+
+<section id="c14-tables" data-coverage="C14">
+  <h2>C14 Tables</h2>
+  <table>
+    <caption>A table with a caption</caption>
+    <thead>
+      <tr><th scope="col">Column one</th><th scope="col">Column two</th></tr>
+    </thead>
+    <tbody>
+      <tr><th scope="row">Row one</th><td>Cell one two</td></tr>
+      <tr><td>Cell two one</td><td>Cell two two</td></tr>
+    </tbody>
+    <tfoot>
+      <tr><td>Footer one</td><td>Footer two</td></tr>
+    </tfoot>
+  </table>
+  <table style="margin-top:1rem">
+    <caption>A table with spanned cells</caption>
+    <tr><th colspan="2">A spanning header</th></tr>
+    <tr><td rowspan="2">A tall cell</td><td>A short cell</td></tr>
+    <tr><td>Another short cell</td></tr>
+  </table>
+  <div role="table" aria-label="An ARIA table" style="margin-top:1rem">
+    <div role="row"><span role="columnheader">ARIA column one</span> <span role="columnheader">ARIA column two</span></div>
+    <div role="row"><span role="cell">ARIA cell one</span> <span role="cell">ARIA cell two</span></div>
+  </div>
+  <div role="grid" aria-label="An ARIA grid" style="margin-top:1rem">
+    <div role="row"><span role="columnheader">Grid column</span> <span role="rowheader">Grid row</span> <span role="gridcell">Grid cell</span></div>
+  </div>
+  <div role="treegrid" aria-label="An ARIA treegrid" style="margin-top:1rem">
+    <div role="row"><span role="gridcell">Treegrid cell</span></div>
+  </div>
+  <div role="table" aria-label="A grouped ARIA table" style="margin-top:1rem">
+    <div role="rowgroup"><div role="row"><span role="cell">Grouped ARIA cell</span></div></div>
+  </div>
+</section>
+
+<section id="c15-lists" data-coverage="C15">
+  <h2>C15 Lists and descriptions</h2>
+  <ul>
+    <li>An unordered list item</li>
+    <li>Another unordered list item
+      <ul><li>A nested list item</li></ul>
+    </li>
+  </ul>
+  <ol>
+    <li>A numbered list item</li>
+    <li>Another numbered list item</li>
+  </ol>
+  <dl>
+    <dt>A description term</dt>
+    <dd>A description detail.</dd>
+    <dt>Another term</dt>
+    <dd>Another detail.</dd>
+  </dl>
+  <div role="list">
+    <div role="listitem">An ARIA list item</div>
+    <div role="listitem">Another ARIA list item</div>
+  </div>
+  <div role="directory" aria-label="An ARIA directory">
+    <div role="listitem">A directory item</div>
+  </div>
+</section>
+
+<section id="c16-images" data-coverage="C16">
+  <h2>C16 Images and pictures</h2>
+  <p><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiBmaWxsPSIjM2I2Ii8+PC9zdmc+" alt="An image with alt text" width="16" height="16"></p>
+  <p><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiBmaWxsPSIjOTk5Ii8+PC9zdmc+" alt="" width="16" height="16"> an image with an empty alt, which is decorative</p>
+  <p><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PGNpcmNsZSBjeD0iOCIgY3k9IjgiIHI9IjciIGZpbGw9IiNmODAiLz48L3N2Zz4=" width="16" height="16"> an image with no alt at all</p>
+  <p><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiBmaWxsPSIjNjY5Ii8+PC9zdmc+" alt="A hidden image" aria-hidden="true" width="16" height="16"></p>
+  <p><svg role="img" aria-label="An SVG image" width="16" height="16"><circle cx="8" cy="8" r="7" fill="#3b6"></circle></svg></p>
+  <figure>
+    <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiBmaWxsPSIjM2I2Ii8+PC9zdmc+" alt="A figure image" width="16" height="16">
+    <figcaption>A figure caption</figcaption>
+  </figure>
+  <picture>
+    <source media="(min-width: 1px)" srcset="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiBmaWxsPSIjM2I2Ii8+PC9zdmc+">
+    <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiI+PHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiBmaWxsPSIjM2I2Ii8+PC9zdmc+" alt="A picture fallback" width="16" height="16">
+  </picture>
+  <p><span class="painted" aria-hidden="true"></span> an element painted from a stylesheet, with no text</p>
+  <p><button type="button"><span class="painted" aria-hidden="true"></span> A button with a painted icon</button></p>
+  <p><canvas width="16" height="16">Canvas fallback text</canvas> a canvas with fallback content</p>
+  <p><span role="img" aria-label="An ARIA image">An ARIA image on a span</span></p>
+</section>
+
+<section id="c17-media" data-coverage="C17">
+  <h2>C17 Audio, video, and frames</h2>
+  <p><audio id="c17-audio" controls aria-label="Coverage audio"></audio></p>
+  <p><video id="c17-video" controls width="120" height="60" aria-label="Coverage video"></video></p>
+  <p><iframe id="c17-frame" title="A same-origin frame"></iframe></p>
+  <p><iframe title="A frame with no content"></iframe></p>
+</section>
+
+<section id="c18-landmarks" data-coverage="C18">
+  <h2>C18 Landmarks and ARIA containers</h2>
+  <nav aria-label="A navigation landmark"><a href="#c18-landmarks">A navigation link</a></nav>
+  <aside aria-label="A complementary landmark">A complementary note.</aside>
+  <section aria-label="A labelled region">A labelled region's prose.</section>
+  <article aria-label="An article">An article's prose.</article>
+  <form aria-label="A form landmark"><input aria-label="A form field"></form>
+  <div role="search" aria-label="A search landmark"><input aria-label="A search input"></div>
+  <div role="banner" aria-label="An ARIA banner">Banner prose.</div>
+  <div role="navigation" aria-label="An ARIA navigation">Navigation prose.</div>
+  <div role="main" aria-label="An ARIA main">Main prose.</div>
+  <div role="complementary" aria-label="An ARIA complementary">Complementary prose.</div>
+  <div role="contentinfo" aria-label="An ARIA contentinfo">Contentinfo prose.</div>
+  <div role="region" aria-label="An ARIA region">Region prose.</div>
+  <div role="article" aria-label="An ARIA article">Article prose.</div>
+  <div role="form" aria-label="An ARIA form">Form prose.</div>
+  <div role="list" aria-label="An ARIA landmark list"><div role="listitem">Landmark list item.</div></div>
+  <div role="searchbox" aria-label="An ARIA searchbox">An ARIA searchbox.</div>
+  <div role="group" aria-label="A group">Grouped prose.</div>
+  <div role="toolbar" aria-label="A toolbar"><button type="button">Toolbar button</button></div>
+  <div role="application" aria-label="An application region">Application prose.</div>
+  <div role="document" aria-label="A document region">Document prose.</div>
+  <div role="feed" aria-label="A feed"><div role="article" aria-label="A feed article">Feed prose.</div></div>
+  <div role="note" aria-label="A note">A note.</div>
+  <div role="definition" aria-label="A definition">A definition.</div>
+  <div role="math" aria-label="A math region">A math region.</div>
+  <div role="suggestion" aria-label="A suggestion">A suggested insertion.</div>
+  <div role="figure" aria-label="An ARIA figure">An ARIA figure.</div>
+  <div role="separator" aria-label="A separator"></div>
+  <div role="presentation">A presentation container whose text is still read.</div>
+  <div role="none">A none container whose text is still read.</div>
+</section>
+
+<section id="c19-widgets" data-coverage="C19">
+  <h2>C19 ARIA widgets</h2>
+  <div role="tablist" aria-label="A tab list">
+    <span role="tab" tabindex="0" aria-selected="true" aria-controls="c19-panel-one">Tab one</span>
+    <span role="tab" tabindex="-1" aria-selected="false" aria-controls="c19-panel-two">Tab two</span>
+  </div>
+  <div role="tabpanel" id="c19-panel-one" aria-label="Panel one">The first tab panel.</div>
+  <div role="tabpanel" id="c19-panel-two" aria-label="Panel two" hidden>The second tab panel.</div>
+  <div role="menubar" aria-label="A menu bar">
+    <span role="menuitem" tabindex="0">A menubar item</span>
+  </div>
+  <div role="tree" aria-label="A tree">
+    <div role="treeitem" aria-expanded="true" aria-selected="false" tabindex="0">A tree item
+      <div role="group"><div role="treeitem" aria-selected="false" tabindex="-1">A nested tree item</div></div>
+    </div>
+  </div>
+  <div role="tooltip" id="c19-tooltip">A tooltip.</div>
+  <p><span aria-describedby="c19-tooltip">A field described by the tooltip</span></p>
+  <div role="listbox" aria-label="A standalone listbox">
+    <span role="option" aria-selected="false">A standalone option</span>
+  </div>
+  <div role="alert">An alert role region.</div>
+  <div role="alertdialog" aria-label="An ARIA alert dialog">An alertdialog region.</div>
+  <div role="status">A status role region.</div>
+  <div role="log" aria-label="A log region">A log entry.</div>
+  <div role="marquee">A marquee region.</div>
+  <div role="timer">A timer region.</div>
+</section>
+
+<section id="c20-states" data-coverage="C20">
+  <h2>C20 ARIA states and properties</h2>
+  <p><button type="button" aria-pressed="true">A pressed button</button></p>
+  <p><button type="button" aria-pressed="false">A not-pressed button</button></p>
+  <p><button type="button" aria-expanded="true" aria-controls="c20-owned">An expanded button</button></p>
+  <div id="c20-owned" aria-owns="c20-owned-child"><span id="c20-owned-child">An owned child.</span></div>
+  <p><span role="checkbox" aria-checked="mixed" tabindex="0">A partly checked box</span></p>
+  <p><span role="option" aria-selected="true" tabindex="0">A selected option</span></p>
+  <p><input aria-label="A busy field" aria-busy="true"></p>
+  <p><input aria-label="A hidden field" aria-hidden="true" type="text"></p>
+  <p><button type="button" aria-disabled="true">An aria-disabled button</button></p>
+  <p><input aria-label="An autocomplete field" autocomplete="name"></p>
+  <p><span role="heading" aria-level="3" aria-roledescription="subheading">A described heading</span></p>
+  <p><button type="button" aria-keyshortcuts="Alt+X">A button with a shortcut</button></p>
+  <p><span role="button" tabindex="0" aria-haspopup="dialog" aria-controls="c13-dialog">A button opening a dialog</span></p>
+</section>
+
+<section id="c21-live" data-coverage="C21">
+  <h2>C21 Live regions</h2>
+  <p aria-live="polite" id="c21-polite">A polite live region.</p>
+  <p aria-live="assertive" id="c21-assertive">An assertive live region.</p>
+  <p aria-live="off" id="c21-off">A live region that is off.</p>
+  <p role="status" id="c21-status">A polite status line.</p>
+  <p><button type="button" id="c21-announce">Announce something</button></p>
+</section>
+
+<section id="c22-hidden" data-coverage="C22">
+  <h2>C22 Hidden and generated content</h2>
+  <p>Ordinary prose anchors the hidden cases around it.</p>
+  <div hidden><p>Content hidden by the hidden attribute.</p></div>
+  <div aria-hidden="true"><p>Content hidden from assistive technology by aria-hidden.</p></div>
+  <div class="hidden-display"><p>Content hidden by display none.</p></div>
+  <div class="hidden-visibility"><p>Content hidden by visibility hidden.</p></div>
+  <div style="visibility:hidden"><p style="visibility:visible">A visible child of a visibility:hidden parent.</p></div>
+  <div class="hidden-opacity"><p>Content painted at zero opacity.</p></div>
+  <div class="hidden-content-visibility"><p>Content hidden by content-visibility.</p></div>
+  <div inert><p>Content made inert.</p></div>
+  <p class="visually-hidden">Content hidden with the visually-hidden pattern.</p>
+  <p class="offscreen">Content positioned off screen.</p>
+  <div class="zero-box"><p>Content in a zero-sized clipping box.</p></div>
+  <template><p>Content inside a template, which is never rendered.</p></template>
+  <p>Content after the hidden cases, so a reader can tell where they end.</p>
+</section>
+
+<section id="c23-shadow" data-coverage="C23">
+  <h2>C23 Shadow DOM and custom elements</h2>
+  <p><coverage-open-shadow id="c23-open"></coverage-open-shadow></p>
+  <p><coverage-closed-shadow id="c23-closed"></coverage-closed-shadow></p>
+  <p><coverage-slot><span slot="named">Content assigned to a named slot</span>Default slot content</coverage-slot></p>
+  <p><coverage-slot id="c23-fallback"></coverage-slot></p>
+</section>
+
+<section id="c24-direction" data-coverage="C24">
+  <h2>C24 Language and direction</h2>
+  <p lang="fr">Un paragraphe en français.</p>
+  <p dir="rtl" lang="ar">نص عربي في اتجاه من اليمين إلى اليسار.</p>
+  <p dir="ltr">Left-to-right text.</p>
+  <p><bdi>مُعرّف مستقل</bdi> inside left-to-right prose.</p>
+  <p><span title="A title attribute">A span with a title attribute.</span></p>
+</section>
+
+<section id="c25-interaction" data-coverage="C25">
+  <h2>C25 Live interaction</h2>
+  <p>These controls change the page so activation, editing, and webpage
+  keyboard mode can be checked. The log records what arrived.</p>
+  <p><button type="button" id="c25-toggle" aria-pressed="false">Toggle the pressed state</button></p>
+  <p><label for="c25-typed">Type here</label> <input id="c25-typed" type="text">
+     <span id="c25-echo">nothing typed</span></p>
+  <p><span id="c25-keyboard" tabindex="0" role="button" aria-label="Keyboard-only button">A control that only hears trusted keys</span></p>
+  <p><a href="#c25-interaction" id="c25-follow">A link that reports when it is followed</a></p>
+  <div id="coverage-log" aria-live="polite">nothing yet</div>
+</section>
+
+</main>
+
+<footer>
+  <p>End of the coverage page.</p>
+</footer>
+
+<script>
+(function () {
+  var log = document.getElementById('coverage-log');
+  var lines = [];
+  function note(text) {
+    lines.push(text);
+    if (lines.length > 12) lines.shift();
+    log.textContent = lines.join('\n');
+  }
+
+  // C07: a mixed checkbox needs script, because HTML has no such attribute.
+  var mixed = document.getElementById('c07-mixed');
+  if (mixed) mixed.indeterminate = true;
+
+  // C05: a pressed toggle and an expanding disclosure.
+  var pressed = document.getElementById('c05-pressed');
+  if (pressed) pressed.addEventListener('click', function () {
+    var on = pressed.getAttribute('aria-pressed') === 'true';
+    pressed.setAttribute('aria-pressed', on ? 'false' : 'true');
+    note('pressed ' + (on ? 'off' : 'on'));
+  });
+  var expand = document.getElementById('c05-expand');
+  var expanded = document.getElementById('c05-expanded');
+  if (expand && expanded) expand.addEventListener('click', function () {
+    var open = expand.getAttribute('aria-expanded') === 'true';
+    expand.setAttribute('aria-expanded', open ? 'false' : 'true');
+    expanded.hidden = open;
+    note('disclosure ' + (open ? 'closed' : 'opened'));
+  });
+
+  // C21: an announcement that rewrites a live region.
+  var announced = 0;
+  var announce = document.getElementById('c21-announce');
+  if (announce) announce.addEventListener('click', function () {
+    announced += 1;
+    document.getElementById('c21-status').textContent = 'Announcement number ' + announced + '.';
+    note('announced ' + announced);
+  });
+
+  // C25: a toggle, an echo, a trusted-key control, and a followed link.
+  var toggle = document.getElementById('c25-toggle');
+  if (toggle) toggle.addEventListener('click', function () {
+    var on = toggle.getAttribute('aria-pressed') === 'true';
+    toggle.setAttribute('aria-pressed', on ? 'false' : 'true');
+    note('toggle ' + (on ? 'off' : 'on'));
+  });
+  var typed = document.getElementById('c25-typed');
+  if (typed) typed.addEventListener('input', function () {
+    document.getElementById('c25-echo').textContent = 'typed: ' + typed.value;
+  });
+  var keyboard = document.getElementById('c25-keyboard');
+  if (keyboard) keyboard.addEventListener('keydown', function (event) {
+    note('key ' + event.key + (event.isTrusted ? ' trusted' : ' synthetic'));
+  });
+  var follow = document.getElementById('c25-follow');
+  if (follow) follow.addEventListener('click', function (event) {
+    event.preventDefault();
+    note('followed');
+  });
+
+  // C17: a silent three-second audio track so the player loads with no network.
+  var audio = document.getElementById('c17-audio');
+  if (audio) {
+    var rate = 8000, seconds = 3, samples = rate * seconds;
+    var buf = new ArrayBuffer(44 + samples);
+    var view = new DataView(buf);
+    function str(at, text) { for (var i = 0; i < text.length; i += 1) view.setUint8(at + i, text.charCodeAt(i)); }
+    str(0, 'RIFF'); view.setUint32(4, 36 + samples, true); str(8, 'WAVE');
+    str(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true); view.setUint32(24, rate, true); view.setUint32(28, rate, true);
+    view.setUint16(32, 1, true); view.setUint16(34, 8, true);
+    str(36, 'data'); view.setUint32(40, samples, true);
+    for (var i = 0; i < samples; i += 1) view.setUint8(44 + i, 128);
+    var binary = '';
+    for (var j = 0; j < buf.byteLength; j += 1) binary += String.fromCharCode(view.getUint8(j));
+    audio.src = 'data:audio/wav;base64,' + btoa(binary);
+  }
+
+  // C17: an empty frame with same-origin content, and one with none.
+  var frame = document.getElementById('c17-frame');
+  if (frame) frame.srcdoc = '<!doctype html><title>Frame title</title><p>Prose inside the frame.</p><a href="#inside">A link inside the frame</a>';
+
+  // C23: an open and a closed shadow root, and a slot with fallback content.
+  if (!window.customElements.get('coverage-open-shadow')) {
+    window.customElements.define('coverage-open-shadow', class extends HTMLElement {
+      connectedCallback() {
+        if (this.shadowRoot) return;
+        this.attachShadow({ mode: 'open' }).innerHTML =
+          '<p>Prose in an open shadow root.</p><button>An open-shadow button</button>';
+      }
+    });
+  }
+  if (!window.customElements.get('coverage-closed-shadow')) {
+    window.customElements.define('coverage-closed-shadow', class extends HTMLElement {
+      connectedCallback() {
+        if (this.__done) return;
+        this.__done = true;
+        this.attachShadow({ mode: 'closed' }).innerHTML =
+          '<p>Prose in a closed shadow root.</p><button>A closed-shadow button</button>';
+      }
+    });
+  }
+  if (!window.customElements.get('coverage-slot')) {
+    window.customElements.define('coverage-slot', class extends HTMLElement {
+      connectedCallback() {
+        if (this.shadowRoot) return;
+        this.attachShadow({ mode: 'open' }).innerHTML =
+          '<p>Slot fallback: <slot name="named">default named</slot> <slot>default unnamed</slot></p>';
+      }
+    });
+  }
+}());
+</script>
+</body>
+</html>
