@@ -864,20 +864,30 @@ own code put it, as Lynx does.
 versioned document requires every preference below a `lynx` key; misplaced,
 unknown, or malformed values are errors. `keymapForOptions()` opens it only for
 the Lynx interface and overlays it on imported Lynx preferences. Writes use a
-0600 temporary file and rename. `src/lynx_options.js` describes the classic
-letter-driven options screen. It changes only options TAWB implements, while
-browser-owned entries remain visible and read-only rather than being migrated
-to global browser settings. Choosing an option enters a second keyboard layer —
-`state.library.choosing` — which mirrors Lynx's `boolean_choice`: any key moves
-a boolean, the arrows walk a list, RETURN accepts and `q` or Ctrl-C restores
-the old value.
+0600 temporary file and rename. `src/lynx_options.js` holds Lynx's
+single-screen Options menu: the rows, the columns and the words are Lynx's own,
+taken from the screen a real Lynx prints. `SCREEN_ROWS` is one entry per row,
+and a row with `fields` carries one or more options as
+`[letter, valueColumn, prefix]`, so several options share a line and each keeps
+its own column. `screenLines()` fills in the values and
+`optionPosition()` says where each one landed.
+
+`openOptions()` puts the screen up in `state.mode === 'options'`, which owns the
+whole terminal: `drawOptionsScreen()` writes the rows itself rather than going
+through the page list, `placeOptionsCursor()` puts the terminal cursor on the
+Command prompt or beside the value being chosen, and no hint row is drawn. It
+changes only options TAWB implements, while browser-owned entries remain
+visible and read-only rather than being migrated to global browser settings.
+Choosing an option enters a second keyboard layer — `state.options.choosing` —
+which mirrors Lynx's `boolean_choice`: any key moves a boolean, the arrows walk a
+list, RETURN accepts and `q` or Ctrl-C restores the old value.
 
 `test/lynx_tty.js` drives a real Lynx in a tmux pane;
 `test/lynx_options_real.test.js` records what it does, and
 `test/lynx_options_compare.test.js` presses the same keys at both programs and
-compares the reading-order position, the words and the saved settings.
-`docs/lynx-parity.md` is the map of the two keymap stacks, the cursor rules,
-the screen layouts, and the differences that remain.
+compares the screen row for row, the cursor, the words and the saved settings.
+`docs/lynx-parity.md` is the map of the two keymap stacks, the cursor rules, the
+screen layouts, and the differences that remain.
 
 Lynx's link movements are kept as separate actions rather than folded into
 one: NEXT_LINK and PREV_LINK walk the links and fields on the row the reader

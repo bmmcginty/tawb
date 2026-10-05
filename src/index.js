@@ -29,9 +29,9 @@ const {
   readLynxSettings, writeLynxSettings, mergeLynxSettings,
 } = require('./lynx_settings');
 const {
-  optionRows, optionForLetter, choiceIndex, applyChoice,
+  optionForLetter, choiceIndex, applyChoice, screenLines, optionPosition,
   persistableOptions, ANY_KEY_CHANGE, VALUE_ACCEPTED, CANCELLED,
-  CHOICE_LIST, SELECT_LINE, NOT_CHANGEABLE,
+  CHOICE_LIST, COMMAND_PROMPT, NOT_CHANGEABLE,
 } = require('./lynx_options');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
@@ -431,6 +431,7 @@ function currentLine(state) {
 // the browser's own lists is open it is that list: the buffer on screen is no
 // longer the tab, and everything that reads lines has to agree about which.
 function activeBlocks(state) {
+  if (state.options) return [];
   if (state.library) return state.library.blocks;
   if (state.dialog) return state.dialog.blocks;
   return state.core.blocks;
@@ -529,7 +530,7 @@ function syncCursor(state) {
   // page. With a list of bookmarks on screen, line 12 is the twelfth
   // bookmark, and telling the core the reader is standing on the page's
   // twelfth block would let a text patch land where they are not.
-  if (state.library || state.dialog) return;
+  if (state.options || state.library || state.dialog) return;
   const line = state.lines[state.cursor];
   const block = blockUnder(state, line, state.col);
   state.core.at(block ? activeBlocks(state).indexOf(block) : -1);
@@ -855,9 +856,6 @@ function hintText(state) {
   if (state.mode === 'number') return 'Follow link number — Enter: follow  g: move  Esc: cancel';
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
   if (state.mode === 'library') {
-    if (state.library.kind === 'options') {
-      return "Options Menu — capital letter: change  >: save  r: return  Left: cancel";
-    }
     return `${state.library.label} — type: filter  Enter: open  Esc: close`;
   }
   if (state.mode === 'line') return `${state.line.label} — Enter: save  Esc: cancel`;
@@ -888,6 +886,9 @@ function hintText(state) {
 // it, which is the churn the split exists to avoid — the banner should stay
 // untouched while reading. Press '=' when the position is actually wanted.
 function drawHint(state, { force = false } = {}) {
+  // The options screen owns the whole terminal and has no hint row of its own;
+  // writing one would land on a row of Lynx's screen.
+  if (state.mode === 'options') return;
   const rendered = hintText(state).slice(0, termSize().cols);
   if (!force && rendered === state.drawn.hint) return;
   state.drawn.hint = rendered;
@@ -3312,8 +3313,7 @@ function refilter(state, page, filter) {
 // ---------------------------------------------------------------------------
 
 function libraryStatus(state) {
-  const { rows, blocks, filter, empty, kind } = state.library;
-  if (kind === 'options') return SELECT_LINE;
+  const { rows, blocks, filter, empty } = state.library;
   if (empty) return filter ? `Nothing matching "${filter}".` : 'Nothing here yet.';
   if (filter) return `${blocks.length} of ${rows.length} matching "${filter}".`;
   return `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} — type to filter.`;
@@ -3330,7 +3330,7 @@ function showLibrary(state, page, filter) {
     .filter((row) => matches(row.text, filter))
     .map((row) => ({
       text: row.text,
-      item: lib.kind === 'info' || lib.kind === 'options'
+      item: lib.kind === 'info'
         ? { role: 'text', name: row.text } : { role: 'link', name: row.text },
       entry: row.entry,
     }));
@@ -3433,53 +3433,120 @@ async function openMainMenu(state, page) {
   return load(state, page, home);
 }
 
-function showOptions(state, page, { letter = null } = {}) {
-  state.library.rows = optionRows(state.keys.preferences);
-  showLibrary(state, page, '');
-  if (!letter) return;
-  // Choosing an option puts the reader on its line, which is where Lynx leaves
-  // them: the cursor is the only thing that says which value is being changed.
-  const row = state.library.rows.findIndex((candidate) => candidate.letter === letter);
-  if (row >= 0) moveSelection(state, row, page, 0);
+// ---------------------------------------------------------------------------
+// The Options menu
+//
+// Lynx's single-screen menu is a fixed screen, not a document: its own rows,
+// its own columns, a Command prompt on the row above the status line, and the
+// terminal cursor left there while nothing is being chosen. TAWB draws it the
+// same way rather than through the page list, so the rows and the cursor land
+// where Lynx puts them.
+// ---------------------------------------------------------------------------
+
+// The whole screen for the current preferences, with the option being chosen
+// shown in reverse video. Each value is drawn on its own line at its own
+// column, so a reader who knows the screen finds the option where they expect
+// it.
+function drawOptionsScreen(state) {
+  const choosing = state.options.choosing;
+  const lines = screenLines(state.keys.preferences);
+  resetScrollRegion();
+  for (let row = 0; row < lines.length; row += 1) {
+    writeLine(row + 1, renderOptionsRow(lines[row], choosing));
+  }
+  writeLine(lines.length + 1, COMMAND_PROMPT);
+  placeOptionsCursor(state, lines);
+}
+
+function renderOptionsRow(line, choosing) {
+  const field = choosing && line.fields.find((candidate) => candidate.letter === choosing.letter);
+  if (!field) return line.text;
+  return line.text.slice(0, field.start)
+    + ANSI_REVERSE + line.text.slice(field.start, field.end) + ANSI_RESET
+    + line.text.slice(field.end);
+}
+
+// Where Lynx leaves the terminal cursor. With nothing being chosen it is on the
+// Command prompt. With a value being chosen it is one column left of that value
+// when SHOW_CURSOR is on, as Lynx does for speech and braille — and after the
+// value when it is off, because Lynx writes the value and leaves the cursor
+// where the write finished.
+function placeOptionsCursor(state, lines = screenLines(state.keys.preferences)) {
+  const choosing = state.options.choosing;
+  if (!choosing) {
+    moveCursor(lines.length + 1, COMMAND_PROMPT.length + 1);
+    return;
+  }
+  const at = optionPosition(lines, choosing.letter);
+  if (!at) return;
+  const show = state.keys && state.keys.preferences && state.keys.preferences.showCursor;
+  moveCursor(at.row + 1, show ? Math.max(1, at.column) : at.field.end + 1);
 }
 
 function openOptions(state, page) {
   state.core.live.refreshing = true;
-  state.mode = 'library';
-  state.library = {
-    kind: 'options', label: 'Options Menu', filter: '', rows: [], blocks: [], empty: false,
+  state.mode = 'options';
+  state.options = {
     choosing: null,
     originalPreferences: { ...state.keys.preferences },
+    // Where the reader was standing, so leaving the screen is not a second
+    // navigation. See closeOptions().
     place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
   };
-  state.title = 'Options Menu';
-  showOptions(state, page);
+  writeTerminal('\x1b[2J');
+  drawOptionsScreen(state);
+  setStatus(state, '');
+  placeOptionsCursor(state);
+}
+
+function closeOptions(state, page, note) {
+  const { place } = state.options;
+  state.options = null;
+  state.mode = 'browse';
+  state.core.live.refreshing = false;
+  state.title = place.title;
+  relayout(state);
+  state.cursor = Math.min(place.cursor, Math.max(state.lines.length - 1, 0));
+  state.col = place.col;
+  state.scroll = place.scroll;
+  clampCol(state);
+  clampScroll(state);
+  writeTerminal('\x1b[2J');
+  render(state, page, { force: true });
+  if (note) setStatus(state, note);
 }
 
 function restoreOptionPreferences(state) {
-  state.keys.preferences = { ...state.library.originalPreferences };
+  state.keys.preferences = { ...state.options.originalPreferences };
 }
 
-// An option has been chosen and not yet decided: the value under the cursor is
-// provisional until RETURN keeps it. This is the second keyboard layer of the
-// Options screen, and it belongs to the option rather than to the screen, which
-// is why it takes the keys that would otherwise be commands.
+// An option has been chosen and not yet decided: the value is provisional until
+// RETURN keeps it. This is the second keyboard layer of the Options screen, and
+// it belongs to the option rather than to the screen, which is why it takes the
+// keys that would otherwise be commands.
+//
+// A key the choice has no use for changes nothing: a reader who presses a
+// reading key here has not answered the question, and answering it for them is
+// how a preference changes by accident.
 function handleOptionChoosing(chunk, state, page) {
-  const lib = state.library;
-  const choosing = lib.choosing;
+  const options = state.options;
+  const choosing = options.choosing;
   const { option } = choosing;
 
   if (chunk === '\r' || chunk === '\n') {
-    lib.choosing = null;
+    options.choosing = null;
+    drawOptionsScreen(state);
     setStatus(state, VALUE_ACCEPTED);
+    placeOptionsCursor(state);
     return;
   }
   if (chunk === 'q' || chunk === 'Q' || chunk === '\x03' || chunk === '\x07'
       || keyIs(chunk, 'Escape', state)) {
     state.keys.preferences = { ...choosing.originalPreferences };
-    lib.choosing = null;
-    showOptions(state, page, { letter: option.letter });
+    options.choosing = null;
+    drawOptionsScreen(state);
     setStatus(state, CANCELLED);
+    placeOptionsCursor(state);
     return;
   }
 
@@ -3499,26 +3566,26 @@ function handleOptionChoosing(chunk, state, page) {
   } else if (keyIs(chunk, 'End', state)) {
     choosing.index = count - 1;
   } else {
-    // A key the list has no use for is not a change and not a cancellation.
     return;
   }
 
   applyChoice(option, state.keys.preferences, choosing.index);
-  showOptions(state, page, { letter: option.letter });
+  drawOptionsScreen(state);
   setStatus(state, option.boolean ? ANY_KEY_CHANGE : CHOICE_LIST);
+  placeOptionsCursor(state);
 }
 
 function handleOptionsKey(chunk, state, page) {
-  const lib = state.library;
-  if (lib.choosing) return handleOptionChoosing(chunk, state, page);
+  const options = state.options;
+  if (options.choosing) return handleOptionChoosing(chunk, state, page);
 
   if (keyIs(chunk, 'ArrowLeft', state) || keyIs(chunk, 'Escape', state)) {
     restoreOptionPreferences(state);
-    closeLibrary(state, page, 'Options unchanged.');
+    closeOptions(state, page, 'Options unchanged.');
     return;
   }
   if (chunk === 'r' || chunk === 'R') {
-    closeLibrary(state, page, 'Options accepted for this session.');
+    closeOptions(state, page, 'Options accepted for this session.');
     return;
   }
   if (chunk === '>') {
@@ -3528,31 +3595,33 @@ function handleOptionsKey(chunk, state, page) {
         ? { file: state.lynxSettingsFile } : {});
     } catch (err) {
       setStatus(state, `Could not save options: ${String(err.message || err).split('\n')[0]}`);
+      placeOptionsCursor(state);
       return;
     }
-    closeLibrary(state, page, 'Options saved.');
+    closeOptions(state, page, 'Options saved.');
     return;
   }
 
   const option = optionForLetter(chunk);
   if (!option) return;
   if (!option.choices) {
-    // An option TAWB cannot honor still takes the reader to its line, so the
-    // screen behaves the same way and only the outcome differs.
-    showOptions(state, page, { letter: option.letter });
+    // An option TAWB cannot honor still names itself, so the screen behaves the
+    // same way and only the outcome differs.
     setStatus(state, NOT_CHANGEABLE);
+    placeOptionsCursor(state);
     return;
   }
   // Choosing an option is not changing it: the value shown becomes provisional
   // and the reader decides, which is the whole of what the second layer is for.
-  lib.choosing = {
+  options.choosing = {
     letter: option.letter,
     option,
     index: choiceIndex(option, state.keys.preferences),
     originalPreferences: { ...state.keys.preferences },
   };
-  showOptions(state, page, { letter: option.letter });
+  drawOptionsScreen(state);
   setStatus(state, option.boolean ? ANY_KEY_CHANGE : CHOICE_LIST);
+  placeOptionsCursor(state);
 }
 
 function openDocumentInfo(state, page) {
@@ -5197,6 +5266,14 @@ async function main() {
 
   process.stdout.on('resize', () => {
     if (state.mode === 'keyboard') return; // the wizard owns its alternate screen
+    if (state.mode === 'options') {
+      // The options screen draws its own rows, so a resize redraws it rather
+      // than the page underneath.
+      writeTerminal('\x1b[2J');
+      drawOptionsScreen(state);
+      placeOptionsCursor(state);
+      return;
+    }
     relayout(state);
     writeTerminal('\x1b[2J');
     render(state, state.core.page, { force: true });
@@ -5227,6 +5304,7 @@ async function main() {
     // page's own keyboard — and no mode may take it.
     if (chunk === ALWAYS_QUIT) { log('input.interrupt', {}); running = false; break; }
     if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
+    else if (state.mode === 'options') result = await handleOptionsKey(chunk, state, current);
     else if (state.mode === 'library') result = await handleLibraryKey(chunk, state, current);
     else if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
     else if (state.mode === 'field-command') result = await handleFieldCommandKey(chunk, state, current);
@@ -5359,9 +5437,10 @@ module.exports = {
   navigationFault, settleAfterFault,
   handleAuthKey, authPromptText, askForPassword,
   openLibrary, openLinkList, openDocumentInfo, openOptions, openHelp, openTraceLog, openMainMenu,
+  closeOptions, drawOptionsScreen, placeOptionsCursor,
   openVisitedLinks, openSessionHistory, openAddressList,
   noteVisitedLink, notePageVisit,
-  closeLibrary, showLibrary, showOptions, handleLibraryKey, handleOptionsKey,
+  closeLibrary, showLibrary, handleLibraryKey, handleOptionsKey,
   handleChooseKey,
   askForLine, askYesNo, bookmarkPage, deleteLibraryBookmark,
   downloadCurrentLink, drawLinePrompt,

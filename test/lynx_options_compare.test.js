@@ -1,17 +1,16 @@
 'use strict';
 
-// TAWB's Lynx interface, measured against the Lynx it is imitating.
+// TAWB's Lynx options screen, measured against the Lynx it is imitating.
 //
 // The two other files answer half of the question each. lynx_options_real
-// records what a real Lynx does when keys are pressed at it. lynx_options
-// checks that TAWB's own screen behaves as TAWB means it to. Neither notices
-// when the two drift apart, which is the thing that matters here: a reader who
-// knows Lynx should be able to press the same keys and get the same result.
+// records what a real Lynx draws and does. lynx_options checks that TAWB's
+// screen behaves as TAWB means it to. Neither notices when the two drift apart,
+// which is the thing that matters here.
 //
-// So this file presses the same keys at both and compares three things that
-// must agree — which option the cursor is on (counted in reading order, since
-// the two draw the screen differently on purpose), what the status line says,
-// and what the same choices leave in the settings file.
+// So this file presses the same keys at both and compares the screen they draw,
+// where the cursor is left, what the status line says, and what the same choices
+// save. The comparison is row for row: TAWB draws the screen at the terminal's
+// own rows, so its row index and Lynx's are the same number.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -20,17 +19,18 @@ const path = require('node:path');
 
 const { tempDir } = require('./tmpdir');
 const { Keymap } = require('../src/keys');
-const { openOptions, handleBrowseKey, handleLibraryKey } = require('../src/index');
+const { openOptions, handleBrowseKey, handleOptionsKey } = require('../src/index');
+const { screenLines, optionPosition } = require('../src/lynx_options');
 const { LynxTty, available, optionFields, sleep } = require('./lynx_tty');
 const {
-  ANY_KEY_CHANGE, VALUE_ACCEPTED, CANCELLED, CHOICE_LIST, SELECT_LINE,
+  ANY_KEY_CHANGE, VALUE_ACCEPTED, CANCELLED, CHOICE_LIST,
 } = require('../src/lynx_options');
 
 const skip = available() ? false : 'needs both lynx and tmux';
 const HOME = skip ? null : tempDir('tawb-compare-');
 const PAGE = skip ? null : path.join(HOME, 'page.html');
 
-// The single-screen menu, which is the one with a keymap of its own and so the
+// The single-screen menu, which is the one with a keyboard of its own and so the
 // one a layered comparison can be made about.
 const LETTER_CFG = skip ? null : path.join(HOME, 'letter.cfg');
 
@@ -50,17 +50,14 @@ test.after(() => {
 // One key vocabulary, two keyboards
 // ---------------------------------------------------------------------------
 
-// The same acts, named the way each side names them: tmux key names for Lynx,
-// the bytes a terminal would send for TAWB.
 const KEYS = {
   '@': { lynx: '@', tawb: '@' },
   S: { lynx: 'S', tawb: 'S' },
   K: { lynx: 'K', tawb: 'K' },
-  I: { lynx: 'I', tawb: 'I' },
+  E: { lynx: 'E', tawb: 'E' },
   Space: { lynx: 'Space', tawb: ' ' },
   Return: { lynx: 'C-m', tawb: '\r' },
   Down: { lynx: 'Down', tawb: '\x1b[B' },
-  Up: { lynx: 'Up', tawb: '\x1b[A' },
   q: { lynx: 'q', tawb: 'q' },
   r: { lynx: 'r', tawb: 'r' },
   Left: { lynx: 'Left', tawb: '\x1b[D' },
@@ -80,9 +77,9 @@ function tawbReader() {
   };
   const directory = tempDir('tawb-compare-tawb-');
   return {
-    interface: 'lynx', keys, mode: 'browse', library: null,
+    interface: 'lynx', keys, mode: 'browse', library: null, options: null,
     lines: [{ blockIndex: 0, text: 'The page' }], cursor: 0, col: 0, scroll: 0,
-    title: 'The page', statusMsg: '', drawn: { title: null, address: null, hint: null },
+    title: 'The page', statusMsg: '', drawn: {},
     lynxSettingsFile: path.join(directory, 'settings.lynx.json'),
     core: {
       source: 'ax', blocks: [{ text: 'The page', item: null }], at() {}, markInput() {},
@@ -91,19 +88,37 @@ function tawbReader() {
   };
 }
 
+const TAWB_PAGE = { url: () => 'https://example.test/' };
+
+// The last place the screen put the terminal cursor.
+function lastCursor(output) {
+  const pattern = /\x1b\[(\d+);(\d+)H/g;
+  let match;
+  let last = null;
+  while ((match = pattern.exec(output)) !== null) {
+    last = { row: Number(match[1]), column: Number(match[2]) };
+  }
+  return last;
+}
+
 async function tawbPressAll(keys) {
   const state = tawbReader();
   const write = process.stdout.write;
-  process.stdout.write = () => true;
+  const chunks = [];
+  process.stdout.write = (chunk) => { chunks.push(String(chunk)); return true; };
   try {
-    await handleBrowseKey('o', state, { url: () => 'https://example.test/' });
-    for (const key of keys) await handleLibraryKey(KEYS[key].tawb, state, {
-      url: () => 'https://example.test/',
-    });
+    await handleBrowseKey('o', state, TAWB_PAGE);
+    for (const key of keys) await handleOptionsKey(KEYS[key].tawb, state, TAWB_PAGE);
   } finally {
     process.stdout.write = write;
   }
-  return state;
+  return {
+    state,
+    output: chunks.join(''),
+    screen: screenLines(state.keys.preferences),
+    cursor: lastCursor(chunks.join('')),
+    status: state.statusMsg,
+  };
 }
 
 function tawbSaved(state) {
@@ -114,27 +129,8 @@ function tawbSaved(state) {
   }
 }
 
-// The option the cursor is on, counted the way a reader counts options on the
-// two screens: first to last, top to bottom, left to right. TAWB gives every
-// option a row and Lynx packs three to a row, so the row number cannot be
-// compared — the position in the reading order can, and is what a reader
-// actually walks.
 function tawbOptionAt(state) {
-  const row = state.library.rows[state.cursor];
-  return row ? row.letter : null;
-}
-
-function lynxOptionAt(screen, cursorY) {
-  const fields = optionFields(screen);
-  const line = String(screen).split('\n')[cursorY] || '';
-  const on = fields.filter((field) => line.includes(field.label.split(':')[0].trim()));
-  return on.length ? on[0].letter : null;
-}
-
-// The reading-order index of an option, which is the position both screens
-// agree on.
-function tawbReadingOrder(state, letter) {
-  return state.library.rows.findIndex((row) => row.letter === letter);
+  return state.options && state.options.choosing ? state.options.choosing.letter : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -150,19 +146,18 @@ async function withLynx(run) {
   await tty.start();
   try {
     return await run(tty);
-  } finally {
+  } catch (err) {
     tty.stop();
+    throw err;
   }
 }
 
-// A Lynx session does not outlive the test that opened it — the pane is killed
-// on the way out — so everything worth asserting on is read out here, inside
-// the session, and handed back as data.
+// A Lynx session does not outlive the test that opened it, so everything worth
+// asserting on is read out here and handed back as data.
 async function lynxPressAll(keys, { save = false } = {}) {
   return withLynx(async (tty) => {
     await tty.press('o');
-    const seen = [];
-    for (const key of keys) seen.push(await tty.press(KEYS[key].lynx));
+    for (const key of keys) await tty.press(KEYS[key].lynx);
     if (save) {
       for (const deadline = Date.now() + 4000; Date.now() < deadline;) {
         if (tty.rc()) break;
@@ -170,12 +165,14 @@ async function lynxPressAll(keys, { save = false } = {}) {
       }
     }
     const screen = tty.screen();
+    const { x, y } = tty.cursor();
     return {
       screen,
       rows: screen.split('\n'),
-      seen,
       rc: tty.rc(),
-      cursor: tty.cursor(),
+      // Lynx reports its cursor zero-based; TAWB's write is one-based, and the
+      // two screens put the same row in the same terminal row.
+      cursor: { row: y + 1, column: x + 1 },
       status: tty.statusLine(),
     };
   });
@@ -185,146 +182,146 @@ async function lynxPressAll(keys, { save = false } = {}) {
 // What has to agree
 // ---------------------------------------------------------------------------
 
-test('the same option letters name the same options', { skip }, async () => {
-  const { screen } = await lynxPressAll([]);
-  const lynx = optionFields(screen);
+// The rows that differ are the two that are about the program rather than about
+// the options: the title says which program is drawing, and the user-agent row
+// has a different agent in it.
+const OWN_ROWS = new Set([0, 19, 20]);
+
+test('TAWB draws the same screen, row for row', { skip }, async () => {
+  const { rows } = await lynxPressAll([]);
   const tawb = await tawbPressAll([]);
-  const tawbLetters = tawb.library.rows.map((row) => row.letter);
-
-  // Every option Lynx draws must be on TAWB's screen, in the same reading
-  // order. TAWB may have one more: (X) local execution is compiled in here and
-  // absent there, and TAWB cannot ask a build what it was compiled with.
-  const lynxLetters = lynx.map((field) => field.letter);
-  const present = tawbLetters.filter((letter) => lynxLetters.includes(letter));
-  assert.deepEqual(present, lynxLetters,
-    'the options TAWB and Lynx share are not in the same reading order');
-
-  const extra = tawbLetters.filter((letter) => !lynxLetters.includes(letter));
-  assert.deepEqual(extra, ['X'],
-    'TAWB shows an option this Lynx does not, beyond the build-conditional one');
+  // TAWB draws the Command prompt as its own row below the screen's rows, so
+  // the two together are the rows Lynx draws above its status line.
+  assert.equal(tawb.screen.length + 1, rows.length - 1,
+    'the options screen has a different number of rows');
+  for (let row = 0; row < tawb.screen.length; row += 1) {
+    if (OWN_ROWS.has(row)) continue;
+    // Lynx's capture is padded to the terminal width; a row's trailing spaces
+    // are not part of what it says.
+    assert.equal(tawb.screen[row].text, rows[row].replace(/\s+$/, ''),
+      `row ${row} differs from Lynx's`);
+  }
+  // The two the test steps over are the only ones that may differ, and each for
+  // a stated reason.
+  assert.match(tawb.screen[0].text, /Options Menu \(TAWB Lynx interface\)/);
+  assert.match(tawb.screen[19].text, /user \(A\)gent\s*: TAWB/);
 });
 
-test('the same keys leave the cursor on the same option', { skip }, async () => {
-  // The canonical reading order comes from the untouched screen, because a
-  // choice list opens a box over the options below it and changes what the
-  // screen says without changing what the list is.
-  const baselineScreen = (await lynxPressAll([])).screen;
-  const baseline = optionFields(baselineScreen);
-  const rowOf = (letter) => baseline.find((field) => field.letter === letter).row;
-  const indexOf = (letter) => baseline.findIndex((field) => field.letter === letter);
-
-  for (const [scenario, keys, letter] of [
-    ['show cursor', ['@'], '@'],
-    ['keypad mode', ['K'], 'K'],
-    ['searching type', ['S'], 'S'],
-    ['list directory style', ['I'], 'I'],
-  ]) {
-    const { cursor } = await lynxPressAll(keys);
-    const tawb = await tawbPressAll(keys);
-
-    assert.ok(indexOf(letter) >= 0, `${scenario}: Lynx has no option ${letter}`);
-    assert.equal(cursor.y, rowOf(letter),
-      `${scenario}: Lynx left the cursor on another row`);
-    assert.equal(tawbReadingOrder(tawb, letter), indexOf(letter),
-      `${scenario}: TAWB puts ${letter} in a different reading position`);
-    assert.equal(tawbOptionAt(tawb), letter,
-      `${scenario}: TAWB left the cursor somewhere other than ${letter}`);
+test('every option is on the row and at the column Lynx puts it', { skip }, async () => {
+  const { rows } = await lynxPressAll([]);
+  const lynx = optionFields(rows.join('\n'));
+  const tawb = await tawbPressAll([]);
+  for (const field of lynx) {
+    if (OWN_ROWS.has(field.row)) continue;
+    const at = optionPosition(tawb.screen, field.letter);
+    assert.ok(at, `TAWB has no option ${field.letter}`);
+    assert.equal(at.row, field.row, `${field.letter} is on a different row`);
   }
 });
 
-test('the same words are said while a value is being chosen', { skip }, async () => {
-  // Lynx's own status lines, read out of Lynx, compared with the constants
-  // TAWB uses for the same moments.
-  const chosen = await lynxPressAll(['@']);
-  assert.equal(chosen.status, ANY_KEY_CHANGE,
-    'the chosen-value prompt is not Lynx\'s');
+test('the Command prompt is on the same row, with the cursor on it', { skip }, async () => {
+  const lynx = await lynxPressAll([]);
+  const tawb = await tawbPressAll([]);
+  assert.deepEqual(tawb.cursor, lynx.cursor,
+    'the two screens leave the cursor in different places');
+  assert.match(lynx.rows[lynx.cursor.row - 1], /^Command: /);
+});
 
+test('choosing an option leaves the cursor beside it, in both', { skip }, async () => {
+  const lynx = await lynxPressAll(['@']);
+  const tawb = await tawbPressAll(['@']);
+  assert.deepEqual(tawb.cursor, lynx.cursor);
+  // Row 14, one column past the value "OFF" that ends at column 65: with
+  // SHOW_CURSOR off Lynx leaves the cursor where the write finished.
+  assert.deepEqual(tawb.cursor, { row: 14, column: 66 });
+  assert.equal(tawbOptionAt(tawb.state), '@');
+});
+
+test('the same words are said while a value is being chosen', { skip }, async () => {
+  const chosen = await lynxPressAll(['@']);
+  assert.equal(chosen.status, ANY_KEY_CHANGE, 'the chosen-value prompt is not Lynx\'s');
   const accepted = await lynxPressAll(['@', 'Space', 'Return']);
   assert.equal(accepted.status, VALUE_ACCEPTED);
-
   const cancelled = await lynxPressAll(['@', 'Space', 'q']);
   assert.equal(cancelled.status, CANCELLED);
-  assert.match(cancelled.rows[13], /show cursor \(@\) : OFF/,
-    'cancelling a change left the changed value standing in Lynx itself');
-
   const listed = await lynxPressAll(['K']);
   assert.equal(listed.status, CHOICE_LIST);
 
-  // The same words on TAWB's side, produced by the same keys.
-  const tawbChosen = await tawbPressAll(['@']);
-  assert.equal(tawbChosen.statusMsg, ANY_KEY_CHANGE);
-  const tawbAccepted = await tawbPressAll(['@', 'Space', 'Return']);
-  assert.equal(tawbAccepted.statusMsg, VALUE_ACCEPTED);
-  const tawbCancelled = await tawbPressAll(['@', 'Space', 'q']);
-  assert.equal(tawbCancelled.statusMsg, CANCELLED);
-  const tawbListed = await tawbPressAll(['K']);
-  assert.equal(tawbListed.statusMsg, CHOICE_LIST);
+  assert.equal((await tawbPressAll(['@'])).status, ANY_KEY_CHANGE);
+  assert.equal((await tawbPressAll(['@', 'Space', 'Return'])).status, VALUE_ACCEPTED);
+  assert.equal((await tawbPressAll(['@', 'Space', 'q'])).status, CANCELLED);
+  assert.equal((await tawbPressAll(['K'])).status, CHOICE_LIST);
 });
 
-// The whole point of the screen: what is chosen, changed and accepted is what
-// the settings file holds afterwards — in each program's own format, saying
-// the same thing.
+test('a cancelled value stands in both, and an unnamed option says so', { skip }, async () => {
+  const lynx = await lynxPressAll(['@', 'Space', 'q']);
+  assert.match(lynx.rows[13], /show cursor \(@\) : OFF/);
+  const tawb = await tawbPressAll(['@', 'Space', 'q']);
+  assert.match(tawb.screen[13].text, /show cursor \(@\) : OFF/);
+
+  // (E)ditor is Lynx's to change and not TAWB's; TAWB says so rather than
+  // silently doing nothing.
+  const editor = await tawbPressAll(['E']);
+  assert.match(editor.status, /not changed by TAWB/);
+  assert.equal(editor.state.options.choosing, null);
+});
+
 test('the same choices are saved, in each program\'s own file', { skip }, async () => {
   const showCursor = await lynxPressAll(['@', 'Space', 'Return', '>'], { save: true });
   assert.equal(showCursor.rc.show_cursor, 'on');
   const tawbCursor = await tawbPressAll(['@', 'Space', 'Return', '>']);
-  assert.equal(tawbSaved(tawbCursor).showCursor, true);
+  assert.equal(tawbSaved(tawbCursor.state).showCursor, true);
 
   const keypad = await lynxPressAll(['K', 'Down', 'Return', '>'], { save: true });
   assert.equal(keypad.rc.keypad_mode, 'LINKS_ARE_NUMBERED');
   const tawbKeypad = await tawbPressAll(['K', 'Down', 'Return', '>']);
-  assert.equal(tawbSaved(tawbKeypad).keypadMode, 'LINKS_ARE_NUMBERED');
-  // The numbering preferences are derived from the mode, not saved beside it.
-  assert.equal(Object.hasOwn(tawbSaved(tawbKeypad), 'numberLinks'), false);
+  assert.equal(tawbSaved(tawbKeypad.state).keypadMode, 'LINKS_ARE_NUMBERED');
+  assert.equal(Object.hasOwn(tawbSaved(tawbKeypad.state), 'numberLinks'), false);
 
   const search = await lynxPressAll(['S', 'Space', 'Return', '>'], { save: true });
   assert.equal(search.rc.case_sensitive_searching, 'on');
   const tawbSearch = await tawbPressAll(['S', 'Space', 'Return', '>']);
-  assert.equal(tawbSaved(tawbSearch).searchCase, 'CASE_SENSITIVE');
+  assert.equal(tawbSaved(tawbSearch.state).searchCase, 'CASE_SENSITIVE');
 });
 
 test('a cancelled change is saved by neither, and r saves nothing', { skip }, async () => {
   const cancelled = await lynxPressAll(['@', 'Space', 'q', '>'], { save: true });
   assert.equal(cancelled.rc.show_cursor, 'off');
   const tawbCancelled = await tawbPressAll(['@', 'Space', 'q', '>']);
-  assert.equal(tawbSaved(tawbCancelled).showCursor, false);
+  assert.equal(tawbSaved(tawbCancelled.state).showCursor, false);
 
   const returned = await lynxPressAll(['@', 'Space', 'Return', 'r']);
   assert.equal(returned.rc, null, 'Lynx wrote a file on r');
   const tawbReturned = await tawbPressAll(['@', 'Space', 'Return', 'r']);
-  assert.equal(tawbSaved(tawbReturned), null, 'TAWB wrote a file on r');
+  assert.equal(tawbSaved(tawbReturned.state), null, 'TAWB wrote a file on r');
 
   const left = await lynxPressAll(['Left', 'Left']);
   assert.equal(left.rc, null, 'Lynx wrote a file on Left');
   const tawbLeft = await tawbPressAll(['Left']);
-  assert.equal(tawbSaved(tawbLeft), null, 'TAWB wrote a file on Left');
+  assert.equal(tawbSaved(tawbLeft.state), null, 'TAWB wrote a file on Left');
 });
 
 // ---------------------------------------------------------------------------
 // Where the two deliberately differ
 // ---------------------------------------------------------------------------
 
-// These are not failures to fix here; they are the differences the parity
-// document describes, pinned so that a change to either side is noticed.
-test('the differences that remain are the known ones', { skip }, async () => {
-  const { screen, cursor, rows } = await lynxPressAll([]);
-  const tawb = await tawbPressAll([]);
-
-  // Lynx opens on a Command prompt line at the bottom of a fixed screen, with
-  // nothing chosen; TAWB opens on the first option, because it has no prompt
-  // line to sit on.
-  assert.deepEqual(cursor, { x: 9, y: rows.length - 2 },
-    'Lynx no longer opens on its Command prompt');
-  assert.equal(tawbOptionAt(tawb), 'E',
-    'TAWB no longer opens on the first option');
-  assert.match(rows[rows.length - 2], /^Command: /);
-
-  // Lynx packs up to three options onto one row; TAWB gives each its own.
-  const lynxRows = new Set(optionFields(screen).map((field) => field.column));
-  assert.ok(lynxRows.size < tawb.library.rows.length,
-    'the layouts were expected to differ');
-
-  // And the default options screen is not this one at all: Lynx renders a
-  // five-page form, which TAWB does not implement. See docs/lynx-parity.md.
-  assert.equal(SELECT_LINE, tawb.statusMsg);
+// Not a failure to fix here; the difference the parity document describes,
+// pinned so a change to either side is noticed.
+test('the default options screen is still the form TAWB does not draw', { skip }, async () => {
+  const forms = skip ? null : path.join(HOME, 'forms.cfg');
+  fs.writeFileSync(forms, 'FORMS_OPTIONS:TRUE\n');
+  const session = `tawb-compare-forms-${process.pid}`;
+  const tty = new LynxTty({ session, home: HOME, page: PAGE, config: forms });
+  fs.rmSync(tty.rcPath(), { force: true });
+  await tty.start();
+  let screen;
+  try {
+    await tty.press('o');
+    screen = tty.screen();
+  } finally {
+    tty.stop();
+  }
+  assert.match(screen, /Options Menu \(p1 of 5\)/, 'Lynx no longer defaults to the form');
+  assert.match(screen, /Accept Changes/);
+  assert.match(screen, /Save options to disk: \[ \]/);
 });

@@ -234,15 +234,27 @@ A 24-row terminal gives 18 rows of content and 6 rows of chrome. The options
 rows therefore begin four rows lower than Lynx's and end three rows higher, and
 the `Command:` prompt has no row of its own to sit on.
 
+## What the single-screen menu now shares with Lynx
+
+The letter-driven Options menu is no longer TAWB's own rendering. It is
+Lynx's screen: the same rows, the same columns, the same values on the same
+lines, the `Command:` prompt on the row above the status line, and the terminal
+cursor left where Lynx leaves it — on the prompt while nothing is chosen, and
+beside the value while one is. `test/lynx_options_compare.test.js` compares it
+row for row with a real Lynx and fails if any row but the two that name the
+program and its user agent differs.
+
+Two options still share a row (`O`/`&`, `V`/`M`/`W`, `T`/`@`, `U`/`!`), and the
+cursor is placed within the row rather than on the row, because the screen is
+drawn by its own renderer rather than through the page list.
+
 ## The remaining differences
 
 | Difference | Why it exists | What matching would take |
 | --- | --- | --- |
 | Default (`FORMS_OPTIONS:TRUE`) options screen | not implemented; TAWB shows the single-screen menu instead | rendering a generated five-page form, or serving one to the browser (see below) |
-| No `Command:` prompt line | TAWB reads one key at a time with no prompt row | a dedicated prompt row, which the current chrome has no place for |
-| One option per row | TAWB's list draws one item per row | composite rows with Lynx's column constants (`COL_OPTION_VALUES 36`, `B_COLOR 44`, `C_COLOR 62`, `B_VIKEYS 5`, `B_EMACSKEYS 22`, `B_SHOW_DOTFILES 44`, `B_VERBOSE_IMAGES 50`, `C_VERBOSE_IMAGES 71`) |
+| The title and user-agent rows | TAWB names itself, and its agent is one word where Lynx's wraps | nothing; the difference is the point |
 | `(X)` local execution shown | TAWB cannot ask a build which options were compiled in | importing the option roster, which `-show_cfg` does not publish |
-| Cursor column in the chooser | TAWB's list cursor is row-based | a per-row column, or a dedicated options renderer |
 | Values for browser-owned options | TAWB has no editor, DISPLAY, mail address, user agent or charset | deliberately out of scope; the screen says so when chosen |
 
 ### A note on the forms options screen
