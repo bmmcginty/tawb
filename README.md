@@ -182,6 +182,10 @@ npm start -- --front-end=lynx https://example.com
 TAWB_FRONT_END=lynx npm start -- https://example.com
 ```
 
+`--front-end` chooses the program: `default` and `lynx` are the full-screen
+reader, and `edb` is the edbrowse bridge described above. It can also be set
+with `TAWB_FRONT_END` or in the settings file.
+
 The interface asks an installed Lynx for its effective `LYNXKEYMAP:` and
 `LYNXEDITMAP:`. This respects Lynx defaults, `LYNX_CFG`, included configuration
 files, `.lynxrc`, vi or Emacs movement, and the selected line editor. Use a
@@ -630,7 +634,13 @@ delegates current web-platform behavior to Chrome or Firefox. It will consume
 more memory and CPU, but avoids having to reproduce every browser API as sites
 adopt it. An experimental edbrowse backend is also present for users interested
 in combining the approaches; its integration details are documented in
-`README-dev.md`.
+`README-dev.md`. Run it as a front end, or through its own entry point — both
+are the same program:
+
+```sh
+npm start -- --front-end edb
+npm run edb -- --port 8080
+```
 
 ### A graphical browser with Orca or another screen reader
 

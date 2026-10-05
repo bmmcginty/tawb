@@ -123,12 +123,12 @@ function interfaceName(value) {
 // keymap profile, which is narrower — the profiles are the full-screen
 // reader's two presentations — and is what Keymap and the display metadata are
 // written against.
-const FRONT_ENDS = new Set(['default', 'lynx']);
+const FRONT_ENDS = new Set(['default', 'lynx', 'edb']);
 
 function frontEndName(value) {
   const name = String(value || 'default').toLowerCase();
   if (!FRONT_ENDS.has(name)) {
-    throw new Error(`Unknown front end ${value}; use default or lynx`);
+    throw new Error(`Unknown front end ${value}; use default, lynx or edb`);
   }
   return name;
 }

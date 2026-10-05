@@ -5,7 +5,9 @@ const { openDriver } = require('./driver');
 const { startEdbServer } = require('./edb_server');
 const { log, timed, enableLog } = require('./log');
 const { readSettings } = require('./settings');
-const { BROWSER_OPTIONS, parseCommandLine, resolveBrowserOptions } = require('./options');
+const {
+  BROWSER_OPTIONS, EDB_OPTIONS, parseCommandLine, resolveBrowserOptions, resolveEdbOptions,
+} = require('./options');
 
 // The edbrowse side of tweb: a browser, and an http origin that serves it.
 //
@@ -23,28 +25,14 @@ const { BROWSER_OPTIONS, parseCommandLine, resolveBrowserOptions } = require('./
 // edb.json for the entry-point plugin to find, and then stays out of the way
 // until you stop it.
 
-// The shared browser session options, plus the one thing only this front end
-// has: the port its http origin listens on.
-const EDB_OPTIONS = {
-  ...BROWSER_OPTIONS,
-  port: { type: 'string' },
-};
-
-function portNumber(value) {
-  if (value == null) return 0;
-  const port = Number(value);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    throw new Error(`--port needs a number between 0 and 65535, not ${value}`);
-  }
-  return port;
-}
-
 function parseArgs(argv, env = process.env) {
-  const { values, url } = parseCommandLine(argv, { options: EDB_OPTIONS, env });
+  const { values, url } = parseCommandLine(argv, {
+    options: { ...BROWSER_OPTIONS, ...EDB_OPTIONS }, env,
+  });
   return {
     ...resolveBrowserOptions(values, env),
+    ...resolveEdbOptions(values),
     url,
-    port: portNumber(values.port),
   };
 }
 

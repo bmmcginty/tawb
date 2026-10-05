@@ -52,6 +52,24 @@ function parseCommandLine(argv, { options, env = process.env } = {}) {
   return { values, url: positionals[0] || null };
 }
 
+// What only the edbrowse front end has: the port its http origin listens on.
+const EDB_OPTIONS = {
+  port: { type: 'string' },
+};
+
+function portNumber(value) {
+  if (value == null) return 0;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`--port needs a number between 0 and 65535, not ${value}`);
+  }
+  return port;
+}
+
+function resolveEdbOptions(values) {
+  return { port: portNumber(values.port) };
+}
+
 // The shared half of the resolved options, in the shape both front ends read.
 // A boolean is read with ?? rather than ||: --no-keep-browser is false, and a
 // falling through to the default would turn the opt-out off.
@@ -68,5 +86,6 @@ function resolveBrowserOptions(values, env = process.env) {
 }
 
 module.exports = {
-  BROWSER_OPTIONS, browserTimeoutMs, parseCommandLine, resolveBrowserOptions,
+  BROWSER_OPTIONS, EDB_OPTIONS, browserTimeoutMs, parseCommandLine,
+  resolveBrowserOptions, resolveEdbOptions,
 };

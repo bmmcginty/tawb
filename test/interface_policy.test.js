@@ -80,6 +80,7 @@ test('the front end is validated apart from the keymap profile', () => {
   assert.equal(frontEndName('lynx'), 'lynx');
   assert.equal(frontEndName('LYNX'), 'lynx');
   assert.equal(frontEndName(undefined), 'default');
+  assert.equal(frontEndName('edb'), 'edb');
   assert.throws(() => frontEndName('emacs'), /Unknown front end/);
 });
 

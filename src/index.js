@@ -43,7 +43,9 @@ const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 const { entryLine, matches, shortAddress, KIND_LABELS } = require('./library');
 const { resolveAddress, DEFAULT_SEARCH } = require('./address');
 const { readSettings } = require('./settings');
-const { BROWSER_OPTIONS, parseCommandLine, resolveBrowserOptions } = require('./options');
+const {
+  BROWSER_OPTIONS, EDB_OPTIONS, parseCommandLine, resolveBrowserOptions, resolveEdbOptions,
+} = require('./options');
 const { startupStatus } = require('./startup');
 const { dumpAx, resolveDumpTarget } = require('./dump');
 const { escapeNonAscii, escapedOffset } = require('./unicode_escape');
@@ -90,6 +92,7 @@ const path = require('node:path');
 // screen, not here.
 const OPTION_SPEC = {
   ...BROWSER_OPTIONS,
+  ...EDB_OPTIONS,
   keyboard: { type: 'boolean' },
   dump: { type: 'boolean' },
   'front-end': { type: 'string' },
@@ -110,6 +113,7 @@ function parseArgs(argv, env = process.env) {
   // falling through to the default on that would turn the opt-out off.
   return {
     ...resolveBrowserOptions(values, env),
+    ...resolveEdbOptions(values),
     url,
     keyboard: values.keyboard ?? false,
     dump: values.dump ?? false,
@@ -4749,6 +4753,18 @@ async function closeInitialTab({
 }
 
 async function main() {
+  // The front end is the program that runs, and only one of them does.
+  // edbrowse's bridge brings its own screen, so it is not the reader with a
+  // different keymap; running it is the end of this function.
+  if (ARGS.frontEnd === 'edb') {
+    if (ARGS.keyboard || ARGS.dump) {
+      throw new Error('--front-end edb cannot be combined with --keyboard or --dump');
+    }
+    const { runEdb } = require('./edb');
+    await runEdb(ARGS);
+    return;
+  }
+
   const logPath = ARGS.log ? enableLog({ directory: ARGS.logDir }) : null;
   if (ARGS.keyboard) {
     // Standalone there is no session screen, so the wizard takes the one the
@@ -5185,17 +5201,21 @@ if (require.main === module) {
   let openDriverRef = null;
   setCurrentDriver = (driver) => { openDriverRef = driver; };
 
-  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-    process.on(sig, () => { shutdown(0, openDriverRef).catch(() => process.exit(0)); });
-  }
+  // The edbrowse front end installs its own handlers around its server. These
+  // would exit before it had a chance to close it, so it gets them alone.
+  if (ARGS.frontEnd !== 'edb') {
+    for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+      process.on(sig, () => { shutdown(0, openDriverRef).catch(() => process.exit(0)); });
+    }
 
-  for (const event of ['uncaughtException', 'unhandledRejection']) {
-    process.on(event, (err) => {
-      restoreTerminal();
-      log('crash', { event, error: String(err && err.message ? err.message : err).slice(0, 300) });
-      console.error(err);
-      shutdown(1, openDriverRef).catch(() => process.exit(1));
-    });
+    for (const event of ['uncaughtException', 'unhandledRejection']) {
+      process.on(event, (err) => {
+        restoreTerminal();
+        log('crash', { event, error: String(err && err.message ? err.message : err).slice(0, 300) });
+        console.error(err);
+        shutdown(1, openDriverRef).catch(() => process.exit(1));
+      });
+    }
   }
 
   main().catch((err) => {

@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const { settingsPath, splitSettings, readSettings } = require('../src/settings');
 const { parseArgs, keymapForOptions } = require('../src/index');
-const { parseArgs: parseEdbArgs } = require('../src/edb');
+const { parseArgs: parseEdbArgs, runEdb } = require('../src/edb');
 const { tempDir } = require('./tmpdir');
 
 test('the settings file uses command-line option syntax', () => {
@@ -73,6 +73,9 @@ test('command-line options can override persistent browser settings', () => {
   assert.equal(parseArgs([], { TAWB_FRONT_END: 'lynx' }).frontEnd, 'lynx');
   assert.equal(parseArgs(['--front-end=lynx'], {}).frontEnd, 'lynx');
   assert.equal(parseArgs(['--front-end', 'default'], { TAWB_FRONT_END: 'lynx' }).frontEnd, 'default');
+  assert.equal(parseArgs(['--front-end=edb'], {}).frontEnd, 'edb');
+  assert.equal(parseArgs([], { TAWB_FRONT_END: 'edb' }).frontEnd, 'edb');
+  assert.equal(parseArgs(['--front-end=edb', '--port', '8080'], {}).port, 8080);
   assert.throws(() => parseArgs(['--front-end=visual'], {}), /Unknown front end/);
   const lynxArgs = parseArgs([
     '--front-end=lynx', '--lynx-executable=/opt/lynx', '--lynx-config', '/config/lynx.cfg',
@@ -119,6 +122,9 @@ test('command-line options can override persistent browser settings', () => {
   assert.equal(shared.port, 8080);
   assert.throws(() => parseEdbArgs(['--not-an-option'], {}), /Unknown option/);
   assert.throws(() => parseEdbArgs(['--port', 'not-a-port'], {}), /between 0 and 65535/);
+  // The edbrowse bridge is exported so the reader can run it as a front end
+  // rather than a second copy of itself.
+  assert.equal(typeof runEdb, 'function');
 });
 
 test('the option parser refuses what it does not know', () => {
