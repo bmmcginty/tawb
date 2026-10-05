@@ -110,6 +110,15 @@ test('command-line options can override persistent browser settings', () => {
   assert.equal(edbArgs.keepBrowser, false);
   assert.equal(edbArgs.log, true);
   assert.equal(edbArgs.logDir, '/host/logs');
+
+  // edb resolves the same shared browser options, plus its port, and refuses
+  // unknown options the same way.
+  const shared = parseEdbArgs(['--browser-timeout', '10', '--keep-browser', '--port', '8080'], {});
+  assert.equal(shared.browserTimeoutMs, 10000);
+  assert.equal(shared.keepBrowser, true);
+  assert.equal(shared.port, 8080);
+  assert.throws(() => parseEdbArgs(['--not-an-option'], {}), /Unknown option/);
+  assert.throws(() => parseEdbArgs(['--port', 'not-a-port'], {}), /between 0 and 65535/);
 });
 
 test('the option parser refuses what it does not know', () => {

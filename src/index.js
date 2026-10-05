@@ -16,8 +16,7 @@ const { layoutLines } = require('./layout');
 const {
   clipField, renderLynxRow, lynxBlocks, lynxFocusable,
 } = require('./lynx_display');
-const { normaliseEndpoint } = require('./browser');
-const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
+const { openDriver, engineNames } = require('./driver');
 const { claimedTargets, releaseTab } = require('./session');
 const { capturePlace, restorePlace, exactBlockForElement } = require('./place');
 const { armActivationFocus, focusedByActivation, cancelActivationFocus } = require('./focus');
@@ -44,13 +43,13 @@ const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 const { entryLine, matches, shortAddress, KIND_LABELS } = require('./library');
 const { resolveAddress, DEFAULT_SEARCH } = require('./address');
 const { readSettings } = require('./settings');
+const { BROWSER_OPTIONS, parseCommandLine, resolveBrowserOptions } = require('./options');
 const { startupStatus } = require('./startup');
 const { dumpAx, resolveDumpTarget } = require('./dump');
 const { escapeNonAscii, escapedOffset } = require('./unicode_escape');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { parseArgs: parseArgv } = require('node:util');
 
 // --connect <port|host:port|url> attaches to a browser that is already
 // running with --remote-debugging-port, rather than launching one.
@@ -90,14 +89,9 @@ const { parseArgs: parseArgv } = require('node:util');
 // the Lynx preferences live in their own file and are changed on the options
 // screen, not here.
 const OPTION_SPEC = {
-  connect: { type: 'string' },
-  profile: { type: 'string' },
-  browser: { type: 'string' },
-  'keep-browser': { type: 'boolean' },
+  ...BROWSER_OPTIONS,
   keyboard: { type: 'boolean' },
   dump: { type: 'boolean' },
-  log: { type: 'boolean' },
-  'log-dir': { type: 'string' },
   interface: { type: 'string' },
   'lynx-executable': { type: 'string' },
   'lynx-config': { type: 'string' },
@@ -107,41 +101,18 @@ const OPTION_SPEC = {
   'escape-unicode': { type: 'boolean' },
   'alt-screen': { type: 'boolean' },
   'close-initial-tab-on-exit': { type: 'boolean' },
-  'browser-timeout': { type: 'string' },
 };
 
-// The flag takes seconds, like TAWB_BROWSER_TIMEOUT, and is kept as
-// milliseconds because that is the unit the browser launch waits in.
-function browserTimeoutMs(value) {
-  if (value == null) return null;
-  const seconds = Number(value);
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    throw new Error(`--browser-timeout needs a positive number of seconds, not ${value}`);
-  }
-  return Math.round(seconds * 1000);
-}
-
 function parseArgs(argv, env = process.env) {
-  const { values, positionals } = parseArgv({
-    args: argv,
-    options: OPTION_SPEC,
-    allowPositionals: true,
-    allowNegative: true,
-    strict: true,
-  });
+  const { values, url } = parseCommandLine(argv, { options: OPTION_SPEC, env });
 
   // A boolean is read with ?? rather than ||: --no-alt-screen is false, and
   // falling through to the default on that would turn the opt-out off.
   return {
-    url: positionals[0] || null,
-    connect: values.connect ? normaliseEndpoint(values.connect) : null,
-    profile: values.profile || null,
-    engine: values.browser || DEFAULT_ENGINE,
-    keepBrowser: values['keep-browser'] ?? false,
+    ...resolveBrowserOptions(values, env),
+    url,
     keyboard: values.keyboard ?? false,
     dump: values.dump ?? false,
-    log: values.log ?? false,
-    logDir: values['log-dir'] || env.TAWB_LOG_DIR || null,
     interface: interfaceName(values.interface || env.TAWB_INTERFACE || 'default'),
     lynxExecutable: values['lynx-executable'] || env.TAWB_LYNX || 'lynx',
     lynxConfig: values['lynx-config'] || null,
@@ -151,7 +122,6 @@ function parseArgs(argv, env = process.env) {
     escapeUnicode: values['escape-unicode'] ?? false,
     altScreen: values['alt-screen'] ?? true,
     closeInitialTabOnExit: values['close-initial-tab-on-exit'] ?? false,
-    browserTimeoutMs: browserTimeoutMs(values['browser-timeout']),
   };
 }
 

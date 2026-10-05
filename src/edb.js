@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-const { openDriver, DEFAULT_ENGINE } = require('./driver');
-const { normaliseEndpoint } = require('./browser');
+const { openDriver } = require('./driver');
 const { startEdbServer } = require('./edb_server');
 const { log, timed, enableLog } = require('./log');
 const { readSettings } = require('./settings');
+const { BROWSER_OPTIONS, parseCommandLine, resolveBrowserOptions } = require('./options');
 
 // The edbrowse side of tweb: a browser, and an http origin that serves it.
 //
@@ -17,38 +17,40 @@ const { readSettings } = require('./settings');
 //
 //     npm run edb
 //     npm run edb -- --browser firefox
+//     tawb --front-end edb
 //
 // It prints the addresses to use, writes them to ~/.local/share/tawb/
 // edb.json for the entry-point plugin to find, and then stays out of the way
 // until you stop it.
 
-function parseArgs(argv, env = process.env) {
-  const options = {
-    engine: DEFAULT_ENGINE, connect: null, profile: null, keepBrowser: false,
-    port: 0, url: null, log: false, logDir: env.TAWB_LOG_DIR || null,
-  };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === '--browser') { options.engine = argv[i + 1] || DEFAULT_ENGINE; i += 1; }
-    else if (arg.startsWith('--browser=')) options.engine = arg.slice('--browser='.length);
-    else if (arg === '--connect') { options.connect = normaliseEndpoint(argv[i + 1] || ''); i += 1; }
-    else if (arg.startsWith('--connect=')) options.connect = normaliseEndpoint(arg.slice('--connect='.length));
-    else if (arg === '--profile') { options.profile = argv[i + 1] || null; i += 1; }
-    else if (arg.startsWith('--profile=')) options.profile = arg.slice('--profile='.length);
-    else if (arg === '--keep-browser') options.keepBrowser = true;
-    else if (arg === '--no-keep-browser') options.keepBrowser = false;
-    else if (arg === '--log') options.log = true;
-    else if (arg === '--log-dir') { options.logDir = argv[i + 1] || null; i += 1; }
-    else if (arg.startsWith('--log-dir=')) options.logDir = arg.slice('--log-dir='.length) || null;
-    else if (arg === '--port') { options.port = Number(argv[i + 1] || 0); i += 1; }
-    else if (arg.startsWith('--port=')) options.port = Number(arg.slice('--port='.length));
-    else if (!arg.startsWith('-') && !options.url) options.url = arg;
+// The shared browser session options, plus the one thing only this front end
+// has: the port its http origin listens on.
+const EDB_OPTIONS = {
+  ...BROWSER_OPTIONS,
+  port: { type: 'string' },
+};
+
+function portNumber(value) {
+  if (value == null) return 0;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`--port needs a number between 0 and 65535, not ${value}`);
   }
-  return options;
+  return port;
 }
 
-async function main() {
-  const args = parseArgs([...readSettings(), ...process.argv.slice(2)]);
+function parseArgs(argv, env = process.env) {
+  const { values, url } = parseCommandLine(argv, { options: EDB_OPTIONS, env });
+  return {
+    ...resolveBrowserOptions(values, env),
+    url,
+    port: portNumber(values.port),
+  };
+}
+
+// The bridge itself, exported so `tawb --front-end edb` runs exactly this and
+// not a second copy of it. `args` is what parseArgs resolved.
+async function runEdb(args) {
   const logPath = args.log ? enableLog({ directory: args.logDir }) : null;
   log('edb.start', { engine: args.engine, logPath });
 
@@ -62,6 +64,7 @@ async function main() {
     connect: args.connect,
     profile: args.profile,
     keepBrowser: args.keepBrowser,
+    browserTimeoutMs: args.browserTimeoutMs,
     log,
   });
 
@@ -104,6 +107,10 @@ async function main() {
   }
 }
 
+async function main() {
+  await runEdb(parseArgs([...readSettings(), ...process.argv.slice(2)]));
+}
+
 if (require.main === module) {
   main().catch((err) => {
     console.error(err);
@@ -111,4 +118,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs };
+module.exports = { parseArgs, runEdb };
