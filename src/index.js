@@ -23,7 +23,7 @@ const { claimedTargets, releaseTab } = require('./session');
 const { capturePlace, restorePlace, exactBlockForElement } = require('./place');
 const { armActivationFocus, focusedByActivation, cancelActivationFocus } = require('./focus');
 const { Keymap } = require('./keys');
-const { interfaceName } = require('./interfaces');
+const { interfaceName, contextNavigationAction, lynxHidesCursor } = require('./interfaces');
 const { readLynxConfig } = require('./lynx_config');
 const {
   readLynxSettings, writeLynxSettings, mergeLynxSettings,
@@ -258,26 +258,6 @@ function setupRawInput() {
 
 function keyIs(chunk, name, state) {
   return (state.keys || FALLBACK_KEYMAP).isKey(chunk, name);
-}
-
-const LYNX_CONTEXT_ACTIONS = {
-  activate: 'accept',
-  'history-back': 'cancel',
-  'close-popup': 'cancel',
-  'next-focusable': 'next',
-  'next-line': 'next',
-  'previous-focusable': 'previous',
-  'previous-line': 'previous',
-  'next-screen': 'page-next',
-  'previous-screen': 'page-previous',
-  top: 'first',
-  bottom: 'last',
-};
-
-function contextNavigationAction(chunk, state) {
-  if (state.interface !== 'lynx') return null;
-  const action = (state.keys || FALLBACK_KEYMAP).actionFor(chunk);
-  return LYNX_CONTEXT_ACTIONS[action] || null;
 }
 
 function actionKeyLabel(state, id, fallback = '') {
@@ -1007,18 +987,6 @@ function drawStatus(state, page) {
   const rendered = pageText(state, wanted).slice(0, termSize().cols);
   if (rendered === state.drawn.status) return;
   writeStatusRow(state, rendered);
-}
-
-// Whether the Lynx profile asks for the cursor to be hidden rather than parked
-// on the current item. Lynx's SHOW_CURSOR is documented for speech and braille
-// interfaces; with it off, Lynx leaves the cursor at the bottom-right and marks
-// the current link with reverse video instead. The Lynx interface follows the
-// imported setting so the two behave the same way.
-function lynxHidesCursor(state) {
-  if (state.interface !== 'lynx') return false;
-  const preferences = state.keys && state.keys.preferences;
-  // Absent means Lynx's own default, which is to hide it.
-  return !(preferences && preferences.showCursor);
 }
 
 // Puts the terminal cursor back where the reader is.

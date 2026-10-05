@@ -122,4 +122,43 @@ function bindingsFor(action, profile = 'default') {
   return [...(LYNX_BINDINGS[action.id] || [])];
 }
 
-module.exports = { INTERFACES, LYNX_BINDINGS, interfaceName, bindingsFor };
+// What a Lynx key means while a transient page the browser drew is open.
+// The popup, chooser and native-dialog handlers understand these semantic
+// names rather than raw keys, so an imported Lynx map drives them the same way
+// it drives the browse map. The gate is the interface, not the keymap: a Lynx
+// map on a default-interface session derives nothing from these keys.
+const LYNX_CONTEXT_ACTIONS = {
+  activate: 'accept',
+  'history-back': 'cancel',
+  'close-popup': 'cancel',
+  'next-focusable': 'next',
+  'next-line': 'next',
+  'previous-focusable': 'previous',
+  'previous-line': 'previous',
+  'next-screen': 'page-next',
+  'previous-screen': 'page-previous',
+  top: 'first',
+  bottom: 'last',
+};
+
+function contextNavigationAction(chunk, state) {
+  if (state.interface !== 'lynx') return null;
+  const action = (state.keys || { actionFor: () => null }).actionFor(chunk);
+  return LYNX_CONTEXT_ACTIONS[action] || null;
+}
+
+// Whether the Lynx profile asks for the cursor to be hidden rather than parked
+// on the current item. Lynx's SHOW_CURSOR is documented for speech and braille
+// interfaces; with it off, Lynx leaves the cursor at the bottom-right and marks
+// the current link with reverse video instead. Absent means Lynx's own default,
+// which is to hide it.
+function lynxHidesCursor(state) {
+  if (state.interface !== 'lynx') return false;
+  const preferences = state.keys && state.keys.preferences;
+  return !(preferences && preferences.showCursor);
+}
+
+module.exports = {
+  INTERFACES, LYNX_BINDINGS, LYNX_CONTEXT_ACTIONS,
+  interfaceName, bindingsFor, contextNavigationAction, lynxHidesCursor,
+};
