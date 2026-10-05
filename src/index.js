@@ -35,6 +35,10 @@ const {
 } = require('./lynx_options');
 const { noteVisitedLink, notePageVisit } = require('./lynx_session');
 const { parseLynxNumberExpression, relativeLinkNumber } = require('./lynx_number');
+const {
+  helpRows, documentInfoRows, visitedRows, sessionRows,
+  linkListRows, describeItem, traceRows,
+} = require('./lynx_pages');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
@@ -3271,12 +3275,12 @@ async function openTraceLog(state, page) {
     setStatus(state, `Could not read the trace log: ${String(err.message || err).split('\n')[0]}`);
     return;
   }
-  const lines = text.split(/\r?\n/).filter(Boolean).slice(-500);
+  const lines = traceRows(text);
   state.core.live.refreshing = true;
   state.mode = 'library';
   state.library = {
     kind: 'info', label: 'Trace Log', filter: '',
-    rows: lines.map((line) => ({ text: line, entry: null })), blocks: [], empty: false,
+    rows: lines, blocks: [], empty: false,
     place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
   };
   state.title = `Trace Log — ${file}`;
@@ -3287,45 +3291,16 @@ async function openTraceLog(state, page) {
 // than opening a fixed page, so the answer here is about the control the
 // reader is standing on and what pressing it would do.
 function describeCurrent(state, page) {
-  const item = itemUnderCursor(state);
-  if (!item) {
+  const description = describeItem(itemUnderCursor(state));
+  if (!description) {
     setStatus(state, 'Nothing here to describe — move to a link, button or form field.');
     return;
   }
-  const parts = [item.name || '(unnamed)', item.role || 'item'];
-  if (item.href) parts.push(`goes to ${item.href}`);
-  if (item.expanded === true) parts.push('expanded');
-  if (item.expanded === false) parts.push('collapsed');
-  if (item.disabled) parts.push('disabled');
-  if (item.checked != null) parts.push(item.checked ? 'checked' : 'not checked');
-  const how = FIELD_ROLES.has(item.role)
-    ? 'Typing enters it; Enter submits'
-    : 'Enter activates it';
-  setStatus(state, `${parts.join(' — ')}. ${how}.`);
+  setStatus(state, description);
 }
 
 function openHelp(state, page) {
-  const rows = [
-    'Lynx Help for TAWB',
-    '',
-    'Arrow keys: move to links and controls; Right or Enter activates.',
-    '^ / $: first / last link or form control.',
-    'Space / b: next / previous screen.',
-    'g / G: enter a new address / edit the current address.',
-    '/, n, N: search / next match / previous match.',
-    'l / A: list references / list reference addresses.',
-    'a / v: add a bookmark / view bookmarks; r removes the selected bookmark.',
-    'd: download the current link.',
-    'o: options menu.  k: keymap and keyboard bindings.',
-    'm: return to the main screen.  \\: toggle source.',
-    'x: reload without cache.  z: stop loading.',
-    'Ctrl+T: toggle tracing.  ;: view the trace log.',
-    'q: quit, after asking.  Q: quit without asking.',
-    'Left: return from this help page.',
-  ];
-  if (state.keys.unsupported && state.keys.unsupported.length) {
-    rows.push('', `Unavailable Lynx functions: ${state.keys.unsupported.join(', ')}`);
-  }
+  const rows = helpRows({ unsupported: state.keys.unsupported });
   state.core.live.refreshing = true;
   state.mode = 'library';
   state.library = {
@@ -3540,21 +3515,13 @@ function handleOptionsKey(chunk, state, page) {
 
 function openDocumentInfo(state, page) {
   const block = currentBlock(state);
-  const item = block && block.item;
-  const rows = [
-    { text: 'File that you are currently viewing', entry: null },
-    { text: `Linkname: ${state.title || '(no title)'}`, entry: null },
-    { text: `URL: ${page.url()}`, entry: null },
-    { text: `size: ${state.lines.length} lines`, entry: null },
-    { text: `mode: ${state.core.source === 'source' ? 'source' : 'normal'}`, entry: null },
-  ];
-  if (item && FOCUSABLE_ROLES.has(item.role)) {
-    rows.push(
-      { text: 'Link that you currently have selected', entry: null },
-      { text: `Linkname: ${item.name || '(unnamed)'}`, entry: null },
-    );
-    if (item.href) rows.push({ text: `URL: ${item.href}`, entry: null });
-  }
+  const rows = documentInfoRows({
+    title: state.title,
+    url: page.url(),
+    source: state.core.source,
+    size: state.lines.length,
+    item: block && block.item,
+  });
   state.core.live.refreshing = true;
   state.mode = 'library';
   state.library = {
@@ -3590,10 +3557,7 @@ function openVisitedLinks(state, page) {
     kind: 'visited',
     label: 'Links visited in this session',
     empty: 'No links followed in this session yet.',
-    rows: (state.visitedLinks || []).map((entry) => ({
-      text: `${entry.name} — ${shortAddress(entry.href)}`,
-      entry: { title: entry.name, url: entry.href },
-    })),
+    rows: visitedRows(state.visitedLinks || []),
   });
 }
 
@@ -3602,35 +3566,19 @@ function openSessionHistory(state, page) {
     kind: 'history',
     label: 'Documents held in this session',
     empty: 'Nothing read in this session yet.',
-    rows: (state.pageLog || []).map((entry, index) => ({
-      text: `${index === 0 ? 'here: ' : ''}${entry.title} — ${shortAddress(entry.url)}`,
-      entry: { title: entry.title, url: entry.url },
-    })),
+    rows: sessionRows(state.pageLog || []),
   });
 }
 
 function openLinkList(state, page, addresses = false) {
   const numbered = state.keys && state.keys.preferences
     && (state.keys.preferences.numberLinks || state.keys.preferences.numberFields);
-  const displayNumbers = new Map();
-  for (const line of state.lines) {
-    if (line.displayNumber && !displayNumbers.has(line.blockIndex)) {
-      displayNumbers.set(line.blockIndex, line.displayNumber);
-    }
-  }
-  const rows = [];
-  for (let blockIndex = 0; blockIndex < state.core.blocks.length; blockIndex += 1) {
-    const block = state.core.blocks[blockIndex];
-    const item = block && block.item;
-    if (!item || !LINK_ROLES.has(item.role) || !item.href) continue;
-    const ordinal = displayNumbers.get(blockIndex) || rows.length + 1;
-    const marker = numbered ? `[${ordinal}]` : `${rows.length + 1}.`;
-    const description = addresses ? item.href : (item.name || item.href);
-    rows.push({
-      text: `${marker} ${description}`,
-      entry: { title: description, url: item.href, block },
-    });
-  }
+  const rows = linkListRows({
+    blocks: state.core.blocks,
+    lines: state.lines,
+    addresses,
+    numbered,
+  });
   if (!rows.length) {
     setStatus(state, 'No references in this document.');
     return;
