@@ -112,6 +112,15 @@ test('command-line options can override persistent browser settings', () => {
   assert.equal(edbArgs.logDir, '/host/logs');
 });
 
+test('the option parser refuses what it does not know', () => {
+  // The hand-written loop ignored anything it did not recognise, which made a
+  // typo look like it worked. The standard parser refuses it, and a bare --
+  // still lets a positional start with a dash.
+  assert.throws(() => parseArgs(['--not-an-option'], {}), /Unknown option/);
+  assert.throws(() => parseArgs(['--browser'], {}), /argument missing/);
+  assert.equal(parseArgs(['--', '--not-an-option'], {}).url, '--not-an-option');
+});
+
 test('only the Lynx interface asks Lynx for effective bindings', () => {
   let calls = 0;
   const importLynx = (options) => {

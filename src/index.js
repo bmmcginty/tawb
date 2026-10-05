@@ -50,6 +50,7 @@ const { escapeNonAscii, escapedOffset } = require('./unicode_escape');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { parseArgs: parseArgv } = require('node:util');
 
 // --connect <port|host:port|url> attaches to a browser that is already
 // running with --remote-debugging-port, rather than launching one.
@@ -82,59 +83,65 @@ const path = require('node:path');
 const OFF = new Set(['off', 'no', 'false', '0']);
 const ON = new Set(['on', 'yes', 'true', '1']);
 
+// The option table the standard parser is given. A boolean whose negative
+// spelling is meaningful (--no-keep-browser) is declared once: allowNegative
+// turns the --no- form into the same key with the value false. Keeping every
+// option here, rather than in a hand-written loop, is also what makes an
+// unknown option an error rather than something silently ignored -- which is
+// what keeps a Lynx option from being set on the command line. See interfaces.js:
+// the Lynx preferences live in their own file and are changed on the options
+// screen, not here.
+const OPTION_SPEC = {
+  connect: { type: 'string' },
+  profile: { type: 'string' },
+  browser: { type: 'string' },
+  'keep-browser': { type: 'boolean' },
+  keyboard: { type: 'boolean' },
+  dump: { type: 'boolean' },
+  log: { type: 'boolean' },
+  'log-dir': { type: 'string' },
+  interface: { type: 'string' },
+  'lynx-executable': { type: 'string' },
+  'lynx-config': { type: 'string' },
+  search: { type: 'string' },
+  'link-address': { type: 'boolean' },
+  'short-links': { type: 'boolean' },
+  'escape-unicode': { type: 'boolean' },
+  'alt-screen': { type: 'boolean' },
+  'close-initial-tab-on-exit': { type: 'boolean' },
+};
+
 function parseArgs(argv, env = process.env) {
-  const options = {
-    url: null, connect: null, profile: null, engine: DEFAULT_ENGINE, keepBrowser: false,
-    keyboard: false, dump: false, log: false, logDir: env.TAWB_LOG_DIR || null,
-    interface: interfaceName(env.TAWB_INTERFACE || 'default'),
-    lynxExecutable: env.TAWB_LYNX || 'lynx', lynxConfig: null,
-    search: env.TAWB_SEARCH || DEFAULT_SEARCH,
-    linkAddress: !OFF.has(String(env.TAWB_LINK_ADDRESS || '').toLowerCase()),
-    shortLinks: ON.has(String(env.TAWB_SHORT_LINKS || '').toLowerCase()),
-    escapeUnicode: false, altScreen: true, closeInitialTabOnExit: false,
+  const { values, positionals } = parseArgv({
+    args: argv,
+    options: OPTION_SPEC,
+    allowPositionals: true,
+    allowNegative: true,
+    strict: true,
+  });
+
+  // A boolean is read with ?? rather than ||: --no-alt-screen is false, and
+  // falling through to the default on that would turn the opt-out off.
+  return {
+    url: positionals[0] || null,
+    connect: values.connect ? normaliseEndpoint(values.connect) : null,
+    profile: values.profile || null,
+    engine: values.browser || DEFAULT_ENGINE,
+    keepBrowser: values['keep-browser'] ?? false,
+    keyboard: values.keyboard ?? false,
+    dump: values.dump ?? false,
+    log: values.log ?? false,
+    logDir: values['log-dir'] || env.TAWB_LOG_DIR || null,
+    interface: interfaceName(values.interface || env.TAWB_INTERFACE || 'default'),
+    lynxExecutable: values['lynx-executable'] || env.TAWB_LYNX || 'lynx',
+    lynxConfig: values['lynx-config'] || null,
+    search: values.search || env.TAWB_SEARCH || DEFAULT_SEARCH,
+    linkAddress: values['link-address'] ?? !OFF.has(String(env.TAWB_LINK_ADDRESS || '').toLowerCase()),
+    shortLinks: values['short-links'] ?? ON.has(String(env.TAWB_SHORT_LINKS || '').toLowerCase()),
+    escapeUnicode: values['escape-unicode'] ?? false,
+    altScreen: values['alt-screen'] ?? true,
+    closeInitialTabOnExit: values['close-initial-tab-on-exit'] ?? false,
   };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === '--connect') { options.connect = normaliseEndpoint(argv[i + 1] || ''); i += 1; }
-    else if (arg.startsWith('--connect=')) { options.connect = normaliseEndpoint(arg.slice('--connect='.length)); }
-    else if (arg === '--profile') { options.profile = argv[i + 1] || null; i += 1; }
-    else if (arg.startsWith('--profile=')) { options.profile = arg.slice('--profile='.length); }
-    else if (arg === '--keep-browser') { options.keepBrowser = true; }
-    else if (arg === '--no-keep-browser') { options.keepBrowser = false; }
-    else if (arg === '--keyboard') { options.keyboard = true; }
-    else if (arg === '--interface') {
-      options.interface = interfaceName(argv[i + 1] || ''); i += 1;
-    } else if (arg.startsWith('--interface=')) {
-      options.interface = interfaceName(arg.slice('--interface='.length));
-    } else if (arg === '--lynx-executable') {
-      options.lynxExecutable = argv[i + 1] || 'lynx'; i += 1;
-    } else if (arg.startsWith('--lynx-executable=')) {
-      options.lynxExecutable = arg.slice('--lynx-executable='.length) || 'lynx';
-    } else if (arg === '--lynx-config') {
-      options.lynxConfig = argv[i + 1] || null; i += 1;
-    } else if (arg.startsWith('--lynx-config=')) {
-      options.lynxConfig = arg.slice('--lynx-config='.length) || null;
-    } else if (arg === '--dump') { options.dump = true; }
-    else if (arg === '--log') { options.log = true; }
-    else if (arg === '--log-dir') { options.logDir = argv[i + 1] || null; i += 1; }
-    else if (arg.startsWith('--log-dir=')) { options.logDir = arg.slice('--log-dir='.length) || null; }
-    else if (arg === '--link-address') { options.linkAddress = true; }
-    else if (arg === '--no-link-address') { options.linkAddress = false; }
-    else if (arg === '--short-links') { options.shortLinks = true; }
-    else if (arg === '--no-short-links') { options.shortLinks = false; }
-    else if (arg === '--escape-unicode') { options.escapeUnicode = true; }
-    else if (arg === '--no-escape-unicode') { options.escapeUnicode = false; }
-    else if (arg === '--alt-screen') { options.altScreen = true; }
-    else if (arg === '--no-alt-screen') { options.altScreen = false; }
-    else if (arg === '--close-initial-tab-on-exit') { options.closeInitialTabOnExit = true; }
-    else if (arg === '--no-close-initial-tab-on-exit') { options.closeInitialTabOnExit = false; }
-    else if (arg === '--browser') { options.engine = argv[i + 1] || DEFAULT_ENGINE; i += 1; }
-    else if (arg.startsWith('--browser=')) { options.engine = arg.slice('--browser='.length); }
-    else if (arg === '--search') { options.search = argv[i + 1] || DEFAULT_SEARCH; i += 1; }
-    else if (arg.startsWith('--search=')) { options.search = arg.slice('--search='.length); }
-    else if (!arg.startsWith('-') && !options.url) { options.url = arg; }
-  }
-  return options;
 }
 
 // npm runs package scripts from the package directory, but preserves the
