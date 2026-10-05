@@ -106,10 +106,13 @@ test('main menu does not reload the main screen', async () => {
   assert.equal(state.statusMsg, 'You are already at the main screen.');
 });
 
-test('help and main-menu actions remain unbound in the default interface', () => {
+test('the default interface has none of the Lynx-only actions at all', () => {
   const keys = new Keymap({ terminfo: {}, load: false });
-  assert.notEqual(keys.actionFor('h'), 'help');
-  assert.notEqual(keys.actionFor('m'), 'main-menu');
-  assert.equal(keys.byId.get('help').bindings.length, 0);
-  assert.equal(keys.byId.get('main-menu').bindings.length, 0);
+  for (const id of ['help', 'main-menu', 'options', 'document-info', 'list-links']) {
+    assert.equal(keys.byId.get(id), undefined, id);
+  }
+  const lynx = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  for (const id of ['help', 'main-menu', 'options', 'document-info', 'list-links']) {
+    assert.ok(lynx.byId.get(id), id);
+  }
 });

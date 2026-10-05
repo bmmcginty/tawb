@@ -204,6 +204,49 @@ const EDITING_ACTIONS = new Set([
   ...ACTIONS.map((action) => action.id).filter((id) => id.startsWith('edit-')),
 ]);
 
+// Which interface an action belongs to.
+//
+// Most actions exist in both: the two interfaces are the same browser behind
+// different keys, and an action with no Lynx function of its own is still
+// reachable from either map. The exceptions are the two sets below.
+//
+// A Lynx-only action is one the Lynx interface added — a Lynx function TAWB
+// had no action for, or a browser facility the compatibility work needed. The
+// default interface keeps exactly the keystrokes it had before that work, so
+// these stay out of its map and out of its keyboard screen until somebody
+// pulls one across deliberately.
+const LYNX_ONLY_ACTIONS = new Set([
+  'goto', 'location-edit', 'edit-command', 'delete-bookmark', 'list-links',
+  'list-addresses', 'document-info', 'options', 'link-number',
+  'repeat-find-forward', 'repeat-find-backward', 'reload-no-cache',
+  'interrupt', 'toggle-trace', 'trace-log', 'source-view', 'help',
+  'main-menu', 'first-focusable', 'last-focusable',
+]);
+
+// A default-only action is one the Lynx interface deliberately leaves out, so
+// that a reader who knows Lynx is never shadowed by a TAWB reading command on
+// a letter Lynx uses. Quick navigation is the bulk of it: Lynx handles moving
+// through a page with numbers and pages, and a reader who wants h/l/f/b/n/p
+// uses the ordinary interface for it.
+const DEFAULT_ONLY_ACTIONS = new Set([
+  'location-bar', 'next-character', 'previous-character', 'line-start', 'line-end',
+  'next-change', 'previous-change', 'where', 'toggle-live', 'toggle-link-address',
+  'toggle-short-links', 'find-backward', 'repeat-find', 'downloads',
+  'next-heading', 'previous-heading', 'next-link', 'previous-link',
+  'next-field', 'previous-field', 'next-button', 'previous-button',
+  'next-text', 'previous-text', 'next-paragraph', 'previous-paragraph',
+]);
+
+function profilesFor(id) {
+  if (LYNX_ONLY_ACTIONS.has(id)) return ['lynx'];
+  if (DEFAULT_ONLY_ACTIONS.has(id)) return ['default'];
+  return ['default', 'lynx'];
+}
+
+function actionsFor(profile) {
+  return ACTIONS.filter((action) => profilesFor(action.id).includes(profile));
+}
+
 // Which keyboards an action belongs to. An `edit-` action exists only while a
 // field is being edited. Every other action exists only while a page is being
 // read. The four movements named in EDITING_ACTIONS above belong to both, on
@@ -273,11 +316,15 @@ class Keymap {
     this.terminfo = terminfo || readTerminfo({ definitions: this.definitions });
     this.unsupported = [...unsupported];
     this.preferences = { ...preferences };
-    this.defaultBindings = new Map(ACTIONS.map((action) => [
+    // Only this interface's actions. A key file that names an action belonging
+    // to the other one is left alone rather than deleted, so switching
+    // interfaces never rewrites the file it is not reading.
+    const actions = actionsFor(this.profile);
+    this.defaultBindings = new Map(actions.map((action) => [
       action.id,
       Object.hasOwn(bindings, action.id) ? [...bindings[action.id]] : bindingsFor(action, this.profile),
     ]));
-    this.actions = ACTIONS.map((action) => ({
+    this.actions = actions.map((action) => ({
       ...action, bindings: [...this.defaultBindings.get(action.id)],
     }));
     this.byId = new Map(this.actions.map((action) => [action.id, action]));
@@ -474,5 +521,6 @@ class Keymap {
 
 module.exports = {
   ACTIONS, EDITING_ACTIONS, KEY_DEFINITIONS, LYNX_KEY_DEFINITIONS,
+  LYNX_ONLY_ACTIONS, DEFAULT_ONLY_ACTIONS, profilesFor, actionsFor,
   Keymap, configPath, readTerminfo, rawSpec,
 };

@@ -26,9 +26,17 @@ const WIZARD_ACTIONS = new Set([
 ]);
 
 function wizardRows(keymap) {
+  // The unsupported commands are Lynx functions with no TAWB equivalent. They
+  // are listed so the screen is a complete picture of what the reader's Lynx
+  // configuration asked for, and headed so it is plain that they are an
+  // inventory rather than something to put a key on.
+  const unsupported = keymap.unsupported || [];
   return [
     ...keymap.actions.map((action) => ({ type: 'action', action })),
-    ...(keymap.unsupported || []).map((name) => ({
+    ...(unsupported.length
+      ? [{ type: 'heading', label: 'Lynx commands with no TAWB equivalent (cannot be bound):' }]
+      : []),
+    ...unsupported.map((name) => ({
       type: 'unsupported', label: `Imported Lynx command ${name}, unsupported`,
     })),
     { type: 'reset', label: 'Restore default bindings' },
@@ -297,6 +305,8 @@ async function runKeyWizard({
           status = 'Default bindings restored. They are not saved yet.';
         } else if (row.type === 'unsupported') {
           status = `${row.label}.`;
+        } else if (row.type === 'heading') {
+          status = 'These have no TAWB equivalent, so there is nothing to bind them to.';
         } else {
           await leave();
         }

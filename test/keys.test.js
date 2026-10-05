@@ -81,6 +81,14 @@ test('imported Lynx defaults reset cleanly and expose unsupported commands', () 
   assert.equal(keys.actionFor('x'), 'quit');
   assert.equal(keys.actionFor('~'), null);
   assert.ok(wizardRows(keys).some((row) => row.type === 'unsupported' && /SHELL/.test(row.label)));
+  // The unsupported commands come after a heading, so the list reads as an
+  // inventory rather than as rows a key could be put on.
+  const rows = wizardRows(keys);
+  const heading = rows.findIndex((row) => row.type === 'heading');
+  const first = rows.findIndex((row) => row.type === 'unsupported');
+  assert.ok(heading >= 0, 'no heading before the unsupported commands');
+  assert.ok(heading < first, 'the heading does not precede the commands');
+  assert.ok(rows.slice(first).every((row) => row.type !== 'action'));
 });
 
 test('the version-one default key file still loads without conversion', () => {

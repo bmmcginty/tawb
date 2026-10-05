@@ -120,9 +120,31 @@ test('default bindings and actions are the ones TAWB always had', () => {
   assert.equal(keys.actionFor('0'), null);
   assert.equal(keys.actionFor('A'), null);
   assert.equal(keys.editingActionFor('\x16'), null, 'Ctrl+V is not a command escape');
-  assert.equal(keys.byId.get('document-info').bindings.length, 0);
-  assert.equal(keys.byId.get('link-number').bindings.length, 0);
-  assert.equal(keys.byId.get('list-links').defaults.length, 0);
+  // The actions the Lynx interface added are not in the default interface at
+  // all, so the keyboard screen cannot offer a reader a key for one.
+  for (const id of ['document-info', 'link-number', 'list-links', 'options', 'help']) {
+    assert.equal(keys.byId.get(id), undefined, id);
+  }
+});
+
+test('each keyboard screen offers only its own interface\'s actions', () => {
+  const { wizardRows } = require('../src/key_wizard');
+  const ordinary = new Keymap({ terminfo: {}, load: false });
+  const lynx = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  const offered = (keys) => new Set(wizardRows(keys)
+    .filter((row) => row.type === 'action').map((row) => row.action.id));
+
+  const ordinaryIds = offered(ordinary);
+  const lynxIds = offered(lynx);
+  for (const id of ['help', 'main-menu', 'options', 'document-info', 'list-links', 'source-view']) {
+    assert.equal(ordinaryIds.has(id), false, `${id} is offered by the default wizard`);
+    assert.equal(lynxIds.has(id), true, `${id} is missing from the Lynx wizard`);
+  }
+  // Quick navigation belongs to the ordinary reading keys. Lynx moves through
+  // a page with numbers and pages, so none of it is offered there.
+  for (const id of ['next-heading', 'next-field', 'next-paragraph', 'toggle-live', 'where']) {
+    assert.equal(lynxIds.has(id), false, `${id} leaked into the Lynx wizard`);
+  }
 });
 
 test('each profile saves to its own file', () => {
