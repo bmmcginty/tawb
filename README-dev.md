@@ -810,7 +810,7 @@ sitting there, and printing a marker would only shift every line sideways.
 
 ## The Lynx compatibility interface
 
-`--interface=lynx` is a presentation and interaction profile over the same
+`--front-end=lynx` is a presentation and interaction profile over the same
 browser, `Core`, and activation paths. It does not launch Lynx for browsing and
 does not give Lynx's network, cookie, proxy, or command settings to the page.
 The boundary is deliberate: Lynx supplies keyboard policy; Chrome or Firefox
@@ -1895,7 +1895,7 @@ interface claim to support — headings, links, buttons, every input type,
 tables, lists, media, frames, open and closed shadow roots, the supported
 ARIA roles and states, and the hidden and generated cases the views disagree
 about. Open the printed address in TAWB and cycle the four views with `\`, or
-read it with `--interface=lynx`; `npm run compare` and `npm run dump` take the
+read it with `--front-end=lynx`; `npm run compare` and `npm run dump` take the
 same address. `test/content_coverage.test.js` pins the page's shape without a
 browser, and `test/browser/content_coverage.test.js` reads it through every
 view and both interfaces on whichever engine `TWEB_TEST_BROWSER` selects.

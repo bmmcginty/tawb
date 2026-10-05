@@ -39,17 +39,17 @@ test('settings are read from disk as arguments', () => {
   assert.deepEqual(readSettings({ file }), ['--browser', 'firefox', '--keep-browser']);
 });
 
-test('the interface and its Lynx settings can be chosen in the settings file', () => {
-  const dir = tempDir('tawb-settings-interface-');
+test('the front end and its Lynx settings can be chosen in the settings file', () => {
+  const dir = tempDir('tawb-settings-front-end-');
   const file = path.join(dir, 'settings');
-  fs.writeFileSync(file, '--interface=lynx\n--lynx-executable=/opt/lynx\n');
+  fs.writeFileSync(file, '--front-end=lynx\n--lynx-executable=/opt/lynx\n');
   const args = parseArgs([...readSettings({ file })], {});
-  assert.equal(args.interface, 'lynx');
+  assert.equal(args.frontEnd, 'lynx');
   assert.equal(args.lynxExecutable, '/opt/lynx');
 
   // The command line is still read after the file, so it wins.
   assert.equal(
-    parseArgs([...readSettings({ file }), '--interface=default'], {}).interface, 'default');
+    parseArgs([...readSettings({ file }), '--front-end=default'], {}).frontEnd, 'default');
 });
 
 test('command-line options can override persistent browser settings', () => {
@@ -67,15 +67,15 @@ test('command-line options can override persistent browser settings', () => {
 
   assert.equal(parseArgs([], {}).dump, false);
   assert.equal(parseArgs(['--dump', 'message.html'], {}).dump, true);
-  assert.equal(parseArgs([], {}).interface, 'default');
+  assert.equal(parseArgs([], {}).frontEnd, 'default');
   assert.equal(parseArgs([], {}).lynxExecutable, 'lynx');
   assert.equal(parseArgs([], { TAWB_LYNX: '/opt/lynx' }).lynxExecutable, '/opt/lynx');
-  assert.equal(parseArgs([], { TAWB_INTERFACE: 'lynx' }).interface, 'lynx');
-  assert.equal(parseArgs(['--interface=lynx'], {}).interface, 'lynx');
-  assert.equal(parseArgs(['--interface', 'default'], { TAWB_INTERFACE: 'lynx' }).interface, 'default');
-  assert.throws(() => parseArgs(['--interface=visual'], {}), /Unknown interface/);
+  assert.equal(parseArgs([], { TAWB_FRONT_END: 'lynx' }).frontEnd, 'lynx');
+  assert.equal(parseArgs(['--front-end=lynx'], {}).frontEnd, 'lynx');
+  assert.equal(parseArgs(['--front-end', 'default'], { TAWB_FRONT_END: 'lynx' }).frontEnd, 'default');
+  assert.throws(() => parseArgs(['--front-end=visual'], {}), /Unknown front end/);
   const lynxArgs = parseArgs([
-    '--interface=lynx', '--lynx-executable=/opt/lynx', '--lynx-config', '/config/lynx.cfg',
+    '--front-end=lynx', '--lynx-executable=/opt/lynx', '--lynx-config', '/config/lynx.cfg',
   ], {});
   assert.equal(lynxArgs.lynxExecutable, '/opt/lynx');
   assert.equal(lynxArgs.lynxConfig, '/config/lynx.cfg');
@@ -171,12 +171,12 @@ test('only the Lynx interface asks Lynx for effective bindings', () => {
     return { bindings: { 'confirm-quit': ['x'] }, unsupported: ['SHELL'] };
   };
   const lynx = keymapForOptions({
-    interface: 'lynx', lynxExecutable: '/opt/lynx', lynxConfig: '/config/lynx.cfg',
+    frontEnd: 'lynx', lynxExecutable: '/opt/lynx', lynxConfig: '/config/lynx.cfg',
   }, { importLynx });
   assert.equal(lynx.actionFor('x'), 'confirm-quit');
   assert.deepEqual(lynx.unsupported, ['SHELL']);
 
-  const ordinary = keymapForOptions({ interface: 'default' }, { importLynx });
+  const ordinary = keymapForOptions({ frontEnd: 'default' }, { importLynx });
   assert.equal(ordinary.actionFor('q'), 'quit');
   assert.equal(calls, 1);
 });

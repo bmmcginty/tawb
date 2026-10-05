@@ -177,9 +177,9 @@ Readers coming from Lynx can select a separate first-party interface while
 keeping Chrome or Firefox as the web engine:
 
 ```sh
-npm start -- --interface=lynx https://example.com
+npm start -- --front-end=lynx https://example.com
 # Or persist it in TAWB's settings file:
-TAWB_INTERFACE=lynx npm start -- https://example.com
+TAWB_FRONT_END=lynx npm start -- https://example.com
 ```
 
 The interface asks an installed Lynx for its effective `LYNXKEYMAP:` and
@@ -188,7 +188,7 @@ files, `.lynxrc`, vi or Emacs movement, and the selected line editor. Use a
 particular binary or configuration with:
 
 ```sh
-npm start -- --interface=lynx \
+npm start -- --front-end=lynx \
   --lynx-executable=/usr/bin/lynx \
   --lynx-config="$HOME/lynx.cfg"
 ```

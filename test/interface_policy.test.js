@@ -9,7 +9,7 @@ const assert = require('node:assert');
 
 const {
   LYNX_KEY_DEFINITIONS, LYNX_ONLY_ACTIONS, DEFAULT_ONLY_ACTIONS,
-  profilesFor, keyPolicy, needsLayoutMetadata,
+  profilesFor, keyPolicy, needsLayoutMetadata, frontEndName,
 } = require('../src/interfaces');
 const { KEY_DEFINITIONS, Keymap } = require('../src/keys');
 const { wizardRows, rowText } = require('../src/key_wizard');
@@ -72,6 +72,15 @@ test('only the Lynx profile asks the extractor for layout metadata', () => {
   assert.equal(needsLayoutMetadata('default'), false);
   assert.equal(needsLayoutMetadata(undefined), false, 'the ordinary interface is the default');
   assert.throws(() => needsLayoutMetadata('emacs'), /Unknown interface/);
+});
+
+test('the front end is validated apart from the keymap profile', () => {
+  // --front-end chooses the program; the keymap profile is narrower and is
+  // what interfaceName above still guards for Keymap and the display.
+  assert.equal(frontEndName('lynx'), 'lynx');
+  assert.equal(frontEndName('LYNX'), 'lynx');
+  assert.equal(frontEndName(undefined), 'default');
+  assert.throws(() => frontEndName('emacs'), /Unknown front end/);
 });
 
 test('the wizard words come from the interface policy', () => {

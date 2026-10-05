@@ -86,7 +86,7 @@ test('saved Lynx settings override imported preferences only in Lynx mode', () =
       showCursor: true, searchCase: 'CASE_SENSITIVE', keypadMode: 'LINKS_ARE_NUMBERED',
     };
   };
-  const lynx = keymapForOptions({ interface: 'lynx' }, { importLynx, readLynx: readSettings });
+  const lynx = keymapForOptions({ frontEnd: 'lynx' }, { importLynx, readLynx: readSettings });
   assert.deepEqual(lynx.preferences, {
     showCursor: true,
     keypadMode: 'LINKS_ARE_NUMBERED',
@@ -95,7 +95,7 @@ test('saved Lynx settings override imported preferences only in Lynx mode', () =
     searchCase: 'CASE_SENSITIVE',
   });
 
-  const ordinary = keymapForOptions({ interface: 'default' }, { importLynx, readLynx: readSettings });
+  const ordinary = keymapForOptions({ frontEnd: 'default' }, { importLynx, readLynx: readSettings });
   assert.deepEqual(ordinary.preferences, {});
   assert.equal(imported, 1);
   assert.equal(settingsReads, 1, 'the default interface never opens settings.lynx.json');

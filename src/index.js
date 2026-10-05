@@ -22,7 +22,7 @@ const { capturePlace, restorePlace, exactBlockForElement } = require('./place');
 const { armActivationFocus, focusedByActivation, cancelActivationFocus } = require('./focus');
 const { Keymap } = require('./keys');
 const {
-  interfaceName, contextNavigationAction, lynxHidesCursor, needsLayoutMetadata,
+  frontEndName, contextNavigationAction, lynxHidesCursor, needsLayoutMetadata,
 } = require('./interfaces');
 const { readLynxConfig } = require('./lynx_config');
 const {
@@ -92,7 +92,7 @@ const OPTION_SPEC = {
   ...BROWSER_OPTIONS,
   keyboard: { type: 'boolean' },
   dump: { type: 'boolean' },
-  interface: { type: 'string' },
+  'front-end': { type: 'string' },
   'lynx-executable': { type: 'string' },
   'lynx-config': { type: 'string' },
   search: { type: 'string' },
@@ -113,7 +113,7 @@ function parseArgs(argv, env = process.env) {
     url,
     keyboard: values.keyboard ?? false,
     dump: values.dump ?? false,
-    interface: interfaceName(values.interface || env.TAWB_INTERFACE || 'default'),
+    frontEnd: frontEndName(values['front-end'] || env.TAWB_FRONT_END || 'default'),
     lynxExecutable: values['lynx-executable'] || env.TAWB_LYNX || 'lynx',
     lynxConfig: values['lynx-config'] || null,
     search: values.search || env.TAWB_SEARCH || DEFAULT_SEARCH,
@@ -145,7 +145,7 @@ const ARGS = parseArgs([...readSettings(), ...process.argv.slice(2)]);
 function keymapForOptions(options, {
   importLynx = readLynxConfig, readLynx = readLynxSettings,
 } = {}) {
-  if (options.interface !== 'lynx') return new Keymap({ profile: options.interface });
+  if (options.frontEnd !== 'lynx') return new Keymap({ profile: options.frontEnd });
   const imported = importLynx({
     executable: options.lynxExecutable, config: options.lynxConfig,
   });
@@ -4766,7 +4766,7 @@ async function main() {
 
   log('start', {
     url: dumpTarget || START_URL, logPath, connect: ARGS.connect || null, engine: ARGS.engine,
-    interface: ARGS.interface,
+    interface: ARGS.frontEnd,
   });
 
   // Either attach to a browser the user is already running, or start an
@@ -4857,12 +4857,12 @@ async function main() {
     driver, page, source: sources[0], sources, browserPort,
     // Only the Lynx display lays a page out with the extractor's inline-flow
     // and table-cell metadata, so only that interface asks for it.
-    layout: needsLayoutMetadata(ARGS.interface),
+    layout: needsLayoutMetadata(ARGS.frontEnd),
   });
   const state = {
     core,
     keys,
-    interface: ARGS.interface,
+    interface: ARGS.frontEnd,
     keyReader: null,
     credentials: null,
     sources,
