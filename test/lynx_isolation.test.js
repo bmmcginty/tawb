@@ -50,6 +50,32 @@ test('the default interface lays out and renders the core blocks unchanged', () 
   assert.equal(renderRow(state, 1), '{News}', 'the current link is not reverse-video');
 });
 
+test('the Lynx-only screens are not reached from a default-interface state', async () => {
+  // A Lynx keymap on a default-interface state is the adversarial case: the
+  // keys are bound, but the interface gate must still refuse the screens.
+  const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  assert.equal(keys.actionFor('h'), 'help');
+  assert.equal(keys.actionFor('o'), 'options');
+
+  const write = process.stdout.write;
+  process.stdout.write = () => true;
+  try {
+    for (const chunk of ['h', 'o', 'm']) {
+      const state = {
+        interface: 'default', mode: 'browse', cursor: 0, scroll: 0, col: 0,
+        keys, lines: [], statusMsg: '', drawn: {},
+        core: { blocks: [], at() {}, markInput() {}, live: { refreshing: false } },
+      };
+      await handleBrowseKey(chunk, state, { url: () => 'https://example.test/' });
+      assert.equal(state.mode, 'browse', `${chunk} opened a Lynx screen`);
+      assert.equal(state.library, undefined, `${chunk} opened a library`);
+      assert.equal(state.options, undefined, `${chunk} opened the options screen`);
+    }
+  } finally {
+    process.stdout.write = write;
+  }
+});
+
 test('default hints keep their own wording', () => {
   assert.match(hintText({ mode: 'browse' }), /^j\/k line/);
   assert.equal(hintText({ interface: 'default', mode: 'type' }),

@@ -184,6 +184,13 @@ function profilesFor(id) {
   return ['default', 'lynx'];
 }
 
+// Whether an interface needs the extractor's inline-flow and table-cell
+// placement metadata. Only the Lynx display lays a page out with it, so only
+// that profile asks the extractor to compute it. See Core's `layout`.
+function needsLayoutMetadata(profile) {
+  return interfaceName(profile) === 'lynx';
+}
+
 // The words an interface uses on the keyboard screen. The ordinary interface
 // has only a title; Lynx names its own functions and lists imported commands
 // it cannot bind.
@@ -254,5 +261,5 @@ module.exports = {
   INTERFACES, LYNX_BINDINGS, LYNX_CONTEXT_ACTIONS,
   LYNX_KEY_DEFINITIONS, LYNX_ONLY_ACTIONS, DEFAULT_ONLY_ACTIONS,
   interfaceName, bindingsFor, profilesFor, keyPolicy,
-  contextNavigationAction, lynxHidesCursor,
+  needsLayoutMetadata, contextNavigationAction, lynxHidesCursor,
 };

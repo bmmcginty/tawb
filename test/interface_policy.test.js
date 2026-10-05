@@ -9,7 +9,7 @@ const assert = require('node:assert');
 
 const {
   LYNX_KEY_DEFINITIONS, LYNX_ONLY_ACTIONS, DEFAULT_ONLY_ACTIONS,
-  profilesFor, keyPolicy,
+  profilesFor, keyPolicy, needsLayoutMetadata,
 } = require('../src/interfaces');
 const { KEY_DEFINITIONS, Keymap } = require('../src/keys');
 const { wizardRows, rowText } = require('../src/key_wizard');
@@ -65,6 +65,13 @@ test('a Keymap draws its vocabulary and codec from the policy', () => {
   const ordinary = new Keymap({ terminfo: {}, load: false });
   assert.equal(ordinary.namedSequences.has('F2'), false);
   assert.equal(ordinary.functionNames.size, 0);
+});
+
+test('only the Lynx profile asks the extractor for layout metadata', () => {
+  assert.equal(needsLayoutMetadata('lynx'), true);
+  assert.equal(needsLayoutMetadata('default'), false);
+  assert.equal(needsLayoutMetadata(undefined), false, 'the ordinary interface is the default');
+  assert.throws(() => needsLayoutMetadata('emacs'), /Unknown interface/);
 });
 
 test('the wizard words come from the interface policy', () => {

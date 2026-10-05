@@ -22,7 +22,9 @@ const { claimedTargets, releaseTab } = require('./session');
 const { capturePlace, restorePlace, exactBlockForElement } = require('./place');
 const { armActivationFocus, focusedByActivation, cancelActivationFocus } = require('./focus');
 const { Keymap } = require('./keys');
-const { interfaceName, contextNavigationAction, lynxHidesCursor } = require('./interfaces');
+const {
+  interfaceName, contextNavigationAction, lynxHidesCursor, needsLayoutMetadata,
+} = require('./interfaces');
 const { readLynxConfig } = require('./lynx_config');
 const {
   readLynxSettings, writeLynxSettings, mergeLynxSettings,
@@ -34,6 +36,7 @@ const {
   helpRows, documentInfoRows, visitedRows, sessionRows,
   linkListRows, describeItem, traceRows,
 } = require('./lynx_pages');
+const { createLynxActions } = require('./lynx_actions');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
@@ -167,6 +170,28 @@ let setCurrentDriver = () => {};
 
 const ESC = '\x1b';
 const FALLBACK_KEYMAP = new Keymap({ terminfo: {}, load: false });
+
+// Every Lynx decision the terminal loop makes goes through here, so the loop
+// itself no longer names the interface. The host is the handful of operations
+// those decisions need from the loop.
+const LYNX_ACTIONS = createLynxActions({
+  fallbackKeymap: FALLBACK_KEYMAP,
+  keyIs,
+  setStatus,
+  currentItem: (state) => {
+    const block = currentBlock(state);
+    return block && block.item;
+  },
+  isField: (role) => FIELD_ROLES.has(role),
+  beginTyping,
+  openLinkNumberPrompt,
+  openHelp,
+  describeCurrent,
+  openMainMenu,
+  openOptions,
+  openTraceLog,
+  toggleTrace,
+});
 
 // What Lynx means by a link when it says a movement stops only on links: the
 // things that are activated rather than typed into. A button is one of them.
@@ -495,7 +520,7 @@ function displayBlocks(state) {
   const blocks = activeBlocks(state);
   const pageBlocks = blocks === state.core.blocks;
   const transform = state.escapeUnicode && pageBlocks ? escapeNonAscii : String;
-  if (state.interface === 'lynx' && pageBlocks) {
+  if (LYNX_ACTIONS.active(state) && pageBlocks) {
     return lynxBlocks(blocks, state.keys && state.keys.preferences, transform);
   }
   if (!state.escapeUnicode || !pageBlocks) return blocks;
@@ -789,7 +814,7 @@ function drawAddress(state, page, { force = false, edit = false } = {}) {
 
 function hintText(state) {
   if (state.mode === 'address') return 'Address — Enter: go  Esc: cancel';
-  if (state.mode === 'type') return state.interface === 'lynx'
+  if (state.mode === 'type') return LYNX_ACTIONS.active(state)
     ? 'Enter text. Use arrows or Tab to move off of field.'
     : 'Typing — Tab: next control  Esc: stop  Enter: submit';
   if (state.mode === 'field-command') return 'Command: press one Lynx browse key  Esc: cancel';
@@ -818,7 +843,7 @@ function hintText(state) {
     return `${refused ? 'Password refused. ' : ''}Sign in to ${describeChallenge(challenge)}`
       + ' — Enter: next  Esc: cancel';
   }
-  if (state.interface === 'lynx') {
+  if (LYNX_ACTIONS.active(state)) {
     return popupIsOpen(state)
       ? "Popup open — q or Left closes it; Enter chooses."
       : "Commands: Use arrow keys to move, '?' for help, 'q' to quit, '<-' to go back.";
@@ -858,7 +883,7 @@ function drawList(state) {
 function renderRow(state, lineIndex) {
   if (state.mode === 'type' && lineIndex === state.cursor) return typingText(state).text;
   const text = lineText(state, lineIndex);
-  if (state.interface !== 'lynx') return text;
+  if (!LYNX_ACTIONS.active(state)) return text;
 
   const line = state.lines[lineIndex];
   const selected = state.lines[state.cursor];
@@ -872,7 +897,7 @@ function renderRow(state, lineIndex) {
 function typingText(state) {
   const item = state.typing.item;
   const value = pageText(state, state.typing.text);
-  if (state.interface === 'lynx') {
+  if (LYNX_ACTIONS.active(state)) {
     const line = state.lines ? currentLine(state) : null;
     // On a merged table row the marker lives in the span, not on the line, so
     // the field being edited keeps the number it had in the row.
@@ -1035,7 +1060,7 @@ function repaintList(state, page, before) {
 // ---------------------------------------------------------------------------
 
 function repaintLynxSelection(state, oldCursor, oldCol = 0) {
-  if (state.interface !== 'lynx') return;
+  if (!LYNX_ACTIONS.active(state)) return;
   const oldLine = state.lines[oldCursor];
   const newLine = state.lines[state.cursor];
   if (!oldLine || !newLine) return;
@@ -1096,7 +1121,7 @@ function moveSelection(state, newCursor, page, newCol = 0) {
   if (scrolledBy === 0) {
     repaintLynxSelection(state, oldCursor, oldCol);
     moveCursor(lineRow(state, target), cursorCol(state));
-  } else if (state.interface === 'lynx') {
+  } else if (LYNX_ACTIONS.active(state)) {
     // Scrolling moves the old highlight to another terminal row. Redrawing is
     // cheaper and less error-prone than trying to repair a multi-line link on
     // both sides of the scroll boundary.
@@ -1272,8 +1297,7 @@ function findText(state, needle, direction) {
   // Ordinary TAWB uses smart case. Lynx has an explicit Searching Type option,
   // so its choice is absolute and remains isolated to that interface.
   const displayedNeedle = pageText(state, needle);
-  const searchCase = state.interface === 'lynx' && state.keys && state.keys.preferences
-    ? state.keys.preferences.searchCase : null;
+  const searchCase = LYNX_ACTIONS.searchCase(state);
   const sensitive = searchCase === 'CASE_SENSITIVE'
     || (searchCase !== 'CASE_INSENSITIVE' && /[A-Z]/.test(displayedNeedle));
   const want = sensitive ? displayedNeedle : displayedNeedle.toLowerCase();
@@ -2282,12 +2306,7 @@ function popupKey({ action, chunk, contextAction, escape = false }) {
 
 async function handleBrowseKey(chunk, state, page) {
   markInput(state);
-  const preferences = state.keys && state.keys.preferences;
-  if (state.interface === 'lynx' && preferences
-      && (preferences.numberLinks || preferences.numberFields) && /^\d+$/.test(chunk)) {
-    openLinkNumberPrompt(state, chunk);
-    return;
-  }
+  if (LYNX_ACTIONS.digit(chunk, state)) return;
   const action = (state.keys || FALLBACK_KEYMAP).actionFor(chunk);
   if (popupIsOpen(state)) {
     const contextAction = contextNavigationAction(chunk, state);
@@ -2304,10 +2323,9 @@ async function handleBrowseKey(chunk, state, page) {
     return await askYesNo(state, 'Are you sure you want to quit?', { defaultYes: true })
       ? 'quit' : undefined;
   }
-  if (action === 'link-number') {
-    openLinkNumberPrompt(state);
-    return;
-  }
+  // The actions only Lynx has. link-number is handled here without the
+  // interface gate because the action exists only in the Lynx map.
+  if (await LYNX_ACTIONS.action(action, state, page)) return;
 
   // A reader inside a menu must always have a way out that also shuts it,
   // rather than one that leaves it open and them somewhere else.
@@ -2330,10 +2348,6 @@ async function handleBrowseKey(chunk, state, page) {
     focusAddressBar(state, page, item.href);
     return;
   }
-
-  if (action === 'help' && state.interface === 'lynx') return openHelp(state, page);
-  if (action === 'context-help' && state.interface === 'lynx') return describeCurrent(state, page);
-  if (action === 'main-menu' && state.interface === 'lynx') return openMainMenu(state, page);
 
   if (action === 'keyboard-wizard') {
     // The live ticker must not paint into the wizard's alternate screen. Let
@@ -2375,18 +2389,6 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'reload-page') return reloadPage(state, page);
   if (action === 'reload-no-cache') return reloadPage(state, page, { ignoreCache: true });
   if (action === 'interrupt') return interruptLoading(state, page);
-  if (action === 'toggle-trace' && state.interface === 'lynx') {
-    if (getLogPath()) {
-      const disabled = await disableLog();
-      setStatus(state, `Trace logging off — ${disabled}.`);
-    } else {
-      const enabled = enableLog({ directory: state.logDir || null });
-      log('trace.enabled', { interface: 'lynx' });
-      setStatus(state, `Trace logging on — ${enabled}.`);
-    }
-    return;
-  }
-  if (action === 'trace-log' && state.interface === 'lynx') return openTraceLog(state, page);
 
   // Cycle views, keeping the reader on the same content.
   //
@@ -2495,7 +2497,6 @@ async function handleBrowseKey(chunk, state, page) {
   if (action === 'previous-change') return jumpToChange(state, page, -1);
 
   if (action === 'document-info') return openDocumentInfo(state, page);
-  if (action === 'options' && state.interface === 'lynx') return openOptions(state, page);
 
   if (action === 'where') {
     const block = currentBlock(state);
@@ -2590,15 +2591,7 @@ async function handleBrowseKey(chunk, state, page) {
     const spec = QUICK_ACTIONS[action];
     const found = findQuickNav(state, spec.match, spec.direction, { sameLine: spec.sameLine });
     jumpTo(state, page, found, spec.label, spec.direction);
-    if (state.interface === 'lynx' && found
-        && !(state.keys && state.keys.preferences
-          && state.keys.preferences.textfieldsNeedActivation)) {
-      const block = currentBlock(state);
-      const item = block && block.item;
-      if (item && FIELD_ROLES.has(item.role) && await beginTyping(state, page, item)) {
-        setStatus(state, `Enter text. Use arrows or Tab to move off of field.`);
-      }
-    }
+    await LYNX_ACTIONS.afterQuickNav(found, state, page);
     return;
   }
 
@@ -2829,7 +2822,7 @@ function moveToPopup(state, page, item) {
   const line = lineForBlock(state, state.core.popupAt());
   if (line < 0) return;
   moveSelection(state, line, page, 0);
-  setStatus(state, `"${item.name}" opened — ${state.interface === 'lynx' ? 'q or Left' : 'q or Esc'} closes it.`);
+  setStatus(state, `"${item.name}" opened — ${LYNX_ACTIONS.popupCloseHint(state)} closes it.`);
 }
 
 // What happened after something was pressed: a different page, a part of this
@@ -3220,6 +3213,20 @@ function showLibrary(state, page, filter) {
   setStatus(state, libraryStatus(state));
 }
 
+// Lynx's TRACE_TOGGLE: TAWB's own private NDJSON trace, not Lynx's parser
+// trace. Turning it on writes to the log; turning it off says where the file
+// that was written is.
+async function toggleTrace(state) {
+  if (getLogPath()) {
+    const disabled = await disableLog();
+    setStatus(state, `Trace logging off — ${disabled}.`);
+  } else {
+    const enabled = enableLog({ directory: state.logDir || null });
+    log('trace.enabled', { interface: 'lynx' });
+    setStatus(state, `Trace logging on — ${enabled}.`);
+  }
+}
+
 async function openTraceLog(state, page) {
   const file = getLogPath();
   if (!file) { setStatus(state, 'Trace logging is off — press Ctrl+T to turn it on.'); return; }
@@ -3506,8 +3513,7 @@ async function handleLibraryKey(chunk, state, page) {
   markInput(state);
   const lib = state.library;
   if (!lib) { state.mode = 'browse'; return; }
-  const lynxAction = state.interface === 'lynx'
-    ? (state.keys || FALLBACK_KEYMAP).actionFor(chunk) : null;
+  const lynxAction = LYNX_ACTIONS.libraryAction(state, chunk);
   const contextAction = contextNavigationAction(chunk, state);
 
   if (lib.kind === 'options') return handleOptionsKey(chunk, state, page);
@@ -3587,7 +3593,7 @@ async function handleLibraryKey(chunk, state, page) {
   // A Lynx internal page uses the Lynx browse map. Printable commands must
   // not unexpectedly become TAWB's list filter; commands without an internal
   // page equivalent simply do nothing here.
-  if (state.interface === 'lynx') return;
+  if (LYNX_ACTIONS.libraryKeepsBrowseMap(state)) return;
 
   if (keyIs(chunk, 'Backspace', state)) {
     if (!lib.filter) return;
@@ -4260,8 +4266,7 @@ async function handleTypeKey(chunk, state, page) {
     return;
   }
 
-  const lynxArrow = state.interface === 'lynx'
-    && (keyIs(chunk, 'ArrowUp', state) || keyIs(chunk, 'ArrowDown', state));
+  const lynxArrow = LYNX_ACTIONS.tabArrow(state, chunk);
   if (keyIs(chunk, 'Tab', state) || keyIs(chunk, 'Shift+Tab', state) || lynxArrow) {
     const direction = keyIs(chunk, 'Shift+Tab', state) || keyIs(chunk, 'ArrowUp', state) ? -1 : 1;
     const screen = screenBefore(state);
@@ -4286,16 +4291,13 @@ async function handleTypeKey(chunk, state, page) {
     // Tab between editable fields stays in typing mode. Buttons, links and
     // select-only widgets stay in forms mode: they are not activated merely
     // by receiving focus, but Tab can continue through the form from them.
-    const needsActivation = state.interface === 'lynx'
-      && state.keys && state.keys.preferences && state.keys.preferences.textfieldsNeedActivation;
+    const needsActivation = LYNX_ACTIONS.tabNeedsActivation(state);
     if (!needsActivation && item && FIELD_ROLES.has(item.role)
         && await beginTyping(state, page, item)) {
-      setStatus(state, state.interface === 'lynx'
-        ? 'Enter text. Use arrows or Tab to move off of field.'
-        : `Typing into "${name}" — Tab: next control, Esc: stop, Enter: submit.`);
+      setStatus(state, LYNX_ACTIONS.tabTypingStatus(state, name));
       return;
     }
-    state.mode = state.interface === 'lynx' ? 'browse' : 'forms';
+    state.mode = LYNX_ACTIONS.tabLandedMode(state);
     drawHint(state);
     setStatus(state, `${direction > 0 ? 'Next' : 'Previous'} control: ${name}.`);
     return;
@@ -4327,7 +4329,7 @@ async function handleTypeKey(chunk, state, page) {
   }
 
   const keymap = state.keys || FALLBACK_KEYMAP;
-  if (state.interface === 'lynx' && keymap.editingActionFor(chunk) === 'edit-command') {
+  if (LYNX_ACTIONS.typeCommand(state, chunk)) {
     state.mode = 'field-command';
     drawHint(state);
     setStatus(state, 'Command:');
@@ -4788,7 +4790,7 @@ async function main() {
     driver, page, source: sources[0], sources, browserPort,
     // Only the Lynx display lays a page out with the extractor's inline-flow
     // and table-cell metadata, so only that interface asks for it.
-    layout: ARGS.interface === 'lynx',
+    layout: needsLayoutMetadata(ARGS.interface),
   });
   const state = {
     core,
