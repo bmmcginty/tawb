@@ -405,6 +405,10 @@ tawb --dump https://example.com
 tawb --front-end=lynx --dump https://example.com
 ```
 
+A Lynx dump uses the preferences TAWB has already saved, but never runs Lynx
+or writes configuration; the import is done by an interactive or `--keyboard`
+Lynx run.
+
 `--dump` and `--keyboard` are flags on a reader front end, not front ends of
 their own, and cannot be combined with each other. The `edb` front end has
 neither a keymap nor a reading buffer, so it refuses both.

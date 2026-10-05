@@ -27,6 +27,15 @@ function keysPath() {
   return configPath(process.env, os.homedir(), 'lynx');
 }
 
+// The preferences a run needs without running Lynx or writing anything: what
+// TAWB already holds, over the built-in defaults. The non-interactive Lynx
+// dump uses this, so a text filter never imports a configuration or rewrites
+// one. A machine that has only ever dumped a page therefore gets the Lynx
+// defaults until an interactive run does the one import.
+function lynxPreferences({ readLynx = readLynxSettings } = {}) {
+  return mergeLynxSettings(DEFAULT_PREFERENCES, readLynx());
+}
+
 function lynxKeymapFor(options, {
   importLynx = readLynxConfig, readLynx = readLynxSettings,
   writeLynx = writeLynxSettings, keysFile = null, hasKeys = fs.existsSync,
@@ -70,4 +79,4 @@ function lynxKeymapFor(options, {
   return keymap;
 }
 
-module.exports = { lynxKeymapFor };
+module.exports = { lynxKeymapFor, lynxPreferences };

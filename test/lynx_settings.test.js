@@ -10,6 +10,7 @@ const {
   lynxSettingsPath, readLynxSettings, writeLynxSettings,
 } = require('../src/lynx_settings');
 const { keymapForOptions } = require('../src/index');
+const { lynxPreferences } = require('../src/lynx_state');
 
 test('Lynx settings have their own XDG file and a missing file is optional', () => {
   const home = tempDir('tawb-lynx-settings-home-');
@@ -157,6 +158,18 @@ test('--lynx-reimport overwrites our copy with the Lynx side', () => {
   const saved = JSON.parse(fs.readFileSync(keysFile, 'utf8'));
   assert.ok(Object.values(saved.functions).some((bindings) => bindings.includes('x')),
     'the reimported map was not written');
+});
+
+test('the dump reads preferences without importing or writing', () => {
+  // lynxPreferences has no import or write seam at all, which is the point:
+  // a text filter must not run Lynx or rewrite configuration.
+  const preferences = lynxPreferences({
+    readLynx: () => ({ showCursor: true, keypadMode: 'LINKS_ARE_NUMBERED' }),
+  });
+  assert.equal(preferences.showCursor, true);
+  assert.equal(preferences.numberLinks, true, 'the saved keypad mode did not derive numbering');
+  assert.equal(preferences.numberFields, false);
+  assert.equal(preferences.searchCase, 'CASE_INSENSITIVE', 'the Lynx default was not the base');
 });
 
 test('a Lynx import that found nothing writes no files', () => {

@@ -25,7 +25,7 @@ const {
   contextNavigationAction, lynxHidesCursor, needsLayoutMetadata,
 } = require('./interfaces');
 const { writeLynxSettings } = require('./lynx_settings');
-const { lynxKeymapFor } = require('./lynx_state');
+const { lynxKeymapFor, lynxPreferences } = require('./lynx_state');
 const optionsScreen = require('./lynx_options_screen');
 const { noteVisitedLink, notePageVisit } = require('./lynx_session');
 const { parseLynxNumberExpression, relativeLinkNumber } = require('./lynx_number');
@@ -4883,8 +4883,9 @@ async function main() {
         target: dumpTarget,
         frontEnd: ARGS.frontEnd,
         // The Lynx presentation needs the same preferences the reader would
-        // have: which links and fields are numbered, and on which side.
-        preferences: ARGS.frontEnd === 'lynx' ? keymapForOptions(ARGS).preferences : {},
+        // have: which links and fields are numbered, and on which side. Read
+        // rather than imported, so a dump never runs Lynx or writes config.
+        preferences: ARGS.frontEnd === 'lynx' ? lynxPreferences() : {},
         escapeUnicode: ARGS.escapeUnicode,
         width: process.stdout.columns || 80,
       });
