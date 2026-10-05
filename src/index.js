@@ -44,7 +44,8 @@ const { entryLine, matches, shortAddress, KIND_LABELS } = require('./library');
 const { resolveAddress, DEFAULT_SEARCH } = require('./address');
 const { readSettings } = require('./settings');
 const {
-  BROWSER_OPTIONS, EDB_OPTIONS, parseCommandLine, resolveBrowserOptions, resolveEdbOptions,
+  BROWSER_OPTIONS, EDB_OPTIONS, HELP_OPTION, parseCommandLine,
+  resolveBrowserOptions, resolveEdbOptions,
 } = require('./options');
 const { startupStatus } = require('./startup');
 const { dumpAx, resolveDumpTarget } = require('./dump');
@@ -93,6 +94,7 @@ const path = require('node:path');
 const OPTION_SPEC = {
   ...BROWSER_OPTIONS,
   ...EDB_OPTIONS,
+  ...HELP_OPTION,
   keyboard: { type: 'boolean' },
   dump: { type: 'boolean' },
   'front-end': { type: 'string' },
@@ -126,6 +128,7 @@ function parseArgs(argv, env = process.env) {
     escapeUnicode: values['escape-unicode'] ?? false,
     altScreen: values['alt-screen'] ?? true,
     closeInitialTabOnExit: values['close-initial-tab-on-exit'] ?? false,
+    help: values.help ?? false,
   };
 }
 
@@ -4752,7 +4755,58 @@ async function closeInitialTab({
   }
 }
 
+const USAGE = [
+  'Usage: tawb [options] [address]',
+  '',
+  'Read a page in a full-screen terminal interface.',
+  '',
+  'Front end:',
+  '  --front-end <name>            default, lynx or edb (TAWB_FRONT_END)',
+  '',
+  'Reader:',
+  '  --keyboard                    open the key binding wizard and exit',
+  '  --dump                        write the page as plain text and exit',
+  '  --alt-screen                  use the alternate screen (default)',
+  '  --no-alt-screen               keep the session on the ordinary screen',
+  '  --escape-unicode              write non-ASCII text as Unicode escapes',
+  '  --link-address                announce the link under the cursor (default)',
+  '  --no-link-address             start with the status row quiet',
+  '  --short-links                 shorten same-site links to their path',
+  '  --close-initial-tab-on-exit   close the tab this session opened on exit',
+  '  --search <url>                search template with %s (TAWB_SEARCH)',
+  '',
+  'Lynx front end:',
+  '  --lynx-executable <path>      the Lynx to read key bindings from (TAWB_LYNX)',
+  '  --lynx-config <path>          a lynx.cfg to read as well',
+  '',
+  'Browser:',
+  '  --browser <name>              chromium or firefox',
+  '  --connect <port|url>          attach to a browser already running',
+  '  --profile <dir>               the browser profile to use',
+  '  --keep-browser                leave the browser running after quitting',
+  '  --no-keep-browser             close a browser the settings would keep',
+  '  --browser-timeout <seconds>   how long to wait for the browser to start',
+  '',
+  'edb front end:',
+  '  --port <number>               the port the edbrowse bridge listens on',
+  '',
+  'Logging:',
+  '  --log                         write a diagnostic log',
+  '  --log-dir <dir>               where to write it (TAWB_LOG_DIR)',
+  '',
+  'Other:',
+  '  -h, --help                    show this help and exit',
+  '',
+  'Options may also be placed in the settings file; see README.md.',
+  '',
+].join('\n');
+
 async function main() {
+  if (ARGS.help) {
+    process.stdout.write(USAGE);
+    return;
+  }
+
   // The front end is the program that runs, and only one of them does.
   // edbrowse's bridge brings its own screen, so it is not the reader with a
   // different keymap; running it is the end of this function.

@@ -408,6 +408,9 @@ be fetched, just as they are during an interactive TAWB session.
 
 ## Common options
 
+`tawb --help` prints the options and exits. The same options can be given on
+the command line, in the settings file, or, where noted, in the environment.
+
 ### Defaults for every run
 
 Put command-line options in `$XDG_CONFIG_HOME/tawb/settings`, or

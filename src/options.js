@@ -52,6 +52,13 @@ function parseCommandLine(argv, { options, env = process.env } = {}) {
   return { values, url: positionals[0] || null };
 }
 
+// Every entry point takes --help. The text belongs to the entry point, since
+// what the options mean depends on which program is running, so this is only
+// the option the parser has to accept.
+const HELP_OPTION = {
+  help: { type: 'boolean', short: 'h' },
+};
+
 // What only the edbrowse front end has: the port its http origin listens on.
 const EDB_OPTIONS = {
   port: { type: 'string' },
@@ -86,6 +93,6 @@ function resolveBrowserOptions(values, env = process.env) {
 }
 
 module.exports = {
-  BROWSER_OPTIONS, EDB_OPTIONS, browserTimeoutMs, parseCommandLine,
+  BROWSER_OPTIONS, EDB_OPTIONS, HELP_OPTION, browserTimeoutMs, parseCommandLine,
   resolveBrowserOptions, resolveEdbOptions,
 };

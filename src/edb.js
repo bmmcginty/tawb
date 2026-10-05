@@ -6,7 +6,8 @@ const { startEdbServer } = require('./edb_server');
 const { log, timed, enableLog } = require('./log');
 const { readSettings } = require('./settings');
 const {
-  BROWSER_OPTIONS, EDB_OPTIONS, parseCommandLine, resolveBrowserOptions, resolveEdbOptions,
+  BROWSER_OPTIONS, EDB_OPTIONS, HELP_OPTION, parseCommandLine,
+  resolveBrowserOptions, resolveEdbOptions,
 } = require('./options');
 
 // The edbrowse side of tweb: a browser, and an http origin that serves it.
@@ -27,12 +28,13 @@ const {
 
 function parseArgs(argv, env = process.env) {
   const { values, url } = parseCommandLine(argv, {
-    options: { ...BROWSER_OPTIONS, ...EDB_OPTIONS }, env,
+    options: { ...BROWSER_OPTIONS, ...EDB_OPTIONS, ...HELP_OPTION }, env,
   });
   return {
     ...resolveBrowserOptions(values, env),
     ...resolveEdbOptions(values),
     url,
+    help: values.help ?? false,
   };
 }
 
@@ -95,8 +97,30 @@ async function runEdb(args) {
   }
 }
 
+const USAGE = [
+  'Usage: edb [options] [address]',
+  '',
+  'Run the edbrowse bridge: a browser and an http origin that serves it.',
+  '',
+  '  --browser <name>              chromium or firefox',
+  '  --connect <port|url>          attach to a browser already running',
+  '  --profile <dir>               the browser profile to use',
+  '  --keep-browser                leave the browser running after quitting',
+  '  --browser-timeout <seconds>   how long to wait for the browser to start',
+  '  --port <number>               the port to listen on',
+  '  --log                         write a diagnostic log',
+  '  --log-dir <dir>               where to write it (TAWB_LOG_DIR)',
+  '  -h, --help                    show this help and exit',
+  '',
+].join('\n');
+
 async function main() {
-  await runEdb(parseArgs([...readSettings(), ...process.argv.slice(2)]));
+  const args = parseArgs([...readSettings(), ...process.argv.slice(2)]);
+  if (args.help) {
+    process.stdout.write(USAGE);
+    return;
+  }
+  await runEdb(args);
 }
 
 if (require.main === module) {

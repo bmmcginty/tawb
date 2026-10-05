@@ -125,6 +125,12 @@ test('command-line options can override persistent browser settings', () => {
   // The edbrowse bridge is exported so the reader can run it as a front end
   // rather than a second copy of itself.
   assert.equal(typeof runEdb, 'function');
+
+  // --help is accepted by every entry point, in both spellings.
+  assert.equal(parseArgs([], {}).help, false);
+  assert.equal(parseArgs(['--help'], {}).help, true);
+  assert.equal(parseArgs(['-h'], {}).help, true);
+  assert.equal(parseEdbArgs(['--help'], {}).help, true);
 });
 
 test('the option parser refuses what it does not know', () => {
