@@ -189,7 +189,9 @@ class LynxTty {
 // "(E)ditor" yields `E` and "show cursor (@)" yields `@`.
 function optionFields(screen) {
   const fields = [];
-  for (const line of String(screen).split('\n')) {
+  const lines = String(screen).split('\n');
+  for (let row = 0; row < lines.length; row += 1) {
+    const line = lines[row];
     let at = 0;
     for (const segment of line.split(':')) {
       const match = /\(([!@&]|\^?[A-Za-z])\)/.exec(segment);
@@ -197,6 +199,7 @@ function optionFields(screen) {
         fields.push({
           letter: match[1],
           label: segment.trim(),
+          row,
           column: at + segment.indexOf(match[0]),
         });
       }

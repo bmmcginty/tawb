@@ -249,13 +249,17 @@ that has it on is imported the same way.
 
 Press `o` for the classic Lynx options menu. Its capital-letter commands change
 the settings TAWB can safely implement: `S` changes search case, `@` changes
-cursor visibility, and `K` changes link and field numbering. `r` returns with
-the choices in effect for this session, Left or Escape cancels them, and `>`
+cursor visibility, and `K` changes link and field numbering. Choosing an option
+only offers the change — any key moves the value and RETURN keeps it, exactly
+as Lynx does — and `q`, Escape or Left leaves it alone. `r` returns with the
+choices in effect for this session, Left or Escape cancels them, and `>`
 saves them to `$XDG_CONFIG_HOME/tawb/settings.lynx.json` (or
 `~/.config/tawb/settings.lynx.json`). The file keeps every value below its
 `lynx` key and is never read by the default interface. Browser-owned options
 remain visible but cannot be changed, so an unavailable Lynx facility is named
-rather than silently becoming a different browser setting.
+rather than silently becoming a different browser setting. What is compared
+against a real Lynx, and where the two still differ, is written down in
+`docs/lynx-parity.md`.
 
 Lynx-specific key overrides are saved to `keys-lynx.json`; ordinary TAWB bindings
 remain in the existing version-1 `keys.json`. Enabling the interface therefore

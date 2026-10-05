@@ -862,7 +862,17 @@ the Lynx interface and overlays it on imported Lynx preferences. Writes use a
 0600 temporary file and rename. `src/lynx_options.js` describes the classic
 letter-driven options screen. It changes only options TAWB implements, while
 browser-owned entries remain visible and read-only rather than being migrated
-to global browser settings.
+to global browser settings. Choosing an option enters a second keyboard layer —
+`state.library.choosing` — which mirrors Lynx's `boolean_choice`: any key moves
+a boolean, the arrows walk a list, RETURN accepts and `q` or Ctrl-C restores
+the old value.
+
+`test/lynx_tty.js` drives a real Lynx in a tmux pane;
+`test/lynx_options_real.test.js` records what it does, and
+`test/lynx_options_compare.test.js` presses the same keys at both programs and
+compares the reading-order position, the words and the saved settings.
+`docs/lynx-parity.md` is the map of the two keymap stacks, the cursor rules,
+the screen layouts, and the differences that remain.
 
 Number entry snapshots references to the numbered block objects rather than
 indexes. `^` and `$` scan display spans as well as ordinary lines, so the first
