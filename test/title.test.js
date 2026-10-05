@@ -65,6 +65,21 @@ test('the address is on the row below the title, and the hint below that', () =>
   assert.match(rows[1].text, /example\.com/, 'the address row lost the URL');
 });
 
+test('a forced paint rewrites the address row even when its text is unchanged', () => {
+  const state = { ...titleState('Example Domain'), core: { source: 'ax' }, mode: 'browse' };
+  const page = { url: () => 'https://example.com/' };
+
+  const first = capture(() => drawAddress(state, page, { force: true }));
+  assert.equal(first.rows.length, 1, 'the address row was not written');
+  assert.equal(first.rows[0].row, 2, 'the address was written on the wrong row');
+
+  // Another screen the wizard shares may have overwritten the row while the
+  // cache still holds the old text; a forced paint has to put it back.
+  const second = capture(() => drawAddress(state, page, { force: true }));
+  assert.equal(second.rows.length, 1, 'a forced paint skipped an unchanged address row');
+  assert.equal(second.rows[0].row, 2, 'the rewrite landed on the wrong row');
+});
+
 test('typing in the address bar rewrites its suffix like nano', () => {
   const state = {
     ...titleState('Example Domain'),

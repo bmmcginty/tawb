@@ -476,6 +476,22 @@ npm start -- --short-links
 export TAWB_SHORT_LINKS=on
 ```
 
+### The alternate screen
+
+By default the interactive interface uses the terminal's alternate screen, so
+the screen you came from — a shell, another full-screen program, or the editor
+you opened TAWB from — is restored exactly as it was when TAWB exits. Terminal
+scrollback is not used while TAWB runs, because every page is re-readable
+inside TAWB itself. To keep the session on the ordinary screen instead:
+
+```sh
+npm start -- --no-alt-screen
+```
+
+Put `--no-alt-screen` in the settings file to make it the default.
+`--dump` never uses the alternate screen, since it writes no terminal controls
+at all.
+
 ### Unicode on a physical Linux console
 
 Speakup can receive many Unicode characters as they are first written, but

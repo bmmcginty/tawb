@@ -59,7 +59,7 @@ function rowText(row, keymap) {
 
 async function runKeyWizard({
   input = process.stdin, output = process.stdout, keymap = new Keymap(), KeyReaderClass = KeyReader,
-  reader: suppliedReader = null,
+  reader: suppliedReader = null, altScreen = true,
 } = {}) {
   const ownsReader = !suppliedReader;
   const wasRaw = !!input.isRaw;
@@ -79,16 +79,17 @@ async function runKeyWizard({
   const leaveScreen = () => {
     if (leftScreen) return;
     leftScreen = true;
-    output.write('\x1b[?1049l');
+    if (altScreen) output.write('\x1b[?1049l');
   };
   const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
   // Run before the reader's shutdown handler, which may exit synchronously
   // when the standalone wizard has no browser to close.
   for (const signal of signals) process.prependListener(signal, leaveScreen);
-  // Keep the page underneath exactly as it was. Clearing the ordinary screen
-  // left a standalone wizard at an empty terminal and erased the browser UI
-  // when the wizard was opened from it.
-  output.write('\x1b[?1049h');
+  // The alternate screen is taken only when this wizard owns the screen. Left
+  // standalone it saves the shell exactly as it was; opened from the browser
+  // it draws on whichever screen that session is already using, so there is
+  // nothing to save or restore around it.
+  if (altScreen) output.write('\x1b[?1049h');
   output.write('\x1b[r');
 
   // The wizard is driven by the same bindings as the rest of the browser, so

@@ -67,6 +67,10 @@ const path = require('node:path');
 // and this is meant to read like one.
 // --escape-unicode represents non-ASCII page text with ASCII-only Unicode
 // escapes, for Speakup review on a physical Linux console.
+// The alternate screen is the default because it hands the terminal back,
+// scrollback and all, exactly as it was when the session ends — which is what
+// a parent full-screen program or a mailcap viewer wants. --no-alt-screen
+// keeps the session on the ordinary screen instead.
 // Options in the settings file are read first, so an explicit command-line
 // option can replace them. --no-keep-browser provides that escape hatch for
 // the otherwise one-way --keep-browser switch.
@@ -82,7 +86,7 @@ function parseArgs(argv, env = process.env) {
     search: env.TAWB_SEARCH || DEFAULT_SEARCH,
     linkAddress: !OFF.has(String(env.TAWB_LINK_ADDRESS || '').toLowerCase()),
     shortLinks: ON.has(String(env.TAWB_SHORT_LINKS || '').toLowerCase()),
-    escapeUnicode: false,
+    escapeUnicode: false, altScreen: true,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -115,6 +119,8 @@ function parseArgs(argv, env = process.env) {
     else if (arg === '--no-short-links') { options.shortLinks = false; }
     else if (arg === '--escape-unicode') { options.escapeUnicode = true; }
     else if (arg === '--no-escape-unicode') { options.escapeUnicode = false; }
+    else if (arg === '--alt-screen') { options.altScreen = true; }
+    else if (arg === '--no-alt-screen') { options.altScreen = false; }
     else if (arg === '--browser') { options.engine = argv[i + 1] || DEFAULT_ENGINE; i += 1; }
     else if (arg.startsWith('--browser=')) { options.engine = arg.slice('--browser='.length); }
     else if (arg === '--search') { options.search = argv[i + 1] || DEFAULT_SEARCH; i += 1; }
@@ -271,6 +277,9 @@ function contentWidth() {
 }
 
 let terminalOwned = false;
+// Whether this session is drawing on the terminal's alternate screen. It is
+// entered once and left once; see enterAlternateScreen() and --no-alt-screen.
+let alternateScreen = false;
 
 function setupRawInput() {
   const stdin = process.stdin;
@@ -787,7 +796,11 @@ function drawAddress(state, page, { force = false, edit = false } = {}) {
   const caretCol = label.length + caretOffset + 1;
   const previousCaretCol = state.drawn.addressCaretCol;
   let cursorPlaced = false;
-  if (rendered !== previous) {
+  // force means the row is written however it reads: a full repaint cannot
+  // assume the row still says what was last drawn on it, since another screen
+  // (the keyboard wizard now shares this one) may have written over it.
+  const rewrite = rendered !== previous || (force && !(state.mode === 'address' && edit));
+  if (rewrite) {
     state.drawn.address = rendered;
     if (!force && state.mode === 'address' && previous != null) {
       cursorPlaced = patchEditedLine(ADDRESS_ROW, previous, rendered, {
@@ -2350,10 +2363,9 @@ async function handleBrowseKey(chunk, state, page) {
   }
 
   if (action === 'keyboard-wizard') {
-    // The live ticker must not paint into the wizard's alternate screen. Let
-    // an in-flight refresh finish before switching screens, then hold later
-    // snapshots and text patches until the ordinary browser screen returns.
-    const beforeSize = termSize();
+    // The live ticker must not paint while the wizard has the screen. Let an
+    // in-flight refresh finish first, then hold later snapshots and text
+    // patches until the page view returns.
     state.mode = 'keyboard';
     while (state.core.live.refreshing) {
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -2361,16 +2373,20 @@ async function handleBrowseKey(chunk, state, page) {
     state.core.live.refreshing = true;
     let saved;
     try {
-      saved = await runKeyWizard({ keymap: state.keys, reader: state.keyReader });
+      // The wizard uses this session's screen rather than taking one of its
+      // own, so whatever it draws has to be replaced by the page afterwards.
+      saved = await runKeyWizard({ keymap: state.keys, reader: state.keyReader, altScreen: false });
     } finally {
       state.core.live.refreshing = false;
       state.mode = 'browse';
     }
-    const afterSize = termSize();
-    if (afterSize.rows !== beforeSize.rows || afterSize.cols !== beforeSize.cols) {
-      relayout(state);
-      render(state, page, { force: true });
-    }
+    // A resize during the wizard changed the geometry, and either way the rows
+    // it wrote are not the page. Clearing first is what options does for the
+    // same reason: a forced render alone leaves the address row untouched when
+    // its text did not change, and never writes the blank row under the hint.
+    relayout(state);
+    writeTerminal('\x1b[2J');
+    render(state, page, { force: true });
     setStatus(state, saved ? 'Keyboard bindings saved.' : 'Keyboard bindings unchanged.');
     return;
   }
@@ -4690,7 +4706,9 @@ async function handleAddressKey(chunk, state, page) {
 async function main() {
   const logPath = ARGS.log ? enableLog({ directory: ARGS.logDir }) : null;
   if (ARGS.keyboard) {
-    await runKeyWizard({ keymap: keymapForOptions(ARGS) });
+    // Standalone there is no session screen, so the wizard takes the one the
+    // session would have: the alternate screen unless --no-alt-screen says no.
+    await runKeyWizard({ keymap: keymapForOptions(ARGS), altScreen: ARGS.altScreen });
     return;
   }
 
@@ -4867,6 +4885,7 @@ async function main() {
   // a password prompt with no keyboard to answer it on is a page that never
   // loads.
   setupRawInput();
+  if (ARGS.altScreen) enterAlternateScreen();
   const keyReader = new KeyReader(process.stdin);
   state.keyReader = keyReader;
   writeTerminal('\x1b[2J');
@@ -4957,7 +4976,7 @@ async function main() {
   });
 
   process.stdout.on('resize', () => {
-    if (state.mode === 'keyboard') return; // the wizard owns its alternate screen
+    if (state.mode === 'keyboard') return; // the wizard is drawing that screen
     if (state.mode === 'options') {
       // The options screen draws its own rows, so a resize redraws it rather
       // than the page underneath.
@@ -5032,14 +5051,38 @@ async function main() {
   process.exit(0);
 }
 
+// Entering the alternate screen saves the parent's screen and cursor and gives
+// the session one of its own; leaving puts them back untouched. That is what
+// lets a mailcap viewer or a parent full-screen program keep its screen and its
+// scrollback. --no-alt-screen asks to stay on the ordinary screen instead.
+function enterAlternateScreen() {
+  if (alternateScreen) return;
+  alternateScreen = true;
+  writeTerminal('\x1b[?1049h');
+  // A margin left set by a run that crashed must not confine this screen.
+  resetScrollRegion();
+}
+
+function leaveAlternateScreen() {
+  if (!alternateScreen) return;
+  alternateScreen = false;
+  writeTerminal('\x1b[?1049l');
+}
+
 // A scroll region outlives the process, so leaving one set would give the
 // user a terminal that only scrolls in the top few rows.
 function restoreTerminal() {
   if (!terminalOwned) return;
   terminalOwned = false;
   resetScrollRegion();
-  moveCursor(termSize().rows, 1);
-  writeTerminal('\n');
+  if (alternateScreen) {
+    // Leaving restores the cursor saved on entry, so there is no place to
+    // park it and no blank line to leave the shell below.
+    leaveAlternateScreen();
+  } else {
+    moveCursor(termSize().rows, 1);
+    writeTerminal('\n');
+  }
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
 }
 

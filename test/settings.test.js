@@ -86,6 +86,12 @@ test('command-line options can override persistent browser settings', () => {
   assert.equal(parseArgs(['--escape-unicode'], {}).escapeUnicode, true);
   assert.equal(parseArgs(['--escape-unicode', '--no-escape-unicode'], {}).escapeUnicode, false);
 
+  // The alternate screen is the default, and a settings-file choice can be
+  // overridden for one run.
+  assert.equal(parseArgs([], {}).altScreen, true);
+  assert.equal(parseArgs(['--no-alt-screen'], {}).altScreen, false);
+  assert.equal(parseArgs(['--no-alt-screen', '--alt-screen'], {}).altScreen, true);
+
   const edbArgs = parseEdbArgs([
     ...configured, '--browser', 'chromium', '--no-keep-browser', '--log', '--log-dir=/host/logs',
   ], {});

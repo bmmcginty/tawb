@@ -324,6 +324,24 @@ test('the wizard asks about saving on its final row and ignores other answers', 
   assert.equal(afterUp.join('').includes('\x1b[2K'), false, 'Up only moves the cursor');
 });
 
+test('the wizard shares the session screen when it does not own one', async () => {
+  const keymap = new Keymap({ terminfo: {}, load: false });
+  const output = new PassThrough();
+  output.rows = 12;
+  output.columns = 80;
+  const writes = [];
+  const write = output.write.bind(output);
+  output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
+
+  const queued = ['\x1b', 'n'];
+  const reader = { next: () => Promise.resolve(queued.shift()) };
+  await runKeyWizard({ input: new PassThrough(), output, keymap, reader, altScreen: false });
+
+  assert.equal(writes.join('').includes('\x1b[?1049'), false,
+    'a wizard sharing the session screen must not switch buffers');
+  assert.ok(writes.includes('\x1b[r'), 'the shared screen still drops any scroll region');
+});
+
 test('the cursor follows every prompt that consumes the next key', async () => {
   const keymap = new Keymap({ terminfo: {}, load: false });
   const output = new PassThrough();
