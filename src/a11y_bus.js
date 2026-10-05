@@ -65,6 +65,34 @@ function sessionBusAddress() {
 // here rather than read from stdout so the daemon can have no pipe back to the
 // reader. Closing that pipe when the launching process exits otherwise takes
 // down a bus that a kept browser still needs, even if the child was unrefed.
+//
+// The daemon is given a configuration of our own rather than `--session`, and
+// the reason is the one thing that can make a browser unusable on a private
+// bus. The machine's session configuration names the desktop services it will
+// activate on demand — portals, dconf, GVfs, a keyring — and D-Bus's
+// StartServiceByName does not return until the service has started or failed.
+// On a terminal with no desktop those launchers cannot come up, so a browser
+// that asks for one waits out the full activation timeout, and its own first
+// network request waits with it. With no <servicedir> the names are simply not
+// activatable, the browser is refused at once, and it carries on.
+function privateBusConfig(socketPath) {
+  return [
+    '<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"',
+    ' "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">',
+    '<busconfig>',
+    '  <type>session</type>',
+    `  <listen>unix:path=${socketPath}</listen>`,
+    '  <auth>EXTERNAL</auth>',
+    '  <policy context="default">',
+    '    <allow send_destination="*"/>',
+    '    <allow receive_sender="*"/>',
+    '    <allow own="*"/>',
+    '  </policy>',
+    '</busconfig>',
+    '',
+  ].join('\n');
+}
+
 function startSessionBus({ log = () => {} } = {}) {
   return new Promise((resolve, reject) => {
     // Put a random socket path in the daemon's command line. If its pid is
@@ -74,17 +102,27 @@ function startSessionBus({ log = () => {} } = {}) {
     const socketPath = path.join(
       os.tmpdir(), `tawb-a11y-${process.pid}-${randomBytes(6).toString('hex')}.sock`,
     );
+    const configPath = `${socketPath}.conf`;
     const address = `unix:path=${socketPath}`;
+    const removeFiles = () => {
+      fs.rmSync(socketPath, { force: true });
+      fs.rmSync(configPath, { force: true });
+    };
     let child;
     try {
+      fs.writeFileSync(configPath, privateBusConfig(socketPath), { mode: 0o600 });
+      // `--address` repeats what the config's <listen> already says, on
+      // purpose: the browser registry proves a companion daemon is ours by
+      // finding the socket path in its command line before it signals it.
       child = spawn('dbus-daemon', [
-        '--session', '--nofork', `--address=${address}`,
+        `--config-file=${configPath}`, `--address=${address}`, '--nofork',
       ], { stdio: 'ignore', detached: true });
     } catch (err) {
+      removeFiles();
       reject(new Error(`no session bus, and dbus-daemon could not be started: ${err.message}`));
       return;
     }
-    child.once('exit', () => fs.rmSync(socketPath, { force: true }));
+    child.once('exit', removeFiles);
 
     let settled = false;
     const finish = (err) => {

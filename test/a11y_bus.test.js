@@ -34,6 +34,23 @@ test('a session bus can be started for a machine that has none', async (t) => {
     assert.match(started.address, /^unix:/);
     const client = await connect(started.address);
     assert.match(client.name, /^:/);
+    // The private bus is not the desktop's. A service the machine can only
+    // activate from a real session — a portal, dconf, a keyring — must not be
+    // offered here: D-Bus's StartServiceByName blocks until the service has
+    // started or failed, and a browser waiting on one that never comes up
+    // cannot send its first request.
+    const [activatable] = await client.call({
+      destination: 'org.freedesktop.DBus',
+      path: '/org/freedesktop/DBus',
+      iface: 'org.freedesktop.DBus',
+      member: 'ListActivatableNames',
+    });
+    for (const unwanted of [
+      'org.freedesktop.portal.Desktop', 'org.freedesktop.impl.portal.desktop.gtk',
+      'ca.desrt.dconf', 'org.gtk.vfs.Daemon', 'org.freedesktop.secrets',
+    ]) {
+      assert.ok(!activatable.includes(unwanted), `the private bus offered to activate ${unwanted}`);
+    }
     client.close();
   } finally {
     started.child.kill('SIGTERM');

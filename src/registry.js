@@ -133,6 +133,9 @@ function stopBrowserCompanion(entry) {
   try {
     process.kill(pid, 'SIGTERM');
     fs.rmSync(socket[1], { force: true });
+    // The bus's configuration is written beside its socket; a sweep runs in a
+    // process that never held the daemon, so its own exit cleanup will not run.
+    fs.rmSync(`${socket[1]}.conf`, { force: true });
     return true;
   } catch {
     return false;
