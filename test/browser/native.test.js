@@ -59,6 +59,25 @@ const waitFor = async (condition, ms = 15000, each = null) => {
   return false;
 };
 
+// A browser that exposes no accessibility tree is only this test's problem
+// when there was a bus for it to expose one on. A machine with no D-Bus at
+// all is an ordinary machine, and the feature says so rather than failing; a
+// bus that is up and a browser that still describes nothing is the regression
+// these tests exist for. The driver logs which one it was.
+function skipWithoutBus(t, events) {
+  // The driver logs whether it came up on a bus at all: `served` for one it
+  // owns, `found` for a desktop's. With either, a browser that describes no
+  // windows is the regression; with neither, there is nothing to answer on.
+  const busWasUp = events.some((entry) => entry.event === 'a11y.bus.served'
+    || entry.event === 'a11y.bus.found');
+  if (busWasUp) {
+    assert.fail('the accessibility bus is up, but the browser described no windows');
+  }
+  const last = [...events].reverse().find((entry) => entry.event === 'native.unavailable');
+  const reason = (last && last.detail && last.detail.reason) || 'no accessibility bus';
+  t.skip(`no accessibility bus to answer on: ${reason}`);
+}
+
 test('a Firefox microphone permission doorhanger reaches the reader', async (t) => {
   if (ENGINE !== 'firefox') {
     t.skip('this is Firefox browser chrome');
@@ -73,7 +92,11 @@ test('a Firefox microphone permission doorhanger reaches the reader', async (t) 
     <button id="ask">Join</button>
     <script>ask.onclick = () => navigator.mediaDevices.getUserMedia({ audio: true });</script>`;
   const { server, url } = await serve(asking);
-  const driver = await openDriver({ engine: ENGINE, profile, broker: false, log: () => {} });
+  const events = [];
+  const driver = await openDriver({
+    engine: ENGINE, profile, broker: false,
+    log: (event, detail) => events.push({ event, detail }),
+  });
   let watch = null;
   try {
     const dialogs = [];
@@ -82,7 +105,13 @@ test('a Firefox microphone permission doorhanger reaches the reader', async (t) 
       const block = dialog.buttons.find((button) => /^block$/i.test(button.name));
       if (block) await dialog.press(block);
     });
-    assert.ok(watch, 'Firefox exposed no accessibility tree');
+    // Firefox is expected to expose this one. With no bus there is nothing to
+    // expose it on and the test has nothing to say; with a bus and no tree
+    // there is a real failure.
+    if (!watch) {
+      skipWithoutBus(t, events);
+      return;
+    }
 
     const page = driver.context.pages()[0] || await driver.context.newPage();
     await page.goto(url);
@@ -105,7 +134,10 @@ test('the browser asking something in a window of its own reaches the reader', a
     return;
   }
   const { server, url } = await serve();
-  const driver = await openDriver({ engine: ENGINE, profile, log: () => {} });
+  const events = [];
+  const driver = await openDriver({
+    engine: ENGINE, profile, log: (event, detail) => events.push({ event, detail }),
+  });
   let watch = null;
   try {
     const asked = [];
@@ -125,9 +157,7 @@ test('the browser asking something in a window of its own reaches the reader', a
       asked.push(dialog);
     });
     if (!watch) {
-      // No accessibility bus on this machine, which is a thing about the
-      // machine rather than a failure: the feature is unavailable and says so.
-      t.skip('this machine has no accessibility bus for the browser to answer on');
+      skipWithoutBus(t, events);
       return;
     }
 
