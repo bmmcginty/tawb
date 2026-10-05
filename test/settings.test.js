@@ -84,6 +84,8 @@ test('command-line options can override persistent browser settings', () => {
   assert.equal(lynxArgs.lynxConfig, '/config/lynx.cfg');
   assert.equal(parseArgs(['--lynx-executable', '/opt/x'], {}).lynxExecutable, '/opt/x');
   assert.equal(parseArgs(['--lynx-config=/config/x'], {}).lynxConfig, '/config/x');
+  assert.equal(parseArgs([], {}).lynxReimport, false);
+  assert.equal(parseArgs(['--lynx-reimport'], {}).lynxReimport, true);
 
   assert.equal(parseArgs([], {}).escapeUnicode, false);
   assert.equal(parseArgs(['--escape-unicode'], {}).escapeUnicode, true);
@@ -175,22 +177,26 @@ test('Lynx preferences cannot be set through the command line or main settings',
   }
 });
 
-test('only the Lynx interface asks Lynx for effective bindings', () => {
+test('only the Lynx front end asks Lynx for effective bindings', () => {
+  const dir = tempDir('tawb-lynx-import-');
   let calls = 0;
   const importLynx = (options) => {
     calls += 1;
     assert.deepEqual(options, { executable: '/opt/lynx', config: '/config/lynx.cfg' });
-    return { bindings: { 'confirm-quit': ['x'] }, unsupported: ['SHELL'] };
+    return { available: true, bindings: { 'confirm-quit': ['x'] }, unsupported: ['SHELL'] };
   };
   const lynx = keymapForOptions({
     frontEnd: 'lynx', lynxExecutable: '/opt/lynx', lynxConfig: '/config/lynx.cfg',
-  }, { importLynx });
+  }, {
+    importLynx, keysFile: path.join(dir, 'keys-lynx.json'), hasKeys: () => false,
+    readLynx: () => ({}), writeLynx: () => {},
+  });
   assert.equal(lynx.actionFor('x'), 'confirm-quit');
   assert.deepEqual(lynx.unsupported, ['SHELL']);
 
   const ordinary = keymapForOptions({ frontEnd: 'default' }, { importLynx });
   assert.equal(ordinary.actionFor('q'), 'quit');
-  assert.equal(calls, 1);
+  assert.equal(calls, 1, 'the ordinary front end must not run Lynx');
 });
 
 test('a malformed settings file names itself in the error', () => {

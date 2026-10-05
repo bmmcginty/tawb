@@ -67,36 +67,110 @@ test('malformed, unknown, and invalid Lynx settings name their file', () => {
   }
 });
 
-test('saved Lynx settings override imported preferences only in Lynx mode', () => {
+test('the first Lynx run imports the config and writes our files', () => {
+  const dir = tempDir('tawb-lynx-first-');
+  const keysFile = path.join(dir, 'keys-lynx.json');
   let imported = 0;
-  let settingsReads = 0;
+  let written = null;
   const importLynx = () => {
     imported += 1;
     return {
-      bindings: {}, unsupported: [],
+      available: true,
+      bindings: { 'confirm-quit': ['x'] },
+      unsupported: ['SHELL'],
       preferences: {
         showCursor: false, keypadMode: 'NUMBERS_AS_ARROWS',
-        numberLinks: false, numberFields: false,
+        numberLinks: false, numberFields: false, searchCase: 'CASE_INSENSITIVE',
       },
     };
   };
-  const readSettings = () => {
-    settingsReads += 1;
-    return {
-      showCursor: true, searchCase: 'CASE_SENSITIVE', keypadMode: 'LINKS_ARE_NUMBERED',
-    };
-  };
-  const lynx = keymapForOptions({ frontEnd: 'lynx' }, { importLynx, readLynx: readSettings });
-  assert.deepEqual(lynx.preferences, {
-    showCursor: true,
-    keypadMode: 'LINKS_ARE_NUMBERED',
-    numberLinks: true,
-    numberFields: false,
-    searchCase: 'CASE_SENSITIVE',
+  // A preference the reader already saved in TAWB wins over the import; the
+  // import supplies everything they have not chosen.
+  const readLynx = () => ({
+    showCursor: true, keypadMode: 'LINKS_ARE_NUMBERED', searchCase: 'CASE_SENSITIVE',
   });
 
-  const ordinary = keymapForOptions({ frontEnd: 'default' }, { importLynx, readLynx: readSettings });
-  assert.deepEqual(ordinary.preferences, {});
+  const lynx = keymapForOptions({ frontEnd: 'lynx' }, {
+    importLynx, readLynx, keysFile, hasKeys: () => false,
+    writeLynx: (settings) => { written = settings; },
+  });
+
   assert.equal(imported, 1);
-  assert.equal(settingsReads, 1, 'the default interface never opens settings.lynx.json');
+  assert.equal(lynx.actionFor('x'), 'confirm-quit');
+  assert.deepEqual(lynx.unsupported, ['SHELL']);
+  assert.equal(lynx.preferences.showCursor, true, 'the saved preference did not win');
+  assert.equal(lynx.preferences.numberLinks, true, 'the keypad mode did not derive numbering');
+  assert.ok(fs.existsSync(keysFile), 'the imported keymap was not written');
+  assert.deepEqual(written, {
+    showCursor: true, keypadMode: 'LINKS_ARE_NUMBERED', searchCase: 'CASE_SENSITIVE',
+  });
+});
+
+test('a later Lynx run reads our files and never runs Lynx', () => {
+  const dir = tempDir('tawb-lynx-later-');
+  const keysFile = path.join(dir, 'keys-lynx.json');
+  fs.writeFileSync(keysFile, JSON.stringify({ version: 2, functions: {} }));
+  let imported = 0;
+  let settingsReads = 0;
+
+  const lynx = keymapForOptions({ frontEnd: 'lynx' }, {
+    importLynx: () => { imported += 1; throw new Error('Lynx must not be run'); },
+    readLynx: () => { settingsReads += 1; return { showCursor: true }; },
+    keysFile, hasKeys: () => true,
+    writeLynx: () => { throw new Error('nothing should be written'); },
+  });
+
+  assert.equal(imported, 0, 'Lynx was run after the first import');
+  assert.equal(settingsReads, 1);
+  assert.equal(lynx.preferences.showCursor, true);
+  assert.equal(lynx.preferences.keypadMode, 'NUMBERS_AS_ARROWS', 'the Lynx default was not the base');
+
+  // The ordinary front end never opens the Lynx settings at all.
+  keymapForOptions({ frontEnd: 'default' }, { readLynx: () => { throw new Error('not ours'); } });
+});
+
+test('--lynx-reimport overwrites our copy with the Lynx side', () => {
+  const dir = tempDir('tawb-lynx-reimport-');
+  const keysFile = path.join(dir, 'keys-lynx.json');
+  fs.writeFileSync(keysFile, JSON.stringify({ version: 2, functions: { QUIT: ['z'] } }));
+  let written = null;
+  const importLynx = () => ({
+    available: true,
+    bindings: { 'confirm-quit': ['x'] },
+    unsupported: [],
+    preferences: { showCursor: true, keypadMode: 'LINKS_ARE_NUMBERED', searchCase: 'CASE_SENSITIVE' },
+  });
+  // What TAWB had saved before the reimport.
+  const readLynx = () => ({ showCursor: false, keypadMode: 'NUMBERS_AS_ARROWS' });
+
+  const lynx = keymapForOptions({ frontEnd: 'lynx', lynxReimport: true }, {
+    importLynx, readLynx, keysFile, hasKeys: () => true,
+    writeLynx: (settings) => { written = settings; },
+  });
+
+  // The old snapshot is not loaded over the import: x is the new binding, so
+  // the previous file cannot have won.
+  assert.equal(lynx.actionFor('x'), 'confirm-quit');
+  assert.equal(lynx.preferences.showCursor, true, 'the import did not win after a reimport');
+  assert.equal(written.showCursor, true);
+  assert.equal(written.keypadMode, 'LINKS_ARE_NUMBERED');
+  const saved = JSON.parse(fs.readFileSync(keysFile, 'utf8'));
+  assert.ok(Object.values(saved.functions).some((bindings) => bindings.includes('x')),
+    'the reimported map was not written');
+});
+
+test('a Lynx import that found nothing writes no files', () => {
+  const dir = tempDir('tawb-lynx-missing-');
+  const keysFile = path.join(dir, 'keys-lynx.json');
+  let wroteSettings = 0;
+
+  const lynx = keymapForOptions({ frontEnd: 'lynx' }, {
+    importLynx: () => ({ available: false, bindings: {}, unsupported: [], preferences: {} }),
+    readLynx: () => ({}), keysFile, hasKeys: () => false,
+    writeLynx: () => { wroteSettings += 1; },
+  });
+
+  assert.equal(fs.existsSync(keysFile), false, 'a fallback map was frozen to disk');
+  assert.equal(wroteSettings, 0);
+  assert.equal(lynx.actionFor('q'), 'confirm-quit', 'the built-in Lynx map was not used');
 });

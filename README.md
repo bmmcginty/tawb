@@ -187,9 +187,9 @@ reader, and `edb` is the edbrowse bridge described above. It can also be set
 with `TAWB_FRONT_END` or in the settings file.
 
 The interface asks an installed Lynx for its effective `LYNXKEYMAP:` and
-`LYNXEDITMAP:`. This respects Lynx defaults, `LYNX_CFG`, included configuration
-files, `.lynxrc`, vi or Emacs movement, and the selected line editor. Use a
-particular binary or configuration with:
+`LYNXEDITMAP:` and for its options. This respects Lynx defaults, `LYNX_CFG`,
+included configuration files, `.lynxrc`, vi or Emacs movement, and the
+selected line editor. Use a particular binary or configuration with:
 
 ```sh
 npm start -- --front-end=lynx \
@@ -197,8 +197,22 @@ npm start -- --front-end=lynx \
   --lynx-config="$HOME/lynx.cfg"
 ```
 
+That import happens once. The first Lynx run writes what it found into TAWB's
+own files, and every run after that reads those without running Lynx or
+opening its configuration, so the keymap does not move under you between runs.
+When the Lynx side changes and you want it again:
+
+```sh
+npm start -- --front-end=lynx --lynx-reimport https://example.com
+```
+
+`--lynx-reimport` imports again and overwrites what TAWB held. Changes you made
+in TAWB's keyboard wizard are overwritten too; a first import, by contrast,
+keeps preferences you had already saved.
+
 `TAWB_LYNX` can name the executable as well. If Lynx is unavailable, TAWB uses
-a built-in standard Lynx map. It imports only interaction settings; cookies,
+a built-in standard Lynx map and writes nothing, so it will import for real
+once Lynx is installed. It imports only interaction settings; cookies,
 credentials, proxies, user agents, viewers, printers, and executable commands
 remain with Lynx or the graphical browser and are never run by the adapter.
 

@@ -20,14 +20,15 @@ const { openDriver, engineNames } = require('./driver');
 const { claimedTargets, releaseTab } = require('./session');
 const { capturePlace, restorePlace, exactBlockForElement } = require('./place');
 const { armActivationFocus, focusedByActivation, cancelActivationFocus } = require('./focus');
-const { Keymap } = require('./keys');
+const { Keymap, configPath } = require('./keys');
 const {
   frontEndName, contextNavigationAction, lynxHidesCursor, needsLayoutMetadata,
 } = require('./interfaces');
-const { readLynxConfig } = require('./lynx_config');
+const { readLynxConfig, DEFAULT_PREFERENCES } = require('./lynx_config');
 const {
   readLynxSettings, writeLynxSettings, mergeLynxSettings,
 } = require('./lynx_settings');
+const { persistableOptions } = require('./lynx_options');
 const optionsScreen = require('./lynx_options_screen');
 const { noteVisitedLink, notePageVisit } = require('./lynx_session');
 const { parseLynxNumberExpression, relativeLinkNumber } = require('./lynx_number');
@@ -100,6 +101,7 @@ const OPTION_SPEC = {
   'front-end': { type: 'string' },
   'lynx-executable': { type: 'string' },
   'lynx-config': { type: 'string' },
+  'lynx-reimport': { type: 'boolean' },
   search: { type: 'string' },
   'link-address': { type: 'boolean' },
   'short-links': { type: 'boolean' },
@@ -122,6 +124,7 @@ function parseArgs(argv, env = process.env) {
     frontEnd: frontEndName(values['front-end'] || env.TAWB_FRONT_END || 'default'),
     lynxExecutable: values['lynx-executable'] || env.TAWB_LYNX || 'lynx',
     lynxConfig: values['lynx-config'] || null,
+    lynxReimport: values['lynx-reimport'] ?? false,
     search: values.search || env.TAWB_SEARCH || DEFAULT_SEARCH,
     linkAddress: values['link-address'] ?? true,
     shortLinks: values['short-links'] ?? false,
@@ -149,21 +152,60 @@ function restoreInvocationDirectory(env = process.env, chdir = process.chdir) {
 
 const ARGS = parseArgs([...readSettings(), ...process.argv.slice(2)]);
 
+// The Lynx side of the reader.
+//
+// The Lynx configuration is read once and then belongs to TAWB. The first
+// Lynx run, when there is no keys-lynx.json, imports it and writes our own
+// files; every run after that reads ours without running the Lynx binary or
+// opening its configuration at all. `--lynx-reimport` asks for the import
+// again and overwrites what we hold.
+//
+// The point is that the reader's Lynx setup is taken deliberately and does not
+// move under them between runs. The cost is the one the flag exists for: a
+// change to .lynxrc or lynx.cfg is not seen until they ask for it.
 function keymapForOptions(options, {
   importLynx = readLynxConfig, readLynx = readLynxSettings,
+  writeLynx = writeLynxSettings, keysFile = null, hasKeys = fs.existsSync,
 } = {}) {
   if (options.frontEnd !== 'lynx') return new Keymap({ profile: options.frontEnd });
+
+  const file = keysFile || configPath(process.env, os.homedir(), 'lynx');
+  const saved = readLynx();
+  if (!options.lynxReimport && hasKeys(file)) {
+    // Ours, and only ours: Lynx is not run and its files are not opened.
+    return new Keymap({
+      profile: 'lynx', file, preferences: mergeLynxSettings(DEFAULT_PREFERENCES, saved),
+    });
+  }
+
   const imported = importLynx({
     executable: options.lynxExecutable, config: options.lynxConfig,
   });
-  // TAWB's saved choices are the last word, just as Lynx's own .lynxrc is the
-  // last word over lynx.cfg. They live in a separate file and are not even
-  // opened for the ordinary interface.
-  const preferences = mergeLynxSettings(imported.preferences, readLynx());
-  return new Keymap({
-    profile: 'lynx', bindings: imported.bindings, unsupported: imported.unsupported,
-    preferences,
+  const preferences = options.lynxReimport
+    ? mergeLynxSettings(imported.preferences, {})
+    : mergeLynxSettings(imported.preferences, saved);
+
+  // Nothing to write when Lynx could not be read: leaving keys-lynx.json
+  // absent means a later run, after Lynx is installed, imports for real
+  // rather than reading a file frozen from the built-in fallback map.
+  if (imported.available === false) {
+    return new Keymap({
+      profile: 'lynx', file, load: false,
+      bindings: {}, unsupported: imported.unsupported, preferences,
+    });
+  }
+
+  // A first run keeps any preferences already saved in TAWB, as they are the
+  // reader's own choice; a reimport overwrites them, which is what asking for
+  // one means. The map is written from the import, not loaded over, so a
+  // reimport replaces an earlier snapshot instead of merging with it.
+  const keymap = new Keymap({
+    profile: 'lynx', file, load: false,
+    bindings: imported.bindings, unsupported: imported.unsupported, preferences,
   });
+  keymap.save();
+  writeLynx(persistableOptions(preferences));
+  return keymap;
 }
 // What is typed on the command line is read the same way as what is typed in
 // the address bar: `tawb wikipedia.org` is an address, `tawb -- braille dots`
@@ -4778,6 +4820,7 @@ const USAGE = [
   'Lynx front end:',
   '  --lynx-executable <path>      the Lynx to read key bindings from (TAWB_LYNX)',
   '  --lynx-config <path>          a lynx.cfg to read as well',
+  '  --lynx-reimport               import the Lynx configuration again',
   '',
   'Browser:',
   '  --browser <name>              chromium or firefox',
@@ -4825,6 +4868,9 @@ async function main() {
   // silently ignored.
   if (ARGS.dump && ARGS.keyboard) {
     throw new Error('--keyboard cannot be combined with --dump');
+  }
+  if (ARGS.lynxReimport && ARGS.frontEnd !== 'lynx') {
+    throw new Error('--lynx-reimport is only for the lynx front end');
   }
 
   const logPath = ARGS.log ? enableLog({ directory: ARGS.logDir }) : null;

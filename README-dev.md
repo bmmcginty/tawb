@@ -832,9 +832,16 @@ provide only the interaction preferences TAWB needs: numbering mode, marker
 side, text-field activation, and `SHOW_CURSOR`. Function names are translated
 to TAWB semantic action ids. Unknown or unsafe functions are retained as an
 unsupported list for keyboard help; they are never executed.
-A failed or absent binary selects `src/interfaces.js`'s built-in Lynx defaults.
+A failed or absent binary selects `src/interfaces.js`'s built-in Lynx defaults,
+and writes nothing, so a later run imports for real once Lynx is present.
 
-`Keymap` accepts the imported bindings as its reset baseline and then reads
+This runs on the first Lynx run and on `--lynx-reimport`, not on every start.
+The first run writes what it found into `keys-lynx.json` and the persistent
+preferences into `settings.lynx.json`; later runs read those and never spawn
+Lynx. A first run keeps preferences already saved in TAWB, while a reimport
+overwrites them along with the keymap, which is what asking for one means.
+
+`Keymap` takes the imported bindings as its reset baseline before it writes
 `keys-lynx.json`. That file is keyed by Lynx function name — `LIST`,
 `NEXT_LINK`, `FASTFORW_LINK`, `DOWN_LINK` — with the extensions TAWB adds under
 a `TAWB_` prefix, so one Lynx function is always one entry and the file, the
