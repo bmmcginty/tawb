@@ -377,14 +377,18 @@ file names, `Enter` attaches the file, and `Escape` cancels.
 
 ## Print a page without the terminal interface
 
-`--dump` opens one address or local HTML file, writes its AX view as plain
-text, and exits. It writes no terminal controls, headings of its own, line
-numbers, or startup progress, so it can be used by programs expecting a text
-filter:
+`--dump` opens one address or local HTML file, writes it as plain text, and
+exits. Which text follows the front end: the ordinary one writes each AX block
+as it reads, and `--front-end=lynx` writes the same Lynx presentation the
+full-screen reader shows — named headings, numbered links, joined prose and
+laid-out table columns. It writes no terminal controls, headings of its own,
+line numbers, or startup progress, so it can be used by programs expecting a
+text filter:
 
 ```sh
 tawb --dump message.html
 tawb --dump https://example.com
+tawb --front-end=lynx --dump https://example.com
 ```
 
 For example, use it as a Mutt HTML autoviewer with this `mailcap` entry:

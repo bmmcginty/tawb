@@ -6,7 +6,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { spawnSync } = require('node:child_process');
 
-const { resolveDumpTarget, formatAxBlocks, dumpAx } = require('../src/dump');
+const { resolveDumpTarget, formatAxBlocks, formatLynxBlocks, dumpAx } = require('../src/dump');
 
 test('dump targets accept mailcap file paths and web addresses', () => {
   const cwd = path.join(path.sep, 'mail', 'tmp');
@@ -33,6 +33,37 @@ test('AX blocks become an unadorned stdout stream', () => {
     'caf\\u00E9 \\U0001F600\n');
 });
 
+test('the Lynx front end dumps the Lynx presentation, not the AX blocks', () => {
+  const blocks = [
+    { text: '# Heading', item: { role: 'heading', level: 1, name: 'Heading' } },
+    { text: '{Docs}', item: { role: 'link', name: 'Docs', href: 'https://example.test/' } },
+  ];
+
+  // The ordinary front end prints each block as it reads.
+  assert.equal(formatAxBlocks(blocks), '# Heading\n{Docs}\n');
+
+  // The Lynx front end names the heading, numbers the link, and gives both
+  // the document margin; the heading is centred for its level.
+  const lines = formatLynxBlocks(blocks, { preferences: { numberLinks: true } }).split('\n');
+  assert.equal(lines[0].trim(), 'Heading');
+  assert.equal(lines[0].length, 36 + 'Heading'.length, 'H1 is not centred in the width');
+  assert.equal(lines[1], '   [1]Docs');
+});
+
+test('dump mode asks for layout metadata only for the Lynx front end', async () => {
+  const seen = [];
+  const page = { async goto() {}, async close() {} };
+  const driver = { context: { async newPage() { return page; } } };
+  const snapshot = async (seenPage, view, options) => {
+    seen.push(options.layout);
+    return [{ text: 'Body' }];
+  };
+
+  await dumpAx({ driver, target: 'file:///x', frontEnd: 'lynx', snapshot, write: () => {} });
+  await dumpAx({ driver, target: 'file:///x', frontEnd: 'default', snapshot, write: () => {} });
+  assert.deepEqual(seen, [true, false]);
+});
+
 test('dump mode reads AX after DOM content and closes its temporary tab', async () => {
   const calls = [];
   const page = {
@@ -56,7 +87,7 @@ test('dump mode reads AX after DOM content and closes its temporary tab', async 
   assert.deepEqual(calls, [
     ['newPage'],
     ['goto', 'file:///tmp/message.html', { waitUntil: 'domcontentloaded' }],
-    ['snapshot', page, 'ax', { driver }],
+    ['snapshot', page, 'ax', { driver, layout: false }],
     ['close'],
   ]);
 });

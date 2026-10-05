@@ -4825,7 +4825,12 @@ async function main() {
       await dumpAx({
         driver,
         target: dumpTarget,
+        frontEnd: ARGS.frontEnd,
+        // The Lynx presentation needs the same preferences the reader would
+        // have: which links and fields are numbered, and on which side.
+        preferences: ARGS.frontEnd === 'lynx' ? keymapForOptions(ARGS).preferences : {},
         escapeUnicode: ARGS.escapeUnicode,
+        width: process.stdout.columns || 80,
       });
     } finally {
       try { await driver.close(); } finally { setCurrentDriver(null); }
