@@ -5,6 +5,14 @@ const { joinProse } = require('./blocks');
 
 const FIELD_WIDTH = 20;
 
+// The only attributes the Lynx screen adds. Reverse video marks the current
+// control and bold marks a heading; there is deliberately no colour. They are
+// written here so no escape byte can reach line text, searches or caret
+// offsets, which are computed from plain text elsewhere.
+const ANSI_REVERSE = '\x1b[7m';
+const ANSI_BOLD = '\x1b[1m';
+const ANSI_RESET = '\x1b[0m';
+
 function clipField(value, width = FIELD_WIDTH) {
   const shown = String(value || '').slice(0, width);
   return shown + '_'.repeat(Math.max(0, width - shown.length));
@@ -84,6 +92,55 @@ function renderLynxBlock(block, transform = String) {
 
 function lynxFocusable(block) {
   return !!(block && block.item && FOCUSABLE_ROLES.has(block.item.role));
+}
+
+// One display row as Lynx's terminal would write it. `line` is the row itself,
+// `selected` is the row the cursor is on, `current` is the block under the
+// caret and `blocks` is the list the row indexes into. Pure text in, styled
+// text out; the caller still owns the terminal.
+function renderLynxRow({ text, line, selected, current, blocks = [] }) {
+  const indent = line ? ' '.repeat(line.displayIndent || 0) : '';
+  const prefix = indent + (line ? line.displayPrefix || '' : '');
+  const suffix = line ? line.displaySuffix || '' : '';
+
+  // A composite paragraph or table row holds several blocks on one line, so
+  // the row is not the current item: only the span the caret is in is. The
+  // number marker is outside the span and so outside the highlight, which is
+  // what keeps a marker from being read as part of the thing it numbers.
+  if (line && line.spans && line.spans.length) {
+    if (!current || !lynxFocusable(current)) return prefix + text + suffix;
+    const currentIndex = blocks.indexOf(current);
+    let out = '';
+    let at = 0;
+    for (const span of line.spans) {
+      if (span.blockIndex !== currentIndex) continue;
+      out += text.slice(at, span.start)
+        + ANSI_REVERSE + text.slice(span.start, span.end) + ANSI_RESET;
+      at = span.end;
+    }
+    if (!out) return prefix + text + suffix;
+    return prefix + out + text.slice(at) + suffix;
+  }
+
+  const block = line && blocks[line.blockIndex];
+  // Lynx highlights every visible part of a wrapped current link.
+  if (line && selected && line.blockIndex === selected.blockIndex && lynxFocusable(block)) {
+    return `${prefix}${ANSI_REVERSE}${text}${ANSI_RESET}${suffix}`;
+  }
+  if (block && block.item && block.item.role === 'heading') {
+    return `${prefix}${ANSI_BOLD}${text}${ANSI_RESET}${suffix}`;
+  }
+  return prefix + text + suffix;
+}
+
+// Core blocks as the Lynx display shows them: rendered into Lynx's control
+// vocabulary, numbered, with inline prose rejoined and table rows laid out.
+// Both transformations retain their source spans, so a link inside either
+// composite still resolves to its browser element.
+function lynxBlocks(blocks, preferences = {}, transform = String) {
+  const rendered = blocks.map((block) => renderLynxBlock(block, transform));
+  const numbered = numberLynxBlocks(rendered, preferences);
+  return groupLynxTableRows(groupLynxFlows(numbered));
 }
 
 // The gap between two columns of a laid-out table row, in cells.
@@ -316,6 +373,7 @@ function numberLynxBlocks(blocks, preferences = {}) {
 }
 
 module.exports = {
-  FIELD_WIDTH, TABLE_GAP, clipField, renderLynxItem, renderLynxBlock,
+  FIELD_WIDTH, TABLE_GAP, ANSI_REVERSE, ANSI_BOLD, ANSI_RESET,
+  clipField, renderLynxItem, renderLynxBlock, lynxBlocks, renderLynxRow,
   lynxFocusable, numberLynxBlocks, groupLynxFlows, groupLynxTableRows,
 };

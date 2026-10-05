@@ -14,8 +14,8 @@ const {
 } = require('./log');
 const { layoutLines } = require('./layout');
 const {
-  clipField, renderLynxBlock, lynxFocusable, numberLynxBlocks, groupLynxFlows,
-  groupLynxTableRows,
+  clipField, renderLynxRow, lynxBlocks, lynxFocusable,
+  ANSI_REVERSE, ANSI_RESET,
 } = require('./lynx_display');
 const { normaliseEndpoint } = require('./browser');
 const { openDriver, engineNames, DEFAULT_ENGINE } = require('./driver');
@@ -501,12 +501,7 @@ function displayBlocks(state) {
   const pageBlocks = blocks === state.core.blocks;
   const transform = state.escapeUnicode && pageBlocks ? escapeNonAscii : String;
   if (state.interface === 'lynx' && pageBlocks) {
-    const rendered = blocks.map((block) => renderLynxBlock(block, transform));
-    const numbered = numberLynxBlocks(rendered, state.keys && state.keys.preferences);
-    // Rejoin only items the extractor proved shared one HTML flow, then lay
-    // table cells out as a row. Both transformations retain source spans, so
-    // a link inside either composite still resolves to its browser element.
-    return groupLynxTableRows(groupLynxFlows(numbered));
+    return lynxBlocks(blocks, state.keys && state.keys.preferences, transform);
   }
   if (!state.escapeUnicode || !pageBlocks) return blocks;
   // Keep Core's original text intact. It uses that text to resolve live
@@ -865,52 +860,18 @@ function drawList(state) {
   setScrollRegion();
 }
 
-const ANSI_REVERSE = '\x1b[7m';
-const ANSI_BOLD = '\x1b[1m';
-const ANSI_RESET = '\x1b[0m';
-
 function renderRow(state, lineIndex) {
   if (state.mode === 'type' && lineIndex === state.cursor) return typingText(state).text;
   const text = lineText(state, lineIndex);
   if (state.interface !== 'lynx') return text;
 
   const line = state.lines[lineIndex];
-  const indent = line ? ' '.repeat(line.displayIndent || 0) : '';
-  const prefix = indent + (line ? line.displayPrefix || '' : '');
-  const suffix = line ? line.displaySuffix || '' : '';
   const selected = state.lines[state.cursor];
-
-  // A composite paragraph or table row holds several blocks on one line, so
-  // the row is not the current item: only the span the caret is in is. The number marker is
-  // outside the span and so outside the highlight, which is what keeps a
-  // marker from being read as part of the thing it numbers.
-  if (line && line.spans && line.spans.length) {
-    const current = selected ? currentBlock(state) : null;
-    if (!current || !lynxFocusable(current)) return prefix + text + suffix;
-    const currentIndex = activeBlocks(state).indexOf(current);
-    let out = '';
-    let at = 0;
-    for (const span of line.spans) {
-      if (span.blockIndex !== currentIndex) continue;
-      out += text.slice(at, span.start)
-        + ANSI_REVERSE + text.slice(span.start, span.end) + ANSI_RESET;
-      at = span.end;
-    }
-    if (!out) return prefix + text + suffix;
-    return prefix + out + text.slice(at) + suffix;
-  }
-
-  const block = line && activeBlocks(state)[line.blockIndex];
-  // Lynx highlights every visible part of a wrapped current link. ANSI lives
-  // only in the terminal write; line text, searches, offsets, and the number
-  // map remain free of escape bytes.
-  if (line && selected && line.blockIndex === selected.blockIndex && lynxFocusable(block)) {
-    return `${prefix}${ANSI_REVERSE}${text}${ANSI_RESET}${suffix}`;
-  }
-  if (block && block.item && block.item.role === 'heading') {
-    return `${prefix}${ANSI_BOLD}${text}${ANSI_RESET}${suffix}`;
-  }
-  return prefix + text + suffix;
+  const current = line && line.spans && line.spans.length && selected
+    ? currentBlock(state) : null;
+  return renderLynxRow({
+    text, line, selected, current, blocks: activeBlocks(state),
+  });
 }
 
 function typingText(state) {

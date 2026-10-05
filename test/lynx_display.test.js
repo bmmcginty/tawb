@@ -3,7 +3,10 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { numberLynxBlocks, renderLynxItem, renderLynxBlock } = require('../src/lynx_display');
+const {
+  numberLynxBlocks, renderLynxItem, renderLynxBlock, renderLynxRow, lynxBlocks,
+  ANSI_REVERSE, ANSI_BOLD, ANSI_RESET,
+} = require('../src/lynx_display');
 const { layoutLines } = require('../src/layout');
 const {
   askForLine, contextNavigationAction, handleBrowseKey, handleFieldCommandKey,
@@ -633,4 +636,69 @@ test('editing a field retains Lynx label and underscore presentation', () => {
   });
   assert.equal(shown.text, `Search cat${'_'.repeat(17)}`);
   assert.equal(shown.caretCol, 10);
+});
+
+// The row renderer moved out of the terminal loop; these pin it directly so
+// the callers in src/index.js are not the only witness to what it produces.
+test('renderLynxRow marks the current link, headings and indentation', () => {
+  const blocks = [
+    { text: 'Heading', item: item('heading', 'Heading', { level: 2 }) },
+    { text: 'News', item: item('link', 'News') },
+    { text: 'Prose', item: item('text', 'Prose') },
+  ];
+  const heading = { blockIndex: 0, text: 'Heading' };
+  const link = { blockIndex: 1, text: 'News' };
+  const prose = { blockIndex: 2, text: 'Prose' };
+
+  // Nothing is current: a heading is bold, links and prose are plain.
+  assert.equal(renderLynxRow({ text: 'Heading', line: heading, selected: null, blocks }),
+    `${ANSI_BOLD}Heading${ANSI_RESET}`);
+  assert.equal(renderLynxRow({ text: 'News', line: link, selected: null, blocks }), 'News');
+
+  // The current link is reverse video, and only while it is current.
+  assert.equal(renderLynxRow({ text: 'News', line: link, selected: link, blocks }),
+    `${ANSI_REVERSE}News${ANSI_RESET}`);
+  assert.equal(renderLynxRow({ text: 'Prose', line: prose, selected: link, blocks }),
+    'Prose');
+});
+
+test('renderLynxRow keeps numbering and margins outside the highlight', () => {
+  const current = { text: 'News', item: item('link', 'News') };
+  const line = {
+    blockIndex: 0, text: 'News', displayIndent: 3, displayPrefix: '[1]', displaySuffix: '',
+  };
+  assert.equal(
+    renderLynxRow({ text: 'News', line, selected: line, current, blocks: [current] }),
+    `   [1]${ANSI_REVERSE}News${ANSI_RESET}`);
+});
+
+test('renderLynxRow highlights only the caret\'s span on a composite row', () => {
+  const alpha = { text: 'Alpha', item: item('link', 'Alpha') };
+  const beta = { text: 'Beta', item: item('link', 'Beta') };
+  const line = {
+    blockIndex: 0, text: 'Alpha and Beta',
+    spans: [
+      { blockIndex: 0, start: 0, end: 5 },
+      { blockIndex: 1, start: 10, end: 14 },
+    ],
+  };
+  const rendered = renderLynxRow({
+    text: 'Alpha and Beta', line, selected: line, current: beta, blocks: [alpha, beta],
+  });
+  assert.equal(rendered, `Alpha and ${ANSI_REVERSE}Beta${ANSI_RESET}`);
+  // A row whose caret sits on no focusable item is left plain.
+  assert.equal(renderLynxRow({
+    text: 'Alpha and Beta', line, selected: line, current: null, blocks: [alpha, beta],
+  }), 'Alpha and Beta');
+});
+
+test('lynxBlocks renders, numbers and reflows in one call', () => {
+  const blocks = [
+    { text: 'Prose', item: item('text', 'Prose', { flow: 1 }) },
+    { text: 'News', item: item('link', 'News', { flow: 1 }) },
+  ];
+  const out = lynxBlocks(blocks, {}, String);
+  assert.equal(out.length, 1, 'the inline run is rejoined');
+  assert.equal(out[0].text, 'Prose News');
+  assert.equal(out[0].spans.length, 2);
 });
