@@ -12,7 +12,7 @@ const { pathToFileURL } = require('node:url');
 const { resolveAddress, DEFAULT_SEARCH } = require('./address');
 const { snapshotFrameTree } = require('./frames');
 const { layoutLines } = require('./layout');
-const { lynxBlocks } = require('./lynx_display');
+const { lynxBlocks, lynxRowText } = require('./lynx_display');
 const { needsLayoutMetadata } = require('./interfaces');
 const { escapeNonAscii } = require('./unicode_escape');
 
@@ -44,15 +44,14 @@ function formatAxBlocks(blocks, { escapeUnicode = false } = {}) {
 // The Lynx presentation as plain lines: the same renderLynxItem vocabulary,
 // numbering, joined prose and laid-out table columns the full-screen reader
 // shows, with the terminal's own styling left out because there is no
-// terminal. The margin, the marker and any suffix are display metadata, so
-// they are put back exactly where renderLynxRow would put them.
+// terminal. lynxRowText is the same row composition renderLynxRow uses, so
+// the two presentations cannot disagree about where the margin or a marker
+// goes.
 function formatLynxBlocks(blocks, { preferences = {}, escapeUnicode = false, width = 80 } = {}) {
   if (!blocks.length) return '';
   const transform = escapeUnicode ? escapeNonAscii : String;
   const lines = layoutLines(lynxBlocks(blocks, preferences, transform), width);
-  const text = lines.map((line) => ' '.repeat(line.displayIndent || 0)
-    + (line.displayPrefix || '') + line.text + (line.displaySuffix || ''));
-  return text.join('\n') + '\n';
+  return lines.map((line) => lynxRowText(line, line.text)).join('\n') + '\n';
 }
 
 async function dumpAx({

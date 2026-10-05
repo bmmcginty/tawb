@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const {
-  numberLynxBlocks, renderLynxItem, renderLynxBlock, renderLynxRow, lynxBlocks,
+  numberLynxBlocks, renderLynxItem, renderLynxBlock, renderLynxRow, lynxBlocks, lynxRowText,
   ANSI_REVERSE, ANSI_BOLD, ANSI_RESET,
 } = require('../src/lynx_display');
 const { layoutLines } = require('../src/layout');
@@ -16,6 +16,26 @@ const {
 const { Keymap } = require('../src/keys');
 
 function item(role, name, extra = {}) { return { role, name, ...extra }; }
+
+test('a plain Lynx row is the margin and the marker around its text', () => {
+  // The full-screen renderer and the dump both compose a row this way; only
+  // the former adds reverse video or bold on top.
+  assert.equal(
+    lynxRowText({ displayIndent: 3, displayPrefix: '[1]', displaySuffix: '' }, 'Docs'),
+    '   [1]Docs',
+  );
+  assert.equal(
+    lynxRowText({ displayIndent: 0, displayPrefix: '', displaySuffix: '[2]' }, 'Pay'),
+    'Pay[2]',
+  );
+  assert.equal(lynxRowText(null, 'bare'), 'bare');
+  // A row the cursor is not on is that same text, unstyled.
+  const line = { displayIndent: 2, displayPrefix: '', displaySuffix: '', blockIndex: 0 };
+  assert.equal(
+    renderLynxRow({ text: 'plain', line, selected: null, current: null, blocks: [{}] }),
+    lynxRowText(line, 'plain'),
+  );
+});
 
 function captureTerminal(fn) {
   const write = process.stdout.write;

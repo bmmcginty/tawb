@@ -94,6 +94,16 @@ function lynxFocusable(block) {
   return !!(block && block.item && FOCUSABLE_ROLES.has(block.item.role));
 }
 
+// One display row as plain text: the document margin, the number marker and
+// any suffix put back around the row's own text. The full-screen renderer and
+// the non-interactive dump both need exactly this; only the former adds the
+// terminal's styling on top, so the composition lives here once.
+function lynxRowText(line, text) {
+  const indent = line ? ' '.repeat(line.displayIndent || 0) : '';
+  return indent + (line ? line.displayPrefix || '' : '')
+    + text + (line ? line.displaySuffix || '' : '');
+}
+
 // One display row as Lynx's terminal would write it. `line` is the row itself,
 // `selected` is the row the cursor is on, `current` is the block under the
 // caret and `blocks` is the list the row indexes into. Pure text in, styled
@@ -108,7 +118,7 @@ function renderLynxRow({ text, line, selected, current, blocks = [] }) {
   // number marker is outside the span and so outside the highlight, which is
   // what keeps a marker from being read as part of the thing it numbers.
   if (line && line.spans && line.spans.length) {
-    if (!current || !lynxFocusable(current)) return prefix + text + suffix;
+    if (!current || !lynxFocusable(current)) return lynxRowText(line, text);
     const currentIndex = blocks.indexOf(current);
     let out = '';
     let at = 0;
@@ -118,7 +128,7 @@ function renderLynxRow({ text, line, selected, current, blocks = [] }) {
         + ANSI_REVERSE + text.slice(span.start, span.end) + ANSI_RESET;
       at = span.end;
     }
-    if (!out) return prefix + text + suffix;
+    if (!out) return lynxRowText(line, text);
     return prefix + out + text.slice(at) + suffix;
   }
 
@@ -130,7 +140,7 @@ function renderLynxRow({ text, line, selected, current, blocks = [] }) {
   if (block && block.item && block.item.role === 'heading') {
     return `${prefix}${ANSI_BOLD}${text}${ANSI_RESET}${suffix}`;
   }
-  return prefix + text + suffix;
+  return lynxRowText(line, text);
 }
 
 // Core blocks as the Lynx display shows them: rendered into Lynx's control
@@ -374,6 +384,6 @@ function numberLynxBlocks(blocks, preferences = {}) {
 
 module.exports = {
   FIELD_WIDTH, TABLE_GAP, ANSI_REVERSE, ANSI_BOLD, ANSI_RESET,
-  clipField, renderLynxItem, renderLynxBlock, lynxBlocks, renderLynxRow,
+  clipField, renderLynxItem, renderLynxBlock, lynxBlocks, renderLynxRow, lynxRowText,
   lynxFocusable, numberLynxBlocks, groupLynxFlows, groupLynxTableRows,
 };
