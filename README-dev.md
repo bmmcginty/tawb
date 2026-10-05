@@ -615,7 +615,10 @@ rather than leaving you to work out why you are somewhere else:
   engines, because we compute that tree ourselves. So all four views match
   exactly: a line knows which node it came from, and moving between views is
   a question about elements rather than a search for text that looks
-  similar.
+  similar. The list of nodes is published only once a walk has finished: a
+  page with media controls asks for a second, privileged pass, and on a frame
+  that pass can be refused, so a half-built list must never replace the
+  complete one the items were numbered against.
 
 An element that simply is not in the view you are entering — `PAGE` lists
 only what is visible — puts you on the nearest line above where it would
@@ -1877,6 +1880,17 @@ npm run axe -- --browser firefox https://example.com
 npm run test:firefox-releases           # latest stable, beta, and nightly in Docker
 npm run test:firefox-releases -- beta   # one channel
 ```
+
+`npm run coverage` serves `tools/content-coverage.html`: one checked-in page
+carrying every kind of content the extractors, the four views, and the Lynx
+interface claim to support — headings, links, buttons, every input type,
+tables, lists, media, frames, open and closed shadow roots, the supported
+ARIA roles and states, and the hidden and generated cases the views disagree
+about. Open the printed address in TAWB and cycle the four views with `\`, or
+read it with `--interface=lynx`; `npm run compare` and `npm run dump` take the
+same address. `test/content_coverage.test.js` pins the page's shape without a
+browser, and `test/browser/content_coverage.test.js` reads it through every
+view and both interfaces on whichever engine `TWEB_TEST_BROWSER` selects.
 
 `test:aria-at` adapts the product-independent assertions from ARIA-AT test
 plans to TAWB's line interface. The upstream ARIA-AT harness is manual and
