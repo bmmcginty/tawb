@@ -16,7 +16,7 @@ const { layoutLines } = require('./layout');
 const {
   clipField, renderLynxRow, lynxBlocks, lynxFocusable,
 } = require('./lynx_display');
-const { openDriver, engineNames } = require('./driver');
+const { openDriver } = require('./driver');
 const { claimedTargets, releaseTab } = require('./session');
 const { capturePlace, restorePlace, exactBlockForElement } = require('./place');
 const { armActivationFocus, focusedByActivation, cancelActivationFocus } = require('./focus');
