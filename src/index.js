@@ -28,7 +28,11 @@ const { readLynxConfig } = require('./lynx_config');
 const {
   readLynxSettings, writeLynxSettings, mergeLynxSettings,
 } = require('./lynx_settings');
-const { optionRows, cycleOption, persistableOptions } = require('./lynx_options');
+const {
+  optionRows, optionForLetter, choiceIndex, applyChoice,
+  persistableOptions, ANY_KEY_CHANGE, VALUE_ACCEPTED, CANCELLED,
+  CHOICE_LIST, SELECT_LINE, NOT_CHANGEABLE,
+} = require('./lynx_options');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
@@ -3142,7 +3146,7 @@ function refilter(state, page, filter) {
 
 function libraryStatus(state) {
   const { rows, blocks, filter, empty, kind } = state.library;
-  if (kind === 'options') return "Select capital letter of option to change; '>' to save, or 'r' to return.";
+  if (kind === 'options') return SELECT_LINE;
   if (empty) return filter ? `Nothing matching "${filter}".` : 'Nothing here yet.';
   if (filter) return `${blocks.length} of ${rows.length} matching "${filter}".`;
   return `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} — type to filter.`;
@@ -3240,9 +3244,14 @@ async function openMainMenu(state, page) {
   return load(state, page, home);
 }
 
-function showOptions(state, page) {
+function showOptions(state, page, { letter = null } = {}) {
   state.library.rows = optionRows(state.keys.preferences);
   showLibrary(state, page, '');
+  if (!letter) return;
+  // Choosing an option puts the reader on its line, which is where Lynx leaves
+  // them: the cursor is the only thing that says which value is being changed.
+  const row = state.library.rows.findIndex((candidate) => candidate.letter === letter);
+  if (row >= 0) moveSelection(state, row, page, 0);
 }
 
 function openOptions(state, page) {
@@ -3250,6 +3259,7 @@ function openOptions(state, page) {
   state.mode = 'library';
   state.library = {
     kind: 'options', label: 'Options Menu', filter: '', rows: [], blocks: [], empty: false,
+    choosing: null,
     originalPreferences: { ...state.keys.preferences },
     place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
   };
@@ -3261,9 +3271,59 @@ function restoreOptionPreferences(state) {
   state.keys.preferences = { ...state.library.originalPreferences };
 }
 
+// An option has been chosen and not yet decided: the value under the cursor is
+// provisional until RETURN keeps it. This is the second keyboard layer of the
+// Options screen, and it belongs to the option rather than to the screen, which
+// is why it takes the keys that would otherwise be commands.
+function handleOptionChoosing(chunk, state, page) {
+  const lib = state.library;
+  const choosing = lib.choosing;
+  const { option } = choosing;
+
+  if (chunk === '\r' || chunk === '\n') {
+    lib.choosing = null;
+    setStatus(state, VALUE_ACCEPTED);
+    return;
+  }
+  if (chunk === 'q' || chunk === 'Q' || chunk === '\x03' || chunk === '\x07'
+      || keyIs(chunk, 'Escape', state)) {
+    state.keys.preferences = { ...choosing.originalPreferences };
+    lib.choosing = null;
+    showOptions(state, page, { letter: option.letter });
+    setStatus(state, CANCELLED);
+    return;
+  }
+
+  const count = option.choices.length;
+  if (option.boolean) {
+    // Any key moves a boolean on to its other value. The arrow keys keep their
+    // direction rather than only going forward, which is what Lynx does.
+    if (keyIs(chunk, 'ArrowUp', state)) choosing.index = (choosing.index + count - 1) % count;
+    else if (keyIs(chunk, 'ArrowDown', state)) choosing.index = (choosing.index + 1) % count;
+    else choosing.index = (choosing.index + 1) % count;
+  } else if (keyIs(chunk, 'ArrowDown', state) || chunk === ' ') {
+    choosing.index = (choosing.index + 1) % count;
+  } else if (keyIs(chunk, 'ArrowUp', state)) {
+    choosing.index = (choosing.index + count - 1) % count;
+  } else if (keyIs(chunk, 'Home', state)) {
+    choosing.index = 0;
+  } else if (keyIs(chunk, 'End', state)) {
+    choosing.index = count - 1;
+  } else {
+    // A key the list has no use for is not a change and not a cancellation.
+    return;
+  }
+
+  applyChoice(option, state.keys.preferences, choosing.index);
+  showOptions(state, page, { letter: option.letter });
+  setStatus(state, option.boolean ? ANY_KEY_CHANGE : CHOICE_LIST);
+}
+
 function handleOptionsKey(chunk, state, page) {
-  const cancel = keyIs(chunk, 'ArrowLeft', state) || keyIs(chunk, 'Escape', state);
-  if (cancel) {
+  const lib = state.library;
+  if (lib.choosing) return handleOptionChoosing(chunk, state, page);
+
+  if (keyIs(chunk, 'ArrowLeft', state) || keyIs(chunk, 'Escape', state)) {
     restoreOptionPreferences(state);
     closeLibrary(state, page, 'Options unchanged.');
     return;
@@ -3285,18 +3345,25 @@ function handleOptionsKey(chunk, state, page) {
     return;
   }
 
-  const changed = cycleOption(state.keys.preferences, chunk);
-  if (changed) {
-    showOptions(state, page);
-    setStatus(state, `${changed} changed.`);
+  const option = optionForLetter(chunk);
+  if (!option) return;
+  if (!option.choices) {
+    // An option TAWB cannot honor still takes the reader to its line, so the
+    // screen behaves the same way and only the outcome differs.
+    showOptions(state, page, { letter: option.letter });
+    setStatus(state, NOT_CHANGEABLE);
     return;
   }
-
-  const optionLetters = new Set(['E', 'D', 'L', 'B', 'F', 'P', 'C', 'G', 'H',
-    'O', '&', 'V', 'M', 'W', 'T', 'N', 'Y', 'I', 'U', '!', 'A', 'X']);
-  if (chunk === '\x01' || optionLetters.has(String(chunk).toUpperCase())) {
-    setStatus(state, 'That option belongs to Lynx or the browser and is not changed by TAWB.');
-  }
+  // Choosing an option is not changing it: the value shown becomes provisional
+  // and the reader decides, which is the whole of what the second layer is for.
+  lib.choosing = {
+    letter: option.letter,
+    option,
+    index: choiceIndex(option, state.keys.preferences),
+    originalPreferences: { ...state.keys.preferences },
+  };
+  showOptions(state, page, { letter: option.letter });
+  setStatus(state, option.boolean ? ANY_KEY_CHANGE : CHOICE_LIST);
 }
 
 function openDocumentInfo(state, page) {
