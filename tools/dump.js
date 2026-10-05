@@ -2,11 +2,14 @@
 
 // Reads one page in one browser and prints the lines, without a terminal.
 //
-//   npm run dump                          # the test page, AX view, Chromium
-//   npm run dump -- --view render
-//   npm run dump -- --browser firefox
-//   npm run dump -- https://example.com
-//   npm run dump -- --connect 9222        # read the tab a browser is already on
+//   npm run dump:lines                    # the test page, AX view, Chromium
+//   npm run dump:lines -- --view render
+//   npm run dump:lines -- --browser firefox
+//   npm run dump:lines -- https://example.com
+//   npm run dump:lines -- --connect 9222  # read the tab a browser is already on
+//
+// (`npm run dump` is the product front end, `tawb --dump`; this is the
+// development tool that can read a chosen view and attach to a running tab.)
 //
 // --connect is the one to reach for when a page will not behave. It attaches
 // to a browser you are already running and reads the tab as it stands,
