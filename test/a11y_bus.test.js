@@ -62,7 +62,12 @@ test('the private bus writes its configuration and removes it with the socket', 
   const started = await busOrSkip(t);
   if (!started) return;
   const configPath = `${started.socketPath}.conf`;
-  started.child.kill('SIGTERM');
+
+  // Read both files before signalling the daemon. Removing them is exactly
+  // what stopping it does, so signalling first left a window in which the
+  // daemon could unlink the socket before this test looked for it — a race
+  // the daemon wins whenever the machine is busy, which is how this test
+  // came to fail intermittently with "the socket was never created".
   try {
     assert.ok(fs.existsSync(started.socketPath), 'the socket was never created');
     assert.ok(fs.existsSync(configPath), 'the bus has no configuration beside its socket');
@@ -73,18 +78,20 @@ test('the private bus writes its configuration and removes it with the socket', 
     // for one waits until it has started or failed.
     assert.ok(!/<servicedir/.test(config), 'the private bus offers desktop services');
   } finally {
-    // Wait for the daemon to leave, because removing its files is its job.
-    const removed = await new Promise((resolve) => {
-      const deadline = Date.now() + 5000;
-      const check = () => {
-        if (!fs.existsSync(started.socketPath) && !fs.existsSync(configPath)) resolve(true);
-        else if (Date.now() >= deadline) resolve(false);
-        else setTimeout(check, 20);
-      };
-      check();
-    });
-    assert.equal(removed, true, 'the socket or its configuration was left behind');
+    started.child.kill('SIGTERM');
   }
+
+  // Wait for the daemon to leave, because removing its files is its job.
+  const removed = await new Promise((resolve) => {
+    const deadline = Date.now() + 5000;
+    const check = () => {
+      if (!fs.existsSync(started.socketPath) && !fs.existsSync(configPath)) resolve(true);
+      else if (Date.now() >= deadline) resolve(false);
+      else setTimeout(check, 20);
+    };
+    check();
+  });
+  assert.equal(removed, true, 'the socket or its configuration was left behind');
 });
 
 test('the accessibility bus we serve answers what a browser asks it', async (t) => {
