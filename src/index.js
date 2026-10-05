@@ -60,9 +60,7 @@ const { parseArgs: parseArgv } = require('node:util');
 // the reader chose there, so it is said here instead — or in TAWB_SEARCH,
 // since it is a preference rather than something to retype every launch.
 // --no-link-address starts with the status row quiet about where the link
-// under the cursor goes. `u` turns it back on for the rest of the session;
-// TAWB_LINK_ADDRESS=off says it once and for good, for the same reason
-// TAWB_SEARCH exists.
+// under the cursor goes. `u` turns it back on for the rest of the session.
 // --short-links says a link that stays on this site as its path alone. Off by
 // default, because a graphical browser's status bar shows the whole address
 // and this is meant to read like one.
@@ -80,9 +78,6 @@ const { parseArgs: parseArgv } = require('node:util');
 // Options in the settings file are read first, so an explicit command-line
 // option can replace them. --no-keep-browser provides that escape hatch for
 // the otherwise one-way --keep-browser switch.
-const OFF = new Set(['off', 'no', 'false', '0']);
-const ON = new Set(['on', 'yes', 'true', '1']);
-
 // The option table the standard parser is given. A boolean whose negative
 // spelling is meaningful (--no-keep-browser) is declared once: allowNegative
 // turns the --no- form into the same key with the value false. Keeping every
@@ -136,8 +131,8 @@ function parseArgs(argv, env = process.env) {
     lynxExecutable: values['lynx-executable'] || env.TAWB_LYNX || 'lynx',
     lynxConfig: values['lynx-config'] || null,
     search: values.search || env.TAWB_SEARCH || DEFAULT_SEARCH,
-    linkAddress: values['link-address'] ?? !OFF.has(String(env.TAWB_LINK_ADDRESS || '').toLowerCase()),
-    shortLinks: values['short-links'] ?? ON.has(String(env.TAWB_SHORT_LINKS || '').toLowerCase()),
+    linkAddress: values['link-address'] ?? true,
+    shortLinks: values['short-links'] ?? false,
     escapeUnicode: values['escape-unicode'] ?? false,
     altScreen: values['alt-screen'] ?? true,
     closeInitialTabOnExit: values['close-initial-tab-on-exit'] ?? false,

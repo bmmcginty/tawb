@@ -459,21 +459,20 @@ export TAWB_SEARCH='https://html.duckduckgo.com/html/?q=%s'
 ### Link addresses
 
 The status line says where the link under the cursor goes. `u` switches that
-off and on while reading. To start with it off every time:
+off and on while reading. Put `--no-link-address` in the settings file to
+start with it off every time:
 
 ```sh
 npm start -- --no-link-address
-export TAWB_LINK_ADDRESS=off
 ```
 
 `U` shortens a link that stays on the site you are reading to its path alone,
 so a link from `/a/b/c` to `/b` is announced as `/b` rather than repeating the
-host every time. Links that leave the site keep their full address. To start
-with the short form every time:
+host every time. Links that leave the site keep their full address. Put
+`--short-links` in the settings file to start with the short form every time:
 
 ```sh
 npm start -- --short-links
-export TAWB_SHORT_LINKS=on
 ```
 
 ### The alternate screen

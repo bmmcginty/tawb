@@ -121,6 +121,17 @@ test('the option parser refuses what it does not know', () => {
   assert.equal(parseArgs(['--', '--not-an-option'], {}).url, '--not-an-option');
 });
 
+test('the link preferences are not set from the environment', () => {
+  // These are reading preferences, not deployment values. The environment is
+  // reserved for values a wrapper or a container supplies -- the log
+  // directory, the lynx path, the search template -- and these two live in the
+  // settings file, set by their command-line spellings.
+  assert.equal(parseArgs([], { TAWB_LINK_ADDRESS: 'off' }).linkAddress, true);
+  assert.equal(parseArgs([], { TAWB_SHORT_LINKS: 'on' }).shortLinks, false);
+  assert.equal(parseArgs(['--no-link-address'], {}).linkAddress, false);
+  assert.equal(parseArgs(['--short-links'], {}).shortLinks, true);
+});
+
 test('only the Lynx interface asks Lynx for effective bindings', () => {
   let calls = 0;
   const importLynx = (options) => {
