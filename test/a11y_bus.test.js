@@ -10,6 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
 
 const { connect } = require('../src/dbus');
 const {
@@ -54,6 +55,35 @@ test('a session bus can be started for a machine that has none', async (t) => {
     client.close();
   } finally {
     started.child.kill('SIGTERM');
+  }
+});
+
+test('the private bus writes its configuration and removes it with the socket', async (t) => {
+  const started = await busOrSkip(t);
+  if (!started) return;
+  const configPath = `${started.socketPath}.conf`;
+  started.child.kill('SIGTERM');
+  try {
+    assert.ok(fs.existsSync(started.socketPath), 'the socket was never created');
+    assert.ok(fs.existsSync(configPath), 'the bus has no configuration beside its socket');
+    const config = fs.readFileSync(configPath, 'utf8');
+    assert.match(config, /<listen>unix:path=/);
+    // The whole point of writing our own: the machine's session config would
+    // make the desktop's services activatable here, and a browser that asks
+    // for one waits until it has started or failed.
+    assert.ok(!/<servicedir/.test(config), 'the private bus offers desktop services');
+  } finally {
+    // Wait for the daemon to leave, because removing its files is its job.
+    const removed = await new Promise((resolve) => {
+      const deadline = Date.now() + 5000;
+      const check = () => {
+        if (!fs.existsSync(started.socketPath) && !fs.existsSync(configPath)) resolve(true);
+        else if (Date.now() >= deadline) resolve(false);
+        else setTimeout(check, 20);
+      };
+      check();
+    });
+    assert.equal(removed, true, 'the socket or its configuration was left behind');
   }
 });
 

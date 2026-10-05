@@ -11,8 +11,12 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const { spawn } = require('node:child_process');
 
-const { Accessibility } = require('../src/atspi');
+const { Accessibility, openAccessibility } = require('../src/atspi');
+const { startSessionBus, serveAccessibilityBus, A11Y_NAME } = require('../src/a11y_bus');
+const { connect } = require('../src/dbus');
 
 // The accessibility tree of a machine with two applications open, one of
 // which is a browser showing Chrome's install confirmation.
@@ -58,11 +62,18 @@ const TREE = {
   ':1.1|/dialog/secret': {
     role: 'password text', name: 'Password', value: '••••••••', children: [],
   },
-  ':1.1|/dialog/cancel': { role: 'push button', name: 'Cancel', children: [] },
+  // Cancel is the button a views dialog is focused on and marks as its
+  // default, which is AT-SPI state word bits 12 and 39. Add extension has
+  // neither.
+  ':1.1|/dialog/cancel': {
+    role: 'push button', name: 'Cancel', children: [], state: [1 << 12, 1 << 7],
+  },
   ':1.1|/dialog/add': { role: 'push button', name: 'Add extension', children: [] },
 };
 
-function fakeBus({ pids = { ':1.1': 4242, ':1.7': 99 }, gone = new Set() } = {}) {
+function fakeBus({
+  pids = { ':1.1': 4242, ':1.7': 99 }, gone = new Set(), childless = new Set(),
+} = {}) {
   const pressed = [];
   const connection = {
     pressed,
@@ -80,16 +91,22 @@ function fakeBus({ pids = { ':1.1': 4242, ':1.7': 99 }, gone = new Set() } = {})
       if (gone.has(key)) throw new Error('object gone');
       const node = TREE[key];
       if (!node) throw new Error(`no node at ${key}`);
-      if (member === 'GetChildren') return [node.children];
+      if (member === 'GetChildren') {
+        // A subtree that has gone away since it was described: the node still
+        // answers for itself, but its children do not.
+        if (childless.has(key)) throw new Error('children gone');
+        return [node.children];
+      }
       if (member === 'GetRoleName') return [node.role];
       if (iface === 'org.freedesktop.DBus.Properties' && member === 'Get') {
         assert.deepEqual(body, ['org.a11y.atspi.Accessible', 'Name']);
         return [node.name];
       }
       if (member === 'GetText') return [node.value || ''];
+      if (member === 'GetState') return [node.state || [0, 0]];
       if (member === 'DoAction') {
         pressed.push(key);
-        return [true];
+        return [node.press !== false];
       }
       throw new Error(`unexpected ${iface}.${member}`);
     },
@@ -174,4 +191,137 @@ test('a walk stops rather than following a tree without end', async () => {
   const read = await a11y.read(dialog, { maxNodes: 3 });
   assert.equal(read.truncated, true);
   assert.ok(read.lines.length <= 3);
+});
+
+test('a subtree whose children cannot be read does not take its siblings with it', async () => {
+  // A panel that has gone away since it was described refuses its children.
+  // The walk must carry on past it rather than ending the read.
+  const a11y = new Accessibility(fakeBus({ childless: new Set([':1.1|/dialog/perms']) }));
+  const application = await a11y.applicationFor({ pid: 4242 });
+  const [, dialog] = await a11y.topLevels(application);
+  const read = await a11y.read(dialog);
+  assert.ok(read.lines.includes('Add "uBlock Origin Lite"?'), 'the heading was lost');
+  assert.ok(!read.lines.includes('Read and change all your data on all websites'),
+    'a permission inside the unreadable subtree appeared anyway');
+  // Everything after the broken subtree in the same parent is still read.
+  assert.deepEqual(read.toggles.map((toggle) => toggle.name), ['Allow it in private windows']);
+  assert.deepEqual(read.buttons.map((button) => button.name), ['Cancel', 'Add extension']);
+});
+
+test('a top-level that vanishes while it is listed is skipped, not fatal', async () => {
+  // The window closes between the application listing it and being asked
+  // about it, which is what a dialog dismissed by somebody else looks like.
+  const a11y = new Accessibility(fakeBus({ gone: new Set([':1.1|/window']) }));
+  const application = await a11y.applicationFor({ pid: 4242 });
+  const tops = await a11y.topLevels(application);
+  assert.deepEqual(tops.map((top) => top.role), ['alert']);
+});
+
+test('a connection that will not answer for a pid is passed over, not fatal', async () => {
+  // ':1.1' is missing from the pid map, so asking the bus about it throws.
+  // ':1.7' answers, and it is the one the pid belongs to. A browser on a
+  // desktop shares the accessibility bus with whatever else is running, so
+  // one uncooperative name must not stop the search.
+  const a11y = new Accessibility(fakeBus({ pids: { ':1.7': 99 } }));
+  const found = await a11y.applicationFor({ pid: 99 });
+  assert.equal(found.name, 'Text Editor');
+  assert.equal(found.bus, ':1.7');
+});
+
+test('AT-SPI state words are decoded by the bit AT-SPI defines', async () => {
+  const a11y = new Accessibility(fakeBus());
+  assert.deepEqual(await a11y.statesOf({ bus: ':1.1', path: '/dialog/cancel' }), {
+    checked: false, focused: true, isDefault: true,
+  });
+  assert.deepEqual(await a11y.statesOf({ bus: ':1.1', path: '/dialog/add' }), {
+    checked: false, focused: false, isDefault: false,
+  });
+});
+
+test('the dialog’s own default button is read from its state, not assumed', async () => {
+  const a11y = new Accessibility(fakeBus());
+  const application = await a11y.applicationFor({ pid: 4242 });
+  const [, dialog] = await a11y.topLevels(application);
+  const read = await a11y.read(dialog);
+  const cancel = read.buttons.find((button) => button.name === 'Cancel');
+  const add = read.buttons.find((button) => button.name === 'Add extension');
+  assert.equal(cancel.isDefault, true);
+  assert.equal(add.focused, false);
+  assert.equal(add.isDefault, false);
+});
+
+test('a press that the browser refuses is reported rather than hidden', async () => {
+  const a11y = new Accessibility(fakeBus());
+  const refused = { bus: ':1.1', path: '/dialog/cancel', name: 'Cancel' };
+  // The tree says this button refuses the action; nothing here should turn
+  // that into success.
+  const original = TREE[':1.1|/dialog/cancel'];
+  TREE[':1.1|/dialog/cancel'] = { ...original, press: false };
+  try {
+    assert.equal(await a11y.press(refused), false);
+  } finally {
+    TREE[':1.1|/dialog/cancel'] = original;
+  }
+});
+
+test('the browser is found when the bus names a child of the process group we started', async (t) => {
+  // With no display the browser runs under xvfb-run, so the pid this session
+  // holds is the group leader and the pid on the bus is a child of it. The
+  // two are matched through the process group, and only a real group tests it.
+  const leader = spawn('sh', ['-c', 'sleep 60 & wait'], { stdio: 'ignore', detached: true });
+  leader.unref();
+  try {
+    let childPid = null;
+    for (let attempt = 0; attempt < 50 && !childPid; attempt += 1) {
+      try {
+        const text = fs.readFileSync(`/proc/${leader.pid}/task/${leader.pid}/children`, 'utf8').trim();
+        if (text) childPid = Number(text.split(/\s+/)[0]);
+      } catch { /* the child is not there yet */ }
+      if (!childPid) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (!childPid) {
+      t.skip('could not observe a child process to place in the group');
+      return;
+    }
+    const a11y = new Accessibility(fakeBus({ pids: { ':1.1': childPid } }));
+    const found = await a11y.applicationFor({ pid: leader.pid });
+    assert.equal(found.name, 'Chromium');
+  } finally {
+    try { process.kill(-leader.pid, 'SIGKILL'); } catch { /* already gone */ }
+  }
+});
+
+test('the accessibility bus is reached through the session bus, or taken directly', async (t) => {
+  let bus;
+  try {
+    bus = await startSessionBus();
+  } catch (err) {
+    t.skip(`no session bus available here: ${err.message}`);
+    return;
+  }
+  let server;
+  try {
+    server = await connect(bus.address);
+    if (await server.requestName(A11Y_NAME) !== 1) {
+      t.skip('somebody else owns the accessibility bus name here');
+      return;
+    }
+    serveAccessibilityBus(server, bus.address);
+
+    // The ordinary route: ask org.a11y.Bus where the accessibility bus is.
+    const throughSession = await openAccessibility({ sessionAddress: bus.address });
+    assert.match(throughSession.connection.name, /^:/);
+    throughSession.close();
+
+    // The route a reader on a private bus takes, where the address is known.
+    const direct = await openAccessibility({ address: bus.address });
+    assert.match(direct.connection.name, /^:/);
+    direct.close();
+
+    // With no bus to ask and none named, it refuses rather than guessing.
+    await assert.rejects(openAccessibility({ sessionAddress: null }), /no session bus/);
+  } finally {
+    if (server) server.close();
+    bus.child.kill('SIGTERM');
+  }
 });

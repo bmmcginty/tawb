@@ -56,7 +56,15 @@ function fakeApplication(windows = []) {
     },
     async press(button) {
       pressed.push(button.name);
+      // The browser owns a control's state; pressing one flips it.
+      if (button) {
+        const checked = !!(button.states && button.states.checked);
+        button.states = { ...(button.states || {}), checked: !checked };
+      }
       return true;
+    },
+    async statesOf(control) {
+      return control.states || { checked: false, focused: false, isDefault: false };
     },
   };
   return { a11y, state };
@@ -224,6 +232,124 @@ test('a dialog answered in the browser is forgotten rather than pressed', async 
     state.windows.push(INSTALL_PROMPT);
     await sleep(60);
     assert.equal(asked.length, 2);
+  } finally {
+    watch.stop();
+  }
+});
+
+test('an option is ticked and the browser’s own new state is read back', async () => {
+  const prompt = {
+    path: '/dialog/install',
+    role: 'alert',
+    name: 'Add “uBlock Origin Lite”?',
+    lines: ['Add “uBlock Origin Lite”?'],
+    buttons: [{ name: 'Cancel' }],
+    toggles: [{ name: 'Allow it in private windows' }],
+  };
+  const { a11y, state } = fakeApplication([prompt]);
+  const asked = [];
+  const watch = watchNativeDialogs({
+    a11y,
+    application: { bus: ':1.1', path: '/root' },
+    interval: 10,
+    onDialog: async (dialog) => { asked.push(dialog); },
+  });
+  try {
+    await sleep(60);
+    assert.equal(asked.length, 1);
+    const [option] = asked[0].toggles;
+    assert.equal(await asked[0].toggle(option), true, 'the read-back state is the browser’s, not assumed');
+    assert.deepEqual(state.pressed, ['Allow it in private windows']);
+    // And ticking it again is the browser’s answer again, not a cached one.
+    assert.equal(await asked[0].toggle(option), false);
+  } finally {
+    watch.stop();
+  }
+});
+
+test('a dialog whose browser has gone stops answering “still open”', async () => {
+  const { a11y, state } = fakeApplication([INSTALL_PROMPT]);
+  const asked = [];
+  const watch = watchNativeDialogs({
+    a11y,
+    application: { bus: ':1.1', path: '/root' },
+    interval: 10,
+    onDialog: async (dialog) => { asked.push(dialog); },
+  });
+  try {
+    await sleep(60);
+    assert.equal(asked.length, 1);
+    state.fail = true;
+    assert.equal(await asked[0].stillOpen(), false, 'a bus that has gone is not “still open”');
+  } finally {
+    watch.stop();
+  }
+});
+
+test('a file chooser is a question like any other', async () => {
+  // DIALOG_ROLES is not just alert and dialog; a chooser the browser drew for
+  // itself arrives the same way and is answered the same way.
+  const { a11y, state } = fakeApplication([]);
+  const asked = [];
+  const watch = watchNativeDialogs({
+    a11y,
+    application: { bus: ':1.1', path: '/root' },
+    interval: 10,
+    onDialog: async (dialog) => { asked.push(dialog.title); },
+  });
+  try {
+    state.windows.push({
+      path: '/dialog/files', role: 'file chooser', name: 'Open File',
+      lines: ['Open File'], buttons: [{ name: 'Cancel' }, { name: 'Open' }],
+    });
+    await sleep(60);
+    assert.deepEqual(asked, ['Open File']);
+  } finally {
+    watch.stop();
+  }
+});
+
+test('a panel with nothing to say and nothing to press is not a question', async () => {
+  const { a11y, state } = fakeApplication([]);
+  const asked = [];
+  const watch = watchNativeDialogs({
+    a11y,
+    application: { bus: ':1.1', path: '/root' },
+    interval: 10,
+    onDialog: async (dialog) => { asked.push(dialog.title); },
+  });
+  try {
+    state.windows.push({ path: '/dialog/empty', role: 'dialog', name: '', lines: [], buttons: [] });
+    await sleep(80);
+    assert.deepEqual(asked, [], 'an empty dialog was put in front of the reader');
+  } finally {
+    watch.stop();
+  }
+});
+
+test('a reader handler that throws does not stop the watch', async () => {
+  const { a11y, state } = fakeApplication([]);
+  const asked = [];
+  let first = true;
+  const watch = watchNativeDialogs({
+    a11y,
+    application: { bus: ':1.1', path: '/root' },
+    interval: 10,
+    onDialog: async (dialog) => {
+      if (first) { first = false; throw new Error('the terminal went away'); }
+      asked.push(dialog.title);
+    },
+    log: () => {},
+  });
+  try {
+    state.windows.push(INSTALL_PROMPT);
+    await sleep(80);
+    state.windows.push({
+      path: '/dialog/second', role: 'alert', name: 'Something else?',
+      lines: ['Something else?'], buttons: [{ name: 'OK' }],
+    });
+    await sleep(120);
+    assert.deepEqual(asked, ['Something else?'], 'the watch ended with the handler');
   } finally {
     watch.stop();
   }
