@@ -100,12 +100,12 @@ test('only the Lynx interface asks Lynx for effective bindings', () => {
   const importLynx = (options) => {
     calls += 1;
     assert.deepEqual(options, { executable: '/opt/lynx', config: '/config/lynx.cfg' });
-    return { bindings: { quit: ['x'] }, unsupported: ['SHELL'] };
+    return { bindings: { 'confirm-quit': ['x'] }, unsupported: ['SHELL'] };
   };
   const lynx = keymapForOptions({
     interface: 'lynx', lynxExecutable: '/opt/lynx', lynxConfig: '/config/lynx.cfg',
   }, { importLynx });
-  assert.equal(lynx.actionFor('x'), 'quit');
+  assert.equal(lynx.actionFor('x'), 'confirm-quit');
   assert.deepEqual(lynx.unsupported, ['SHELL']);
 
   const ordinary = keymapForOptions({ interface: 'default' }, { importLynx });

@@ -882,6 +882,13 @@ distinction is visible wherever a reflowed paragraph or table row puts several
 items on one display row, and `findQuickNav()` takes a column as it crosses
 rows, as Lynx does. DOWN_HALF and UP_HALF are a step of half the viewport.
 
+The other Lynx pairs that were once one action are separate too: `confirm-quit`
+asks before quitting where `abort` does not, `link-address` edits the address of
+the link under the cursor where `location-edit` edits the document's, and
+`context-help` describes the control under the cursor where `help` opens the
+help page. `askYesNo()` takes a default answer, so Enter accepts Lynx's own
+`(y)` prompt.
+
 Number entry snapshots references to the numbered block objects rather than
 indexes. `^` and `$` scan display spans as well as ordinary lines, so the first
 or last control in a reflowed paragraph retains the column of its exact browser

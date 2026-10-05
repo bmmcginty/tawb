@@ -54,9 +54,12 @@ const LYNX_KEY_DEFINITIONS = {
 
 const ACTIONS = [
   ['quit', 'Quit', ['Ctrl+C', 'q']],
+  ['confirm-quit', 'Quit, asking first', []],
+  ['abort', 'Quit without asking', []],
   ['location-bar', 'Location bar', ['Ctrl+L']],
   ['goto', 'Enter a new address', []],
   ['location-edit', 'Edit the current address', []],
+  ['link-address', "Edit the current link's address", []],
   ['history-back', 'Back in page history', ['Alt+-']],
   ['history-forward', 'Forward in page history', ['Alt++']],
   ['activate', 'Activate', ['Enter']],
@@ -159,6 +162,7 @@ const ACTIONS = [
   ['cycle-view', 'Cycle view', ['\\']],
   ['source-view', 'Toggle source and presentation', []],
   ['help', 'Help', []],
+  ['context-help', 'Help for the current control', []],
   ['keyboard-wizard', 'Keyboard wizard', ['Alt+?']],
   ['main-menu', 'Go to the main screen', []],
   ['next-heading', 'Next heading', ['h']],
@@ -229,6 +233,7 @@ const LYNX_ONLY_ACTIONS = new Set([
   'main-menu', 'first-focusable', 'last-focusable',
   'fast-forward-link', 'fast-backward-link', 'down-link', 'up-link',
   'next-half-screen', 'previous-half-screen',
+  'confirm-quit', 'abort', 'link-address', 'context-help',
 ]);
 
 // A default-only action is one the Lynx interface deliberately leaves out, so
@@ -237,6 +242,7 @@ const LYNX_ONLY_ACTIONS = new Set([
 // through a page with numbers and pages, and a reader who wants h/l/f/b/n/p
 // uses the ordinary interface for it.
 const DEFAULT_ONLY_ACTIONS = new Set([
+  'quit',
   'location-bar', 'next-character', 'previous-character', 'line-start', 'line-end',
   'next-change', 'previous-change', 'where', 'toggle-live', 'toggle-link-address',
   'toggle-short-links', 'find-backward', 'repeat-find', 'downloads',

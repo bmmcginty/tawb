@@ -21,8 +21,10 @@ test('Lynx key names become portable TAWB key specifications', () => {
 test('the effective Lynx browse map is translated by function name', () => {
   const parsed = parseBrowseMap([
     'q           QUIT          quit the browser',
+    'Q           ABORT         quit unconditionally',
     'g           GOTO          enter an address',
     'G           ECGOTO        edit the current address',
+    "E           ELGOTO        edit the current link's address",
     '^R          RELOAD        reload the current document',
     'x           NOCACHE       reload without cache',
     'z           INTERRUPT     stop loading',
@@ -53,9 +55,12 @@ test('the effective Lynx browse map is translated by function name', () => {
     '!           SHELL         escape to a shell',
   ].join('\n'));
 
-  assert.deepEqual(parsed.bindings.quit, ['q']);
+  // Lynx's QUIT and ABORT are two functions, and stay two here.
+  assert.deepEqual(parsed.bindings['confirm-quit'], ['q']);
+  assert.deepEqual(parsed.bindings.abort, ['Q']);
   assert.deepEqual(parsed.bindings.goto, ['g']);
   assert.deepEqual(parsed.bindings['location-edit'], ['G']);
+  assert.deepEqual(parsed.bindings['link-address'], ['E']);
   assert.deepEqual(parsed.bindings['source-view'], ['\\']);
   assert.deepEqual(parsed.bindings['reload-page'], ['Ctrl+R']);
   assert.deepEqual(parsed.bindings['reload-no-cache'], ['x']);
@@ -92,7 +97,7 @@ test('custom effective output carries included control and function-key mappings
   const output = fs.readFileSync(path.join(
     __dirname, 'fixtures', 'lynx-keymap-custom-effective.txt'), 'utf8');
   const parsed = parseBrowseMap(output);
-  assert.deepEqual(parsed.bindings.quit, ['x']);
+  assert.deepEqual(parsed.bindings['confirm-quit'], ['x']);
   assert.deepEqual(parsed.bindings.goto, ['Ctrl+X']);
   assert.deepEqual(parsed.bindings['document-info'], ['F2']);
   assert.deepEqual(parsed.bindings['next-focusable'], ['ArrowDown']);
@@ -126,7 +131,7 @@ test('malformed or partial effective output degrades to what can be read', () =>
     ['x'.repeat(20), 'QUIT', 'too long a key column'].join(' '),
   ].join('\n');
   const parsed = parseBrowseMap(garbage);
-  assert.deepEqual(parsed.bindings.quit, []);
+  assert.deepEqual(parsed.bindings['confirm-quit'], []);
   assert.deepEqual(parsed.bindings.goto, []);
   assert.deepEqual(parsed.unsupported, []);
 

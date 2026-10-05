@@ -49,7 +49,7 @@ test('effective standard, vi, and Emacs Lynx maps drive their familiar keys', ()
   assert.equal(standard.actionFor('G'), 'location-edit');
   assert.equal(standard.actionFor('0'), 'link-number');
   assert.equal(standard.actionFor('l'), 'list-links');
-  assert.equal(standard.actionFor('\x1bOP'), 'help',
+  assert.equal(standard.actionFor('\x1bOP'), 'context-help',
     'an imported function-key binding resolves through the Lynx vocabulary');
 
   const vi = new Keymap({
@@ -73,12 +73,12 @@ test('effective standard, vi, and Emacs Lynx maps drive their familiar keys', ()
 test('imported Lynx defaults reset cleanly and expose unsupported commands', () => {
   const keys = new Keymap({
     terminfo: {}, profile: 'lynx', load: false,
-    bindings: { quit: ['x'] }, unsupported: ['SHELL'],
+    bindings: { 'list-links': ['x'] }, unsupported: ['SHELL'],
   });
-  assert.equal(keys.actionFor('x'), 'quit');
-  keys.assign('quit', '~');
+  assert.equal(keys.actionFor('x'), 'list-links');
+  keys.assign('list-links', '~');
   keys.reset();
-  assert.equal(keys.actionFor('x'), 'quit');
+  assert.equal(keys.actionFor('x'), 'list-links');
   assert.equal(keys.actionFor('~'), null);
   assert.ok(wizardRows(keys).some((row) => row.type === 'unsupported' && /SHELL/.test(row.label)));
   // The unsupported commands come after a heading, so the list reads as an
@@ -105,9 +105,9 @@ test('the version-one default key file still loads without conversion', () => {
 test('an old Lynx key file wins over a new built-in action on the same key', () => {
   const directory = tempDir('tawb-old-lynx-keys-');
   const file = path.join(directory, 'keys-lynx.json');
-  fs.writeFileSync(file, JSON.stringify({ version: 1, actions: { quit: ['x'] } }));
+  fs.writeFileSync(file, JSON.stringify({ version: 1, actions: { 'list-links': ['x'] } }));
   const keys = new Keymap({ terminfo: {}, profile: 'lynx', file });
-  assert.equal(keys.actionFor('x'), 'quit');
+  assert.equal(keys.actionFor('x'), 'list-links');
   assert.equal(keys.byId.get('reload-no-cache').bindings.includes('x'), false);
 });
 
@@ -154,7 +154,8 @@ test('function keys are named only for the Lynx profile', () => {
   const lynx = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
   assert.equal(lynx.nameForSequence('\x1bOQ'), 'F2');
   assert.deepEqual(lynx.sequencesFor('F2'), ['\x1bOQ', '\x1b[12~', '\x1b[[B']);
-  assert.equal(lynx.actionFor('\x1bOP'), null, 'having a name is not a binding');
+  assert.equal(lynx.actionFor('\x1bOQ'), null, 'F2 is named but not bound');
+  assert.equal(lynx.actionFor('\x1bOP'), 'context-help', 'F1 is DWIMHELP in Lynx');
 });
 
 test('the shared terminfo table never asks for the Lynx-only function keys', () => {

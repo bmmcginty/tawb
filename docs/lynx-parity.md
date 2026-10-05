@@ -135,6 +135,12 @@ The rows matter because TAWB's Lynx presentation reflows a paragraph or a table
 row onto one display row, which is exactly the case where "the next link" and
 "the link below" come apart.
 
+Other Lynx functions that were once folded together are separate too: `QUIT`
+(`q`) asks before quitting where `ABORT` (`Q`, `^D`) does not, `ELGOTO` (`E`)
+edits the address of the link under the cursor where `ECGOTO` (`G`) edits the
+document's, and `DWIMHELP` (`F1`) describes the control under the cursor where
+`HELP` opens the help page.
+
 ## Cursor placement
 
 | Situation | Lynx | TAWB |

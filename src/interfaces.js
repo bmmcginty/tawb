@@ -8,10 +8,13 @@ const INTERFACES = new Set(['default', 'lynx']);
 // An empty entry is deliberate: it keeps a TAWB reading command from leaking
 // into Lynx merely because nobody supplied a Lynx equivalent for it.
 const LYNX_BINDINGS = {
-  quit: ['q', 'Q'],
+  quit: [],
+  'confirm-quit': ['q'],
+  abort: ['Q', 'Ctrl+D'],
   'location-bar': [],
   goto: ['g'],
   'location-edit': ['G'],
+  'link-address': ['E'],
   'history-back': ['ArrowLeft', 'u'],
   'history-forward': ['Ctrl+U'],
   activate: ['Enter', 'ArrowRight'],
@@ -77,6 +80,7 @@ const LYNX_BINDINGS = {
   'cycle-view': [],
   'source-view': ['\\'],
   help: ['h', 'H', '?'],
+  'context-help': ['F1'],
   'keyboard-wizard': ['k', 'K'],
   'main-menu': ['m', 'M'],
   'next-heading': [],

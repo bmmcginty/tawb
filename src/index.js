@@ -2361,11 +2361,15 @@ function popupIsOpen(state) {
 }
 
 // What a key means while that popup is open: close it, quit for real, or fall
-// through to the browse map.
+// through to the browse map. Lynx's popup cancels on its quit and abort
+// functions, so all three readings of "leave" close the menu; only the
+// terminal's own interrupt leaves the program.
 function popupKey({ action, chunk, contextAction }) {
   if (action === 'close-popup') return 'close';
   if (contextAction === 'cancel') return 'close';
-  if (action === 'quit') return chunk === ALWAYS_QUIT ? 'quit' : 'close';
+  if (action === 'quit' || action === 'confirm-quit' || action === 'abort') {
+    return chunk === ALWAYS_QUIT ? 'quit' : 'close';
+  }
   return null;
 }
 
@@ -2385,6 +2389,12 @@ async function handleBrowseKey(chunk, state, page) {
     if (popup === 'close') return closePopup(state, page);
   }
   if (action === 'quit') return 'quit';
+  // Lynx tells quitting apart from aborting: QUIT asks first, ABORT does not.
+  if (action === 'abort') return 'quit';
+  if (action === 'confirm-quit') {
+    return await askYesNo(state, 'Are you sure you want to quit?', { defaultYes: true })
+      ? 'quit' : undefined;
+  }
   if (action === 'link-number') {
     openLinkNumberPrompt(state);
     return;
@@ -2399,7 +2409,21 @@ async function handleBrowseKey(chunk, state, page) {
     return;
   }
 
+  // ELGOTO: the link's own address, which is not the document's. A reader who
+  // wants to see where a link really goes before following it, or to change
+  // one part of it, gets the address in front of them.
+  if (action === 'link-address') {
+    const item = itemUnderCursor(state);
+    if (!item || !item.href) {
+      setStatus(state, 'Move to a link before editing its address.');
+      return;
+    }
+    focusAddressBar(state, page, item.href);
+    return;
+  }
+
   if (action === 'help' && state.interface === 'lynx') return openHelp(state, page);
+  if (action === 'context-help' && state.interface === 'lynx') return describeCurrent(state, page);
   if (action === 'main-menu' && state.interface === 'lynx') return openMainMenu(state, page);
 
   if (action === 'keyboard-wizard') {
@@ -3307,6 +3331,27 @@ async function openTraceLog(state, page) {
   showLibrary(state, page, '');
 }
 
+// DWIMHELP. Lynx's F1 answers according to what is under the cursor rather
+// than opening a fixed page, so the answer here is about the control the
+// reader is standing on and what pressing it would do.
+function describeCurrent(state, page) {
+  const item = itemUnderCursor(state);
+  if (!item) {
+    setStatus(state, 'Nothing here to describe — move to a link, button or form field.');
+    return;
+  }
+  const parts = [item.name || '(unnamed)', item.role || 'item'];
+  if (item.href) parts.push(`goes to ${item.href}`);
+  if (item.expanded === true) parts.push('expanded');
+  if (item.expanded === false) parts.push('collapsed');
+  if (item.disabled) parts.push('disabled');
+  if (item.checked != null) parts.push(item.checked ? 'checked' : 'not checked');
+  const how = FIELD_ROLES.has(item.role)
+    ? 'Typing enters it; Enter submits'
+    : 'Enter activates it';
+  setStatus(state, `${parts.join(' — ')}. ${how}.`);
+}
+
 function openHelp(state, page) {
   const rows = [
     'Lynx Help for TAWB',
@@ -3323,7 +3368,8 @@ function openHelp(state, page) {
     'm: return to the main screen.  \\: toggle source.',
     'x: reload without cache.  z: stop loading.',
     'Ctrl+T: toggle tracing.  ;: view the trace log.',
-    'q: quit.  Left: return from this help page.',
+    'q: quit, after asking.  Q: quit without asking.',
+    'Left: return from this help page.',
   ];
   if (state.keys.unsupported && state.keys.unsupported.length) {
     rows.push('', `Unavailable Lynx functions: ${state.keys.unsupported.join(', ')}`);
@@ -3633,7 +3679,9 @@ async function handleLibraryKey(chunk, state, page) {
   if (lib.kind === 'bookmarks' && lynxAction === 'delete-bookmark') {
     return deleteLibraryBookmark(state, page);
   }
-  if (lynxAction === 'quit') return 'quit';
+  if (lynxAction === 'quit' || lynxAction === 'abort' || lynxAction === 'confirm-quit') {
+    return 'quit';
+  }
   if (contextAction === 'cancel') {
     closeLibrary(state, page, `Closed ${lib.label.toLowerCase()}.`);
     return;
@@ -3909,20 +3957,22 @@ async function askForFilePaths(state, { asking, multiple = false, accept = '' } 
   }
 }
 
-async function askYesNo(state, question) {
+async function askYesNo(state, question, { defaultYes = false } = {}) {
   if (!state.keyReader) return false;
   const previousMode = state.mode;
   const previousStatus = state.statusMsg;
   state.mode = 'confirm';
   const token = state.keyReader.claim();
   drawHint(state, { force: true });
-  setStatus(state, `${question} (y/n)`);
+  setStatus(state, `${question} (${defaultYes ? 'y' : 'y/n'})`);
   moveCursor(statusRow(), Math.min(question.length + 8, termSize().cols));
   try {
     for (;;) {
       const chunk = await state.keyReader.next(token);
       if (chunk === EOF || keyIs(chunk, 'Escape', state) || /^[nN]$/.test(chunk)) return false;
       if (/^[yY]$/.test(chunk)) return true;
+      // Enter is the answer the prompt is showing as its default.
+      if (defaultYes && (chunk === '\r' || chunk === '\n')) return true;
     }
   } finally {
     state.keyReader.release(token);

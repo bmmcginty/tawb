@@ -211,6 +211,8 @@ The common Lynx commands include:
 | Left | Go back |
 | Space / `b` | Next / previous screen |
 | `g` / `G` | Enter a new address / edit the current address |
+| `E` | Edit the address of the link under the cursor |
+| `q` / `Q` | Quit, asking first / quit without asking |
 | `/`, `n`, `N` | Find / next match / previous match |
 | `l` / `A` | List references by name / by address |
 | `a` / `v` | Add a bookmark / view bookmarks |
@@ -218,6 +220,7 @@ The common Lynx commands include:
 | `=` | Information about the current document and selected item |
 | `o`, `O` | Lynx options menu |
 | `h`, `H`, `?` | Lynx help |
+| `F1` | Help for the control under the cursor |
 | `k`, `K` | Lynx-profile keymap and keyboard bindings |
 | `m`, `M` | Return to the main screen |
 | `x`, `X` | Reload without using the browser cache |

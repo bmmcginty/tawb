@@ -50,7 +50,8 @@ function imported(config = null) {
 test('an installed Lynx supplies its stock key bindings', { skip }, () => {
   const result = imported();
   assert.equal(result.available, true);
-  assert.ok(result.bindings.quit.includes('q'), 'q quits');
+  assert.ok(result.bindings['confirm-quit'].includes('q'), 'q quits, asking first');
+  assert.ok(result.bindings.abort.includes('Q'), 'Q quits without asking');
   assert.ok(result.bindings.goto.includes('g'), 'g goes to an address');
   assert.ok(result.bindings['history-back'].includes('ArrowLeft'), 'Left goes back');
   assert.ok(result.bindings.activate.includes('Enter'), 'Enter activates');
@@ -102,7 +103,7 @@ test('SHOW_CURSOR follows the configuration', { skip }, () => {
 test('a custom KEYMAP is imported and an unsupported function is reported', { skip }, () => {
   const result = imported(configFile('custom.cfg', 'KEYMAP:x:QUIT\nKEYMAP:^X:SHELL\n'));
   assert.equal(result.available, true);
-  assert.ok(result.bindings.quit.includes('x'), 'the remapped quit key arrived');
+  assert.ok(result.bindings['confirm-quit'].includes('x'), 'the remapped quit key arrived');
   assert.ok(result.unsupported.includes('SHELL'), 'the shell escape was reported, not bound');
   const bound = Object.values(result.bindings).flat();
   assert.ok(!bound.includes('Ctrl+X'), 'an unsupported function is never assigned to a key');

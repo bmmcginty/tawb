@@ -6,8 +6,8 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const BROWSE_FUNCTIONS = {
-  QUIT: 'quit', ABORT: 'quit',
-  GOTO: 'goto', ELGOTO: 'location-edit', ECGOTO: 'location-edit',
+  QUIT: 'confirm-quit', ABORT: 'abort',
+  GOTO: 'goto', ELGOTO: 'link-address', ECGOTO: 'location-edit',
   PREV_DOC: 'history-back', NEXT_DOC: 'history-forward',
   ACTIVATE: 'activate',
   DOWN_TWO: 'next-line', UP_TWO: 'previous-line',
@@ -21,7 +21,7 @@ const BROWSE_FUNCTIONS = {
   WHEREIS: 'find-forward', NEXT: 'repeat-find-forward', PREV: 'repeat-find-backward',
   REFRESH: 'refresh', RELOAD: 'reload-page', NOCACHE: 'reload-no-cache', INTERRUPT: 'interrupt',
   TRACE_TOGGLE: 'toggle-trace', TRACE_LOG: 'trace-log',
-  SOURCE: 'source-view', KEYMAP: 'keyboard-wizard', HELP: 'help', DWIMHELP: 'help',
+  SOURCE: 'source-view', KEYMAP: 'keyboard-wizard', HELP: 'help', DWIMHELP: 'context-help',
   MAIN_MENU: 'main-menu',
   NEXT_LINK: 'next-focusable', FASTFORW_LINK: 'fast-forward-link', DOWN_LINK: 'down-link',
   PREV_LINK: 'previous-focusable', FASTBACKW_LINK: 'fast-backward-link', UP_LINK: 'up-link',

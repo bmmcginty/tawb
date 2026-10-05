@@ -30,6 +30,58 @@ async function quietly(run) {
   try { return await run(); } finally { process.stdout.write = write; }
 }
 
+// A prompt takes the keyboard for itself; here it is fed from an array.
+function keyboard(keys) {
+  const queue = [...keys];
+  return {
+    claim() { return 'token'; },
+    release() {},
+    async next() {
+      if (!queue.length) throw new Error('the prompt asked for a key nobody pressed');
+      return queue.shift();
+    },
+  };
+}
+
+test('Q aborts at once, and q asks before quitting', async () => {
+  const aborted = reader();
+  assert.equal(await quietly(() => handleBrowseKey('Q', aborted, PAGE)), 'quit',
+    'ABORT asked a question it should not have');
+
+  const yes = reader();
+  yes.keyReader = keyboard(['y']);
+  assert.equal(await quietly(() => handleBrowseKey('q', yes, PAGE)), 'quit');
+
+  const no = reader();
+  no.keyReader = keyboard(['n']);
+  assert.equal(await quietly(() => handleBrowseKey('q', no, PAGE)), undefined,
+    'a refused QUIT left the browser anyway');
+});
+
+test("E opens the address bar with the link's own address", async () => {
+  const state = reader();
+  state.core.blocks = [{
+    text: '{Alpha}',
+    item: { role: 'link', name: 'Alpha', href: 'https://example.test/a' },
+  }];
+  state.lines = [{ blockIndex: 0, text: 'Alpha' }];
+  await quietly(() => handleBrowseKey('E', state, PAGE));
+  assert.equal(state.mode, 'address');
+  assert.equal(state.address.text, 'https://example.test/a');
+});
+
+test('F1 describes the control under the cursor', async () => {
+  const state = reader();
+  state.core.blocks = [{
+    text: '{Alpha}',
+    item: { role: 'link', name: 'Alpha', href: 'https://example.test/a' },
+  }];
+  state.lines = [{ blockIndex: 0, text: 'Alpha' }];
+  await quietly(() => handleBrowseKey('\x1bOP', state, PAGE));
+  assert.match(state.statusMsg, /Alpha — link — goes to https:\/\/example\.test\/a/);
+  assert.match(state.statusMsg, /Enter activates it/);
+});
+
 test('h, H, and question mark open Lynx help while k opens the keymap', async () => {
   const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
   assert.equal(keys.actionFor('h'), 'help');
