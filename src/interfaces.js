@@ -119,20 +119,6 @@ function interfaceName(value) {
   return name;
 }
 
-// The front end is the program that runs. interfaceName above validates the
-// keymap profile, which is narrower — the profiles are the full-screen
-// reader's two presentations — and is what Keymap and the display metadata are
-// written against.
-const FRONT_ENDS = new Set(['default', 'lynx', 'edb']);
-
-function frontEndName(value) {
-  const name = String(value || 'default').toLowerCase();
-  if (!FRONT_ENDS.has(name)) {
-    throw new Error(`Unknown front end ${value}; use default, lynx or edb`);
-  }
-  return name;
-}
-
 // Function keys beyond F5 are named only for the Lynx profile, because nothing
 // in TAWB's own bindings uses them. Importing an effective Lynx map is the one
 // caller that can: upstream binds F1 to context help and a customized map can
@@ -272,8 +258,8 @@ function lynxHidesCursor(state) {
 }
 
 module.exports = {
-  INTERFACES, FRONT_ENDS, LYNX_BINDINGS, LYNX_CONTEXT_ACTIONS,
+  INTERFACES, LYNX_BINDINGS, LYNX_CONTEXT_ACTIONS,
   LYNX_KEY_DEFINITIONS, LYNX_ONLY_ACTIONS, DEFAULT_ONLY_ACTIONS,
-  interfaceName, frontEndName, bindingsFor, profilesFor, keyPolicy,
+  interfaceName, bindingsFor, profilesFor, keyPolicy,
   needsLayoutMetadata, contextNavigationAction, lynxHidesCursor,
 };

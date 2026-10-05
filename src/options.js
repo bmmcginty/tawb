@@ -38,6 +38,20 @@ function browserTimeoutMs(value) {
   return Math.round(seconds * 1000);
 }
 
+// The front end is the program that runs: the full-screen reader, in either of
+// its two profiles, and edbrowse's bridge. It is an option value, so its
+// vocabulary lives here rather than with the keymap-profile policy in
+// interfaces.js, which is narrower and is what Keymap is written against.
+const FRONT_ENDS = new Set(['default', 'lynx', 'edb']);
+
+function frontEndName(value) {
+  const name = String(value || 'default').toLowerCase();
+  if (!FRONT_ENDS.has(name)) {
+    throw new Error(`Unknown front end ${value}; use default, lynx or edb`);
+  }
+  return name;
+}
+
 // Parse with the standard parser and the strict rules the table describes: an
 // unknown option or a missing value is an error, a bare -- still lets a
 // positional start with a dash, and a boolean may be spelled --no-x.
@@ -93,6 +107,6 @@ function resolveBrowserOptions(values, env = process.env) {
 }
 
 module.exports = {
-  BROWSER_OPTIONS, EDB_OPTIONS, HELP_OPTION, browserTimeoutMs, parseCommandLine,
-  resolveBrowserOptions, resolveEdbOptions,
+  BROWSER_OPTIONS, EDB_OPTIONS, FRONT_ENDS, HELP_OPTION, browserTimeoutMs,
+  frontEndName, parseCommandLine, resolveBrowserOptions, resolveEdbOptions,
 };

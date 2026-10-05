@@ -22,7 +22,7 @@ const { capturePlace, restorePlace, exactBlockForElement } = require('./place');
 const { armActivationFocus, focusedByActivation, cancelActivationFocus } = require('./focus');
 const { Keymap, configPath } = require('./keys');
 const {
-  frontEndName, contextNavigationAction, lynxHidesCursor, needsLayoutMetadata,
+  contextNavigationAction, lynxHidesCursor, needsLayoutMetadata,
 } = require('./interfaces');
 const { readLynxConfig, DEFAULT_PREFERENCES } = require('./lynx_config');
 const {
@@ -45,7 +45,7 @@ const { entryLine, matches, shortAddress, KIND_LABELS } = require('./library');
 const { resolveAddress, DEFAULT_SEARCH } = require('./address');
 const { readSettings } = require('./settings');
 const {
-  BROWSER_OPTIONS, EDB_OPTIONS, HELP_OPTION, parseCommandLine,
+  BROWSER_OPTIONS, EDB_OPTIONS, HELP_OPTION, frontEndName, parseCommandLine,
   resolveBrowserOptions, resolveEdbOptions,
 } = require('./options');
 const { startupStatus } = require('./startup');

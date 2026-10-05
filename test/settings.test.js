@@ -8,6 +8,7 @@ const path = require('node:path');
 const { settingsPath, splitSettings, readSettings } = require('../src/settings');
 const { parseArgs, keymapForOptions } = require('../src/index');
 const { parseArgs: parseEdbArgs, runEdb } = require('../src/edb');
+const { frontEndName } = require('../src/options');
 const { tempDir } = require('./tmpdir');
 
 test('the settings file uses command-line option syntax', () => {
@@ -175,6 +176,16 @@ test('Lynx preferences cannot be set through the command line or main settings',
     assert.throws(() => parseArgs([`--${name}`], {}), /Unknown option/, name);
     assert.throws(() => parseArgs([`--${name}=on`], {}), /Unknown option/, name);
   }
+});
+
+test('the front end is validated with its own vocabulary', () => {
+  // --front-end chooses the program; the keymap profile is narrower and is
+  // what interfaces.js still guards for Keymap and the display.
+  assert.equal(frontEndName('lynx'), 'lynx');
+  assert.equal(frontEndName('LYNX'), 'lynx');
+  assert.equal(frontEndName('edb'), 'edb');
+  assert.equal(frontEndName(undefined), 'default');
+  assert.throws(() => frontEndName('emacs'), /Unknown front end/);
 });
 
 test('only the Lynx front end asks Lynx for effective bindings', () => {
