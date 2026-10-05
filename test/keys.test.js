@@ -9,8 +9,9 @@ const { PassThrough } = require('node:stream');
 const { tempDir } = require('./tmpdir');
 
 const {
-  Keymap, configPath, readTerminfo, rawSpec, LYNX_KEY_DEFINITIONS,
+  Keymap, configPath, readTerminfo, rawSpec,
 } = require('../src/keys');
+const { LYNX_KEY_DEFINITIONS } = require('../src/interfaces');
 const { parseBrowseMap } = require('../src/lynx_config');
 const { runKeyWizard, wizardRows } = require('../src/key_wizard');
 

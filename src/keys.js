@@ -4,8 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { bindingsFor, interfaceName } = require('./interfaces');
-const { parseKeyFile, serialiseKeyFile, functionForAction, functionNames } = require('./lynx_keymap');
+const { bindingsFor, interfaceName, profilesFor, keyPolicy } = require('./interfaces');
 
 // The ordinary key file, read the way it has always been: a version-1 document
 // whose `actions` object is keyed by TAWB action id.
@@ -41,26 +40,8 @@ const KEY_DEFINITIONS = {
   'Shift+Tab': { cap: 'kcbt', sequences: ['\x1b[Z'] },
 };
 
-// Function keys beyond F5 are named only for the Lynx profile, because nothing
-// in TAWB's own bindings uses them. Importing an effective Lynx map is the one
-// caller that can: upstream binds F1 to context help and a customized map can
-// put any function key on any command. Keeping them out of the shared table
-// means a reader who has not asked for the Lynx interface gets exactly the
-// startup it had before, with no extra terminfo lookups and no page key that
-// suddenly has a name.
-const LYNX_KEY_DEFINITIONS = {
-  F1: { cap: 'kf1', sequences: ['\x1bOP', '\x1b[11~', '\x1b[[A'] },
-  F2: { cap: 'kf2', sequences: ['\x1bOQ', '\x1b[12~', '\x1b[[B'] },
-  F3: { cap: 'kf3', sequences: ['\x1bOR', '\x1b[13~', '\x1b[[C'] },
-  F4: { cap: 'kf4', sequences: ['\x1bOS', '\x1b[14~', '\x1b[[D'] },
-  F6: { cap: 'kf6', sequences: ['\x1b[17~'] },
-  F7: { cap: 'kf7', sequences: ['\x1b[18~'] },
-  F8: { cap: 'kf8', sequences: ['\x1b[19~'] },
-  F9: { cap: 'kf9', sequences: ['\x1b[20~'] },
-  F10: { cap: 'kf10', sequences: ['\x1b[21~'] },
-  F11: { cap: 'kf11', sequences: ['\x1b[23~'] },
-  F12: { cap: 'kf12', sequences: ['\x1b[24~'] },
-};
+// Function keys beyond F5 are named only for the Lynx profile and live with
+// the rest of that interface's policy in ./interfaces.
 
 const ACTIONS = [
   ['quit', 'Quit', ['Ctrl+C', 'q']],
@@ -226,50 +207,6 @@ const EDITING_ACTIONS = new Set([
   ...ACTIONS.map((action) => action.id).filter((id) => id.startsWith('edit-')),
 ]);
 
-// Which interface an action belongs to.
-//
-// Most actions exist in both: the two interfaces are the same browser behind
-// different keys, and an action with no Lynx function of its own is still
-// reachable from either map. The exceptions are the two sets below.
-//
-// A Lynx-only action is one the Lynx interface added — a Lynx function TAWB
-// had no action for, or a browser facility the compatibility work needed. The
-// default interface keeps exactly the keystrokes it had before that work, so
-// these stay out of its map and out of its keyboard screen until somebody
-// pulls one across deliberately.
-const LYNX_ONLY_ACTIONS = new Set([
-  'goto', 'location-edit', 'edit-command', 'delete-bookmark', 'list-links',
-  'list-addresses', 'document-info', 'options', 'link-number',
-  'repeat-find-forward', 'repeat-find-backward', 'reload-no-cache',
-  'interrupt', 'toggle-trace', 'trace-log', 'source-view', 'help',
-  'main-menu', 'first-focusable', 'last-focusable',
-  'fast-forward-link', 'fast-backward-link', 'down-link', 'up-link',
-  'next-half-screen', 'previous-half-screen',
-  'confirm-quit', 'abort', 'link-address', 'context-help',
-  'visited-links', 'session-history',
-]);
-
-// A default-only action is one the Lynx interface deliberately leaves out, so
-// that a reader who knows Lynx is never shadowed by a TAWB reading command on
-// a letter Lynx uses. Quick navigation is the bulk of it: Lynx handles moving
-// through a page with numbers and pages, and a reader who wants h/l/f/b/n/p
-// uses the ordinary interface for it.
-const DEFAULT_ONLY_ACTIONS = new Set([
-  'quit', 'history',
-  'location-bar', 'next-character', 'previous-character', 'line-start', 'line-end',
-  'next-change', 'previous-change', 'where', 'toggle-live', 'toggle-link-address',
-  'toggle-short-links', 'find-backward', 'repeat-find', 'downloads',
-  'next-heading', 'previous-heading', 'next-link', 'previous-link',
-  'next-field', 'previous-field', 'next-button', 'previous-button',
-  'next-text', 'previous-text', 'next-paragraph', 'previous-paragraph',
-]);
-
-function profilesFor(id) {
-  if (LYNX_ONLY_ACTIONS.has(id)) return ['lynx'];
-  if (DEFAULT_ONLY_ACTIONS.has(id)) return ['default'];
-  return ['default', 'lynx'];
-}
-
 function actionsFor(profile) {
   return ACTIONS.filter((action) => profilesFor(action.id).includes(profile));
 }
@@ -334,12 +271,15 @@ class Keymap {
   } = {}) {
     this.profile = interfaceName(profile);
     this.file = file || configPath(process.env, os.homedir(), this.profile);
+    // The policy an interface owns: the extra terminal keys only it names, and
+    // the key-file format it reads and writes. The ordinary interface has
+    // neither, which is what keeps this class generic.
+    const policy = keyPolicy(this.profile);
+    this.keyFile = policy.keyFile;
     // A compatibility profile may name terminal keys TAWB itself never binds.
     // They are added to this profile's vocabulary only, so the shared table and
     // the default profile's terminfo lookups are unchanged.
-    this.definitions = this.profile === 'lynx'
-      ? { ...KEY_DEFINITIONS, ...LYNX_KEY_DEFINITIONS }
-      : KEY_DEFINITIONS;
+    this.definitions = { ...KEY_DEFINITIONS, ...(policy.keyDefinitions || {}) };
     this.terminfo = terminfo || readTerminfo({ definitions: this.definitions });
     this.unsupported = [...unsupported];
     this.preferences = { ...preferences };
@@ -358,7 +298,7 @@ class Keymap {
     // What the keyboard screen calls each action in this interface. Lynx names
     // its functions, so the screen does too; the ordinary interface has no
     // such vocabulary and its rows are just the action labels.
-    this.functionNames = this.profile === 'lynx' ? functionNames(this.actions) : new Map();
+    this.functionNames = policy.keyFile ? policy.keyFile.functionNames(this.actions) : new Map();
     this.namedSequences = new Map();
     this.sequenceNames = new Map();
     this.buildNames();
@@ -438,9 +378,10 @@ class Keymap {
     let text;
     try { text = fs.readFileSync(this.file, 'utf8'); } catch { return; }
     // The Lynx file is keyed by Lynx function name and the ordinary one by
-    // TAWB action id; parseKeyFile() reads either, including the version of
-    // the Lynx file written before the two were told apart.
-    const parsed = this.profile === 'lynx' ? parseKeyFile(text) : plainActions(text);
+    // TAWB action id; the interface's own parser reads whichever this is,
+    // including the version of the Lynx file written before the two were told
+    // apart.
+    const parsed = this.keyFile ? this.keyFile.parse(text) : plainActions(text);
     if (!parsed) return;
     const explicit = new Set();
     for (const [id, bindings] of Object.entries(parsed)) {
@@ -545,8 +486,8 @@ class Keymap {
 
   save() {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    const contents = this.profile === 'lynx'
-      ? serialiseKeyFile(this.actions)
+    const contents = this.keyFile
+      ? this.keyFile.serialise(this.actions)
       : `${JSON.stringify({ version: 1, actions: Object.fromEntries(
         this.actions.map((action) => [action.id, action.bindings]),
       ) }, null, 2)}\n`;
@@ -557,7 +498,6 @@ class Keymap {
 }
 
 module.exports = {
-  ACTIONS, EDITING_ACTIONS, KEY_DEFINITIONS, LYNX_KEY_DEFINITIONS,
-  LYNX_ONLY_ACTIONS, DEFAULT_ONLY_ACTIONS, profilesFor, actionsFor,
+  ACTIONS, EDITING_ACTIONS, KEY_DEFINITIONS, actionsFor,
   Keymap, configPath, readTerminfo, rawSpec,
 };
