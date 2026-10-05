@@ -67,9 +67,9 @@ const SOURCE_LABELS = { ax: 'AX', render: 'PAGE', inspect: 'INSPECT', source: 'S
 // rather than by matching role and name. INSPECT carries AX's own references.
 const DOM_SOURCES = new Set(['source']);
 
-async function snapshotBlocks(page, source = 'ax', { visited = null, driver = null } = {}) {
+async function snapshotBlocks(page, source = 'ax', { visited = null, driver = null, layout = false } = {}) {
   const t0 = Date.now();
-  const blocks = await snapshotFrameTree(page, source, { visited, driver });
+  const blocks = await snapshotFrameTree(page, source, { visited, driver, layout });
   log('snapshot', { source, ms: Date.now() - t0, blocks: blocks.length, frames: page.frames().length });
   return blocks;
 }
@@ -423,12 +423,16 @@ const RESTORE_SCROLL = () => {
 // ---------------------------------------------------------------------------
 
 class Core {
-  constructor({ driver, page, source, sources, browserPort = null }) {
+  constructor({ driver, page, source, sources, browserPort = null, layout = false }) {
     this.driver = driver;
     this.page = page;
     this.browserPort = browserPort;
     this.sources = sources;
     this.source = source;
+    // Whether the extraction records the inline-flow and table-cell placement
+    // the Lynx display lays a page out with. Nothing else reads it, so a
+    // reader who has not asked for Lynx does not pay for it. See blocksForFrame.
+    this.layout = layout;
     this.blocks = [];
     // Bumped whenever the block list is replaced wholesale. A front end that
     // holds its own copy — which every front end does, and a front end
@@ -599,7 +603,9 @@ class Core {
   async rescan({ page = this.page } = {}) {
     const started = Date.now();
     const visited = [];
-    this.blocks = await snapshotBlocks(page, this.source, { visited, driver: this.driver });
+    this.blocks = await snapshotBlocks(page, this.source, {
+      visited, driver: this.driver, layout: this.layout,
+    });
     for (const block of this.blocks) {
       const item = block.item;
       if (!item || !item.file || !item.file.key) continue;

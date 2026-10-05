@@ -1252,10 +1252,11 @@ async function openFirefox({
       return frame.evaluate(pageFunction, { pierce: true, ...extra });
     },
 
-    async axItems(frame) {
+    async axItems(frame, options = {}) {
       return readDocument(
         frame, extractAxItems, this, (items) => !items || !items.length,
         (scope) => scope.evaluate(() => !!document.querySelector('video[controls],audio[controls]')),
+        options,
       );
     },
 

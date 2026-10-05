@@ -4784,7 +4784,12 @@ async function main() {
 
   const sources = ALL_SOURCES.filter(
     (source) => !['ax', 'inspect'].includes(source) || driver.capabilities?.ax !== false);
-  const core = new Core({ driver, page, source: sources[0], sources, browserPort });
+  const core = new Core({
+    driver, page, source: sources[0], sources, browserPort,
+    // Only the Lynx display lays a page out with the extractor's inline-flow
+    // and table-cell metadata, so only that interface asks for it.
+    layout: ARGS.interface === 'lynx',
+  });
   const state = {
     core,
     keys,

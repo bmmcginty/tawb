@@ -111,7 +111,7 @@ test('Lynx arrows enter a textarea and Tab moves on to the next control', async 
     <textarea aria-label="Message"></textarea>
     <button>Send</button>
   `);
-  const core = new Core({ driver, page, source: 'ax' });
+  const core = new Core({ driver, page, source: 'ax', layout: true });
   await core.rescan();
   const state = makeState(core);
   relayout(state);
@@ -154,7 +154,7 @@ test('Lynx arrows enter a contenteditable host and Tab leaves it', async () => {
     selection.addRange(range);
   });
 
-  const core = new Core({ driver, page, source: 'ax' });
+  const core = new Core({ driver, page, source: 'ax', layout: true });
   await core.rescan();
   const state = makeState(core);
   relayout(state);
@@ -187,7 +187,7 @@ test('Lynx Enter opens a native select and the Lynx keys choose and cancel', asy
       <option>Japan</option>
     </select>
   `);
-  const core = new Core({ driver, page, source: 'ax' });
+  const core = new Core({ driver, page, source: 'ax', layout: true });
   await core.rescan();
   const state = makeState(core);
   relayout(state);
@@ -228,7 +228,7 @@ test('a custom ARIA control is pressed rather than typed into, updating in place
     <div id="choices" role="listbox" hidden><div role="option">One</div></div>
     <p id="said"></p>
   `);
-  const core = new Core({ driver, page, source: 'ax' });
+  const core = new Core({ driver, page, source: 'ax', layout: true });
   await core.rescan();
   const state = makeState(core);
   relayout(state);

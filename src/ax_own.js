@@ -171,6 +171,10 @@ function extractAxItems(options) {
   // tree descends into them on Chromium, so ours has to as well or the two
   // engines describe different pages.
   const opts = options || {};
+  // Whether to record the inline-flow and table-cell placement the Lynx
+  // display lays a page out with. Nothing else reads it, so by default the
+  // per-item closest() walk is not run at all.
+  const layout = !!opts.layout;
   const privilegedRoots = new Map();
   const nativeControls = new Map();
   const rememberNative = (controls) => {
@@ -707,8 +711,8 @@ function extractAxItems(options) {
   };
 
   const fromElement = (item, el) => {
-    const table = tableInfoOf(el);
-    const flow = flowOf(el, item.role);
+    const table = layout ? tableInfoOf(el) : undefined;
+    const flow = layout ? flowOf(el, item.role) : undefined;
     return {
       ...item,
       ...(table ? { table } : {}),
@@ -721,11 +725,11 @@ function extractAxItems(options) {
 
   const emit = (item, el) => {
     if (item.role !== '__break__') {
-      if (!item.table && el) {
+      if (layout && !item.table && el) {
         const table = tableInfoOf(el);
         if (table) item.table = table;
       }
-      if (!item.flow && el) {
+      if (layout && !item.flow && el) {
         const flow = flowOf(el, item.role);
         if (flow) item.flow = flow;
       }
@@ -803,7 +807,7 @@ function extractAxItems(options) {
     const tag = el.tagName.toLowerCase();
     // A <br> emits no ordinary item, but it does end the inline run on both
     // sides. Give what follows a new identity without changing default blocks.
-    if (tag === 'br') { breakFlow(el); return; }
+    if (tag === 'br') { if (layout) breakFlow(el); return; }
     if (SKIP.has(tag)) return;
     const visibility = visibilityOf(el);
     if (visibility === GONE) return;

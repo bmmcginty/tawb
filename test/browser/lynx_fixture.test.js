@@ -49,7 +49,7 @@ async function rendered() {
   driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
   const page = driver.context.pages()[0] || await driver.context.newPage();
   await page.goto('file://' + path.join(FIXTURES, 'lynx-display.html'));
-  const core = new Core({ driver, page, source: 'ax' });
+  const core = new Core({ driver, page, source: 'ax', layout: true });
   await core.rescan();
   const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
   keys.preferences = { numberLinks: true, numberFields: true };

@@ -483,10 +483,11 @@ async function openChromium({
     // the page, in the same item shape everything downstream expects — prose
     // merging, separator folding and layout are untouched by which engine
     // produced it.
-    async axItems(frame) {
+    async axItems(frame, options = {}) {
       return readDocument(
         frame, extractAxItems, this, (items) => !items || !items.length,
         (scope) => scope.evaluate(() => !!document.querySelector('video[controls],audio[controls]')),
+        options,
       );
     },
 

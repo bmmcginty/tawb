@@ -59,7 +59,11 @@
 // are rare, and a threshold invented to thin them out would drop real content
 // silently.
 
-function extractVisible() {
+function extractVisible(options) {
+  // Whether to record the inline-flow and table-cell placement the Lynx
+  // display lays a page out with. The ordinary PAGE view never reads it, so
+  // by default the per-item closest() walk is not run at all.
+  const layout = !!(options && options.layout);
   const SKIP = new Set(['script', 'style', 'noscript', 'template', 'head', 'meta',
     'link', 'title', 'svg', 'path', 'defs']);
   // Elements that start a new line of output regardless of their content.
@@ -207,7 +211,7 @@ function extractVisible() {
   };
 
   const emit = (entry, el) => {
-    if (el) {
+    if (el && layout) {
       const table = tableInfoOf(el);
       if (table) entry.table = table;
       const flow = flowOf(el, entry.kind);
@@ -396,7 +400,7 @@ function extractVisible() {
 
   walk = (el, inheritedBlock) => {
     const tag = el.tagName.toLowerCase();
-    if (tag === 'br') { breakFlow(el); return; }
+    if (tag === 'br') { if (layout) breakFlow(el); return; }
     if (SKIP.has(tag)) return;
     const visibility = visibilityOf(el);
     if (visibility === GONE) return;
@@ -642,9 +646,9 @@ const ROLE_BY_KIND = {
   text: 'text',
 };
 
-async function snapshotRenderBlocks(target) {
+async function snapshotRenderBlocks(target, { layout = false } = {}) {
   const frame = typeof target.mainFrame === 'function' ? target.mainFrame() : target;
-  const entries = await target.evaluate(extractVisible);
+  const entries = await target.evaluate(extractVisible, { layout });
 
   return entries.map((entry) => ({
     kind: 'control',

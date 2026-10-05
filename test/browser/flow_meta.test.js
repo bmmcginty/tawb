@@ -54,7 +54,7 @@ function named(blocks, name) {
 for (const source of ['ax', 'render']) {
   test(`${source} records one flow for inline neighbours and different flows at blocks`, async () => {
     const page = await openPage();
-    const core = new Core({ driver, page, source, sources: [source] });
+    const core = new Core({ driver, page, source, sources: [source], layout: true });
     await core.rescan();
     const blocks = core.blocks;
 
@@ -89,7 +89,7 @@ for (const source of ['ax', 'render']) {
 test('flow metadata changes no default line', async () => {
   const page = await openPage();
   for (const source of ['ax', 'render']) {
-    const core = new Core({ driver, page, source, sources: [source] });
+    const core = new Core({ driver, page, source, sources: [source], layout: true });
     await core.rescan();
     const state = {
       interface: 'default', core,
@@ -99,5 +99,15 @@ test('flow metadata changes no default line', async () => {
     relayout(state);
     assert.deepEqual(state.lines.map((line) => line.text), core.blocks.map((block) => block.text), source);
     assert.ok(state.lines.every((line) => !line.spans), source);
+  }
+});
+
+test('without the layout request the extractor records no flow', async () => {
+  const page = await openPage();
+  for (const source of ['ax', 'render']) {
+    const core = new Core({ driver, page, source, sources: [source] });
+    await core.rescan();
+    assert.ok(core.blocks.every((block) => block.item.flow === undefined),
+      `${source}: no flow metadata without a layout request`);
   }
 });

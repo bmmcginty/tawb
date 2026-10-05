@@ -43,7 +43,12 @@ function isFrameItem(item) {
 // PAGE is a plain DOM walk. AX and INSPECT share the driver's accessibility
 // extraction, while SOURCE also asks the driver for privileged shadow roots
 // so browser-owned controls do not disappear from its markup.
-async function blocksForFrame(frame, source, driver = null) {
+//
+// `layout` asks both page-side extractors to record the inline-flow and
+// table-cell placement the Lynx display needs. It is off for every other
+// reader, so the extra closest() walk never runs and blocks carry no
+// metadata they would never read.
+async function blocksForFrame(frame, source, driver = null, layout = false) {
   // SOURCE stays unfolded on purpose: it shows structure, where separator
   // folding would be a lie.
   if (source === 'source') {
@@ -55,9 +60,9 @@ async function blocksForFrame(frame, source, driver = null) {
       frame, extractSource, driver, (answer) => !answer || !answer.length, async () => true);
     return sourceEntriesToBlocks(entries, frame);
   }
-  if (source === 'render') return foldSeparatorBlocks(await snapshotRenderBlocks(frame));
+  if (source === 'render') return foldSeparatorBlocks(await snapshotRenderBlocks(frame, { layout }));
   if (!driver) throw new Error('the AX and INSPECT views need a driver to read accessibility semantics');
-  const items = await driver.axItems(frame);
+  const items = await driver.axItems(frame, { layout });
   if (source === 'inspect') return inspectBlocks(items, frame);
   const blocks = buildBlocks(items);
   // AX items carry no element reference, so record the frame they came from;
@@ -82,12 +87,12 @@ async function blocksForFrame(frame, source, driver = null) {
 //
 // `isEmpty` is the caller's, because what "nothing" means depends on what was
 // being read: no accessibility items, no tokens, no lines.
-async function readDocument(frame, pageFunction, driver, isEmpty, needsPiercing = null) {
-  const first = await frame.evaluate(pageFunction);
+async function readDocument(frame, pageFunction, driver, isEmpty, needsPiercing = null, extra = undefined) {
+  const first = await frame.evaluate(pageFunction, extra);
   let needed = isEmpty(first);
   if (!needed && needsPiercing) needed = await needsPiercing(frame).catch(() => false);
   if (!needed || !driver || typeof driver.pierceAndRun !== 'function') return first;
-  const second = await driver.pierceAndRun(frame, pageFunction).catch(() => null);
+  const second = await driver.pierceAndRun(frame, pageFunction, extra).catch(() => null);
   return second || first;
 }
 
@@ -144,16 +149,16 @@ async function orderedChildFrames(frame, limit = Infinity) {
 
 // `visited` collects the frames that actually contributed content, so the
 // caller can observe exactly what it displays.
-async function snapshotFrameTree(page, source, { visited = null, driver = null } = {}) {
+async function snapshotFrameTree(page, source, { visited = null, driver = null, layout = false } = {}) {
   const budget = { remaining: MAX_FRAMES };
-  return walk(page.mainFrame(), source, 0, budget, new Set(), visited, driver);
+  return walk(page.mainFrame(), source, 0, budget, new Set(), visited, driver, layout);
 }
 
-async function walk(frame, source, depth, budget, seen, visited, driver) {
+async function walk(frame, source, depth, budget, seen, visited, driver, layout = false) {
   let blocks;
   const tBlocks = Date.now();
   try {
-    blocks = await withDeadline(blocksForFrame(frame, source, driver), FRAME_BUDGET_MS, null);
+    blocks = await withDeadline(blocksForFrame(frame, source, driver, layout), FRAME_BUDGET_MS, null);
   } catch (err) {
     log('frame.blocks.error', {
       depth, url: frame.url().slice(0, 80), error: String(err && err.message ? err.message : err).slice(0, 160),
@@ -216,7 +221,7 @@ async function walk(frame, source, depth, budget, seen, visited, driver) {
     budget.remaining -= 1;
     if (budget.remaining < 0) break;
 
-    const nested = await walk(child, source, depth + 1, budget, new Set([...seen, url]), visited, driver);
+    const nested = await walk(child, source, depth + 1, budget, new Set([...seen, url]), visited, driver, layout);
     out.push(...nested);
   }
 
@@ -241,7 +246,7 @@ async function walk(frame, source, depth, budget, seen, visited, driver) {
     if (!url || url === 'about:blank' || seen.has(url)) continue;
 
     budget.remaining -= 1;
-    const nested = await walk(child, source, depth + 1, budget, new Set([...seen, url]), visited, driver);
+    const nested = await walk(child, source, depth + 1, budget, new Set([...seen, url]), visited, driver, layout);
 
     // The marker goes in even when nothing could be read out of the frame.
     // A document whose contents are behind a closed shadow root reads as

@@ -112,7 +112,7 @@ function numberedTargets(state) {
 
 test('a numbered Lynx link activates the element it numbered', async () => {
   const page = await openPage();
-  const core = new Core({ driver, page, source: 'ax' });
+  const core = new Core({ driver, page, source: 'ax', layout: true });
   await core.rescan();
 
   const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
@@ -149,7 +149,7 @@ test('inline prose reflows while each link stays reachable in every view', async
 
   for (const source of ['ax', 'render']) {
     await page.evaluate(() => { window.clicked = null; });
-    const core = new Core({ driver, page, source, sources: [source, 'source'] });
+    const core = new Core({ driver, page, source, sources: [source, 'source'], layout: true });
     await core.rescan();
     const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
     keys.preferences = { numberLinks: true, numberFields: false };
@@ -187,7 +187,7 @@ test('inline prose reflows while each link stays reachable in every view', async
 
 test('a live update renumbers but cannot retarget an open number prompt', async () => {
   const page = await openPage();
-  const core = new Core({ driver, page, source: 'ax' });
+  const core = new Core({ driver, page, source: 'ax', layout: true });
   await core.rescan();
 
   const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
@@ -244,7 +244,7 @@ test('a live update renumbers but cannot retarget an open number prompt', async 
 
 test('the same blocks keep TAWB markers unless the Lynx interface is selected', async () => {
   const page = await openPage();
-  const core = new Core({ driver, page, source: 'ax' });
+  const core = new Core({ driver, page, source: 'ax', layout: true });
   await core.rescan();
 
   const ordinary = makeState(core, new Keymap({ terminfo: {}, load: false }), {
@@ -282,7 +282,7 @@ test('numbering stays in reading order, and wraps, in every view', async () => {
   const sources = ['ax', 'render', 'inspect', 'source'].filter(
     (source) => source !== 'inspect' || driver.capabilities?.ax !== false);
   for (const source of sources) {
-    const core = new Core({ driver, page, source, sources: [source] });
+    const core = new Core({ driver, page, source, sources: [source], layout: true });
     await core.rescan();
     const keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
     keys.preferences = { numberLinks: true, numberFields: true };
@@ -325,7 +325,7 @@ test('numbering stays in reading order, and wraps, in every view', async () => {
 
 test('Lynx SOURCE shows the markup and returns to the presentation view', async () => {
   const page = await openPage();
-  const core = new Core({ driver, page, source: 'ax', sources: ['ax', 'source'] });
+  const core = new Core({ driver, page, source: 'ax', sources: ['ax', 'source'], layout: true });
   await core.rescan();
 
   const state = makeState(core, new Keymap({ terminfo: {}, profile: 'lynx', load: false }));
@@ -352,7 +352,7 @@ test('a table row is one line, and its cells stay reachable in every view', asyn
   `);
 
   for (const source of ['ax', 'render']) {
-    const core = new Core({ driver, page, source, sources: [source] });
+    const core = new Core({ driver, page, source, sources: [source], layout: true });
     await core.rescan();
     await page.evaluate(() => { window.clicked = null; });
 

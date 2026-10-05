@@ -58,7 +58,7 @@ function places(blocks) {
 test('both extracted views record the same table position for every cell', async () => {
   const page = await openPage();
   for (const source of ['ax', 'render']) {
-    const core = new Core({ driver, page, source, sources: [source] });
+    const core = new Core({ driver, page, source, sources: [source], layout: true });
     await core.rescan();
     const found = places(core.blocks);
 
@@ -82,7 +82,7 @@ test('nested tables and a rowspan are recorded for the nearest table', async () 
     </table>
   `));
   for (const source of ['ax', 'render']) {
-    const core = new Core({ driver, page, source, sources: [source] });
+    const core = new Core({ driver, page, source, sources: [source], layout: true });
     await core.rescan();
     const found = places(core.blocks);
 
@@ -106,4 +106,14 @@ test('the default view is exactly the blocks the extractor produced', async () =
   relayout(state);
   assert.deepEqual(state.lines.map((line) => line.text), blocks.map((block) => block.text));
   assert.ok(state.lines.every((line) => !line.displayPrefix && !line.displayNumber));
+});
+
+test('without the layout request the extractor records no table placement', async () => {
+  const page = await openPage();
+  for (const source of ['ax', 'render']) {
+    const core = new Core({ driver, page, source, sources: [source] });
+    await core.rescan();
+    assert.ok(core.blocks.every((block) => !block.item.table),
+      `${source}: no table metadata without a layout request`);
+  }
 });
