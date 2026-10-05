@@ -92,6 +92,17 @@ test('command-line options can override persistent browser settings', () => {
   assert.equal(parseArgs(['--no-alt-screen'], {}).altScreen, false);
   assert.equal(parseArgs(['--no-alt-screen', '--alt-screen'], {}).altScreen, true);
 
+  // Closing the session's tab is off unless asked for, on the command line or
+  // in the settings file.
+  assert.equal(parseArgs([], {}).closeInitialTabOnExit, false);
+  assert.equal(
+    parseArgs(['--close-initial-tab-on-exit'], {}).closeInitialTabOnExit, true);
+  assert.equal(
+    parseArgs(['--close-initial-tab-on-exit', '--no-close-initial-tab-on-exit'], {})
+      .closeInitialTabOnExit,
+    false,
+  );
+
   const edbArgs = parseEdbArgs([
     ...configured, '--browser', 'chromium', '--no-keep-browser', '--log', '--log-dir=/host/logs',
   ], {});

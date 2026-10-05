@@ -71,6 +71,11 @@ const path = require('node:path');
 // scrollback and all, exactly as it was when the session ends — which is what
 // a parent full-screen program or a mailcap viewer wants. --no-alt-screen
 // keeps the session on the ordinary screen instead.
+// --close-initial-tab-on-exit closes the tab this session opened when it
+// quits, so a page read from a file the parent is about to delete does not
+// outlive it. Off by default; an adopted tab is never touched, and with
+// --keep-browser a last remaining tab is navigated to about:blank rather than
+// closed, since closing it would take the browser down.
 // Options in the settings file are read first, so an explicit command-line
 // option can replace them. --no-keep-browser provides that escape hatch for
 // the otherwise one-way --keep-browser switch.
@@ -86,7 +91,7 @@ function parseArgs(argv, env = process.env) {
     search: env.TAWB_SEARCH || DEFAULT_SEARCH,
     linkAddress: !OFF.has(String(env.TAWB_LINK_ADDRESS || '').toLowerCase()),
     shortLinks: ON.has(String(env.TAWB_SHORT_LINKS || '').toLowerCase()),
-    escapeUnicode: false, altScreen: true,
+    escapeUnicode: false, altScreen: true, closeInitialTabOnExit: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -121,6 +126,8 @@ function parseArgs(argv, env = process.env) {
     else if (arg === '--no-escape-unicode') { options.escapeUnicode = false; }
     else if (arg === '--alt-screen') { options.altScreen = true; }
     else if (arg === '--no-alt-screen') { options.altScreen = false; }
+    else if (arg === '--close-initial-tab-on-exit') { options.closeInitialTabOnExit = true; }
+    else if (arg === '--no-close-initial-tab-on-exit') { options.closeInitialTabOnExit = false; }
     else if (arg === '--browser') { options.engine = argv[i + 1] || DEFAULT_ENGINE; i += 1; }
     else if (arg.startsWith('--browser=')) { options.engine = arg.slice('--browser='.length); }
     else if (arg === '--search') { options.search = argv[i + 1] || DEFAULT_SEARCH; i += 1; }
@@ -173,6 +180,15 @@ const START_URL = ARGS.url
 // Set by the entry point so the shutdown path can reach the browser from a
 // signal handler, which has no other way to get at it.
 let setCurrentDriver = () => {};
+
+// The tab this session opened, with the context it lives in, so a signal
+// handler can close it the same way the ordinary quit path does. Null for an
+// adopted tab, which is not ours to close, and before one has been opened.
+let currentSessionTab = null;
+
+function setCurrentSessionTab(page, context) {
+  currentSessionTab = page ? { page, context } : null;
+}
 
 const ESC = '\x1b';
 const FALLBACK_KEYMAP = new Keymap({ terminfo: {}, load: false });
@@ -4703,6 +4719,47 @@ async function handleAddressKey(chunk, state, page) {
 
 // ---------------------------------------------------------------------------
 
+// Close the tab this session opened, so a page read from a temporary file does
+// not outlive the file the parent is about to delete.
+//
+// The last tab is special: closing it takes a browser down with it, undoing
+// --keep-browser and making the next session pay the cold start again. With the
+// browser being kept, that tab is navigated to about:blank instead, leaving the
+// browser running with nothing of the page in it. A tab already closed by the
+// reader, or one that will not go blank, is simply left alone.
+async function closeInitialTab({
+  page, context, keepBrowser = false, log: writeLog = () => {},
+} = {}) {
+  if (!page) return 'none';
+
+  let pages = [];
+  try {
+    pages = context && typeof context.pages === 'function' ? context.pages() : [];
+  } catch { pages = []; }
+
+  if (pages.length <= 1 && keepBrowser) {
+    try {
+      await page.goto('about:blank', { waitUntil: 'domcontentloaded' });
+      writeLog('tab.blanked', {});
+      return 'blanked';
+    } catch (err) {
+      // Left rather than closed: closing the only tab would take the browser
+      // down, which is the one outcome --keep-browser exists to avoid.
+      writeLog('tab.blank.failed', { error: String(err.message || err).slice(0, 120) });
+      return 'kept';
+    }
+  }
+
+  try {
+    await page.close();
+    writeLog('tab.closed', {});
+    return 'closed';
+  } catch (err) {
+    writeLog('tab.close.failed', { error: String(err.message || err).slice(0, 120) });
+    return 'kept';
+  }
+}
+
 async function main() {
   const logPath = ARGS.log ? enableLog({ directory: ARGS.logDir }) : null;
   if (ARGS.keyboard) {
@@ -4801,6 +4858,9 @@ async function main() {
 
   const adopted = !!page;
   if (!page) page = await context.newPage();
+  // Registered for the shutdown path, which closes the tab on the way out
+  // when asked. An adopted tab is somebody else's and is never closed.
+  if (!adopted) setCurrentSessionTab(page, context);
 
   const sources = ALL_SOURCES.filter(
     (source) => !['ax', 'inspect'].includes(source) || driver.capabilities?.ax !== false);
@@ -5045,6 +5105,12 @@ async function main() {
   keyReader.close();
   flushCounters({ refreshes: state.core.live.refreshes });
   log('exit', {});
+  // A tab this session adopted belonged to the reader before it started and is
+  // not ours to close. One we opened is, when asked, so a file the parent is
+  // about to delete does not stay open in the browser.
+  if (ARGS.closeInitialTabOnExit && !adopted) {
+    await closeInitialTab({ page, context, keepBrowser: ARGS.keepBrowser, log });
+  }
   releaseTab(browserPort);
   await driver.close();
   restoreTerminal();
@@ -5108,7 +5174,14 @@ async function shutdown(code, driver) {
   if (driver) {
     // Bounded: a browser that will not answer must not keep the terminal.
     await Promise.race([
-      driver.close().catch(() => {}),
+      (async () => {
+        if (ARGS.closeInitialTabOnExit && currentSessionTab) {
+          await closeInitialTab({
+            ...currentSessionTab, keepBrowser: ARGS.keepBrowser, log,
+          }).catch(() => {});
+        }
+        await driver.close();
+      })().catch(() => {}),
       new Promise((r) => setTimeout(r, SHUTDOWN_GRACE_MS)),
     ]);
   }
@@ -5165,6 +5238,7 @@ module.exports = {
   historyEntryIdentity, rememberHistoryPlace, rememberCurrentHistoryPlace,
   restoreHistoryPlace, acknowledgeHistoryNavigation, traversePageHistory, moveInHistory,
   switchToTab, focusAddressBar, openNewTab, cycleTab, closeCurrentTab, onNewTab,
+  closeInitialTab,
   sameDocumentFragment, findBlockWithText, jumpToFragment,
   renderRow, typingText, parseArgs, keymapForOptions, lynxHidesCursor,
   restoreInvocationDirectory, onExternalNavigation, readTitle, drawTitle,

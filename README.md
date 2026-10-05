@@ -492,6 +492,25 @@ Put `--no-alt-screen` in the settings file to make it the default.
 `--dump` never uses the alternate screen, since it writes no terminal controls
 at all.
 
+### Closing the tab a session opened
+
+TAWB opens a tab for the page it reads. An interactive session normally leaves
+that tab in the browser, and a browser kept with `--keep-browser` keeps it too.
+When the page came from a file something else is about to delete — an HTML
+attachment opened from a mail client, say — ask for the tab to be closed on
+exit:
+
+```sh
+npm start -- --close-initial-tab-on-exit --keep-browser message.html
+```
+
+The tab is closed on an ordinary quit and on Ctrl-C. A tab that already existed
+in a running browser is never touched. With `--keep-browser`, if the session's
+tab is the last one open it is navigated to `about:blank` rather than closed,
+because closing the last tab would shut the browser down and undo the point of
+keeping it. Put `--close-initial-tab-on-exit` in the settings file to make it
+the default; `--no-close-initial-tab-on-exit` overrides that for one run.
+
 ### Unicode on a physical Linux console
 
 Speakup can receive many Unicode characters as they are first written, but
