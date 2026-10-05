@@ -33,6 +33,7 @@ const {
   persistableOptions, ANY_KEY_CHANGE, VALUE_ACCEPTED, CANCELLED,
   CHOICE_LIST, COMMAND_PROMPT, NOT_CHANGEABLE,
 } = require('./lynx_options');
+const { noteVisitedLink, notePageVisit } = require('./lynx_session');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
@@ -223,36 +224,6 @@ const FOOTER_ROWS = 2;   // blank + status line
 const TITLE_ROW = 1;
 const ADDRESS_ROW = 2;
 const HINT_ROW = 3;
-
-// How many links and pages a session remembers for Lynx's VLINKS and HISTORY.
-// A session is not a browser profile: what matters is the recent past, and a
-// list nobody can reach the bottom of is not more useful for being longer.
-const VISITED_LIMIT = 200;
-
-// Lynx's VLINKS: the links followed in this session, newest first, each one
-// once. What identifies it is where it goes, so following the same link twice
-// moves it to the top rather than listing it twice.
-function noteVisitedLink(state, item) {
-  const href = item.href;
-  if (!state.visitedLinks) state.visitedLinks = [];
-  const list = state.visitedLinks;
-  const at = list.findIndex((entry) => entry.href === href);
-  if (at >= 0) list.splice(at, 1);
-  list.unshift({ name: item.name || href, href });
-  if (list.length > VISITED_LIMIT) list.length = VISITED_LIMIT;
-}
-
-// Lynx's HISTORY is the stack of documents it is holding. The browser owns the
-// real one, and this is the session's own record of what has been read, which
-// is what a reader is looking for when they press the key.
-function notePageVisit(state, url, title) {
-  if (!url || /^about:blank$/i.test(url)) return;
-  if (!state.pageLog) state.pageLog = [];
-  const log = state.pageLog;
-  if (log.length && log[0].url === url) log[0].title = title || log[0].title;
-  else log.unshift({ url, title: title || url });
-  if (log.length > VISITED_LIMIT) log.length = VISITED_LIMIT;
-}
 
 // No selection marker: the terminal cursor already marks the focused line,
 // and a screen reader / braille display tracks it there. A printed marker
