@@ -273,11 +273,15 @@ rather than silently becoming a different browser setting. What is compared
 against a real Lynx, and where the two still differ, is written down in
 `docs/lynx-parity.md`.
 
-Lynx-specific key overrides are saved to `keys-lynx.json`; ordinary TAWB bindings
+Lynx-specific key overrides are saved to `keys-lynx.json`, keyed by Lynx's own
+function names — `LIST`, `NEXT_LINK`, `DOWN_LINK` — with TAWB's extensions under
+a `TAWB_` prefix. A file written before that, keyed by TAWB action id, is read
+and rewritten in the new shape when it is next saved. Ordinary TAWB bindings
 remain in the existing version-1 `keys.json`. Enabling the interface therefore
 requires no migration and never rewrites the user's normal key configuration.
-The keyboard screen lists imported Lynx functions that have no safe TAWB
-equivalent rather than silently assigning them different behavior.
+The keyboard screen names each row by its Lynx function and lists imported Lynx
+functions that have no safe TAWB equivalent, rather than silently assigning them
+different behavior.
 
 The display intentionally still uses TAWB's semantic extraction. Old parser
 toggles, shell commands, external programs, and advanced number expressions

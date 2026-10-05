@@ -5,6 +5,16 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { bindingsFor, interfaceName } = require('./interfaces');
+const { parseKeyFile, serialiseKeyFile, functionForAction, functionNames } = require('./lynx_keymap');
+
+// The ordinary key file, read the way it has always been: a version-1 document
+// whose `actions` object is keyed by TAWB action id.
+function plainActions(text) {
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { return null; }
+  if (!parsed || typeof parsed.actions !== 'object') return null;
+  return parsed.actions;
+}
 
 const KEY_DEFINITIONS = {
   Escape: { sequences: ['\x1b'] },
@@ -345,6 +355,10 @@ class Keymap {
       ...action, bindings: [...this.defaultBindings.get(action.id)],
     }));
     this.byId = new Map(this.actions.map((action) => [action.id, action]));
+    // What the keyboard screen calls each action in this interface. Lynx names
+    // its functions, so the screen does too; the ordinary interface has no
+    // such vocabulary and its rows are just the action labels.
+    this.functionNames = this.profile === 'lynx' ? functionNames(this.actions) : new Map();
     this.namedSequences = new Map();
     this.sequenceNames = new Map();
     this.buildNames();
@@ -421,11 +435,15 @@ class Keymap {
   }
 
   load() {
-    let parsed;
-    try { parsed = JSON.parse(fs.readFileSync(this.file, 'utf8')); } catch { return; }
-    if (!parsed || typeof parsed.actions !== 'object') return;
+    let text;
+    try { text = fs.readFileSync(this.file, 'utf8'); } catch { return; }
+    // The Lynx file is keyed by Lynx function name and the ordinary one by
+    // TAWB action id; parseKeyFile() reads either, including the version of
+    // the Lynx file written before the two were told apart.
+    const parsed = this.profile === 'lynx' ? parseKeyFile(text) : plainActions(text);
+    if (!parsed) return;
     const explicit = new Set();
-    for (const [id, bindings] of Object.entries(parsed.actions)) {
+    for (const [id, bindings] of Object.entries(parsed)) {
       const action = this.byId.get(id);
       if (!action || !Array.isArray(bindings) || !bindings.every((item) => typeof item === 'string')) continue;
       action.bindings = [...new Set(bindings.filter((item) => this.sequencesFor(item).length))];
@@ -527,9 +545,11 @@ class Keymap {
 
   save() {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    const contents = `${JSON.stringify({ version: 1, actions: Object.fromEntries(
-      this.actions.map((action) => [action.id, action.bindings]),
-    ) }, null, 2)}\n`;
+    const contents = this.profile === 'lynx'
+      ? serialiseKeyFile(this.actions)
+      : `${JSON.stringify({ version: 1, actions: Object.fromEntries(
+        this.actions.map((action) => [action.id, action.bindings]),
+      ) }, null, 2)}\n`;
     const temporary = `${this.file}.${process.pid}.tmp`;
     fs.writeFileSync(temporary, contents, { mode: 0o600 });
     fs.renameSync(temporary, this.file);

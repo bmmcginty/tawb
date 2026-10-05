@@ -833,11 +833,16 @@ unsupported list for keyboard help; they are never executed.
 A failed or absent binary selects `src/interfaces.js`'s built-in Lynx defaults.
 
 `Keymap` accepts the imported bindings as its reset baseline and then reads
-`keys-lynx.json`. The ordinary interface continues to read the original
-version-1 `keys.json`; its path, schema, defaults, and interpretation did not
-change. Any future schema change must load and convert version 1 in memory
-before writing a newer version, so merely upgrading TAWB can never require a
-user migration.
+`keys-lynx.json`. That file is keyed by Lynx function name — `LIST`,
+`NEXT_LINK`, `FASTFORW_LINK`, `DOWN_LINK` — with the extensions TAWB adds under
+a `TAWB_` prefix, so one Lynx function is always one entry and the file, the
+imported map and the keyboard screen all use the same vocabulary.
+`src/lynx_keymap.js` owns the translation, reads a version-1 file (keyed by
+TAWB action id) in memory, and writes version 2. The ordinary interface
+continues to read the original version-1 `keys.json`; its path, schema,
+defaults, and interpretation did not change. Any future schema change must load
+and convert version 1 in memory before writing a newer version, so merely
+upgrading TAWB can never require a user migration.
 
 `src/lynx_display.js` creates display copies of Core blocks. It renders classic
 form markers and adds link/form numbers as metadata. `src/layout.js` reserves

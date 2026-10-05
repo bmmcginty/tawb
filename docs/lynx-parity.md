@@ -157,6 +157,31 @@ is built for terminals and DOS environments where Alt is spoken for.
 An open popup closes on `q`, on Left, and on Escape, whatever Escape is bound
 to, and the terminal's own interrupt gets out of every mode.
 
+## The key file and the keyboard screen
+
+`keys-lynx.json` is keyed by Lynx function name, not by TAWB action id:
+
+```json
+{ "version": 2, "functions": {
+    "LIST": ["l"], "NEXT_LINK": ["ArrowDown"],
+    "TAWB_CYCLE_VIEW": ["Ctrl+O"] } }
+```
+
+The `TAWB_` prefix is how an extension TAWB adds is named in the same
+namespace, so there is one lookup table and one file. `src/lynx_keymap.js`
+reads version 1 as well and converts it in memory, so a reader who upgrades and
+opens the keyboard screen keeps their bindings and saves them in the new shape.
+The default interface's `keys.json` is untouched and still version 1.
+
+The keyboard screen in Lynx mode leads each row with the Lynx function it acts
+on:
+
+```
+LIST — List page links, l
+NEXT_LINK — Next link, button or form field, 2, ArrowDown
+TAWB_CYCLE_VIEW — Cycle view, Ctrl+O
+```
+
 Other Lynx functions that were once folded together are separate too: `QUIT`
 (`q`) asks before quitting where `ABORT` (`Q`, `^D`) does not, `ELGOTO` (`E`)
 edits the address of the link under the cursor where `ECGOTO` (`G`) edits the

@@ -49,7 +49,11 @@ function rowText(row, keymap) {
   const bindings = row.action.bindings.length
     ? row.action.bindings.map((binding) => keymap.display(binding)).join(', ')
     : '(unbound)';
-  return `${row.action.label}, ${bindings}`;
+  // In the Lynx interface the row leads with the Lynx function it acts on, so
+  // a reader can find their own KEYMAP entry by name.
+  const lynx = keymap.functionNames && keymap.functionNames.get(row.action.id);
+  const name = lynx ? `${lynx} — ${row.action.label}` : row.action.label;
+  return `${name}, ${bindings}`;
 }
 
 async function runKeyWizard({
