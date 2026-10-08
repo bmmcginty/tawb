@@ -1,6 +1,6 @@
 'use strict';
 
-const http = require('http');
+const net = require('net');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -96,16 +96,18 @@ class Peer {
     this.onText = onText;
     this.buffer = Buffer.alloc(0);
     this.fragments = [];
-    socket.on('data', (chunk) => {
-      this.buffer = this.buffer.length ? Buffer.concat([this.buffer, chunk]) : chunk;
-      this.drain();
-    });
+    socket.on('data', (chunk) => { this.consume(chunk); });
     socket.on('close', onClose);
     socket.on('error', onClose);
   }
 
   send(text) {
     try { this.socket.write(frame(text)); } catch { /* gone */ }
+  }
+
+  consume(chunk) {
+    this.buffer = this.buffer.length ? Buffer.concat([this.buffer, chunk]) : chunk;
+    this.drain();
   }
 
   drain() {
@@ -363,20 +365,50 @@ function startBroker({
     socket.send(text.replace(/"id"\s*:\s*\d+/, `"id":${ours}`));
   };
 
-  const server = http.createServer((req, res) => { res.writeHead(404); res.end(); });
+  // Bun's node:http compatibility layer listens normally but does not pass a
+  // manually upgraded socket through the same path as Node. This local server
+  // needs only a WebSocket GET, so parse that small header over node:net and
+  // hand the socket to the frame implementation above. node:net behaves the
+  // same in Node, Bun and Deno, which also makes a compiled broker portable.
+  const server = net.createServer((socket) => {
+    let request = Buffer.alloc(0);
+    const onRequest = (chunk) => {
+      request = request.length ? Buffer.concat([request, chunk]) : chunk;
+      const end = request.indexOf('\r\n\r\n');
+      if (end < 0) {
+        if (request.length > 65536) socket.destroy();
+        return;
+      }
+      socket.removeListener('data', onRequest);
+      const lines = request.subarray(0, end).toString('latin1').split('\r\n');
+      const headers = {};
+      for (const line of lines.slice(1)) {
+        const colon = line.indexOf(':');
+        if (colon > 0) headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim();
+      }
+      if (!/^GET\s/i.test(lines[0] || '') || !headers['sec-websocket-key']) {
+        socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+        return;
+      }
 
-  server.on('upgrade', (req, socket) => {
-    const client = { subscribed: new Set(), peer: null, activeAt: Date.now() };
-    client.peer = acceptWebSocket(req, socket, (text) => { fromClient(client, text); }, () => {
-      if (!clients.delete(client)) return;
-      for (const [ours, route] of routes) if (route.client === client) routes.delete(ours);
-      log('broker.reader.left', { readers: clients.size, retained });
-      if (!clients.size && !retained) idle();
-    });
-    clients.add(client);
-    everHadClient = true;
-    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-    log('broker.reader.joined', { readers: clients.size });
+      const client = { subscribed: new Set(), peer: null, activeAt: Date.now() };
+      client.peer = acceptWebSocket({ headers }, socket, (text) => { fromClient(client, text); }, () => {
+        if (!clients.delete(client)) return;
+        for (const [ours, route] of routes) if (route.client === client) routes.delete(ours);
+        log('broker.reader.left', { readers: clients.size, retained });
+        if (!clients.size && !retained) idle();
+      });
+      clients.add(client);
+      everHadClient = true;
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+      log('broker.reader.joined', { readers: clients.size });
+
+      // A client may put the first frame in the same packet as its handshake.
+      // Feed that tail directly because its socket data event has already run.
+      const rest = request.subarray(end + 4);
+      if (rest.length) client.peer.consume(rest);
+    };
+    socket.on('data', onRequest);
   });
 
   const listening = new Promise((resolve) => {
@@ -441,6 +473,19 @@ function claimBroker(profileDir, record) {
 
 const brokerUrl = (port) => `ws://127.0.0.1:${port}/session`;
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+const INTERNAL_BROKER_ARG = '--tawb-internal-firefox-broker';
+const STANDALONE = typeof TAWB_STANDALONE !== 'undefined' && TAWB_STANDALONE;
+
+// A source checkout asks Node/Bun to run this file. A compiled executable has
+// no broker.js beside it, so it restarts itself in a private dispatch mode.
+// Keep this decision pure so the release artifact can test the exact argv it
+// will use without actually detaching a child.
+function brokerProcessArgs(endpoint, port, profileDir, {
+  standalone = STANDALONE, filename = __filename,
+} = {}) {
+  const args = [endpoint, String(port), profileDir];
+  return standalone ? [INTERNAL_BROKER_ARG, ...args] : [filename, ...args];
+}
 
 // The broker for this browser: the one already running, or one started here.
 async function ensureBroker({ profileDir, endpoint, log: logIt = () => {} }) {
@@ -463,7 +508,7 @@ async function ensureBroker({ profileDir, endpoint, log: logIt = () => {} }) {
       continue;
     }
 
-    const child = spawn(process.execPath, [__filename, endpoint, String(port), profileDir], {
+    const child = spawn(process.execPath, brokerProcessArgs(endpoint, port, profileDir), {
       detached: true,
       stdio: 'ignore',
     });
@@ -487,8 +532,8 @@ function writeBrokerRecordFor(profileDir, record) {
 
 // --- as a program ------------------------------------------------------------
 
-if (require.main === module) {
-  const [upstream, port, profileDir] = process.argv.slice(2);
+function runBrokerProcess(args = process.argv.slice(2)) {
+  const [upstream, port, profileDir] = args;
   const broker = startBroker({
     upstream,
     port: Number(port || 0),
@@ -536,9 +581,13 @@ if (require.main === module) {
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
     process.on(signal, async () => { await broker.close(); process.exit(0); });
   }
+  return broker;
 }
+
+if (require.main === module) runBrokerProcess();
 
 module.exports = {
   startBroker, ensureBroker, readBrokerRecord, clearBrokerRecord, brokerRecordPath, brokerUrl,
-  acceptWebSocket, IDLE_EXIT_MS, RETAIN_SESSION,
+  acceptWebSocket, brokerProcessArgs, runBrokerProcess, INTERNAL_BROKER_ARG,
+  IDLE_EXIT_MS, RETAIN_SESSION,
 };

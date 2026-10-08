@@ -11,7 +11,25 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 
-const { startBroker, acceptWebSocket, RETAIN_SESSION } = require('../src/broker');
+const {
+  startBroker, acceptWebSocket, brokerProcessArgs, INTERNAL_BROKER_ARG, RETAIN_SESSION,
+} = require('../src/broker');
+
+test('a source broker is launched through its module', () => {
+  assert.deepEqual(
+    brokerProcessArgs('ws://browser/session', 8123, '/profile', {
+      standalone: false, filename: '/package/src/broker.js',
+    }),
+    ['/package/src/broker.js', 'ws://browser/session', '8123', '/profile'],
+  );
+});
+
+test('a standalone executable restarts in its private broker mode', () => {
+  assert.deepEqual(
+    brokerProcessArgs('ws://browser/session', 8123, '/profile', { standalone: true }),
+    [INTERNAL_BROKER_ARG, 'ws://browser/session', '8123', '/profile'],
+  );
+});
 
 // A browser that speaks BiDi's shape and nothing else.
 async function fakeBrowser() {

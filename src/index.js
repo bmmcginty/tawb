@@ -5255,7 +5255,7 @@ async function shutdown(code, driver) {
   process.exit(code);
 }
 
-if (require.main === module) {
+function runCli() {
   restoreInvocationDirectory();
 
   // Set as soon as the driver exists, so a crash during startup still tidies
@@ -5286,7 +5286,10 @@ if (require.main === module) {
   });
 }
 
+if (require.main === module) runCli();
+
 module.exports = {
+  runCli,
   handleBrowseKey, handleTypeKey, handleFieldCommandKey,
   handleFormsKey, handleControlKey, handlePageKey,
   handleAddressKey, handleFindKey, handleNumberKey, openLinkNumberPrompt,

@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
+const BUILT_REVISION = typeof TAWB_BUILD_COMMIT !== 'undefined' ? TAWB_BUILD_COMMIT : '';
 let cached = null;
 
 // A checkout can ask Git directly. Packaged copies may have no .git directory,
@@ -16,9 +17,13 @@ function resolveRevision({
   root = ROOT,
   exec = execFileSync,
   readFile = fs.readFileSync,
+  builtRevision = BUILT_REVISION,
 } = {}) {
   const supplied = String(env.TAWB_COMMIT || '').trim();
   if (/^[0-9a-f]{7,64}$/i.test(supplied)) return supplied;
+
+  const built = String(builtRevision || '').trim();
+  if (/^[0-9a-f]{7,64}$/i.test(built)) return built;
 
   try {
     const revision = String(exec('git', ['rev-parse', '--verify', 'HEAD'], {

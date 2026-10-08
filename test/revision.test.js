@@ -14,6 +14,15 @@ test('an explicitly packaged commit identifies the running copy', () => {
   }), HASH);
 });
 
+test('a compiled commit identifies a standalone copy without adjacent files', () => {
+  assert.equal(resolveRevision({
+    env: {},
+    builtRevision: HASH,
+    exec: () => { throw new Error('Git should not be asked'); },
+    readFile: () => { throw new Error('package.json should not be read'); },
+  }), HASH);
+});
+
 test('a source checkout records its Git commit', () => {
   assert.equal(resolveRevision({
     env: {},
