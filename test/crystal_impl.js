@@ -56,6 +56,15 @@ function lynxNumberImplementations(javascript) {
   return implementations;
 }
 
+function readerCommands(root) {
+  const commands = [{
+    name: 'JavaScript', command: process.execPath, args: ['src/index.js'],
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return commands;
+  commands.push({ name: 'Crystal', command: binary, args: [] });
+  return commands.map((entry) => ({ ...entry, cwd: root }));
+}
+
 function optionImplementations(javascript) {
   const implementations = [{ name: 'JavaScript', ...javascript }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
@@ -91,5 +100,5 @@ function unicodeImplementations(javascript) {
 
 module.exports = {
   call, addressImplementations, lynxNumberImplementations, optionImplementations,
-  unicodeImplementations,
+  readerCommands, unicodeImplementations,
 };
