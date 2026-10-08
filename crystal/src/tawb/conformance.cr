@@ -1,6 +1,7 @@
 require "json"
 require "./address"
 require "./aria"
+require "./dump"
 require "./lynx_number"
 require "./options"
 require "./unicode_escape"
@@ -36,6 +37,18 @@ module Tawb
         JSON::Any.new(Address.search_url(words, template))
       when "aria.render_line"
         JSON::Any.new(Aria.render_line(payload.as_h["item"]))
+      when "dump.resolve_target"
+        object = payload.as_h
+        existing = object["existing"].as_a.map(&.as_s).to_set
+        JSON::Any.new(Dump.resolve_target(
+          object["input"]?.try(&.as_s?), object["cwd"].as_s, existing,
+          object["search"]?.try(&.as_s?) || Address::DEFAULT_SEARCH
+        ))
+      when "dump.format_ax_blocks"
+        object = payload.as_h
+        JSON::Any.new(Dump.format_ax_blocks(
+          object["blocks"].as_a, object["escape_unicode"]?.try(&.as_bool?) || false
+        ))
       when "lynx_number.parse"
         parsed = LynxNumber.parse(payload.as_h["text"].as_s)
         parsed ? JSON::Any.new(parsed) : JSON::Any.new(nil)

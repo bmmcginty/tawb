@@ -53,6 +53,25 @@ function addressImplementations(javascript) {
   return implementations;
 }
 
+function dumpImplementations(javascript) {
+  const implementations = [{ name: 'JavaScript', ...javascript }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    resolveDumpTarget(input, { cwd = process.cwd(), exists = () => false, search } = {}) {
+      // Existing tests use a finite fake filesystem; enumerate the only path
+      // they ask the callback about rather than giving Crystal host access.
+      const candidate = path.resolve(cwd, String(input || '').trim());
+      const existing = exists(candidate) ? [candidate] : [];
+      return call('dump.resolve_target', { input, cwd, existing, search });
+    },
+    formatAxBlocks(blocks, { escapeUnicode = false } = {}) {
+      return call('dump.format_ax_blocks', { blocks, escape_unicode: escapeUnicode });
+    },
+  });
+  return implementations;
+}
+
 function lynxNumberImplementations(javascript) {
   const implementations = [{ name: 'JavaScript', ...javascript }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
@@ -111,6 +130,7 @@ function unicodeImplementations(javascript) {
 }
 
 module.exports = {
-  call, addressImplementations, ariaImplementations, lynxNumberImplementations, optionImplementations,
+  call, addressImplementations, ariaImplementations, dumpImplementations,
+  lynxNumberImplementations, optionImplementations,
   readerCommands, unicodeImplementations,
 };

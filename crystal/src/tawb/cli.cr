@@ -1,3 +1,4 @@
+require "./dump"
 require "./options"
 
 module Tawb
@@ -41,6 +42,15 @@ module Tawb
       if options["help"].as_bool
         STDOUT << USAGE
         return
+      end
+      if options["frontEnd"].as_s == "edb" && (options["keyboard"].as_bool || options["dump"].as_bool)
+        raise ArgumentError.new("--front-end edb cannot be combined with --keyboard or --dump")
+      end
+      if options["keyboard"].as_bool && options["dump"].as_bool
+        raise ArgumentError.new("--keyboard cannot be combined with --dump")
+      end
+      if options["dump"].as_bool
+        Dump.resolve_target(options["url"].as_s?, search: options["search"].as_s)
       end
       STDERR.puts "The native Crystal reader cannot open a browser yet; use --help for its current options."
       exit 2
