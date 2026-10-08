@@ -474,7 +474,10 @@ function claimBroker(profileDir, record) {
 const brokerUrl = (port) => `ws://127.0.0.1:${port}/session`;
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 const INTERNAL_BROKER_ARG = '--tawb-internal-firefox-broker';
-const STANDALONE = typeof TAWB_STANDALONE !== 'undefined' && TAWB_STANDALONE;
+const DENO_STANDALONE = typeof Deno !== 'undefined'
+  && String(Deno.mainModule || '').includes('/deno-compile-');
+const STANDALONE = (typeof TAWB_STANDALONE !== 'undefined' && TAWB_STANDALONE)
+  || DENO_STANDALONE;
 
 // A source checkout asks Node/Bun to run this file. A compiled executable has
 // no broker.js beside it, so it restarts itself in a private dispatch mode.

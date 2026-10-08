@@ -1,4 +1,5 @@
 node_modules/
+dist/
 
 # Timing log, rewritten on every run. A second concurrent session writes
 # tweb-<pid>.log rather than trampling the first one's.

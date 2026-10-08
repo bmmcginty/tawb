@@ -40,7 +40,8 @@ not depend on that route alone.
 
 TAWB currently targets Linux. You need:
 
-- a current Node.js release and npm;
+- a current Node.js release and npm when running from source, or the standalone
+  executable described below;
 - Chrome, Chromium, Firefox, Firefox ESR, or LibreWolf;
 - a terminal that reports its key sequences correctly through `$TERM`;
 - `xvfb-run` if no graphical `$DISPLAY` is available.
@@ -50,6 +51,44 @@ names for Node.js and browsers vary by distribution.
 
 TAWB has no npm runtime dependencies. It controls the browser directly using
 Chrome DevTools Protocol or WebDriver BiDi.
+
+### Standalone executable
+
+The Linux release executable contains TAWB and its JavaScript runtime. A reader
+does not need to install Node.js, npm, Bun, clone this repository, or run an
+installer. Put the executable somewhere convenient, make it executable once,
+and run it:
+
+```sh
+chmod +x tawb-linux-x64
+./tawb-linux-x64 https://example.com
+```
+
+The executable still uses an installed Chrome, Chromium, Firefox, Firefox ESR,
+or LibreWolf. It also needs `xvfb-run` when the machine has no graphical
+`$DISPLAY`; bundling a browser or desktop services into TAWB would prevent it
+from using the reader's existing profiles, logins, extensions, and browser
+updates.
+
+Release maintainers can build the x86-64 executable with:
+
+```sh
+tools/build_standalone.sh
+```
+
+This writes `dist/tawb-linux-x64` and its SHA-256 file. Deno first compiles the
+program and its runtime into one executable; StaticX then packages that and its
+system libraries behind a small static launcher. The result is a genuinely
+statically linked ELF (`ldd` reports `not a dynamic executable`) and embeds the
+TAWB source revision. The build machine needs Deno, Python, `patchelf`, and
+`file`. The script installs a pinned StaticX in its cache on the first run;
+`STATICX=/path/to/staticx` selects an existing offline installation.
+
+StaticX extracts the enclosed program into a private temporary directory when
+it starts. On a machine whose `/tmp` is mounted `noexec`, point
+`STATICX_TMPDIR` at a directory where executables are allowed. The artifact is
+still specific to its Linux CPU architecture; Alpine, Android, macOS, and
+Windows require separate builds and testing.
 
 ## Quick start
 
