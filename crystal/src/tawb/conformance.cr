@@ -1,6 +1,7 @@
 require "json"
 require "./address"
 require "./lynx_number"
+require "./options"
 require "./unicode_escape"
 
 module Tawb
@@ -40,6 +41,14 @@ module Tawb
         JSON::Any.new(LynxNumber.relative(
           object["prompt"], object["amount"].as_i64, object["direction"].as_i64
         ))
+      when "options.parse_reader", "options.parse_edb"
+        object = payload.as_h
+        argv = object["argv"].as_a.map(&.as_s)
+        env = object["env"].as_h.transform_values(&.as_s)
+        result = operation.ends_with?("reader") ? Options.parse_reader(argv, env) : Options.parse_edb(argv, env)
+        JSON::Any.new(result)
+      when "options.front_end_name"
+        JSON::Any.new(Options.front_end_name(payload.as_h["value"]?.try(&.as_s?)))
       when "unicode.escape"
         JSON::Any.new(UnicodeEscape.escape(payload.as_h["value"]?.try(&.as_s?)))
       when "unicode.escaped_offset"
