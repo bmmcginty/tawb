@@ -25,6 +25,18 @@ function call(operation, payload) {
   return response.value;
 }
 
+function ariaImplementations(javascript) {
+  const implementations = [{ name: 'JavaScript', ...javascript }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    renderLine(item) {
+      return call('aria.render_line', { item });
+    },
+  });
+  return implementations;
+}
+
 function addressImplementations(javascript) {
   const implementations = [{ name: 'JavaScript', ...javascript }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
@@ -99,6 +111,6 @@ function unicodeImplementations(javascript) {
 }
 
 module.exports = {
-  call, addressImplementations, lynxNumberImplementations, optionImplementations,
+  call, addressImplementations, ariaImplementations, lynxNumberImplementations, optionImplementations,
   readerCommands, unicodeImplementations,
 };

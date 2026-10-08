@@ -1,5 +1,6 @@
 require "json"
 require "./address"
+require "./aria"
 require "./lynx_number"
 require "./options"
 require "./unicode_escape"
@@ -33,6 +34,8 @@ module Tawb
         words = object["words"].as_s
         template = object["template"]?.try(&.as_s?) || Address::DEFAULT_SEARCH
         JSON::Any.new(Address.search_url(words, template))
+      when "aria.render_line"
+        JSON::Any.new(Aria.render_line(payload.as_h["item"]))
       when "lynx_number.parse"
         parsed = LynxNumber.parse(payload.as_h["text"].as_s)
         parsed ? JSON::Any.new(parsed) : JSON::Any.new(nil)
