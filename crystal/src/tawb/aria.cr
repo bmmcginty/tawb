@@ -15,8 +15,9 @@ module Tawb
       name = string(object, "name")
       value = string(object, "value")
       if role == "heading"
-        level = object["level"]?.try(&.as_i?)
-        marker = level ? "#" * level + " " : "## "
+        level_value = object["level"]?
+        level = level_value.try(&.as_i64?) || level_value.try(&.as_s?).try(&.to_i64?)
+        marker = level ? "#" * level.to_i + " " : "## "
         return marker + name
       end
       return "{#{name}#{expansion(object)}#{state_text(object)}}" if LINK_ROLES.includes?(role)

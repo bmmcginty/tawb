@@ -11,6 +11,8 @@ for (const implementation of ariaImplementations(javascript)) {
   const test = (name, fn) => nodeTest(`${implementation.name}: ${name}`, fn);
 
   test('ARIA values and orientation are spoken on fields', () => {
+    assert.equal(renderLine({ role: 'heading', name: 'Title', level: 1 }), '# Title');
+    assert.equal(renderLine({ role: 'heading', name: 'Title', level: '1' }), '# Title');
     assert.equal(renderLine({
       role: 'slider', name: 'Volume', value: '35 percent', orientation: 'vertical',
     }), '[Volume: 35 percent, vertical]');

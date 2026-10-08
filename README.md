@@ -55,8 +55,8 @@ Chrome DevTools Protocol or WebDriver BiDi.
 
 A native Crystal implementation is being developed so a future release can be
 copied to a Linux machine without installing Node or extracting another runtime.
-It is not yet a runnable reader. Its current executable is a conformance target
-used to port behavior without changing it.
+It can currently produce a default Chromium `--dump`; the interactive reader,
+Firefox, the Lynx presentation, and edb are still being ported.
 
 Build it with Crystal 1.21 or newer:
 
@@ -65,13 +65,20 @@ tools/build_crystal.sh
 ```
 
 The build writes `dist/tawb-crystal` and rejects an output that has an ELF
-interpreter or any `DT_NEEDED` entries. Run the existing Node specifications
-against both implementations with:
+interpreter or any `DT_NEEDED` entries. Its current browser-backed command is:
+
+```sh
+dist/tawb-crystal --dump https://example.com
+```
+
+Run the existing Node specifications against both implementations with:
 
 ```sh
 tools/test_crystal.sh
 # Or one ported specification:
 tools/test_crystal.sh test/address.test.js
+# Differential test through real Chromium:
+tools/test_crystal_browser.sh
 ```
 
 Each ported test file contains one set of assertions. The ordinary test command

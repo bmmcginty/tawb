@@ -1,3 +1,6 @@
+require "./blocks"
+require "./browser"
+require "./cdp"
 require "./dump"
 require "./options"
 
@@ -50,13 +53,34 @@ module Tawb
         raise ArgumentError.new("--keyboard cannot be combined with --dump")
       end
       if options["dump"].as_bool
-        Dump.resolve_target(options["url"].as_s?, search: options["search"].as_s)
+        raise ArgumentError.new("the native Lynx dump is not ported yet") if options["frontEnd"].as_s == "lynx"
+        run_dump(options)
+        return
       end
-      STDERR.puts "The native Crystal reader cannot open a browser yet; use --help for its current options."
+      STDERR.puts "The native Crystal interactive reader is not ported yet; use --dump or --help."
       exit 2
     rescue error
       STDERR.puts(error.message || error.class.name)
       exit 1
+    end
+
+    private def self.run_dump(options : Hash(String, JSON::Any)) : Nil
+      target = Dump.resolve_target(options["url"].as_s?, search: options["search"].as_s)
+      timeout = options["browserTimeoutMs"].as_i64?
+      session = Browser.open(options["connect"].as_s?, options["profile"].as_s?, timeout)
+      page = Cdp::Page.new(session.endpoint)
+      begin
+        page.navigate(target)
+        blocks = Blocks.build(page.accessibility_items)
+        STDOUT << Dump.format_ax_blocks(blocks, options["escapeUnicode"].as_bool)
+      ensure
+        if session.owned?
+          page.close_browser
+        else
+          page.close
+        end
+        session.close
+      end
     end
   end
 end
