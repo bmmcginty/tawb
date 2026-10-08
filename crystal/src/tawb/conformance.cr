@@ -1,6 +1,7 @@
 require "json"
 require "./address"
 require "./aria"
+require "./blocks"
 require "./dump"
 require "./lynx_number"
 require "./options"
@@ -37,6 +38,10 @@ module Tawb
         JSON::Any.new(Address.search_url(words, template))
       when "aria.render_line"
         JSON::Any.new(Aria.render_line(payload.as_h["item"]))
+      when "blocks.build"
+        JSON::Any.new(Blocks.build(payload.as_h["items"].as_a))
+      when "blocks.fold"
+        JSON::Any.new(Blocks.fold(payload.as_h["blocks"].as_a))
       when "dump.resolve_target"
         object = payload.as_h
         existing = object["existing"].as_a.map(&.as_s).to_set

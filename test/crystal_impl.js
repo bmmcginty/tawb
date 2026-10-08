@@ -53,6 +53,24 @@ function addressImplementations(javascript) {
   return implementations;
 }
 
+function blockImplementations(blocks, aria) {
+  const implementations = [{ name: 'JavaScript', ...blocks, renderLine: aria.renderLine }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    buildBlocks(items) {
+      return call('blocks.build', { items });
+    },
+    foldSeparatorBlocks(values) {
+      return call('blocks.fold', { blocks: values });
+    },
+    renderLine(item) {
+      return call('aria.render_line', { item });
+    },
+  });
+  return implementations;
+}
+
 function dumpImplementations(javascript) {
   const implementations = [{ name: 'JavaScript', ...javascript }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
@@ -130,7 +148,7 @@ function unicodeImplementations(javascript) {
 }
 
 module.exports = {
-  call, addressImplementations, ariaImplementations, dumpImplementations,
+  call, addressImplementations, ariaImplementations, blockImplementations, dumpImplementations,
   lynxNumberImplementations, optionImplementations,
   readerCommands, unicodeImplementations,
 };
