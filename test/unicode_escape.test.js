@@ -1,27 +1,35 @@
 'use strict';
 
-const test = require('node:test');
+const nodeTest = require('node:test');
 const assert = require('node:assert');
 
-const { escapeNonAscii, escapedOffset } = require('../src/unicode_escape');
+const javascript = require('../src/unicode_escape');
 const { findText, relayout, typingText } = require('../src/index');
+const { unicodeImplementations } = require('./crystal_impl');
 
-test('non-ASCII code points become unambiguous ASCII escapes', () => {
-  assert.equal(
-    escapeNonAscii('café 中文 — 😀 e\u0301'),
-    'caf\\u00E9 \\u4E2D\\u6587 \\u2014 \\U0001F600 e\\u0301',
-  );
-  assert.equal(escapeNonAscii('plain ASCII 123!'), 'plain ASCII 123!');
-});
+for (const implementation of unicodeImplementations(javascript)) {
+  const { escapeNonAscii, escapedOffset } = implementation;
+  const test = (name, fn) => nodeTest(`${implementation.name}: ${name}`, fn);
 
-test('escaped field offsets count terminal columns without changing browser offsets', () => {
-  const text = 'a中😀z';
-  assert.equal(escapedOffset(text, 1), 1);
-  assert.equal(escapedOffset(text, 2), 7);
-  assert.equal(escapedOffset(text, 4), 17);
-});
+  test('non-ASCII code points become unambiguous ASCII escapes', () => {
+    assert.equal(
+      escapeNonAscii('café 中文 — 😀 e\u0301'),
+      'caf\\u00E9 \\u4E2D\\u6587 \\u2014 \\U0001F600 e\\u0301',
+    );
+    assert.equal(escapeNonAscii('plain ASCII 123!'), 'plain ASCII 123!');
+  });
 
-test('page relayout escapes display copies and leaves core text unchanged', () => {
+  test('escaped field offsets count terminal columns without changing browser offsets', () => {
+    const text = 'a中😀z';
+    assert.equal(escapedOffset(text, 1), 1);
+    assert.equal(escapedOffset(text, 2), 7);
+    assert.equal(escapedOffset(text, 4), 17);
+    assert.equal(escapedOffset('😀', 1), 6, 'a split surrogate is one \\u escape');
+    assert.equal(escapedOffset('😀', -1), 6, 'negative slice offsets retain JavaScript semantics');
+  });
+}
+
+nodeTest('page relayout escapes display copies and leaves core text unchanged', () => {
   const block = { text: '{中文}', item: { role: 'link', name: '中文' } };
   const state = {
     core: { blocks: [block], at() {} },
@@ -36,7 +44,7 @@ test('page relayout escapes display copies and leaves core text unchanged', () =
   assert.equal(block.item.name, '中文');
 });
 
-test('editing keeps the browser value intact and maps its caret to escaped columns', () => {
+nodeTest('editing keeps the browser value intact and maps its caret to escaped columns', () => {
   const state = {
     escapeUnicode: true,
     typing: { item: { name: '名称' }, text: 'a中😀z', caret: 4 },
@@ -47,7 +55,7 @@ test('editing keeps the browser value intact and maps its caret to escaped colum
   });
 });
 
-test('a pasted Unicode search finds its escaped page representation', () => {
+nodeTest('a pasted Unicode search finds its escaped page representation', () => {
   const state = {
     escapeUnicode: true,
     lines: [{ text: 'before \\u4E2D after' }],

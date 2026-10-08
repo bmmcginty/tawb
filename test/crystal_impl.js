@@ -41,4 +41,19 @@ function addressImplementations(javascript) {
   return implementations;
 }
 
-module.exports = { call, addressImplementations };
+function unicodeImplementations(javascript) {
+  const implementations = [{ name: 'JavaScript', ...javascript }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    escapeNonAscii(value) {
+      return call('unicode.escape', { value });
+    },
+    escapedOffset(value, offset) {
+      return call('unicode.escaped_offset', { value, offset });
+    },
+  });
+  return implementations;
+}
+
+module.exports = { call, addressImplementations, unicodeImplementations };

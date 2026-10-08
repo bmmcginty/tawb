@@ -1,5 +1,6 @@
 require "json"
 require "./address"
+require "./unicode_escape"
 
 module Tawb
   module Conformance
@@ -30,6 +31,13 @@ module Tawb
         words = object["words"].as_s
         template = object["template"]?.try(&.as_s?) || Address::DEFAULT_SEARCH
         JSON::Any.new(Address.search_url(words, template))
+      when "unicode.escape"
+        JSON::Any.new(UnicodeEscape.escape(payload.as_h["value"]?.try(&.as_s?)))
+      when "unicode.escaped_offset"
+        object = payload.as_h
+        value = object["value"]?.try(&.as_s?)
+        offset = object["offset"].as_i.to_i32
+        JSON::Any.new(UnicodeEscape.escaped_offset(value, offset).to_i64)
       else
         raise ArgumentError.new("unknown conformance operation #{operation}")
       end
