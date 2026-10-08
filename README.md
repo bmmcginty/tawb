@@ -40,8 +40,7 @@ not depend on that route alone.
 
 TAWB currently targets Linux. You need:
 
-- a current Node.js release and npm when running from source, or the standalone
-  executable described below;
+- a current Node.js release and npm;
 - Chrome, Chromium, Firefox, Firefox ESR, or LibreWolf;
 - a terminal that reports its key sequences correctly through `$TERM`;
 - `xvfb-run` if no graphical `$DISPLAY` is available.
@@ -52,43 +51,35 @@ names for Node.js and browsers vary by distribution.
 TAWB has no npm runtime dependencies. It controls the browser directly using
 Chrome DevTools Protocol or WebDriver BiDi.
 
-### Standalone executable
+### Native static port
 
-The Linux release executable contains TAWB and its JavaScript runtime. A reader
-does not need to install Node.js, npm, Bun, clone this repository, or run an
-installer. Put the executable somewhere convenient, make it executable once,
-and run it:
+A native Crystal implementation is being developed so a future release can be
+copied to a Linux machine without installing Node or extracting another runtime.
+It is not yet a runnable reader. Its current executable is a conformance target
+used to port behavior without changing it.
 
-```sh
-chmod +x tawb-linux-x64
-./tawb-linux-x64 https://example.com
-```
-
-The executable still uses an installed Chrome, Chromium, Firefox, Firefox ESR,
-or LibreWolf. It also needs `xvfb-run` when the machine has no graphical
-`$DISPLAY`; bundling a browser or desktop services into TAWB would prevent it
-from using the reader's existing profiles, logins, extensions, and browser
-updates.
-
-Release maintainers can build the x86-64 executable with:
+Build it with Crystal 1.21 or newer:
 
 ```sh
-tools/build_standalone.sh
+tools/build_crystal.sh
 ```
 
-This writes `dist/tawb-linux-x64` and its SHA-256 file. Deno first compiles the
-program and its runtime into one executable; StaticX then packages that and its
-system libraries behind a small static launcher. The result is a genuinely
-statically linked ELF (`ldd` reports `not a dynamic executable`) and embeds the
-TAWB source revision. The build machine needs Deno, Python, `patchelf`, and
-`file`. The script installs a pinned StaticX in its cache on the first run;
-`STATICX=/path/to/staticx` selects an existing offline installation.
+The build writes `dist/tawb-crystal` and rejects an output that has an ELF
+interpreter or any `DT_NEEDED` entries. Run the existing Node specifications
+against both implementations with:
 
-StaticX extracts the enclosed program into a private temporary directory when
-it starts. On a machine whose `/tmp` is mounted `noexec`, point
-`STATICX_TMPDIR` at a directory where executables are allowed. The artifact is
-still specific to its Linux CPU architecture; Alpine, Android, macOS, and
-Windows require separate builds and testing.
+```sh
+tools/test_crystal.sh
+# Or one ported specification:
+tools/test_crystal.sh test/address.test.js
+```
+
+Each ported test file contains one set of assertions. The ordinary test command
+runs those assertions against JavaScript; `tools/test_crystal.sh` adds the
+Crystal implementation to the same cases through a private JSON conformance
+protocol. This keeps the shipping implementation as the reference while the
+native port grows. The external Chrome, Chromium, Firefox, Firefox ESR, or
+LibreWolf browser remains intentionally outside the static executable.
 
 ## Quick start
 
