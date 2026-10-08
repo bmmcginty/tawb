@@ -41,6 +41,21 @@ function addressImplementations(javascript) {
   return implementations;
 }
 
+function lynxNumberImplementations(javascript) {
+  const implementations = [{ name: 'JavaScript', ...javascript }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    parseLynxNumberExpression(text) {
+      return call('lynx_number.parse', { text });
+    },
+    relativeLinkNumber(prompt, amount, direction) {
+      return call('lynx_number.relative', { prompt, amount, direction });
+    },
+  });
+  return implementations;
+}
+
 function unicodeImplementations(javascript) {
   const implementations = [{ name: 'JavaScript', ...javascript }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
@@ -56,4 +71,6 @@ function unicodeImplementations(javascript) {
   return implementations;
 }
 
-module.exports = { call, addressImplementations, unicodeImplementations };
+module.exports = {
+  call, addressImplementations, lynxNumberImplementations, unicodeImplementations,
+};
