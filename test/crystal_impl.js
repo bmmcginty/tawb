@@ -122,6 +122,9 @@ function lynxDisplayImplementations(javascript) {
     numberLynxBlocks(blocks, preferences = {}) {
       return call('lynx_display.number_blocks', { blocks, preferences });
     },
+    groupLynxFlows(blocks) {
+      return call('lynx_display.group_flows', { blocks });
+    },
     lynxRowText(line, text) {
       return call('lynx_display.row_text', { line, text });
     },

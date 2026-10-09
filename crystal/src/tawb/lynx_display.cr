@@ -1,5 +1,6 @@
 require "json"
 require "./aria"
+require "./blocks"
 require "./unicode_escape"
 
 module Tawb
@@ -95,11 +96,104 @@ module Tawb
       end
     end
 
+    def self.group_flows(blocks : Array(JSON::Any)) : Array(JSON::Any)
+      output = [] of JSON::Any
+      index = 0
+      while index < blocks.size
+        first = blocks[index]
+        first_object = first.as_h
+        first_item = first_object["item"]?.try(&.as_h?)
+        flow = first_item.try { |item| item["flow"]? }
+        role = first_item.try { |item| string(item, "role") } || ""
+        inline = flow && (role == "text" || Aria::LINK_ROLES.includes?(role))
+        unless inline
+          copied = first_object.dup
+          copied["sourceIndex"] = JSON::Any.new(source_index(first_object, index))
+          output << JSON::Any.new(copied)
+          index += 1
+          next
+        end
+
+        finish = index + 1
+        while finish < blocks.size
+          candidate = blocks[finish].as_h
+          item = candidate["item"]?.try(&.as_h?)
+          candidate_role = item.try { |value| string(value, "role") } || ""
+          break unless item && item["flow"]? == flow &&
+                       (candidate_role == "text" || Aria::LINK_ROLES.includes?(candidate_role))
+          finish += 1
+        end
+        if finish == index + 1
+          copied = first_object.dup
+          copied["sourceIndex"] = JSON::Any.new(source_index(first_object, index))
+          output << JSON::Any.new(copied)
+          index = finish
+          next
+        end
+
+        text = ""
+        previous = ""
+        spans = [] of JSON::Any
+        (index...finish).each do |at|
+          object = blocks[at].as_h
+          block_text = string(object, "text")
+          joined = previous.empty? ? block_text : Blocks.join_prose(previous, block_text)
+          text += " " if !previous.empty? && joined == "#{previous} #{block_text}"
+          text += string(object, "displayPrefix")
+          start_offset = utf16_size(text).to_i64
+          text += block_text
+          if existing = object["spans"]?.try(&.as_a?)
+            existing.each do |span|
+              shifted = span.as_h.dup
+              shifted["start"] = JSON::Any.new(start_offset + number(shifted, "start"))
+              shifted["end"] = JSON::Any.new(start_offset + number(shifted, "end"))
+              spans << JSON::Any.new(shifted)
+            end
+          else
+            spans << JSON::Any.new({
+              "blockIndex"    => JSON::Any.new(source_index(object, at)),
+              "start"         => JSON::Any.new(start_offset),
+              "end"           => JSON::Any.new(utf16_size(text).to_i64),
+              "displayNumber" => object["displayNumber"]? || JSON::Any.new(nil),
+            })
+          end
+          text += string(object, "displaySuffix")
+          previous = block_text
+        end
+
+        merged = first_object.dup
+        merged["text"] = JSON::Any.new(text)
+        merged["spans"] = JSON::Any.new(spans)
+        merged["sourceIndex"] = JSON::Any.new(source_index(first_object, index))
+        merged["displayPrefix"] = JSON::Any.new("")
+        merged["displaySuffix"] = JSON::Any.new("")
+        merged["displayNumber"] = JSON::Any.new(nil)
+        merged["merged"] = JSON::Any.new(true)
+        output << JSON::Any.new(merged)
+        index = finish
+      end
+      output
+    end
+
     def self.row_text(line : JSON::Any?, text : String) : String
       return text unless line
       object = line.as_h
       indent = " " * (object["displayIndent"]?.try(&.as_i64?) || 0_i64).to_i
       indent + string(object, "displayPrefix") + text + string(object, "displaySuffix")
+    end
+
+    private def self.source_index(object : Hash(String, JSON::Any), position : Int32) : Int64
+      value = object["sourceIndex"]?
+      return value.as_i64 if value && !value.raw.nil?
+      position.to_i64
+    end
+
+    private def self.utf16_size(value : String) : Int32
+      value.each_char.sum { |character| character.ord > 0xffff ? 2 : 1 }
+    end
+
+    private def self.number(object : Hash(String, JSON::Any), key : String) : Int64
+      object[key]?.try(&.as_i64?) || 0_i64
     end
 
     private def self.clip_field(value : String, width = FIELD_WIDTH) : String

@@ -4,7 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const {
-  numberLynxBlocks, renderLynxItem, renderLynxBlock, renderLynxRow, lynxBlocks, lynxRowText,
+  numberLynxBlocks, groupLynxFlows, renderLynxItem, renderLynxBlock, renderLynxRow,
+  lynxBlocks, lynxRowText,
   ANSI_REVERSE, ANSI_BOLD, ANSI_RESET,
 } = require('../src/lynx_display');
 const { layoutLines } = require('../src/layout');
@@ -164,6 +165,31 @@ for (const implementation of lynxDisplayImplementations({ numberLynxBlocks })) {
     assert.equal(right[1].displayPrefix, '');
     assert.equal(right[1].displaySuffix, '[1]');
     assert.equal(right[3].displaySuffix, '[3]');
+  });
+}
+
+for (const implementation of lynxDisplayImplementations({ groupLynxFlows })) {
+  test(`${implementation.name}: inline Lynx flows retain source spans`, () => {
+    const grouped = implementation.groupLynxFlows([
+      { text: 'Before', item: item('text', 'Before', { flow: 7 }) },
+      {
+        text: 'News', item: item('link', 'News', { flow: 7 }),
+        displayNumber: 1, displayPrefix: '[1]', displaySuffix: '',
+      },
+      { text: 'after', item: item('text', 'after', { flow: 7 }) },
+      { text: 'Next paragraph', item: item('text', 'Next paragraph', { flow: 8 }) },
+    ]);
+    assert.equal(grouped.length, 2);
+    assert.equal(grouped[0].text, 'Before [1]News after');
+    assert.equal(grouped[0].merged, true);
+    assert.deepEqual(grouped[0].spans.map(({ blockIndex, start, end, displayNumber }) => ({
+      blockIndex, start, end, displayNumber,
+    })), [
+      { blockIndex: 0, start: 0, end: 6, displayNumber: null },
+      { blockIndex: 1, start: 10, end: 14, displayNumber: 1 },
+      { blockIndex: 2, start: 15, end: 20, displayNumber: null },
+    ]);
+    assert.equal(grouped[1].sourceIndex, 3);
   });
 }
 
