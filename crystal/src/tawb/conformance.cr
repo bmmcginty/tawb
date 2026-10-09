@@ -10,7 +10,9 @@ require "./firefox_agent"
 require "./firefox_driver"
 require "./firefox_launch"
 require "./layout"
+require "./lynx_config"
 require "./lynx_display"
+require "./lynx_keymap"
 require "./lynx_number"
 require "./marionette"
 require "./options"
@@ -32,6 +34,12 @@ module Tawb
         "error" => JSON::Any.new(error.message || error.class.name),
       }.to_json)
       exit 1
+    end
+
+    private def self.string_table(table : Hash(String, String)) : JSON::Any
+      built = {} of String => JSON::Any
+      table.each { |key, value| built[key] = JSON::Any.new(value) }
+      JSON::Any.new(built)
     end
 
     private def self.dispatch(operation : String, payload : JSON::Any) : JSON::Any
@@ -190,6 +198,26 @@ module Tawb
         line = object["line"]?
         line = nil if line.try(&.raw.nil?)
         JSON::Any.new(LynxDisplay.row_text(line, object["text"].as_s))
+      when "lynx_keymap.table"
+        string_table(LynxKeymap::FUNCTION_ACTIONS)
+      when "lynx_keymap.action_names"
+        string_table(LynxKeymap::ACTION_FUNCTIONS)
+      when "lynx_keymap.action_for_function"
+        found = LynxKeymap.action_for_function(payload.as_h["name"].as_s)
+        found ? JSON::Any.new(found) : JSON::Any.new(nil)
+      when "lynx_keymap.function_for_action"
+        found = LynxKeymap.function_for_action(payload.as_h["id"].as_s)
+        found ? JSON::Any.new(found) : JSON::Any.new(nil)
+      when "lynx_keymap.function_names"
+        string_table(LynxKeymap.function_names(payload.as_h["ids"].as_a.map(&.as_s)))
+      when "lynx_keymap.parse"
+        actions = LynxKeymap.parse_key_file(payload.as_h["text"].as_s)
+        actions ? JSON::Any.new(actions) : JSON::Any.new(nil)
+      when "lynx_keymap.serialise"
+        entries = payload.as_h["actions"].as_a.map do |action|
+          {id: action.as_h["id"].as_s, bindings: action.as_h["bindings"].as_a.map(&.as_s)}
+        end
+        JSON::Any.new(LynxKeymap.serialise_key_file(entries))
       when "lynx_number.parse"
         parsed = LynxNumber.parse(payload.as_h["text"].as_s)
         parsed ? JSON::Any.new(parsed) : JSON::Any.new(nil)

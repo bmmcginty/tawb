@@ -182,6 +182,27 @@ function dumpImplementations(javascript) {
   return implementations;
 }
 
+function lynxKeymapImplementations(javascript) {
+  const implementations = [{
+    name: 'JavaScript',
+    actionForFunction: javascript.actionForFunction,
+    functionForAction: javascript.functionForAction,
+    functionNames: (ids) => Object.fromEntries(javascript.functionNames(ids.map((id) => ({ id })))),
+    parse: javascript.parseKeyFile,
+    serialise: javascript.serialiseKeyFile,
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    actionForFunction(name) { return call('lynx_keymap.action_for_function', { name }); },
+    functionForAction(id) { return call('lynx_keymap.function_for_action', { id }); },
+    functionNames(ids) { return call('lynx_keymap.function_names', { ids }); },
+    parse(text) { return call('lynx_keymap.parse', { text }); },
+    serialise(actions) { return call('lynx_keymap.serialise', { actions }); },
+  });
+  return implementations;
+}
+
 function endpointImplementations(javascript) {
   const implementations = [{
     name: 'JavaScript',
@@ -500,7 +521,7 @@ module.exports = {
   call, callAsync, addressImplementations, ariaImplementations, bidiImplementations,
   blockImplementations, dumpImplementations, endpointImplementations, firefoxAgentImplementations,
   firefoxAutomationImplementations, firefoxLaunchImplementations, firefoxPageImplementations,
-  layoutImplementations, lynxDisplayImplementations, lynxNumberImplementations, marionetteImplementations,
-  optionImplementations,
+  layoutImplementations, lynxDisplayImplementations, lynxKeymapImplementations, lynxNumberImplementations,
+  marionetteImplementations, optionImplementations,
   readerCommands, unicodeImplementations,
 };
