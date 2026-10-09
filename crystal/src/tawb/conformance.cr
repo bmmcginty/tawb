@@ -4,6 +4,7 @@ require "./aria"
 require "./blocks"
 require "./bidi"
 require "./dump"
+require "./firefox_driver"
 require "./layout"
 require "./lynx_display"
 require "./lynx_number"
@@ -62,6 +63,8 @@ module Tawb
         JSON::Any.new(Dump.format_ax_blocks(
           object["blocks"].as_a, object["escape_unicode"]?.try(&.as_bool?) || false
         ))
+      when "firefox.page_scenario"
+        firefox_page_scenario(payload)
       when "layout.wrap_with_offsets"
         object = payload.as_h
         JSON::Any.new(Layout.wrap_with_offsets(object["text"].as_s, object["width"].as_i))
@@ -133,6 +136,30 @@ module Tawb
         JSON::Any.new(UnicodeEscape.escaped_offset(value, offset).to_i64)
       else
         raise ArgumentError.new("unknown conformance operation #{operation}")
+      end
+    end
+
+    private def self.firefox_page_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      browser = FirefoxDriver::BrowserSession.new(object["url"].as_s)
+      begin
+        started = browser.start
+        events = object["events"].as_a.map(&.as_s)
+        browser.subscribe(events)
+        page = browser.existing_page
+        page.navigate(object["target"].as_s)
+        tree, documents = page.accessibility_documents(object["layout"]?.try(&.as_bool?) || false)
+        created = browser.create_page(background: true)
+        created.close
+        JSON::Any.new({
+          "session"   => started,
+          "url"       => JSON::Any.new(page.url),
+          "tree"      => tree,
+          "documents" => JSON::Any.new(documents.transform_values { |items| JSON::Any.new(items) }),
+          "created"   => JSON::Any.new(created.context_id),
+        })
+      ensure
+        browser.close
       end
     end
 

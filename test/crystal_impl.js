@@ -181,6 +181,52 @@ function dumpImplementations(javascript) {
   return implementations;
 }
 
+function firefoxPageImplementations({ bidi, FirefoxPage, FirefoxFrame, extractAxItems }) {
+  const pageScenario = async (url, { events, target, layout = false }) => {
+    const session = await bidi.connect(url);
+    try {
+      const started = await session.send('session.new', { capabilities: { alwaysMatch: {} } });
+      await session.send('session.subscribe', { events });
+      const initial = await session.send('browsingContext.getTree', {});
+      const top = initial.contexts[0];
+      if (!top) throw new Error('Firefox exposed no browsing context');
+      const page = new FirefoxPage(session, top.context, {});
+      page.setUrl(top.url || 'about:blank');
+      await page.goto(target, { waitUntil: 'domcontentloaded' });
+      const result = await session.send('browsingContext.getTree', { root: top.context });
+      const documents = {};
+      const frameTree = async (context) => {
+        const frame = new FirefoxFrame(session, context.context, page);
+        frame._url = context.url || 'about:blank';
+        documents[context.context] = await frame.evaluate(extractAxItems, { layout });
+        const children = await Promise.all((context.children || []).map(frameTree));
+        return {
+          frame: { id: context.context, url: context.url || 'about:blank' },
+          ...(children.length ? { childFrames: children } : {}),
+        };
+      };
+      const tree = await frameTree(result.contexts[0]);
+      const made = await session.send('browsingContext.create', { type: 'tab', background: true });
+      const created = new FirefoxPage(session, made.context, {});
+      await created.close();
+      return { session: started, url: page.url(), tree, documents, created: made.context };
+    } finally {
+      await session.send('session.end', {}).catch(() => {});
+      session.close();
+    }
+  };
+
+  const implementations = [{ name: 'JavaScript', pageScenario }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    pageScenario(url, options) {
+      return callAsync('firefox.page_scenario', { url, ...options });
+    },
+  });
+  return implementations;
+}
+
 function layoutImplementations(javascript) {
   const implementations = [{ name: 'JavaScript', ...javascript }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
@@ -288,7 +334,7 @@ function unicodeImplementations(javascript) {
 
 module.exports = {
   call, addressImplementations, ariaImplementations, bidiImplementations,
-  blockImplementations, dumpImplementations,
+  blockImplementations, dumpImplementations, firefoxPageImplementations,
   layoutImplementations, lynxDisplayImplementations, lynxNumberImplementations, optionImplementations,
   readerCommands, unicodeImplementations,
 };
