@@ -1,0 +1,908 @@
+# The native port of the buffer half of src/core.js: everything about a page
+# that is not about a terminal and not about a browser.
+#
+# The reader in src/index.js owns a terminal — a width to wrap to, a cursor on
+# a row, a scroll position, four prompt modes. None of that is true of
+# edbrowse, which owns its own buffer and its own line numbers, and none of it
+# would be true of a port that kept this program and threw the front end away.
+# What both front ends need is the same: a page, a view of it, a list of blocks
+# with stable identity, and the policy that decides when that list is allowed
+# to change under a reader.
+#
+# That is what lives here. The dividing line is deliberately drawn at the
+# *block*, not the line:
+#
+#   blocks  — one per thing on the page (a link, a heading, a paragraph).
+#             Core. Width-independent. Carries the item behind it, which is
+#             what activation resolves against.
+#   lines   — blocks wrapped to a terminal width, with continuations.
+#             Front end. A block may be one line or nine; edbrowse would
+#             wrap differently, or not at all.
+#
+# Every position that crosses this boundary is therefore a block index. The
+# front end maps it to and from its own lines, and nothing here ever needs to
+# know how wide anything is.
+#
+# ## The shadow cursor
+#
+# Several of the rules this program exists for need to know where the reader
+# is: a text patch must never rewrite the line under them, a rebuild must
+# re-anchor rather than teleport, and a change region is only worth
+# reporting relative to somewhere. The cursor belongs to the front end — it
+# is a terminal artefact, and edbrowse's would be its own — so the core
+# cannot read it, and asking for it per decision would make the boundary
+# chatty in exactly the place it must not be.
+#
+# Instead the front end *tells* the core, with `at(block_index)`, whenever
+# the reader moves. It is one-way and unacknowledged. The core keeps the last
+# one it was told and uses it to make its decisions. A stale shadow cursor
+# costs at worst one refused patch, which is the safe direction to be wrong
+# in.
+#
+# ## What is not here yet
+#
+# The half of src/core.js that acts on the page — activate, click, hover,
+# typing, sliders, file attachments, tabs — and the live-update policy
+# (src/live.js) still live in the JavaScript originals and move here as the
+# front end work proceeds.
+
+require "json"
+require "set"
+require "uri"
+require "./remap"
+
+module Tawb
+  class Core
+    # The views of a page, cycled by backslash. AX and INSPECT share the
+    # driver's accessibility extraction; PAGE and SOURCE are DOM-derived.
+    ALL_SOURCES   = ["ax", "render", "inspect", "source"]
+    SOURCE_LABELS = {"ax" => "AX", "render" => "PAGE", "inspect" => "INSPECT", "source" => "SOURCE"}
+    # SOURCE keeps its own page-side node array and is activated through it,
+    # rather than by matching role and name. INSPECT carries AX's own references.
+    DOM_SOURCES = %w[source]
+
+    # How far from the old position a re-anchor will look. A live update must
+    # never relocate the reader across the page: past this, staying put is the
+    # better answer.
+    REANCHOR_WINDOW = 250
+    # How many neighbours on each side identify a position. Block text is
+    # routinely duplicated — a markup view is full of repeated <svg> and
+    # <option> — so what tells two identical blocks apart is what sits around
+    # them.
+    CONTEXT_RADIUS = 3
+
+    # How long something that changed stays worth being told about, how many
+    # such places are remembered, and what separates news from a thing that
+    # simply ticks.
+    #
+    # The last is the one that matters. Every path used to *replace* the record
+    # of what had changed, so a clock rewriting itself once a second erased the
+    # fact that a menu had opened at the other end of the page — press c and you
+    # went to the clock, every time, for ever. A block that has changed this many
+    # times inside this window is a clock, a countdown or a view counter: it goes
+    # on being patched and goes on being readable, it just stops being reported
+    # as news.
+    CHANGE_MEMORY_MS = 60000
+    CHANGE_LIMIT     = 20
+    TICKER_WINDOW_MS = 10000
+    TICKER_REPEATS   = 3
+
+    # Nothing the reader triggers may block the interface indefinitely — a
+    # control that cannot resolve, an element that vanished mid-page, must
+    # report the failure to whoever asked instead of freezing the terminal.
+    # The page itself is given longer, because a load is allowed to take longer
+    # than a control is allowed to take to answer.
+    ACTION_TIMEOUT_MS     = 6000
+    OPERATION_TIMEOUT_MS  = 8000
+    NAVIGATION_TIMEOUT_MS = 20000
+
+    # How far past a text match the context has to agree before a re-anchor
+    # believes it: the normal case for a block whose own content is what
+    # changed, where the text can never match but the neighbours did not move.
+    MIN_CONTEXT_SCORE = 3
+
+    # One block: a line's worth of page, and the item behind it, which is what
+    # activation resolves against. The item stays JSON — the shape the in-page
+    # extractors hand back — open-ended by design, and read for whatever field
+    # the policy needs.
+    class Block
+      property text : String
+      property item : JSON::Any
+
+      def initialize(@text : String, @item : JSON::Any = JSON::Any.new(nil))
+      end
+    end
+
+    # Where the reader is, described well enough to find again in a buffer
+    # that has been rebuilt. See anchor().
+    record Anchor, text : String, name : String?, identity : String?,
+      block : Int32, context : Array(String), ratio : Float64
+    # Where a re-anchor left the reader: the block, and whether the arithmetic
+    # remap answered exactly or something fuzzier had to.
+    record Settled, block : Int32, exact : Bool
+    # A run of consecutive blocks that changed together.
+    record Region, start : Int32, stop : Int32
+    # One entry of the change memory: where the change was, what its text was
+    # at the time, and when it happened. The text travels with the position
+    # because the next rebuild renumbers everything; see change_targets().
+    record Change, start : Int32, stop : Int32, text : String, at : Int64
+    # A change resolved against the buffer as it stands now.
+    record Target, block : Int32, size : Int32, at : Int64
+    # How often one place has changed lately, so a ticker can be told from
+    # news. Keyed by block index, which holds still for as long as only text
+    # is being replaced — which is exactly the case this is about.
+    record Ticker, count : Int32, last : Int64
+    # What the page looked like the last time asking it for more produced
+    # nothing. See no_more_to_load?().
+    record Exhausted, url : String, blocks : Int32
+    # What a patch undoes: the block, its text, and the name it had — null
+    # when the item behind the block had none worth restoring.
+    record Undo, block : Block, text : String, name : String?
+    # What a successful patch reports: the blocks it touched, the buffer
+    # generation it belongs to, and the undo that puts it back.
+    record PatchResult, touched : Array(Int32), generation : Int32, undo : Proc(Nil)
+
+    # An open dropdown, whose entries are spliced into the block list under
+    # the control they belong to. See open_chooser().
+    class Chooser
+      property block_index : Int32
+      property at : Int32
+      property count : Int32
+      property filter : String
+      property shown : Array(Int32)
+      property options : Array(JSON::Any)
+      property multiple : Bool
+
+      def initialize
+        @block_index = 0
+        @at = 0
+        @count = 0
+        @filter = ""
+        @shown = [] of Int32
+        @options = [] of JSON::Any
+        @multiple = false
+      end
+    end
+
+    # -----------------------------------------------------------------------
+    # Questions about the buffer, answered without a page
+    # -----------------------------------------------------------------------
+
+    # Identity of the element behind a block, where the view has one. The
+    # DOM-derived views number the nodes they walk, which survives a re-snapshot
+    # as long as the document structure has not shifted — far stronger evidence
+    # than the block's text, which is routinely duplicated.
+    def self.identity_of(block : Block?) : String?
+      return nil unless block
+      return nil if block.item.raw.nil?
+      item = block.item.as_h? || return nil
+      dom = item["domIndex"]?
+      render = item["renderIndex"]?
+      index = if dom && !dom.raw.nil?
+                dom.as_i64?
+              elsif render && !render.raw.nil?
+                render.as_i64?
+              end
+      return nil unless index
+      frame_url = item["frame"]?.try(&.as_h?).try { |frame| frame["url"]?.try(&.as_s?) } || ""
+      "#{frame_url}##{index}"
+    end
+
+    def self.diff_blocks(previous_texts : Array(String), blocks : Array(Block)) : Array(Region)
+      before = previous_texts.to_set
+      changed = [] of Int32
+      blocks.each_with_index do |block, index|
+        changed << index unless before.includes?(block.text)
+      end
+
+      # Collapse consecutive indices into regions; one edit usually replaces a
+      # run of lines and should be reported as a single place to go.
+      regions = [] of Region
+      changed.each do |index|
+        last = regions.last?
+        if last && index == last.stop + 1
+          regions[regions.size - 1] = Region.new(last.start, index)
+        else
+          regions << Region.new(index, index)
+        end
+      end
+      regions
+    end
+
+    # Where a piece of text sits in the buffer, but only if it sits in exactly
+    # one place. Ambiguity is the whole risk in patching by content: "12:04"
+    # appearing twice means we cannot say which one the page rewrote.
+    def self.sole_block_containing(blocks : Array(Block), needle : String) : Int32
+      found = -1
+      blocks.each_with_index do |block, index|
+        at = block.text.index(needle) || next
+        # Twice inside one line is just as ambiguous as once in two lines.
+        if found >= 0 || block.text.index(needle, at + needle.bytesize)
+          return -1
+        end
+        found = index
+      end
+      found
+    end
+
+    # The block holding a piece of text, searched by content in both directions:
+    # the buffer's line can be longer than the snippet (prose runs together) or
+    # shorter (a link renders as just its name).
+    def self.find_block_with_text(blocks : Array(Block), needle : String) : Int32
+      trimmed = needle.strip
+      return -1 if trimmed.empty?
+
+      direct = blocks.index { |block| block.text.includes?(trimmed) }
+      return direct.not_nil! if direct
+
+      # Long enough that a common word cannot match the wrong place.
+      found = blocks.index do |block|
+        text = block.text.strip
+        text.size >= 10 && trimmed.includes?(text)
+      end
+      found || -1
+    end
+
+    # Whether two URLs are the same document reached at a different fragment.
+    def self.same_document_fragment(before : String, after : String) : Bool
+      a = URI.parse(before)
+      b = URI.parse(after)
+      # JavaScript's URL constructor accepts absolute URLs only; anything
+      # without a scheme throws and the answer is false.
+      return false if a.scheme.nil? || a.scheme.not_nil!.empty?
+      return false unless b.fragment
+      a.fragment = nil
+      b.fragment = nil
+      a.to_s == b.to_s
+    rescue
+      false
+    end
+
+    # Internal helpers on the class, not private: the instance methods below
+    # call them as Core.js_number and friends, and Crystal's private class
+    # methods cannot be reached through an explicit receiver.
+
+    # JavaScript's Number(), far enough for the strings a slider's attributes
+    # carry: null is zero, the empty string is zero, anything unparseable is
+    # NaN. (Hex and Infinity are not the shapes the page answers with.)
+    def self.js_number(raw : JSON::Any?) : Float64
+      case value = raw.try(&.raw)
+      when Nil      then 0.0
+      when Bool     then value ? 1.0 : 0.0
+      when Int64    then value.to_f
+      when Float64  then value
+      when String
+        trimmed = value.strip
+        return 0.0 if trimmed.empty?
+        return Float64::NAN unless trimmed.matches?(/^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/)
+        trimmed.to_f
+      else Float64::NAN
+      end
+    end
+
+    # Which value a slider's advertised range puts a key at. A custom ARIA
+    # slider may advertise a range and ignore every standard key; this is what
+    # maps the key onto the track so the pointer can be used as a fallback.
+    def self.slider_target(state : JSON::Any, key : String) : Float64?
+      object = state.as_h? || {} of String => JSON::Any
+      present = ->(name : String) { object[name]? && !object[name].raw.nil? }
+      low = present.call("min") ? js_number(object["min"]) : 0.0
+      high = present.call("max") ? js_number(object["max"]) : 100.0
+      # A missing value is Number(undefined): NaN, and no answer at all.
+      current = present.call("value") ? js_number(object["value"]) : Float64::NAN
+      return nil unless low.finite? && high.finite? && current.finite? && high > low
+
+      step = js_number(object["step"]?)
+      small = step > 0 ? step : (high - low) / 20
+      large = Math.max(small, (high - low) / 10)
+      target = current
+      case key
+      when "Home"                then target = low
+      when "End"                 then target = high
+      when "ArrowRight", "ArrowUp"   then target += small
+      when "ArrowLeft", "ArrowDown"  then target -= small
+      when "PageUp"              then target += large
+      when "PageDown"            then target -= large
+      else return nil
+      end
+      Math.min(high, Math.max(low, target))
+    end
+
+    # JavaScript's String.prototype.replace with a string pattern: the first
+    # occurrence, with the replacement's $ patterns — $$, $&, $`, $' —
+    # substituted. ($1 and friends belong to regular expressions; with a
+    # string pattern they stay literal.) The byte walk is UTF-8 safe because
+    # the $ byte never appears inside a multi-byte character.
+    def self.js_replace(text : String, from : String, to : String) : String
+      at = text.index(from)
+      return text if at.nil?
+      prefix = text.byte_slice(0, at)
+      tail = text.byte_slice(at + from.bytesize)
+      replacement = IO::Memory.new
+      bytes = to.to_slice
+      i = 0
+      while i < bytes.size
+        if bytes[i] == '$'.ord && i + 1 < bytes.size
+          case bytes[i + 1].chr
+          when '$'    then replacement << '$'
+          when '&'    then replacement << from
+          when '`'    then replacement << prefix
+          when '\''   then replacement << tail
+          else             replacement.write_byte(bytes[i]); i += 1; next
+          end
+          i += 2
+        else
+          replacement.write_byte(bytes[i])
+          i += 1
+        end
+      end
+      prefix + replacement.to_s + tail
+    end
+
+    # A JavaScript Math.round: half towards positive infinity, not half away
+    # from zero. Only the proportional fallback can land on a negative half,
+    # and where the reader lands there must not depend on the language.
+    def self.js_round(value : Float64) : Int32
+      (value + 0.5).floor.to_i32
+    end
+
+    # -----------------------------------------------------------------------
+    # The buffer
+    # -----------------------------------------------------------------------
+
+    property blocks : Array(Block)
+    # Bumped whenever the block list is replaced wholesale. A front end that
+    # holds its own copy — which every front end does, and a front end
+    # across a socket must — needs to know that a patch it is being handed
+    # was computed against the buffer it still has. Patches name the
+    # generation they belong to; one that names an older generation is
+    # dropped rather than misapplied.
+    getter generation : Int32
+    property rendered_url : String
+    # Where the front end last said the reader was, as a block index. See
+    # the shadow cursor note above; -1 means it has not said yet.
+    getter cursor_block : Int32
+    property exhausted : Exhausted?
+    getter chooser : Chooser?
+    getter change_index : Int32
+
+    def initialize(source : String = "ax", layout : Bool = false)
+      @source = source
+      # Whether the extraction records the inline-flow and table-cell placement
+      # the Lynx display lays a page out with. Nothing else reads it, so a
+      # reader who has not asked for Lynx does not pay for it.
+      @layout = layout
+      @blocks = [] of Block
+      @generation = 0
+      @rendered_url = ""
+      @cursor_block = -1
+      @changes = [] of Change
+      @change_index = -1
+      @tickers = {} of Int32 => Ticker
+      @chooser = nil
+      # The popup the reader has open, if any, named by the id its control
+      # points at. See relocate_popup().
+      @popup = nil
+      @exhausted = nil
+    end
+
+    # The front end reporting a move. One way, no reply, cheap enough to send
+    # on every arrow key.
+    def at(block_index : Int32) : Nil
+      @cursor_block = block_index
+    end
+
+    def block(index : Int32) : Block?
+      return nil if index < 0 || index >= @blocks.size
+      @blocks[index]
+    end
+
+    def texts : Array(String)
+      @blocks.map(&.text)
+    end
+
+    def block_text(index : Int32) : String
+      block = self.block(index)
+      block ? block.text : ""
+    end
+
+    # Whether asking this page for more has already been tried and answered no.
+    #
+    # Without this, every press of the down key at the last line paid the full
+    # scroll-and-wait again — measured at 2.5 seconds per keypress, for ever,
+    # on any page at all. The trap is that "can this page scroll" is nearly
+    # always yes: a document taller than the window scrolls, which is most
+    # documents, and it has nothing to do with whether more content exists.
+    # The buffer already holds the whole document either way, because the walk
+    # reads the DOM and not the viewport. Only lazily loaded content is ever at
+    # stake, and the only way to find out is to try — so try once, and remember.
+    #
+    # The answer stops applying the moment the page is a different page or has
+    # a different number of blocks in it, which covers both a navigation and a
+    # feed that finally delivered something.
+    def no_more_to_load? : Bool
+      return false unless exhausted = @exhausted
+      exhausted.url == @rendered_url && exhausted.blocks == @blocks.size
+    end
+
+    # -----------------------------------------------------------------------
+    # Keeping the reader's place
+    #
+    # All of this used to be worked out in line space, over the terminal's
+    # wrapped lines. It is worked out in block space now, which is not merely
+    # tidier: a block is what the page produced, so the same buffer re-read at a
+    # different terminal width gives the same answer, and the arithmetic remap
+    # below can no longer be thrown off by a line that rewrapped when nothing
+    # about the page had changed at all.
+    # -----------------------------------------------------------------------
+
+    # Where the reader is, described well enough to find again in a buffer
+    # that has been rebuilt: by the element if the view knows one, by the text
+    # otherwise, by the neighbours when the text repeats, and by proportion
+    # when nothing else survived.
+    def anchor : Anchor
+      index = @cursor_block
+      block = self.block(index)
+      Anchor.new(
+        text: block ? block.text : "",
+        name: anchor_name(block),
+        identity: Core.identity_of(block),
+        block: index,
+        context: (-CONTEXT_RADIUS..CONTEXT_RADIUS).map { |offset| block_text(index + offset) },
+        ratio: @blocks.empty? ? 0.0 : index / @blocks.size,
+      )
+    end
+
+    # JavaScript answers '' when there is no block or no item behind one, and
+    # undefined — which travels as null — when the item carries no name.
+    private def anchor_name(block : Block?) : String?
+      return "" unless block
+      return "" if block.item.raw.nil?
+      return nil unless object = block.item.as_h?
+      object["name"]?.try(&.as_s?)
+    end
+
+    # How much of the remembered neighbourhood a candidate still agrees with.
+    def context_score(index : Int32, anchor : Anchor) : Int32
+      score = 0
+      (-CONTEXT_RADIUS..CONTEXT_RADIUS).each do |offset|
+        next if offset == 0
+        expected = anchor.context[offset + CONTEXT_RADIUS]
+        score += 1 if expected && !expected.empty? && expected == block_text(index + offset)
+      end
+      score
+    end
+
+    # Searched outward from where the reader was, so the nearest of several
+    # identical blocks wins and context breaks the tie. `accept` returns a
+    # score, or nil for "not a candidate at all".
+    #
+    # Outward rather than from the top is the whole point. Block text repeats
+    # constantly — two buttons both called "Open", a page of <option value=30>
+    # — and the first match from the top can be the length of the document away
+    # from the one the reader was actually standing on.
+    def search_outward(start : Int32, limit : Int32 = REANCHOR_WINDOW,
+                       &accept : Int32 -> Int32?) : NamedTuple(index: Int32, score: Int32)?
+      best = nil
+      (0..limit).each do |distance|
+        candidates = distance == 0 ? [start] : [start - distance, start + distance]
+        any_in_range = false
+        candidates.each do |index|
+          next if index < 0 || index >= @blocks.size
+          any_in_range = true
+          score = accept.call(index)
+          next if score.nil?
+          candidate = {index: index, score: score.not_nil!}
+          best = candidate if best.nil? || candidate[:score] > best.not_nil![:score]
+          return best if best.not_nil![:score] == CONTEXT_RADIUS * 2
+        end
+        # Both ends have run off the buffer; nothing further to visit.
+        break if !any_in_range && distance > 0
+      end
+      best
+    end
+
+    # Putting the reader back after a change they asked for — a view switch, a
+    # refresh they pressed for, the page redrawing after they pressed
+    # something. Always answers with somewhere, falling back to the same
+    # proportion of a buffer whose block count may be wildly different, because
+    # the reader asked for this and has to arrive somewhere.
+    #
+    # The search spans the whole buffer, because they asked and it must find
+    # the thing if the thing is there — but it still runs outward from where
+    # they were, so that of two blocks reading exactly the same it chooses the
+    # one they were standing on rather than the first one on the page.
+    def restore(anchor : Anchor) : Int32
+      return 0 if @blocks.empty?
+      needle = (anchor.name.presence || anchor.text.presence || "").strip
+      start = Math.min(Math.max(anchor.block, 0), @blocks.size - 1)
+      whole = @blocks.size
+
+      unless needle.empty?
+        exact = search_outward(start, limit: whole) do |index|
+          @blocks[index].text == anchor.text ? context_score(index, anchor) : nil
+        end
+        return exact[:index] if exact
+
+        partial = search_outward(start, limit: whole) do |index|
+          @blocks[index].text.includes?(needle) ? context_score(index, anchor) : nil
+        end
+        return partial[:index] if partial
+      end
+
+      Math.min(Core.js_round(anchor.ratio * @blocks.size), @blocks.size - 1)
+    end
+
+    # Putting the reader back after a change they did not ask for.
+    #
+    # Unlike restore(), this never falls back to a proportional guess, and
+    # answers -1 for "stay exactly where you are": if what they were reading
+    # has gone, standing still is far less disorienting than being silently
+    # moved somewhere proportional. Nor does it search from the top of the
+    # document — block text is often not unique, so the first match can be
+    # thousands of blocks from where the reader actually is.
+    #
+    # In order: the arithmetic answer, which is right whenever the page
+    # rewrote one contiguous region and is the only thing that gets a ticking
+    # clock right; then the element itself; then the nearest matching text,
+    # searched outward; then the surroundings alone.
+    def reanchor(anchor : Anchor, previous_texts : Array(String)? = nil) : Settled
+      if previous_texts
+        remap = Remap.remap_index(previous_texts, texts, anchor.block)
+        return Settled.new(remap.index, true) if remap.exact
+      end
+
+      if identity = anchor.identity
+        found = @blocks.index { |block| Core.identity_of(block) == identity }
+        # Node numbering comes from walk order, so inserting an element earlier
+        # in the document renumbers everything after it and the same number can
+        # name a different node. Trust the match only when a second signal
+        # agrees: the text is unchanged, or it is somewhere plausibly nearby.
+        if found
+          same_text = @blocks[found].text == anchor.text
+          if same_text || (found - anchor.block).abs <= REANCHOR_WINDOW
+            return Settled.new(found, false)
+          end
+        end
+      end
+
+      start = Math.min(Math.max(anchor.block, 0), Math.max(@blocks.size - 1, 0))
+
+      # Matching a single block is not enough when the text repeats — a page of
+      # <option value=30> entries offers dozens of equally good candidates. The
+      # neighbours disambiguate: the right one sits in the same surroundings it
+      # did before.
+      by_text = search_outward(start) do |index|
+        @blocks[index].text == anchor.text ? context_score(index, anchor) : nil
+      end
+      return Settled.new(by_text[:index], false) if by_text
+
+      by_context = search_outward(start) do |index|
+        score = context_score(index, anchor)
+        score >= MIN_CONTEXT_SCORE ? score : nil
+      end
+      return Settled.new(by_context[:index], false) if by_context
+
+      Settled.new(-1, false)
+    end
+
+    # -----------------------------------------------------------------------
+    # What is worth being told about
+    # -----------------------------------------------------------------------
+
+    # Whether this place has changed often enough lately to be a ticker rather
+    # than news.
+    private def ticking?(index : Int32, now : Int64) : Bool
+      entry = @tickers[index]?
+      fresh = if entry && now - entry.last <= TICKER_WINDOW_MS
+                Ticker.new(entry.count + 1, now)
+              else
+                Ticker.new(1, now)
+              end
+      @tickers[index] = fresh
+      fresh.count > TICKER_REPEATS
+    end
+
+    # Add to what is known to have changed, rather than replacing it. Returns
+    # only what was worth reporting, which is what the reader is told about.
+    #
+    # Each entry remembers its text as well as its position, because the next
+    # rebuild renumbers everything; the position is where to start looking and
+    # the text is what to look for. See change_targets().
+    def record_changes(regions : Array(Region)) : Array(Change)
+      now = Time.utc.to_unix_ms
+      news = [] of Change
+      regions.each do |region|
+        next if ticking?(region.start, now)
+        news << Change.new(region.start, region.stop, block_text(region.start), now)
+      end
+      return [] of Change if news.empty?
+
+      superseded = news.map(&.text).to_set
+      kept = @changes.reject do |entry|
+        superseded.includes?(entry.text) || now - entry.at >= CHANGE_MEMORY_MS
+      end
+      @changes = (kept + news).last(CHANGE_LIMIT)
+      @change_index = -1
+      news
+    end
+
+    def note_changes(previous_texts : Array(String)) : Array(Change)
+      record_changes(Core.diff_blocks(previous_texts, @blocks))
+    end
+
+    # The nearest block to `start` whose text still matches, or -1.
+    def find_near(start : Int32, text : String) : Int32
+      return -1 if @blocks.empty?
+      from = Math.min(Math.max(start, 0), @blocks.size - 1)
+      (0...@blocks.size).each do |distance|
+        candidates = distance == 0 ? [from] : [from - distance, from + distance]
+        candidates.each do |index|
+          next if index < 0 || index >= @blocks.size
+          return index if @blocks[index].text == text
+        end
+      end
+      -1
+    end
+
+    # Everywhere worth going, in document order, resolved against the buffer as
+    # it stands now. Entries whose text is nowhere to be found have been
+    # overwritten again since, and are dropped rather than pointing somewhere
+    # arbitrary.
+    def change_targets : Array(Target)
+      now = Time.utc.to_unix_ms
+      out = [] of Target
+      @changes.each do |entry|
+        next if now - entry.at >= CHANGE_MEMORY_MS
+        block = find_near(entry.start, entry.text)
+        next if block < 0
+        out << Target.new(block, entry.stop - entry.start + 1, entry.at)
+      end
+      out.sort_by!(&.block)
+      out
+    end
+
+    # -----------------------------------------------------------------------
+    # Splicing text in without a snapshot
+    # -----------------------------------------------------------------------
+
+    # Splices replaced text straight into the buffer, skipping the snapshot.
+    #
+    # A clock costs a whole-page snapshot per tick otherwise — 150ms on a
+    # plain page and seconds on a heavy one — to change eight characters. When
+    # the page tells us the exact text it replaced, and that text names one
+    # block and one block only, we can rewrite that block for a fraction of a
+    # millisecond.
+    #
+    # Returns the block indices it changed together with the undo that puts
+    # them back, or nil if the patches could not be accounted for. The undo
+    # matters because the caller has one more test to apply that cannot be
+    # made here: a patch whose new text wraps to a different number of lines
+    # would reflow the buffer, and reflowing the buffer moves the reader,
+    # which is the one thing a live update may not do. Only the front end
+    # knows how wide a line is, so only the front end can see that coming —
+    # and it needs a way back when it does.
+    def patch_text(patches : Array(JSON::Any), protect : Bool = true) : PatchResult?
+      return nil if patches.empty? || @blocks.empty?
+
+      undo_log = [] of Undo
+      touched = [] of Int32
+      undo = -> do
+        undo_log.reverse_each do |entry|
+          entry.block.text = entry.text
+          if name = entry.name
+            entry.block.item.as_h["name"] = JSON::Any.new(name)
+          end
+        end
+        undo_log.clear
+      end
+
+      patches.each do |patch|
+        object = patch.as_h? || {} of String => JSON::Any
+        from = object["from"]?.try(&.as_s?) || ""
+        to = object["to"]?.try(&.as_s?) || ""
+        if from.empty? || to.empty? || from == to
+          undo.call
+          return nil
+        end
+
+        # Resolved one at a time, against the buffer as the previous patch
+        # left it: two patches can land on the same block.
+        index = Core.sole_block_containing(@blocks, from)
+        if index < 0
+          undo.call
+          return nil
+        end
+
+        block = @blocks[index]
+        item = block.item.as_h?
+        had_name = nil
+        if item && (name = item["name"]?.try(&.as_s?)) && name.includes?(from)
+          had_name = name
+        end
+        undo_log << Undo.new(block, block.text, had_name)
+
+        block.text = Core.js_replace(block.text, from, to)
+        # The name is what activation resolves against, so it cannot be left
+        # describing text that is no longer on the page.
+        if had_name
+          item.not_nil!["name"] = JSON::Any.new(Core.js_replace(had_name.not_nil!, from, to))
+        end
+        touched << index unless touched.includes?(index)
+      end
+
+      # The block the reader is on is theirs while they are reading it. A
+      # clock elsewhere on the page may tick — that moves nothing — but
+      # rewriting the words under them mid-sentence is exactly what the freeze
+      # exists to prevent. This is the shadow cursor's whole job.
+      if protect && @cursor_block >= 0 && touched.includes?(@cursor_block)
+        undo.call
+        return nil
+      end
+
+      PatchResult.new(touched, @generation, undo)
+    end
+
+    # -----------------------------------------------------------------------
+    # Popups that are not where their control is
+    #
+    # A menu or listbox is very often rendered into the end of <body> rather
+    # than next to the button that opens it — a "portal", done so that no
+    # ancestor's overflow or stacking can clip it. On a screen that is
+    # invisible: the menu appears under the mouse. In a line list it is
+    # catastrophic, because the reader presses a button and the thing they
+    # asked for appears hundreds of lines below them with nothing to say it is
+    # theirs. Re-reading the page finds it; it does not help them reach it.
+    #
+    # So it is moved. The extractor tags everything inside a popup with the id
+    # its control points at, and this puts those blocks back where the reader
+    # is standing. Nothing about the page changes — this is the buffer's
+    # reading order, which is the only thing here that was ever the reader's.
+    # -----------------------------------------------------------------------
+
+    # Start following a popup. Deliberately does not move anything yet: this is
+    # called the moment the control is pressed, when the buffer still describes
+    # the page as it was before, and the popup it names does not exist in it.
+    # The next read is what finds it.
+    def follow_popup(controls : String?) : String?
+      @popup = controls && !controls.empty? ? controls : nil
+      @popup
+    end
+
+    def forget_popup : Nil
+      @popup = nil
+    end
+
+    # Move the open popup's blocks to sit directly after the control that owns
+    # them. Answers how many blocks moved, and forgets the popup when the page
+    # has closed it.
+    def relocate_popup : Int32
+      id = @popup
+      return 0 unless id && !id.empty?
+
+      owned = [] of Int32
+      control = -1
+      @blocks.each_with_index do |block, index|
+        object = block.item.as_h?
+        next unless object
+        if object["popup"]?.try(&.as_s?) == id
+          owned << index
+        elsif object["controls"]?.try(&.as_s?) == id
+          control = index
+        end
+      end
+
+      if owned.empty?
+        # Nothing of it in the buffer. That is either "the page has closed it",
+        # which the control will say, or "we have not read the page since it
+        # opened", which is the ordinary case one read after pressing — and
+        # forgetting on that would mean never finding it at all.
+        closed = control >= 0 && @blocks[control].item.as_h?.try do |object|
+          object["expanded"]? == JSON::Any.new(false)
+        end
+        @popup = nil if closed || control < 0
+        return 0
+      end
+      return 0 if control < 0
+      # Already in the right place: the popup is not portaled on this page, or
+      # we moved it on a previous read.
+      return 0 if owned[0] == control + 1
+
+      moved = owned.map { |index| @blocks[index] }
+      owned.reverse_each { |index| @blocks.delete_at(index) }
+      before = owned.count { |index| index < control }
+      moved.each_with_index do |block, offset|
+        @blocks.insert(control - before + 1 + offset, block)
+      end
+      return moved.size
+    end
+
+    # Where the open popup's entries begin, or -1.
+    def popup_at : Int32
+      id = @popup
+      return -1 unless id && !id.empty?
+      @blocks.index do |block|
+        block.item.as_h?.try { |object| object["popup"]?.try(&.as_s?) == id }
+      end || -1
+    end
+
+    # -----------------------------------------------------------------------
+    # Dropdowns
+    #
+    # A native <select> is not a text field and never was, and the popup it
+    # opens is drawn by the browser rather than by the page — no click can
+    # reach it and no amount of walking the DOM will find it. What *is* in the
+    # DOM is the list of options, all of it, always. So there is nothing to
+    # open: the entries are read straight off the element and spliced into the
+    # buffer underneath the control, where they can be moved through and
+    # filtered like anything else the reader can see.
+    # -----------------------------------------------------------------------
+
+    # Splice a dropdown's entries into the buffer under its control. They are
+    # ordinary blocks from here on, so moving through them, wrapping them and
+    # finding text in them all work without knowing anything about dropdowns.
+    def open_chooser(block_index : Int32, listing : JSON::Any) : Chooser
+      close_chooser
+      object = listing.as_h? || {} of String => JSON::Any
+      chooser = Chooser.new
+      chooser.block_index = block_index
+      chooser.at = block_index + 1
+      chooser.count = 0
+      chooser.filter = ""
+      chooser.shown = [] of Int32
+      chooser.options = object["options"]?.try(&.as_a?) || [] of JSON::Any
+      chooser.multiple = object["multiple"]?.try(&.as_bool?) || false
+      @chooser = chooser
+      show_chooser
+      chooser
+    end
+
+    # (Re)draw the entries, honouring the filter. Filtering happens here and
+    # never at the page: these are our lines, and typing at the control would
+    # reach a widget that may have no key handler at all.
+    def show_chooser(filter : String? = nil) : Int32
+      chooser = @chooser || return 0
+      chooser.filter = filter unless filter.nil?
+      @blocks.delete_at(chooser.at, chooser.count) if chooser.count > 0
+
+      needle = chooser.filter.strip.downcase
+      shown = [] of Int32
+      blocks = [] of Block
+      chooser.options.each_with_index do |option, index|
+        object = option.as_h? || {} of String => JSON::Any
+        option_text = object["text"]?.try(&.as_s?) || ""
+        next if !needle.empty? && !option_text.downcase.includes?(needle)
+        selected = object["selected"]?.try(&.as_bool?) || false
+        disabled = object["disabled"]?.try(&.as_bool?) || false
+        shown << index
+        blocks << Block.new(
+          "    #{selected ? "(*)" : "( )"} #{option_text}" + (disabled ? " — unavailable" : ""),
+          JSON::Any.new({
+            "role"         => JSON::Any.new("option"),
+            "name"         => JSON::Any.new(option_text),
+            "chooserIndex" => JSON::Any.new(index.to_i64),
+            "disabled"     => JSON::Any.new(disabled),
+          })
+        )
+      end
+
+      blocks.each_with_index { |entry, offset| @blocks.insert(chooser.at + offset, entry) }
+      chooser.count = blocks.size
+      chooser.shown = shown
+      blocks.size
+    end
+
+    def close_chooser : Nil
+      if chooser = @chooser
+        @blocks.delete_at(chooser.at, chooser.count) if chooser.count > 0
+      end
+      @chooser = nil
+    end
+
+    # Whether a block index is one of the open dropdown's entries.
+    def in_chooser?(block_index : Int32) : Bool
+      chooser = @chooser || return false
+      block_index >= chooser.at && block_index < chooser.at + chooser.count
+    end
+  end
+end

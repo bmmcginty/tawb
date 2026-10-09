@@ -3,6 +3,8 @@ require "./address"
 require "./aria"
 require "./blocks"
 require "./bidi"
+require "./core"
+require "./remap"
 require "./broker"
 require "./dump"
 require "./endpoint"
@@ -250,6 +252,47 @@ module Tawb
         JSON::Any.new(Blocks.build(payload.as_h["items"].as_a))
       when "blocks.fold"
         JSON::Any.new(Blocks.fold(payload.as_h["blocks"].as_a))
+      when "core.scenario"
+        core_scenario(payload)
+      when "core.diff_blocks"
+        object = payload.as_h
+        previous = object["previous_texts"].as_a.map(&.as_s)
+        blocks = object["blocks"].as_a.map { |text| Core::Block.new(text.as_s) }
+        JSON::Any.new(Core.diff_blocks(previous, blocks).map { |region| region_json(region) })
+      when "core.sole_block_containing"
+        object = payload.as_h
+        blocks = object["blocks"].as_a.map { |text| Core::Block.new(text.as_s) }
+        JSON::Any.new(Core.sole_block_containing(blocks, object["needle"].as_s).to_i64)
+      when "core.find_block_with_text"
+        object = payload.as_h
+        blocks = object["blocks"].as_a.map { |text| Core::Block.new(text.as_s) }
+        JSON::Any.new(Core.find_block_with_text(blocks, object["needle"].as_s).to_i64)
+      when "core.same_document_fragment"
+        object = payload.as_h
+        JSON::Any.new(Core.same_document_fragment(object["before"].as_s, object["after"].as_s))
+      when "core.identity_of"
+        object = payload.as_h["block"].as_h
+        item = object["item"]? || JSON::Any.new(nil)
+        JSON::Any.new(Core.identity_of(Core::Block.new(object["text"].as_s, item)))
+      when "core.slider_target"
+        object = payload.as_h
+        target = Core.slider_target(object["state"], object["key"].as_s)
+        # JavaScript numbers carry no int/float distinction; 52 must not
+        # travel as 52.0.
+        if target && target == target.trunc
+          JSON::Any.new(target.to_i64)
+        else
+          JSON::Any.new(target)
+        end
+      when "core.remap_index"
+        object = payload.as_h
+        remapped = Remap.remap_index(
+          object["old"].as_a.map(&.as_s), object["new"].as_a.map(&.as_s), object["index"].as_i
+        )
+        JSON::Any.new({
+          "index" => JSON::Any.new(remapped.index.to_i64),
+          "exact" => JSON::Any.new(remapped.exact),
+        })
       when "dump.resolve_target"
         object = payload.as_h
         existing = object["existing"].as_a.map(&.as_s).to_set
@@ -549,6 +592,177 @@ module Tawb
       else
         raise ArgumentError.new("unknown conformance operation #{operation}")
       end
+    end
+
+    private def self.region_json(region : Core::Region) : JSON::Any
+      JSON::Any.new({
+        "start" => JSON::Any.new(region.start.to_i64),
+        "end"   => JSON::Any.new(region.stop.to_i64),
+      })
+    end
+
+    private def self.core_news_json(news : Array(Core::Change)) : JSON::Any
+      JSON::Any.new(news.map do |entry|
+        JSON::Any.new({
+          "start" => JSON::Any.new(entry.start.to_i64),
+          "end"   => JSON::Any.new(entry.stop.to_i64),
+          "text"  => JSON::Any.new(entry.text),
+        })
+      end)
+    end
+
+    private def self.core_targets_json(targets : Array(Core::Target)) : JSON::Any
+      JSON::Any.new(targets.map do |target|
+        JSON::Any.new({
+          "block" => JSON::Any.new(target.block.to_i64),
+          "size"  => JSON::Any.new(target.size.to_i64),
+        })
+      end)
+    end
+
+    private def self.core_block_from_json(entry : JSON::Any, index : Int32) : Core::Block
+      object = entry.as_h?
+      if object.nil?
+        Core::Block.new(entry.as_s, JSON::Any.new({
+          "name"     => JSON::Any.new(entry.as_s),
+          "domIndex" => JSON::Any.new(index.to_i64),
+        }))
+      else
+        item = object["item"]?
+        item = JSON::Any.new({
+          "name"     => JSON::Any.new(object["text"].as_s),
+          "domIndex" => JSON::Any.new(index.to_i64),
+        }) if item.nil? || item.raw.nil?
+        Core::Block.new(object["text"].as_s, item)
+      end
+    end
+
+    # A scripted pass over the core's buffer: blocks set, the shadow cursor
+    # moved, changes recorded, text patched, popups relocated, dropdowns
+    # spliced in — and after each step, one observation. The JavaScript
+    # original runs the same script in-process over src/core.js, so the two
+    # runtimes must answer with the same observations.
+    private def self.core_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      core = Core.new(source: object["source"]?.try(&.as_s?) || "source")
+      anchors = {} of String => Core::Anchor
+      texts = {} of String => Array(String)
+      undos = {} of String => Proc(Nil)
+      observations = [] of JSON::Any
+      object["script"].as_a.each do |step_value|
+        step = step_value.as_h
+        case step["op"].as_s
+        when "blocks"
+          if given = step["blocks"]?
+            core.blocks = given.as_a.map_with_index { |entry, index| core_block_from_json(entry, index) }
+          else
+            core.blocks = step["texts"].as_a.map_with_index do |text, index|
+              Core::Block.new(text.as_s, JSON::Any.new({
+                "name"     => JSON::Any.new(text.as_s),
+                "domIndex" => JSON::Any.new(index.to_i64),
+              }))
+            end
+          end
+          if cursor = step["cursor"]?.try(&.as_i?)
+            core.at(cursor)
+          end
+          observations.push JSON::Any.new(nil)
+        when "at"
+          core.at(step["index"].as_i)
+          observations.push JSON::Any.new(nil)
+        when "texts"
+          current = core.texts
+          if id = step["id"]?.try(&.as_s?)
+            texts[id] = current
+          end
+          observations.push JSON::Any.new(current.map { |text| JSON::Any.new(text) })
+        when "block_text"
+          observations.push JSON::Any.new(core.block_text(step["index"].as_i))
+        when "anchor"
+          anchor = core.anchor
+          if id = step["id"]?.try(&.as_s?)
+            anchors[id] = anchor
+          end
+          observations.push JSON::Any.new({
+            "text"     => JSON::Any.new(anchor.text),
+            "name"     => JSON::Any.new(anchor.name),
+            "identity" => JSON::Any.new(anchor.identity),
+            "block"    => JSON::Any.new(anchor.block.to_i64),
+            "context"  => JSON::Any.new(anchor.context.map { |text| JSON::Any.new(text) }),
+          })
+        when "reanchor"
+          anchor = anchors[step["anchor"].as_s]
+          previous = step["previous"]?.try { |id| texts[id.as_s]? }
+          settled = core.reanchor(anchor, previous)
+          observations.push JSON::Any.new({
+            "block" => JSON::Any.new(settled.block.to_i64),
+            "exact" => JSON::Any.new(settled.exact),
+          })
+        when "restore"
+          observations.push JSON::Any.new(core.restore(anchors[step["anchor"].as_s]).to_i64)
+        when "record_changes"
+          regions = step["regions"].as_a.map do |region|
+            entry = region.as_h
+            Core::Region.new(entry["start"].as_i, entry["end"].as_i)
+          end
+          observations.push core_news_json(core.record_changes(regions))
+        when "note_changes"
+          observations.push core_news_json(core.note_changes(texts[step["previous"].as_s]))
+        when "change_targets"
+          observations.push core_targets_json(core.change_targets)
+        when "patch"
+          result = core.patch_text(
+            step["patches"].as_a,
+            step["protect"]?.try(&.as_bool?) != false
+          )
+          if result
+            undos[step["id"]?.try(&.as_s?) || "last"] = result.undo
+            observations.push JSON::Any.new({
+              "touched"    => JSON::Any.new(result.touched.map { |index| JSON::Any.new(index.to_i64) }),
+              "generation" => JSON::Any.new(result.generation.to_i64),
+            })
+          else
+            observations.push JSON::Any.new(nil)
+          end
+        when "undo"
+          undos[step["id"]?.try(&.as_s?) || "last"].call
+          observations.push JSON::Any.new(true)
+        when "open_chooser"
+          core.open_chooser(step["block_index"].as_i, step["listing"])
+          observations.push JSON::Any.new(nil)
+        when "show_chooser"
+          filter = step["filter"]?.try(&.as_s?)
+          observations.push JSON::Any.new(core.show_chooser(filter).to_i64)
+        when "close_chooser"
+          core.close_chooser
+          observations.push JSON::Any.new(nil)
+        when "in_chooser"
+          observations.push JSON::Any.new(core.in_chooser?(step["index"].as_i))
+        when "follow_popup"
+          core.follow_popup(step["controls"]?.try(&.as_s?))
+          observations.push JSON::Any.new(nil)
+        when "forget_popup"
+          core.forget_popup
+          observations.push JSON::Any.new(nil)
+        when "relocate_popup"
+          observations.push JSON::Any.new(core.relocate_popup.to_i64)
+        when "popup_at"
+          observations.push JSON::Any.new(core.popup_at.to_i64)
+        when "find_near"
+          observations.push JSON::Any.new(core.find_near(step["start"].as_i, step["text"].as_s).to_i64)
+        when "rendered_url"
+          core.rendered_url = step["url"].as_s
+          observations.push JSON::Any.new(nil)
+        when "exhaust"
+          core.exhausted = Core::Exhausted.new(core.rendered_url, core.blocks.size)
+          observations.push JSON::Any.new(nil)
+        when "no_more_to_load"
+          observations.push JSON::Any.new(core.no_more_to_load?)
+        else
+          raise ArgumentError.new("unknown core scenario op #{step["op"]}")
+        end
+      end
+      JSON::Any.new(observations)
     end
 
     private def self.firefox_launch_scenario(payload : JSON::Any) : JSON::Any

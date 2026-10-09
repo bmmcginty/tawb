@@ -1,0 +1,447 @@
+'use strict';
+
+// The core's buffer policy, differenced between the JavaScript original and
+// the Crystal port: the same pages, the same moves, the same changes. Where
+// the reader is put back after a rebuild, what counts as news, which patch is
+// refused — every answer the reader's place depends on must come out the same
+// on both runtimes.
+//
+// Several of these encode decisions that took real pages to discover, and
+// they are the ones most likely to be undone by accident, because each looks
+// like an arbitrary choice until the page that forced it turns up again.
+
+const test = require('node:test');
+const assert = require('node:assert');
+
+const coreModule = require('../src/core');
+const { coreImplementations } = require('./crystal_impl');
+
+const PAGE = ['head', 'a', 'b', 'CLOCK 10:00:00', 'c', 'd', 'tail'];
+
+const LISTING = {
+  multiple: false,
+  selectedIndex: 1,
+  options: [
+    { text: 'Ukraine', selected: false, disabled: false },
+    { text: 'United States', selected: true, disabled: false },
+    { text: 'United States Minor Outlying Islands', selected: false, disabled: false },
+  ],
+};
+
+// Each scenario runs step by step on both runtimes and answers one
+// observation per step; the expectations below were read off the JavaScript
+// original, which is the oracle.
+const scripts = {
+  'nothing changed leaves them exactly where they were': [
+    { op: 'blocks', texts: PAGE, cursor: 3 },
+    { op: 'anchor', id: 'a' },
+    { op: 'texts', id: 'before' },
+    { op: 'reanchor', anchor: 'a', previous: 'before' },
+  ],
+
+  'a clock rewriting itself does not move them off it': [
+    { op: 'blocks', texts: PAGE, cursor: 3 },
+    { op: 'anchor', id: 'a' },
+    { op: 'texts', id: 'before' },
+    { op: 'blocks', texts: ['head', 'a', 'b', 'CLOCK 10:00:01', 'c', 'd', 'tail'] },
+    { op: 'reanchor', anchor: 'a', previous: 'before' },
+  ],
+
+  'content inserted above carries them down with it': [
+    { op: 'blocks', texts: PAGE, cursor: 3 },
+    { op: 'anchor', id: 'a' },
+    { op: 'texts', id: 'before' },
+    { op: 'blocks', texts: ['head', 'NEW', 'NEW2', 'a', 'b', 'CLOCK 10:00:00', 'c', 'd', 'tail'] },
+    { op: 'reanchor', anchor: 'a', previous: 'before' },
+  ],
+
+  'content removed above carries them up with it': [
+    { op: 'blocks', texts: PAGE, cursor: 3 },
+    { op: 'anchor', id: 'a' },
+    { op: 'texts', id: 'before' },
+    { op: 'blocks', texts: ['a', 'b', 'CLOCK 10:00:00', 'c', 'd', 'tail'] },
+    { op: 'reanchor', anchor: 'a', previous: 'before' },
+  ],
+
+  // Not the first from the top. Two buttons called "Open", a page of
+  // <option value=30> — the first match can be the length of the document
+  // away from where the reader was standing.
+  'two blocks reading the same: the near one wins': [
+    { op: 'blocks', texts: ['x', 'same', 'y', 'same', 'z', 'same', 'w'], cursor: 5 },
+    { op: 'anchor', id: 'a' },
+    { op: 'texts', id: 'before' },
+    { op: 'blocks', texts: ['PRE', 'x', 'same', 'y', 'same', 'z', 'same', 'w'] },
+    { op: 'reanchor', anchor: 'a', previous: 'before' },
+  ],
+
+  'finds the same block in a buffer of a different length': [
+    { op: 'blocks', texts: PAGE, cursor: 3 },
+    { op: 'anchor', id: 'a' },
+    { op: 'blocks', texts: ['q', 'w', 'e', 'r', 'CLOCK 10:00:00', 't', 'y', 'u'] },
+    { op: 'restore', anchor: 'a' },
+  ],
+
+  // This is the bug where pressing the second of two buttons called "Open"
+  // left the reader standing on the first.
+  'of two that read the same it chooses the one they were on': [
+    { op: 'blocks', texts: ['a', '[*Open]', 'b', '[*Open]', 'c'], cursor: 3 },
+    { op: 'anchor', id: 'a' },
+    { op: 'blocks', texts: ['a', '[*Open]', 'b', '[*Open]', 'c'] },
+    { op: 'restore', anchor: 'a' },
+  ],
+
+  'one thing changing does not erase another': [
+    { op: 'blocks', texts: PAGE, cursor: 0 },
+    { op: 'record_changes', regions: [{ start: 1, end: 1 }] },
+    { op: 'record_changes', regions: [{ start: 5, end: 5 }] },
+    { op: 'change_targets' },
+  ],
+
+  // A clock, a countdown, a view counter. It goes on being readable; it
+  // just stops drowning out the thing that actually happened.
+  'a place that keeps changing stops being news': [
+    { op: 'blocks', texts: PAGE, cursor: 0 },
+    { op: 'blocks', texts: ['head', 'a', 'b', 'CLOCK 10:00:00', 'c', 'd', 'tail'] },
+    { op: 'record_changes', regions: [{ start: 3, end: 3 }] },
+    { op: 'blocks', texts: ['head', 'a', 'b', 'CLOCK 10:00:01', 'c', 'd', 'tail'] },
+    { op: 'record_changes', regions: [{ start: 3, end: 3 }] },
+    { op: 'blocks', texts: ['head', 'a', 'b', 'CLOCK 10:00:02', 'c', 'd', 'tail'] },
+    { op: 'record_changes', regions: [{ start: 3, end: 3 }] },
+    { op: 'blocks', texts: ['head', 'a', 'b', 'CLOCK 10:00:03', 'c', 'd', 'tail'] },
+    { op: 'record_changes', regions: [{ start: 3, end: 3 }] },
+    { op: 'blocks', texts: ['head', 'a', 'b', 'CLOCK 10:00:04', 'c', 'd', 'tail'] },
+    { op: 'record_changes', regions: [{ start: 3, end: 3 }] },
+    { op: 'blocks', texts: ['head', 'a', 'b', 'CLOCK 10:00:05', 'c', 'd', 'tail'] },
+    { op: 'record_changes', regions: [{ start: 3, end: 3 }] },
+    { op: 'change_targets' },
+  ],
+
+  'a change whose text is gone is dropped, not followed blindly': [
+    { op: 'blocks', texts: PAGE, cursor: 0 },
+    { op: 'record_changes', regions: [{ start: 5, end: 5 }] },
+    { op: 'blocks', texts: ['completely', 'different', 'page'] },
+    { op: 'change_targets' },
+  ],
+
+  'changes are visited in document order': [
+    { op: 'blocks', texts: PAGE, cursor: 0 },
+    { op: 'record_changes', regions: [{ start: 5, end: 5 }] },
+    { op: 'record_changes', regions: [{ start: 1, end: 1 }] },
+    { op: 'change_targets' },
+  ],
+
+  'a replacement that names one block is applied': [
+    { op: 'blocks', texts: PAGE, cursor: 0 },
+    { op: 'patch', patches: [{ from: '10:00:00', to: '10:00:01' }] },
+    { op: 'block_text', index: 3 },
+  ],
+
+  // Ambiguity is the whole risk: we cannot say which one the page rewrote.
+  'text that names two blocks is refused': [
+    { op: 'blocks', texts: ['a 12:04', 'b 12:04'], cursor: 0 },
+    { op: 'patch', patches: [{ from: '12:04', to: '12:05' }] },
+  ],
+
+  'the block the reader is standing on is left alone': [
+    { op: 'blocks', texts: PAGE, cursor: 3 },
+    { op: 'patch', patches: [{ from: '10:00:00', to: '10:00:01' }] },
+    { op: 'block_text', index: 3 },
+  ],
+
+  'undo returns the buffer exactly as it was': [
+    { op: 'blocks', texts: PAGE, cursor: 0 },
+    { op: 'patch', patches: [{ from: '10:00:00', to: '10:00:01' }], id: 'u' },
+    { op: 'undo', id: 'u' },
+    { op: 'texts' },
+  ],
+
+  'its entries are spliced in directly beneath it': [
+    { op: 'blocks', texts: ['before', '[Country: United States]', 'after'], cursor: 1 },
+    { op: 'open_chooser', block_index: 1, listing: LISTING },
+    { op: 'block_text', index: 2 },
+    { op: 'block_text', index: 3 },
+    { op: 'block_text', index: 5 },
+    { op: 'texts' },
+  ],
+
+  'typing narrows our own lines': [
+    { op: 'blocks', texts: ['before', '[Country: United States]', 'after'], cursor: 1 },
+    { op: 'open_chooser', block_index: 1, listing: LISTING },
+    { op: 'show_chooser', filter: 'Ukr' },
+    { op: 'show_chooser', filter: 'United States' },
+    { op: 'show_chooser', filter: '' },
+    { op: 'in_chooser', index: 1 },
+    { op: 'in_chooser', index: 2 },
+    { op: 'in_chooser', index: 4 },
+    { op: 'in_chooser', index: 5 },
+  ],
+
+  'closing puts the buffer back': [
+    { op: 'blocks', texts: ['before', '[Country: United States]', 'after'], cursor: 1 },
+    { op: 'open_chooser', block_index: 1, listing: LISTING },
+    { op: 'close_chooser' },
+    { op: 'texts' },
+  ],
+
+  // Frameworks render a menu into the end of <body> so nothing can clip it,
+  // which in a line list puts it nowhere near the button that opened it.
+  'a popup rendered at the end of the document is brought to its control': [
+    { op: 'blocks', cursor: 0, blocks: [
+      { text: 'top' },
+      { text: '[*Account, expanded]', item: { name: 'Account', controls: 'account-menu' } },
+      { text: 'lots' },
+      { text: 'of' },
+      { text: 'page' },
+      { text: '[*Profile]', item: { name: 'Profile', popup: 'account-menu' } },
+      { text: '[*Sign out]', item: { name: 'Sign out', popup: 'account-menu' } },
+    ] },
+    { op: 'follow_popup', controls: 'account-menu' },
+    { op: 'relocate_popup' },
+    { op: 'texts' },
+    { op: 'popup_at' },
+  ],
+
+  'a popup the page has closed is forgotten': [
+    { op: 'blocks', cursor: 0, blocks: [
+      { text: '[*Account]', item: { name: 'Account', controls: 'account-menu', expanded: false } },
+    ] },
+    { op: 'follow_popup', controls: 'account-menu' },
+    { op: 'relocate_popup' },
+    { op: 'popup_at' },
+  ],
+
+  'asking for more is only tried once': [
+    { op: 'blocks', texts: PAGE, cursor: 0 },
+    { op: 'rendered_url', url: 'http://example.com/a' },
+    { op: 'no_more_to_load' },
+    { op: 'exhaust' },
+    { op: 'no_more_to_load' },
+    { op: 'rendered_url', url: 'http://example.com/b' },
+    { op: 'no_more_to_load' },
+    { op: 'rendered_url', url: 'http://example.com/a' },
+    { op: 'no_more_to_load' },
+    { op: 'blocks', texts: ['x', 'y'], cursor: 0 },
+    { op: 'no_more_to_load' },
+  ],
+
+  'the nearest matching block is found outward from the start': [
+    { op: 'blocks', texts: PAGE, cursor: 0 },
+    { op: 'find_near', start: 3, text: 'b' },
+    { op: 'find_near', start: 0, text: 'zzz' },
+  ],
+
+  'a rebuild reports what changed, without a snapshot': [
+    { op: 'blocks', texts: PAGE, cursor: 3 },
+    { op: 'texts', id: 'before' },
+    { op: 'blocks', texts: ['head', 'a', 'b', 'CLOCK 10:00:01', 'c', 'd', 'tail'] },
+    { op: 'note_changes', previous: 'before' },
+  ],
+};
+
+const implementations = coreImplementations(coreModule);
+
+for (const implementation of implementations) {
+  const check = (name, fn) => test(`${implementation.name}: ${name}`, fn);
+  const run = (name) => implementation.scenario(scripts[name]);
+
+  check('keeping the reader in place', () => {
+    const settled = run('nothing changed leaves them exactly where they were');
+    assert.deepEqual(settled[1], {
+      text: 'CLOCK 10:00:00', name: 'CLOCK 10:00:00', identity: '#3', block: 3,
+      context: PAGE,
+    });
+    assert.deepEqual(settled[3], { block: 3, exact: true });
+  });
+
+  check('keeping the reader in place: the clock', () => {
+    // The line's own text is what changed, so matching on text can never
+    // find it; the arithmetic can.
+    const settled = run('a clock rewriting itself does not move them off it');
+    assert.deepEqual(settled[4], { block: 3, exact: true });
+  });
+
+  check('keeping the reader in place: insertions and removals', () => {
+    const inserted = run('content inserted above carries them down with it');
+    assert.deepEqual(inserted[4], { block: 5, exact: true });
+    const removed = run('content removed above carries them up with it');
+    assert.deepEqual(removed[4], { block: 2, exact: true });
+  });
+
+  check('keeping the reader in place: repeated text', () => {
+    const settled = run('two blocks reading the same: the near one wins');
+    assert.deepEqual(settled[4], { block: 6, exact: true });
+  });
+
+  check('putting them back after a change they asked for', () => {
+    const found = run('finds the same block in a buffer of a different length');
+    assert.equal(found[3], 4);
+    const chosen = run('of two that read the same it chooses the one they were on');
+    assert.equal(chosen[3], 3);
+  });
+
+  check('what is worth being told about', () => {
+    const both = run('one thing changing does not erase another');
+    assert.deepEqual(both[1], [{ start: 1, end: 1, text: 'a' }]);
+    assert.deepEqual(both[2], [{ start: 5, end: 5, text: 'd' }]);
+    assert.deepEqual(both[3], [{ block: 1, size: 1 }, { block: 5, size: 1 }]);
+
+    const clock = run('a place that keeps changing stops being news');
+    assert.deepEqual(clock[2], [{ start: 3, end: 3, text: 'CLOCK 10:00:00' }]);
+    assert.deepEqual(clock[4], [{ start: 3, end: 3, text: 'CLOCK 10:00:01' }]);
+    assert.deepEqual(clock[6], [{ start: 3, end: 3, text: 'CLOCK 10:00:02' }]);
+    assert.deepEqual(clock[8], [], 'the clock should have stopped counting as news');
+    assert.deepEqual(clock[10], []);
+    assert.deepEqual(clock[12], []);
+    assert.deepEqual(clock[13], [], 'and should not have drowned the change memory either');
+
+    const gone = run('a change whose text is gone is dropped, not followed blindly');
+    assert.deepEqual(gone[3], []);
+
+    const order = run('changes are visited in document order');
+    assert.deepEqual(order[3], [{ block: 1, size: 1 }, { block: 5, size: 1 }]);
+  });
+
+  check('splicing text in without a snapshot', () => {
+    const applied = run('a replacement that names one block is applied');
+    assert.deepEqual(applied[1], { touched: [3], generation: 0 });
+    assert.equal(applied[2], 'CLOCK 10:00:01');
+
+    const refused = run('text that names two blocks is refused');
+    assert.equal(refused[1], null);
+
+    const protectedCase = run('the block the reader is standing on is left alone');
+    assert.equal(protectedCase[1], null);
+    assert.equal(protectedCase[2], 'CLOCK 10:00:00', 'and put back as it was');
+
+    const undone = run('undo returns the buffer exactly as it was');
+    assert.equal(undone[2], true);
+    assert.deepEqual(undone[3], PAGE);
+  });
+
+  check('a dropdown becomes lines under its control', () => {
+    const spliced = run('its entries are spliced in directly beneath it');
+    assert.equal(spliced[2], '    ( ) Ukraine');
+    assert.equal(spliced[3], '    (*) United States', 'the chosen one is marked');
+    assert.equal(spliced[4], 'after', 'and what followed is still after them');
+    assert.deepEqual(spliced[5], [
+      'before',
+      '[Country: United States]',
+      '    ( ) Ukraine',
+      '    (*) United States',
+      '    ( ) United States Minor Outlying Islands',
+      'after',
+    ]);
+
+    const narrowing = run('typing narrows our own lines');
+    assert.equal(narrowing[2], 1);
+    assert.equal(narrowing[3], 2, 'a prefix matches both, as it must');
+    assert.equal(narrowing[4], 3);
+    assert.deepEqual(narrowing.slice(5), [false, true, true, false]);
+
+    const closed = run('closing puts the buffer back');
+    assert.deepEqual(closed[3], ['before', '[Country: United States]', 'after']);
+  });
+
+  check('a popup is brought to its control', () => {
+    const moved = run('a popup rendered at the end of the document is brought to its control');
+    assert.equal(moved[2], 2);
+    assert.deepEqual(moved[3], [
+      'top', '[*Account, expanded]', '[*Profile]', '[*Sign out]', 'lots', 'of', 'page',
+    ]);
+    assert.equal(moved[4], 2);
+
+    const forgotten = run('a popup the page has closed is forgotten');
+    assert.equal(forgotten[2], 0);
+    assert.equal(forgotten[3], -1);
+  });
+
+  check('asking for more is only tried once', () => {
+    const tried = run('asking for more is only tried once');
+    assert.deepEqual(
+      [tried[2], tried[4], tried[6], tried[8], tried[10]],
+      [false, true, false, true, false],
+    );
+  });
+
+  check('finding the nearest matching block', () => {
+    const found = run('the nearest matching block is found outward from the start');
+    assert.deepEqual(found.slice(1), [2, -1]);
+  });
+
+  check('a rebuild reports what changed, without a snapshot', () => {
+    const news = run('a rebuild reports what changed, without a snapshot');
+    assert.deepEqual(news[3], [{ start: 3, end: 3, text: 'CLOCK 10:00:01' }]);
+  });
+
+  check('slider keys map onto an advertised ARIA range', () => {
+    const state = { value: '50', min: '0', max: '100', step: '2' };
+    assert.equal(implementation.sliderTarget(state, 'ArrowUp'), 52);
+    assert.equal(implementation.sliderTarget(state, 'ArrowLeft'), 48);
+    assert.equal(implementation.sliderTarget(state, 'PageDown'), 40);
+    assert.equal(implementation.sliderTarget(state, 'Home'), 0);
+    assert.equal(implementation.sliderTarget(state, 'End'), 100);
+    assert.equal(implementation.sliderTarget({ value: '50' }, 'ArrowUp'), 55, 'the default fifth of the range');
+    assert.equal(implementation.sliderTarget(state, 'Q'), null);
+    assert.equal(implementation.sliderTarget({ value: 'x', min: 0, max: 100 }, 'ArrowUp'), null);
+  });
+
+  check('an arithmetic remap crosses a rewritten region', () => {
+    const old = ['head', 'a', 'b', 'CLOCK', 'c', 'd', 'tail'];
+    assert.deepEqual(implementation.remapIndex(old, old, 3), { index: 3, exact: true });
+    assert.deepEqual(
+      implementation.remapIndex(old, ['head', 'NEW', 'a', 'b', 'CLOCK', 'c', 'd', 'tail'], 3),
+      { index: 4, exact: true },
+    );
+    assert.deepEqual(
+      implementation.remapIndex(old, ['a', 'b', 'NEWCLOCK', 'c', 'd', 'tail'], 3),
+      { index: 2, exact: false },
+    );
+    assert.deepEqual(implementation.remapIndex([], ['a'], 0), { index: 0, exact: false });
+  });
+
+  check('a diff collapses consecutive rewrites into one region', () => {
+    assert.deepEqual(implementation.diffBlocks(['a', 'b', 'c'], ['a', 'x', 'c']), [{ start: 1, end: 1 }]);
+    assert.deepEqual(implementation.diffBlocks(['a', 'b', 'c'], ['x', 'y', 'z']), [{ start: 0, end: 2 }]);
+    assert.deepEqual(implementation.diffBlocks(['a'], ['a']), []);
+    assert.deepEqual(implementation.diffBlocks([], ['a']), [{ start: 0, end: 0 }]);
+  });
+
+  check('a needle naming two blocks is ambiguous', () => {
+    assert.equal(implementation.soleBlockContaining(['a 12:04', 'b 12:04'], '12:04'), -1);
+    assert.equal(implementation.soleBlockContaining(['a 12:04', 'b'], '12:04'), 0);
+    assert.equal(implementation.soleBlockContaining(['x', 'twice twice'], 'twice'), -1);
+    assert.equal(implementation.soleBlockContaining(['nothing', 'has it'], 'it'), 1);
+  });
+
+  check('a block is found by content in both directions', () => {
+    assert.equal(implementation.findBlockWithText(['alpha', 'beta gamma'], 'beta'), 1);
+    assert.equal(implementation.findBlockWithText(['alpha', 'beta gamma'], '  beta  '), 1);
+    assert.equal(implementation.findBlockWithText(['long enough text here'], 'xx long enough text here yy'), 0);
+    assert.equal(implementation.findBlockWithText(['alpha'], ''), -1);
+  });
+
+  check('a fragment is the same document at another place', () => {
+    assert.equal(implementation.sameDocumentFragment('http://x/a#f1', 'http://x/a#f2'), true);
+    assert.equal(implementation.sameDocumentFragment('http://x/a', 'http://x/a#f'), true);
+    assert.equal(implementation.sameDocumentFragment('http://x/a#f', 'http://x/a'), false);
+    assert.equal(implementation.sameDocumentFragment('http://x/a#f', 'http://x/b#f'), false);
+    assert.equal(implementation.sameDocumentFragment('nope', 'nope#f'), false);
+  });
+
+  check('identity comes from the element the view numbered', () => {
+    assert.equal(implementation.identityOf({ text: 'x', item: { domIndex: 5 } }), '#5');
+    assert.equal(implementation.identityOf({ text: 'x', item: { domIndex: 0 } }), '#0');
+    assert.equal(implementation.identityOf({ text: 'x', item: { renderIndex: 7 } }), '#7');
+    assert.equal(implementation.identityOf({ text: 'x', item: {} }), null);
+    assert.equal(implementation.identityOf({ text: 'x' }), null);
+  });
+}
+
+if (implementations.length > 1) {
+  const [javascript, crystal] = implementations;
+  for (const [name, script] of Object.entries(scripts)) {
+    test(`both runtimes agree: ${name}`, () => {
+      assert.deepEqual(crystal.scenario(script), javascript.scenario(script));
+    });
+  }
+}

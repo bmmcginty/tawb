@@ -165,6 +165,173 @@ function blockImplementations(blocks, aria) {
   return implementations;
 }
 
+// A scripted pass over the core's buffer: blocks set, the shadow cursor
+// moved, changes recorded, text patched, popups relocated, dropdowns spliced
+// in — and after each step, one observation both runtimes must agree on. The
+// JavaScript original runs the script in-process over src/core.js, so the
+// same assertions can be made about both.
+function coreImplementations(javascript) {
+  const blocksOf = (texts) => texts.map((text, i) => ({ text, item: { name: text, domIndex: i } }));
+  const scenario = (script) => {
+    const core = new javascript.Core({ driver: {}, page: {}, source: 'source', sources: ['source'] });
+    const anchors = new Map();
+    const texts = new Map();
+    const undos = new Map();
+    const observations = [];
+    const newsOf = (list) => list.map(({ start, end, text }) => ({ start, end, text }));
+    const anchorOf = (anchor) => ({
+      text: anchor.text, name: anchor.name ?? null, identity: anchor.identity ?? null,
+      block: anchor.block, context: anchor.context,
+    });
+    for (const step of script) {
+      switch (step.op) {
+        case 'blocks':
+          core.blocks = step.blocks
+            ? step.blocks.map((block, i) => ({
+                text: block.text,
+                item: block.item === undefined ? { name: block.text, domIndex: i } : block.item,
+              }))
+            : blocksOf(step.texts);
+          if (step.cursor !== undefined) core.at(step.cursor);
+          observations.push(null);
+          break;
+        case 'at':
+          core.at(step.index);
+          observations.push(null);
+          break;
+        case 'texts': {
+          const current = core.texts();
+          if (step.id) texts.set(step.id, current);
+          observations.push(current);
+          break;
+        }
+        case 'block_text':
+          observations.push(core.blockText(step.index));
+          break;
+        case 'anchor': {
+          const anchor = core.anchor();
+          if (step.id) anchors.set(step.id, anchor);
+          observations.push(anchorOf(anchor));
+          break;
+        }
+        case 'reanchor': {
+          const settled = core.reanchor(
+            anchors.get(step.anchor), step.previous ? texts.get(step.previous) : null);
+          observations.push({ block: settled.block, exact: settled.exact });
+          break;
+        }
+        case 'restore':
+          observations.push(core.restore(anchors.get(step.anchor)));
+          break;
+        case 'record_changes':
+          observations.push(newsOf(core.recordChanges(step.regions)));
+          break;
+        case 'note_changes':
+          observations.push(newsOf(core.noteChanges(texts.get(step.previous))));
+          break;
+        case 'change_targets':
+          observations.push(core.changeTargets().map(({ block, size }) => ({ block, size })));
+          break;
+        case 'patch': {
+          const patched = core.patchText(step.patches, { protect: step.protect !== false });
+          if (patched) undos.set(step.id || 'last', patched.undo);
+          observations.push(patched
+            ? { touched: patched.touched, generation: patched.generation }
+            : null);
+          break;
+        }
+        case 'undo':
+          undos.get(step.id || 'last')();
+          observations.push(true);
+          break;
+        case 'open_chooser':
+          core.openChooser(step.block_index, step.listing);
+          observations.push(null);
+          break;
+        case 'show_chooser':
+          observations.push(core.showChooser(step.filter === undefined ? null : step.filter));
+          break;
+        case 'close_chooser':
+          core.closeChooser();
+          observations.push(null);
+          break;
+        case 'in_chooser':
+          observations.push(core.inChooser(step.index));
+          break;
+        case 'follow_popup':
+          core.followPopup(step.controls);
+          observations.push(null);
+          break;
+        case 'forget_popup':
+          core.forgetPopup();
+          observations.push(null);
+          break;
+        case 'relocate_popup':
+          observations.push(core.relocatePopup());
+          break;
+        case 'popup_at':
+          observations.push(core.popupAt());
+          break;
+        case 'find_near':
+          observations.push(core.findNear(step.start, step.text));
+          break;
+        case 'rendered_url':
+          core.renderedUrl = step.url;
+          observations.push(null);
+          break;
+        case 'exhaust':
+          core.exhausted = { url: core.renderedUrl, blocks: core.blocks.length };
+          observations.push(null);
+          break;
+        case 'no_more_to_load':
+          observations.push(core.noMoreToLoad());
+          break;
+        default:
+          throw new Error(`unknown core scenario op ${step.op}`);
+      }
+    }
+    return observations;
+  };
+
+  const implementations = [{
+    name: 'JavaScript',
+    scenario,
+    diffBlocks: (previousTexts, texts) =>
+      javascript.diffBlocks(previousTexts, texts.map((text) => ({ text }))),
+    soleBlockContaining: (texts, needle) =>
+      javascript.soleBlockContaining(texts.map((text) => ({ text })), needle),
+    findBlockWithText: (texts, needle) =>
+      javascript.findBlockWithText(texts.map((text) => ({ text })), needle),
+    sameDocumentFragment: javascript.sameDocumentFragment,
+    identityOf: javascript.identityOf,
+    sliderTarget: javascript.sliderTarget,
+    remapIndex: require('../src/remap').remapIndex,
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    scenario(script) { return call('core.scenario', { script }); },
+    diffBlocks(previousTexts, texts) {
+      return call('core.diff_blocks', { previous_texts: previousTexts, blocks: texts });
+    },
+    soleBlockContaining(texts, needle) {
+      return call('core.sole_block_containing', { blocks: texts, needle });
+    },
+    findBlockWithText(texts, needle) {
+      return call('core.find_block_with_text', { blocks: texts, needle });
+    },
+    sameDocumentFragment(before, after) {
+      return call('core.same_document_fragment', { before, after });
+    },
+    identityOf(block) { return call('core.identity_of', { block }); },
+    sliderTarget(state, key) { return call('core.slider_target', { state, key }); },
+    remapIndex(oldTexts, newTexts, index) {
+      return call('core.remap_index', { old: oldTexts, new: newTexts, index });
+    },
+  });
+  return implementations;
+}
+
 function dumpImplementations(javascript) {
   const implementations = [{ name: 'JavaScript', ...javascript }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
@@ -774,7 +941,8 @@ function unicodeImplementations(javascript) {
 
 module.exports = {
   call, callAsync, addressImplementations, ariaImplementations, bidiImplementations,
-  blockImplementations, dumpImplementations, endpointImplementations, firefoxAgentImplementations,
+  blockImplementations, coreImplementations, dumpImplementations, endpointImplementations,
+  firefoxAgentImplementations,
   firefoxAutomationImplementations, firefoxLaunchImplementations, firefoxPageImplementations,
   inputImplementations, interfaceImplementations, keymapImplementations, layoutImplementations,
   lynxDisplayImplementations, lynxKeymapImplementations,
