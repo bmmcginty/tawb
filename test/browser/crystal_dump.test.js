@@ -3,13 +3,34 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const http = require('node:http');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { tempDir } = require('../tmpdir');
 const cdp = require('../../src/cdp');
 
 const ROOT = path.join(__dirname, '..', '..');
 const enabled = process.env.TAWB_TEST_CRYSTAL_BROWSER === '1';
+
+function runAsync(command, args, options) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, options);
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+function listen(server, host) {
+  return new Promise((resolve) => server.listen(0, host, resolve));
+}
+
+function closeServer(server) {
+  return new Promise((resolve) => server.close(resolve));
+}
 
 test('the static Crystal dump matches JavaScript on a real Chromium page', { skip: !enabled }, () => {
   const root = tempDir('tawb-crystal-dump-');
@@ -47,6 +68,43 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
   ], 'crystal-firefox-data');
   assert.equal(firefox.status, 1);
   assert.match(firefox.stderr, /native Firefox dump is not ported/);
+});
+
+test('the native dump includes an out-of-process iframe', { skip: !enabled }, async () => {
+  const root = tempDir('tawb-crystal-cross-frame-');
+  const childServer = http.createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end('<!doctype html><p>Words from the other origin.</p>');
+  });
+  const parentServer = http.createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(`<!doctype html><h1>Parent document</h1>
+      <iframe title="foreign frame" src="http://localhost:${childServer.address().port}/"></iframe>`);
+  });
+  await listen(childServer);
+  await listen(parentServer, '127.0.0.1');
+  const env = {
+    ...process.env,
+    HOME: path.join(root, 'home'),
+    XDG_CONFIG_HOME: path.join(root, 'config'),
+    XDG_CACHE_HOME: path.join(root, 'cache'),
+  };
+  fs.mkdirSync(env.HOME, { recursive: true });
+  const url = `http://127.0.0.1:${parentServer.address().port}/`;
+  try {
+    const javascript = await runAsync(process.execPath, ['src/index.js', '--dump', url], {
+      cwd: ROOT, env: { ...env, XDG_DATA_HOME: path.join(root, 'js-data') }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const crystal = await runAsync(path.join(ROOT, 'dist', 'tawb-crystal'), ['--dump', url], {
+      cwd: ROOT, env: { ...env, XDG_DATA_HOME: path.join(root, 'crystal-data') }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.equal(javascript.status, 0, javascript.stderr);
+    assert.equal(crystal.status, 0, crystal.stderr);
+    assert.equal(crystal.stdout, javascript.stdout);
+    assert.match(crystal.stdout, /Words from the other origin\./);
+  } finally {
+    await Promise.all([closeServer(parentServer), closeServer(childServer)]);
+  }
 });
 
 test('a kept native Chromium is rejoined through its profile', { skip: !enabled }, async () => {
