@@ -181,6 +181,24 @@ function dumpImplementations(javascript) {
   return implementations;
 }
 
+function firefoxLaunchImplementations(javascript) {
+  const implementations = [{ name: 'JavaScript', ...javascript }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    profileLastVersion(profile) {
+      return call('firefox.profile_last_version', { profile });
+    },
+    installedFirefoxVersion(executable) {
+      return call('firefox.installed_version', { executable });
+    },
+    requireCompatibleProfile({ executable, name }, profile) {
+      return call('firefox.require_compatible_profile', { executable, name, profile });
+    },
+  });
+  return implementations;
+}
+
 function firefoxPageImplementations({ bidi, FirefoxPage, FirefoxFrame, extractAxItems }) {
   const pageScenario = async (url, { events, target, layout = false }) => {
     const session = await bidi.connect(url);
@@ -334,7 +352,7 @@ function unicodeImplementations(javascript) {
 
 module.exports = {
   call, addressImplementations, ariaImplementations, bidiImplementations,
-  blockImplementations, dumpImplementations, firefoxPageImplementations,
+  blockImplementations, dumpImplementations, firefoxLaunchImplementations, firefoxPageImplementations,
   layoutImplementations, lynxDisplayImplementations, lynxNumberImplementations, optionImplementations,
   readerCommands, unicodeImplementations,
 };

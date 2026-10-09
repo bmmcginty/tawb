@@ -5,6 +5,7 @@ require "./blocks"
 require "./bidi"
 require "./dump"
 require "./firefox_driver"
+require "./firefox_launch"
 require "./layout"
 require "./lynx_display"
 require "./lynx_number"
@@ -65,6 +66,18 @@ module Tawb
         ))
       when "firefox.page_scenario"
         firefox_page_scenario(payload)
+      when "firefox.profile_last_version"
+        value = FirefoxLaunch.profile_last_version(payload.as_h["profile"].as_s)
+        value ? JSON::Any.new(value) : JSON::Any.new(nil)
+      when "firefox.installed_version"
+        value = FirefoxLaunch.installed_version(payload.as_h["executable"].as_s)
+        value ? JSON::Any.new(value) : JSON::Any.new(nil)
+      when "firefox.require_compatible_profile"
+        object = payload.as_h
+        FirefoxLaunch.require_compatible_profile(
+          object["executable"].as_s, object["name"].as_s, object["profile"].as_s
+        )
+        JSON::Any.new(true)
       when "layout.wrap_with_offsets"
         object = payload.as_h
         JSON::Any.new(Layout.wrap_with_offsets(object["text"].as_s, object["width"].as_i))
