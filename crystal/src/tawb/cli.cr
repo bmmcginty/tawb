@@ -2,6 +2,7 @@ require "./blocks"
 require "./browser"
 require "./cdp"
 require "./dump"
+require "./firefox_dump"
 require "./frames"
 require "./layout"
 require "./lynx_display"
@@ -41,7 +42,8 @@ module Tawb
       -h, --help                    show this help and exit
 
     The native Crystal reader is being ported incrementally. Default and Lynx
-    Chromium --dump are available; interactive, Firefox, and edb are not yet.
+    --dump are available for Chromium and Firefox; interactive and edb are
+    not yet.
     TEXT
 
     def self.run(argv : Array(String) = ARGV, env : Hash(String, String) = ENV.to_h) : Nil
@@ -57,9 +59,6 @@ module Tawb
         raise ArgumentError.new("--keyboard cannot be combined with --dump")
       end
       if options["dump"].as_bool
-        unless options["engine"].as_s == "chromium"
-          raise ArgumentError.new("the native Firefox dump is not ported yet")
-        end
         run_dump(options)
         return
       end
@@ -71,6 +70,10 @@ module Tawb
     end
 
     private def self.run_dump(options : Hash(String, JSON::Any)) : Nil
+      if options["engine"].as_s == "firefox"
+        FirefoxDump.run(options)
+        return
+      end
       target = Dump.resolve_target(options["url"].as_s?, search: options["search"].as_s)
       timeout = options["browserTimeoutMs"].as_i64?
       session = Browser.open(options["connect"].as_s?, options["profile"].as_s?, timeout)

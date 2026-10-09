@@ -113,6 +113,8 @@ module Tawb
         firefox_page_scenario(payload)
       when "firefox.verified_session"
         firefox_verified_session(payload)
+      when "firefox.dump_scenario"
+        firefox_dump_scenario(payload)
       when "firefox.find"
         object = payload.as_h
         found = FirefoxLaunch.find_firefox(object["path"].as_s)
@@ -246,6 +248,23 @@ module Tawb
       ensure
         started.close
       end
+    end
+
+    private def self.firefox_dump_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      JSON::Any.new(FirefoxDump.read_page(
+        object["upstream"].as_s,
+        object["profile"].as_s,
+        object["marionette_port"]?.try(&.as_i?).try(&.to_i32),
+        object["library_port"]?.try(&.as_i?).try(&.to_i32),
+        object["owned"]?.try(&.as_bool?) || false,
+        object["keep_browser"]?.try(&.as_bool?) || false,
+        object["brokered"]?.try(&.as_bool?) != false,
+        object["target"].as_s,
+        object["layout"]?.try(&.as_bool?) || false,
+        object["escape_unicode"]?.try(&.as_bool?) || false,
+        object["preferences"]?.try(&.as_h?) || {} of String => JSON::Any,
+      ))
     end
 
     private def self.firefox_verified_session(payload : JSON::Any) : JSON::Any
