@@ -85,24 +85,7 @@ module Tawb
       end
 
       def send(text : String) : Nil
-        payload = text.to_slice
-        header = IO::Memory.new
-        header.write_byte(0x81_u8)
-        if payload.size < 126
-          header.write_byte((0x80 | payload.size).to_u8)
-        elsif payload.size < 65536
-          header.write_byte(0xfe_u8)
-          header.write_bytes(payload.size.to_u16, IO::ByteFormat::NetworkEndian)
-        else
-          header.write_byte(0xff_u8)
-          header.write_bytes(payload.size.to_u64, IO::ByteFormat::NetworkEndian)
-        end
-        mask = Random::Secure.random_bytes(4)
-        header.write(mask)
-        masked = Bytes.new(payload.size) { |index| payload[index] ^ mask[index % 4] }
-        @socket.write(header.to_slice)
-        @socket.write(masked)
-        @socket.flush
+        write_frame(0x01_u8, text.to_slice)
       end
 
       def receive : String
@@ -153,8 +136,27 @@ module Tawb
       end
 
       private def send_control(opcode : UInt8, payload : Bytes) : Nil
-        @socket.write(Bytes[0x80_u8 | opcode, payload.size.to_u8])
-        @socket.write(payload)
+        raise ArgumentError.new("oversized WebSocket control frame") if payload.size > 125
+        write_frame(opcode, payload)
+      end
+
+      private def write_frame(opcode : UInt8, payload : Bytes) : Nil
+        header = IO::Memory.new
+        header.write_byte(0x80_u8 | opcode)
+        if payload.size < 126
+          header.write_byte((0x80 | payload.size).to_u8)
+        elsif payload.size < 65536
+          header.write_byte(0xfe_u8)
+          header.write_bytes(payload.size.to_u16, IO::ByteFormat::NetworkEndian)
+        else
+          header.write_byte(0xff_u8)
+          header.write_bytes(payload.size.to_u64, IO::ByteFormat::NetworkEndian)
+        end
+        mask = Random::Secure.random_bytes(4)
+        header.write(mask)
+        masked = Bytes.new(payload.size) { |index| payload[index] ^ mask[index % 4] }
+        @socket.write(header.to_slice)
+        @socket.write(masked)
         @socket.flush
       end
 

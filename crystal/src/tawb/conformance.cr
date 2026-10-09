@@ -5,6 +5,7 @@ require "./blocks"
 require "./dump"
 require "./lynx_number"
 require "./options"
+require "./transport"
 require "./unicode_escape"
 
 module Tawb
@@ -62,6 +63,14 @@ module Tawb
         JSON::Any.new(LynxNumber.relative(
           object["prompt"], object["amount"].as_i64, object["direction"].as_i64
         ))
+      when "transport.websocket_round_trip"
+        socket = Transport::WebSocket.new(payload.as_h["url"].as_s)
+        begin
+          socket.send(payload.as_h["text"].as_s)
+          JSON::Any.new(socket.receive)
+        ensure
+          socket.close
+        end
       when "options.parse_reader", "options.parse_edb"
         object = payload.as_h
         argv = object["argv"].as_a.map(&.as_s)
