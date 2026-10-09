@@ -4,16 +4,17 @@ require "./transport"
 
 module Tawb
   module Browser
-    CANDIDATES = {"google-chrome-stable", "google-chrome", "chromium", "chromium-browser"}
+    CANDIDATES  = {"google-chrome-stable", "google-chrome", "chromium", "chromium-browser"}
+    PORT_RECORD = ".tawb-devtools-port"
 
     class Session
       getter endpoint : String
 
-      def initialize(@endpoint : String, @process : Process? = nil)
+      def initialize(@endpoint : String, @process : Process? = nil, @owned = false, @profile_dir : String? = nil)
       end
 
       def owned? : Bool
-        !@process.nil?
+        @owned
       end
 
       def close : Nil
@@ -22,17 +23,24 @@ module Tawb
         process.terminate
         process.wait
       rescue
+      ensure
+        if profile_dir = @profile_dir
+          File.delete?(File.join(profile_dir, PORT_RECORD))
+        end
       end
     end
 
     def self.open(connect : String?, profile : String?, timeout_ms : Int64?) : Session
       return Session.new(connect.not_nil!) if connect
+      profile_dir = profile || default_profile
+      FileUtils.mkdir_p(profile_dir)
+      if endpoint = running_endpoint(profile_dir)
+        return Session.new(endpoint)
+      end
       executable = find_executable || raise IO::Error.new(
         "No browser found. Looked for: #{CANDIDATES.join(", ")}. Install Chrome or Chromium."
       )
       port = free_port
-      profile_dir = profile || default_profile
-      FileUtils.mkdir_p(profile_dir)
       arguments = [
         "--user-data-dir=#{profile_dir}",
         "--remote-debugging-port=#{port}",
@@ -58,7 +66,8 @@ module Tawb
       loop do
         begin
           Transport.http(endpoint, "GET", "/json/version")
-          return Session.new(endpoint, process)
+          File.write(File.join(profile_dir, PORT_RECORD), "#{port}\n")
+          return Session.new(endpoint, process, owned: true, profile_dir: profile_dir)
         rescue error
           last_error = error
           if Time.instant >= deadline
@@ -78,6 +87,20 @@ module Tawb
         info = File.info?(candidate)
         return candidate if info && info.file? && File::Info.executable?(candidate)
       end
+      nil
+    end
+
+    private def self.running_endpoint(profile_dir : String) : String?
+      own_record = File.join(profile_dir, PORT_RECORD)
+      chromium_record = File.join(profile_dir, "DevToolsActivePort")
+      record = File.file?(own_record) ? own_record : chromium_record
+      return nil unless File.file?(record)
+      port = File.read_lines(record).first?.try(&.strip.to_i?)
+      return nil unless port
+      endpoint = "http://127.0.0.1:#{port}"
+      Transport.http(endpoint, "GET", "/json/version")
+      endpoint
+    rescue
       nil
     end
 

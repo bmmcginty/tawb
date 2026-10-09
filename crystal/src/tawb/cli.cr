@@ -36,8 +36,8 @@ module Tawb
     Other:
       -h, --help                    show this help and exit
 
-    The native Crystal reader is being ported incrementally. Browser sessions
-    are not available from this executable yet.
+    The native Crystal reader is being ported incrementally. Chromium --dump
+    is available; interactive, Firefox, Lynx, and edb sessions are not yet.
     TEXT
 
     def self.run(argv : Array(String) = ARGV, env : Hash(String, String) = ENV.to_h) : Nil
@@ -54,6 +54,9 @@ module Tawb
       end
       if options["dump"].as_bool
         raise ArgumentError.new("the native Lynx dump is not ported yet") if options["frontEnd"].as_s == "lynx"
+        unless options["engine"].as_s == "chromium"
+          raise ArgumentError.new("the native Firefox dump is not ported yet")
+        end
         run_dump(options)
         return
       end
@@ -68,18 +71,23 @@ module Tawb
       target = Dump.resolve_target(options["url"].as_s?, search: options["search"].as_s)
       timeout = options["browserTimeoutMs"].as_i64?
       session = Browser.open(options["connect"].as_s?, options["profile"].as_s?, timeout)
-      page = Cdp::Page.new(session.endpoint)
+      page = nil
       begin
+        page = Cdp::Page.new(session.endpoint)
         page.navigate(target)
         blocks = Blocks.build(page.accessibility_items)
         STDOUT << Dump.format_ax_blocks(blocks, options["escapeUnicode"].as_bool)
       ensure
-        if session.owned?
-          page.close_browser
-        else
-          page.close
+        if current_page = page
+          if session.owned? && !options["keepBrowser"].as_bool
+            current_page.close_browser
+            session.close
+          else
+            current_page.close
+          end
+        elsif session.owned?
+          session.close
         end
-        session.close
       end
     end
   end
