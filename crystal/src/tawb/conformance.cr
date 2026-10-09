@@ -72,6 +72,8 @@ module Tawb
         FirefoxAgent.ask(port, object["request"])
       when "firefox.page_scenario"
         firefox_page_scenario(payload)
+      when "firefox.verified_session"
+        firefox_verified_session(payload)
       when "firefox.profile_last_version"
         value = FirefoxLaunch.profile_last_version(payload.as_h["profile"].as_s)
         value ? JSON::Any.new(value) : JSON::Any.new(nil)
@@ -161,6 +163,21 @@ module Tawb
         JSON::Any.new(UnicodeEscape.escaped_offset(value, offset).to_i64)
       else
         raise ArgumentError.new("unknown conformance operation #{operation}")
+      end
+    end
+
+    private def self.firefox_verified_session(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      browser = FirefoxDriver::BrowserSession.new(object["url"].as_s)
+      begin
+        result = browser.start_verified(object["library_port"].as_i.to_i32)
+        JSON::Any.new({
+          "session"   => result[:session],
+          "cleared"   => result[:cleared],
+          "webdriver" => JSON::Any.new(result[:webdriver]),
+        })
+      ensure
+        browser.close
       end
     end
 

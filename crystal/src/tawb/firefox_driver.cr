@@ -1,5 +1,6 @@
 require "json"
 require "./bidi"
+require "./firefox_agent"
 
 module Tawb
   module FirefoxDriver
@@ -21,6 +22,18 @@ module Tawb
         })
         @started = true
         result
+      end
+
+      def start_verified(library_port : Int32) : NamedTuple(session: JSON::Any, cleared: JSON::Any, webdriver: Bool)
+        started = start
+        cleared = FirefoxAgent.ask(library_port, JSON.parse(%({"kind":"clearAutomation"})))
+        webdriver = verify_webdriver
+        if webdriver
+          raise IO::Error.new(
+            "Firefox is still announcing itself as automated (navigator.webdriver is true)"
+          )
+        end
+        {session: started, cleared: cleared, webdriver: webdriver}
       end
 
       def subscribe(events : Array(String)) : Nil
@@ -51,6 +64,42 @@ module Tawb
         @protocol.close
         @started = false
       end
+
+      private def verify_webdriver : Bool
+        probe = create_page(background: true)
+        started = Time.instant
+        deadline = started + 30.seconds
+        confirm_deadline = nil
+        last_error = nil
+        begin
+          loop do
+            limit = confirm_deadline || deadline
+            break if Time.instant >= limit
+            begin
+              state = probe.automation_state
+              if state
+                if state["readyState"]?.try(&.as_s?) != "loading"
+                  webdriver = state["webdriver"]?.try(&.as_bool?)
+                  return false if webdriver == false
+                  confirm_deadline ||= Time.instant + 3.seconds if webdriver == true
+                end
+              end
+              last_error = nil
+            rescue error
+              last_error = error
+            end
+            remaining = limit - Time.instant
+            sleep({200.milliseconds, remaining}.min) if remaining > Time::Span.zero
+          end
+          return true if confirm_deadline
+        ensure
+          probe.close rescue nil
+        end
+        detail = last_error ? " Last answer: #{last_error.message}." : ""
+        raise IO::Error.new(
+          "Firefox opened its protocol but did not finish initializing a page within 30s.#{detail}"
+        )
+      end
     end
 
     class Page
@@ -73,6 +122,20 @@ module Tawb
         @protocol.command("browsingContext.close", {
           "context" => JSON::Any.new(@context_id),
         })
+      end
+
+      def automation_state : Hash(String, JSON::Any)?
+        result = @protocol.command("script.callFunction", {
+          "functionDeclaration" => JSON::Any.new(
+            "function () { return ({readyState: document.readyState, webdriver: navigator.webdriver}); }"
+          ),
+          "arguments"       => JSON::Any.new([] of JSON::Any),
+          "target"          => JSON::Any.new({"context" => JSON::Any.new(@context_id)}),
+          "awaitPromise"    => JSON::Any.new(true),
+          "resultOwnership" => JSON::Any.new("none"),
+        }).as_h
+        return nil if result["type"]?.try(&.as_s?) == "exception"
+        Bidi.from_remote(result["result"]?).as_h?
       end
 
       def accessibility_documents(layout = false) : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))

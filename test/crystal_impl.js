@@ -193,6 +193,44 @@ function firefoxAgentImplementations(javascript) {
   return implementations;
 }
 
+function firefoxAutomationImplementations({
+  bidi, FirefoxPage, askFirefoxLibrary, verifyWebdriverFlag,
+}) {
+  const verifiedSession = async (url, libraryPort) => {
+    const session = await bidi.connect(url);
+    try {
+      const started = await session.send('session.new', { capabilities: { alwaysMatch: {} } });
+      const cleared = await askFirefoxLibrary(libraryPort, { kind: 'clearAutomation' });
+      const context = {
+        async newPage({ background = false } = {}) {
+          const params = { type: 'tab' };
+          if (background) params.background = true;
+          const created = await session.send('browsingContext.create', params);
+          return new FirefoxPage(session, created.context, context);
+        },
+      };
+      const webdriver = await verifyWebdriverFlag(context);
+      if (webdriver) {
+        throw new Error('Firefox is still announcing itself as automated (navigator.webdriver is true)');
+      }
+      return { session: started, cleared, webdriver };
+    } finally {
+      await session.send('session.end', {}).catch(() => {});
+      session.close();
+    }
+  };
+
+  const implementations = [{ name: 'JavaScript', verifiedSession }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    verifiedSession(url, libraryPort) {
+      return callAsync('firefox.verified_session', { url, library_port: libraryPort });
+    },
+  });
+  return implementations;
+}
+
 function firefoxLaunchImplementations(javascript) {
   const implementations = [{ name: 'JavaScript', ...javascript }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
@@ -383,7 +421,7 @@ function unicodeImplementations(javascript) {
 module.exports = {
   call, addressImplementations, ariaImplementations, bidiImplementations,
   blockImplementations, dumpImplementations, firefoxAgentImplementations,
-  firefoxLaunchImplementations, firefoxPageImplementations,
+  firefoxAutomationImplementations, firefoxLaunchImplementations, firefoxPageImplementations,
   layoutImplementations, lynxDisplayImplementations, lynxNumberImplementations, marionetteImplementations,
   optionImplementations,
   readerCommands, unicodeImplementations,
