@@ -9,6 +9,7 @@ require "./firefox_launch"
 require "./layout"
 require "./lynx_display"
 require "./lynx_number"
+require "./marionette"
 require "./options"
 require "./transport"
 require "./unicode_escape"
@@ -124,6 +125,8 @@ module Tawb
         JSON::Any.new(LynxNumber.relative(
           object["prompt"], object["amount"].as_i64, object["direction"].as_i64
         ))
+      when "marionette.clear_automation"
+        Marionette.clear_automation(payload.as_h["port"].as_i.to_i32)
       when "transport.websocket_round_trip"
         socket = Transport::WebSocket.new(payload.as_h["url"].as_s)
         begin
