@@ -182,6 +182,53 @@ function dumpImplementations(javascript) {
   return implementations;
 }
 
+function interfaceImplementations(javascript) {
+  const implementations = [{
+    name: 'JavaScript',
+    interfaceName: (value) => javascript.interfaceName(value),
+    profilesFor: (id) => javascript.profilesFor(id),
+    bindingsFor: (id, defaults, profile) => javascript.bindingsFor({ id, defaults }, profile),
+    keyPolicy: (profile) => {
+      const policy = javascript.keyPolicy(profile);
+      return {
+        key_definitions: policy.keyDefinitions,
+        labels: policy.labels,
+        has_key_file: !!policy.keyFile,
+      };
+    },
+    needsLayoutMetadata: (profile) => javascript.needsLayoutMetadata(profile),
+    contextActions: () => javascript.LYNX_CONTEXT_ACTIONS,
+    contextNavigationAction: (chunk, profile, actionFor) =>
+      javascript.contextNavigationAction(chunk, {
+        interface: profile,
+        keys: actionFor ? { actionFor: (pressed) => actionFor[pressed] ?? null } : null,
+      }),
+    lynxHidesCursor: (profile, showCursor) => javascript.lynxHidesCursor({
+      interface: profile,
+      keys: showCursor === undefined ? null : { preferences: { showCursor } },
+    }),
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    interfaceName(value) { return call('interfaces.name', { value }); },
+    profilesFor(id) { return call('interfaces.profiles_for', { id }); },
+    bindingsFor(id, defaults, profile) {
+      return call('interfaces.bindings_for', { id, defaults, profile });
+    },
+    keyPolicy(profile) { return call('interfaces.key_policy', { profile }); },
+    needsLayoutMetadata(profile) { return call('interfaces.needs_layout_metadata', { profile }); },
+    contextActions() { return call('interfaces.context_actions', {}); },
+    contextNavigationAction(chunk, profile, actionFor) {
+      return call('interfaces.context_navigation_action', { chunk, interface: profile, action_for: actionFor });
+    },
+    lynxHidesCursor(profile, showCursor) {
+      return call('interfaces.lynx_hides_cursor', { interface: profile, show_cursor: showCursor ?? null });
+    },
+  });
+  return implementations;
+}
+
 function lynxKeymapImplementations(javascript) {
   const implementations = [{
     name: 'JavaScript',
@@ -521,7 +568,7 @@ module.exports = {
   call, callAsync, addressImplementations, ariaImplementations, bidiImplementations,
   blockImplementations, dumpImplementations, endpointImplementations, firefoxAgentImplementations,
   firefoxAutomationImplementations, firefoxLaunchImplementations, firefoxPageImplementations,
-  layoutImplementations, lynxDisplayImplementations, lynxKeymapImplementations, lynxNumberImplementations,
-  marionetteImplementations, optionImplementations,
+  interfaceImplementations, layoutImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
+  lynxNumberImplementations, marionetteImplementations, optionImplementations,
   readerCommands, unicodeImplementations,
 };

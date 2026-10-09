@@ -9,6 +9,7 @@ require "./endpoint"
 require "./firefox_agent"
 require "./firefox_driver"
 require "./firefox_launch"
+require "./interfaces"
 require "./layout"
 require "./lynx_config"
 require "./lynx_display"
@@ -39,6 +40,12 @@ module Tawb
     private def self.string_table(table : Hash(String, String)) : JSON::Any
       built = {} of String => JSON::Any
       table.each { |key, value| built[key] = JSON::Any.new(value) }
+      JSON::Any.new(built)
+    end
+
+    private def self.string_labels(labels : NamedTuple) : JSON::Any
+      built = {} of String => JSON::Any
+      labels.each { |key, value| built[key.to_s] = JSON::Any.new(value) }
       JSON::Any.new(built)
     end
 
@@ -198,6 +205,52 @@ module Tawb
         line = object["line"]?
         line = nil if line.try(&.raw.nil?)
         JSON::Any.new(LynxDisplay.row_text(line, object["text"].as_s))
+      when "interfaces.name"
+        JSON::Any.new(Interfaces.interface_name(payload.as_h["value"]?.try(&.as_s?)))
+      when "interfaces.profiles_for"
+        JSON::Any.new(Interfaces.profiles_for(payload.as_h["id"].as_s).map { |profile| JSON::Any.new(profile) })
+      when "interfaces.bindings_for"
+        object = payload.as_h
+        JSON::Any.new(Interfaces.bindings_for(
+          object["id"].as_s,
+          object["defaults"].as_a.map(&.as_s),
+          object["profile"]?.try(&.as_s?) || "default"
+        ).map { |binding| JSON::Any.new(binding) })
+      when "interfaces.key_policy"
+        policy = Interfaces.key_policy(payload.as_h["profile"]?.try(&.as_s?) || "default")
+        definitions = policy[:key_definitions]
+        definition_table = {} of String => JSON::Any
+        definitions.try(&.each do |name, definition|
+          definition_table[name] = JSON::Any.new({
+            "cap"       => JSON::Any.new(definition[:cap]),
+            "sequences" => JSON::Any.new(definition[:sequences].map { |sequence| JSON::Any.new(sequence) }),
+          })
+        end)
+        JSON::Any.new({
+          "key_definitions" => definitions ? JSON::Any.new(definition_table) : JSON::Any.new(nil),
+          "labels"          => string_labels(policy[:labels]),
+          "has_key_file"    => JSON::Any.new(!policy[:key_file].nil?),
+        })
+      when "interfaces.needs_layout_metadata"
+        JSON::Any.new(Interfaces.needs_layout_metadata(payload.as_h["profile"].as_s))
+      when "interfaces.context_actions"
+        string_table(Interfaces::LYNX_CONTEXT_ACTIONS)
+      when "interfaces.context_navigation_action"
+        object = payload.as_h
+        mapping = object["action_for"]?.try(&.as_h?)
+        action_for = mapping && ->(chunk : String) { mapping[chunk]?.try(&.as_s) }
+        found = Interfaces.context_navigation_action(
+          object["chunk"].as_s,
+          object["interface"]?.try(&.as_s?) || "default",
+          action_for
+        )
+        found ? JSON::Any.new(found) : JSON::Any.new(nil)
+      when "interfaces.lynx_hides_cursor"
+        object = payload.as_h
+        JSON::Any.new(Interfaces.lynx_hides_cursor(
+          object["interface"]?.try(&.as_s?) || "default",
+          object["show_cursor"]?.try(&.as_bool?)
+        ))
       when "lynx_keymap.table"
         string_table(LynxKeymap::FUNCTION_ACTIONS)
       when "lynx_keymap.action_names"
