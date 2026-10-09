@@ -2,6 +2,7 @@ require "json"
 require "./address"
 require "./aria"
 require "./blocks"
+require "./bidi"
 require "./dump"
 require "./layout"
 require "./lynx_display"
@@ -41,6 +42,8 @@ module Tawb
         JSON::Any.new(Address.search_url(words, template))
       when "aria.render_line"
         JSON::Any.new(Aria.render_line(payload.as_h["item"]))
+      when "bidi.from_remote"
+        Bidi.from_remote(payload.as_h["value"]?)
       when "blocks.build"
         JSON::Any.new(Blocks.build(payload.as_h["items"].as_a))
       when "blocks.fold"
