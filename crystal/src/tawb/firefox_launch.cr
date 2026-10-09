@@ -1,5 +1,23 @@
+require "json"
+
 module Tawb
   module FirefoxLaunch
+    def self.write_profile_prefs(profile_dir : String, preferences : Hash(String, JSON::Any)) : Nil
+      target = File.join(profile_dir, "user.js")
+      names = preferences.keys
+      kept = begin
+        File.read(target).lines(chomp: true).reject do |line|
+          line.strip.empty? || names.any? { |name| line.includes?(%("#{name}")) }
+        end
+      rescue
+        [] of String
+      end
+      written = preferences.map do |name, value|
+        %(user_pref("#{name}", #{value.to_json});)
+      end
+      File.write(target, (kept + written).join('\n') + '\n')
+    end
+
     def self.profile_last_version(profile_dir : String) : String?
       text = File.read(File.join(profile_dir, "compatibility.ini"))
       /^LastVersion=([^\s_\/]+)/m.match(text).try(&.[1]?)

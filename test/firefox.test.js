@@ -8,7 +8,7 @@ const path = require('node:path');
 
 const {
   MARIONETTE_TIMEOUT_MS, libraryParentScript, firefoxRuntimeInfo, CLEAR_SCRIPT,
-  requireCompatibleProfile, profileLastVersion, installedFirefoxVersion,
+  requireCompatibleProfile, profileLastVersion, installedFirefoxVersion, writeProfilePrefs,
 } = require('../src/firefox');
 const { tempDir, removeTempDir } = require('./tmpdir');
 const { firefoxLaunchImplementations } = require('./crystal_impl');
@@ -414,9 +414,31 @@ function profileLastUsedBy(dir, version) {
 }
 
 for (const implementation of firefoxLaunchImplementations({
-  requireCompatibleProfile, profileLastVersion, installedFirefoxVersion,
+  requireCompatibleProfile, profileLastVersion, installedFirefoxVersion, writeProfilePrefs,
 })) {
   const check = (name, fn) => test(`${implementation.name}: ${name}`, fn);
+
+  check('managed Firefox preferences replace stale values without removing user settings', () => {
+    const profile = tempDir('tweb-ff-profile-');
+    const userJs = path.join(profile, 'user.js');
+    fs.writeFileSync(userJs,
+      'user_pref("browser.startup.page", 3);\n'
+      + 'user_pref("marionette.port", 2828);\n'
+      + 'user_pref("signon.rememberSignons", false);\n');
+
+    implementation.writeProfilePrefs(profile, {
+      'marionette.port': 43210,
+      'signon.rememberSignons': true,
+      'media.block-autoplay-until-in-foreground': false,
+    });
+
+    assert.equal(fs.readFileSync(userJs, 'utf8'),
+      'user_pref("browser.startup.page", 3);\n'
+      + 'user_pref("marionette.port", 43210);\n'
+      + 'user_pref("signon.rememberSignons", true);\n'
+      + 'user_pref("media.block-autoplay-until-in-foreground", false);\n');
+    removeTempDir(profile);
+  });
 
   check('a profile a newer Firefox wrote is refused before Firefox is launched', () => {
     const install = tempDir('tweb-ff-install-');

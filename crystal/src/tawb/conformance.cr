@@ -84,6 +84,10 @@ module Tawb
           object["executable"].as_s, object["name"].as_s, object["profile"].as_s
         )
         JSON::Any.new(true)
+      when "firefox.write_profile_prefs"
+        object = payload.as_h
+        FirefoxLaunch.write_profile_prefs(object["profile"].as_s, object["preferences"].as_h)
+        JSON::Any.new(true)
       when "layout.wrap_with_offsets"
         object = payload.as_h
         JSON::Any.new(Layout.wrap_with_offsets(object["text"].as_s, object["width"].as_i))

@@ -207,6 +207,9 @@ function firefoxLaunchImplementations(javascript) {
     requireCompatibleProfile({ executable, name }, profile) {
       return call('firefox.require_compatible_profile', { executable, name, profile });
     },
+    writeProfilePrefs(profile, preferences) {
+      return call('firefox.write_profile_prefs', { profile, preferences });
+    },
   });
   return implementations;
 }
