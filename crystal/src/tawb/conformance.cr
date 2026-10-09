@@ -19,6 +19,7 @@ require "./lynx_keymap"
 require "./lynx_number"
 require "./marionette"
 require "./options"
+require "./session"
 require "./transport"
 require "./unicode_escape"
 
@@ -520,6 +521,8 @@ module Tawb
         Marionette.clear_automation(payload.as_h["port"].as_i.to_i32)
       when "marionette.release_stranded"
         JSON::Any.new(Marionette.release_stranded_session(payload.as_h["port"].as_i.to_i32))
+      when "session.scenario"
+        session_scenario(payload)
       when "transport.websocket_round_trip"
         socket = Transport::WebSocket.new(payload.as_h["url"].as_s)
         begin
@@ -656,6 +659,62 @@ module Tawb
         session.close
       end
       JSON::Any.new(values)
+    end
+
+    # A scripted pass over the tab claims: tabs claimed and released, other
+    # readers' claims planted in the file, and what the session then says
+    # about the port. The whole script runs in this one process, so the
+    # process id the claims are written under is stable across steps — which
+    # is the point the claims turn on. Scenarios open with reset, the empty
+    # claims file a final release leaves, because the JavaScript and Crystal
+    # runs share the one state directory. The JavaScript original runs the
+    # same script in-process over src/session.js, so the two runtimes must
+    # answer with the same observations.
+    private def self.session_scenario(payload : JSON::Any) : JSON::Any
+      observations = [] of JSON::Any
+      payload.as_h["script"].as_a.each do |step_value|
+        step = step_value.as_h
+        port = step["port"]?.try(&.as_i?) || 0
+        case step["op"].as_s
+        when "reset"
+          Session.write_claims(port, [] of Session::Claim)
+        when "claim"
+          Session.claim_tab(port, step["target"].as_s)
+        when "release"
+          Session.release_tab(port)
+        when "inject"
+          inject_claim(port, step["who"].as_s, step["target"].as_s)
+        when "other_readers"
+          observations.push(JSON::Any.new(Session.other_readers_on(port)))
+        when "claimed"
+          observations.push(JSON::Any.new(Session.claimed_targets(port).map do |target|
+            JSON::Any.new(target)
+          end))
+        else
+          raise ArgumentError.new("unknown session scenario op #{step["op"]}")
+        end
+      end
+      JSON::Any.new(observations)
+    end
+
+    # Plant another reader's claim in the file the way a second session would
+    # have left it: a live reader is this process's parent (alive, and not
+    # us), a dead one a pid no machine has. Starts from what is already in
+    # the file, which the scenario is expected to have claimed first — the
+    # JavaScript harness reads the same file and fails the same way if there
+    # is nothing to read.
+    private def self.inject_claim(port : Int32, who : String, target : String) : Nil
+      pid = who == "dead" ? 0x7fffffff : LibC.getppid.to_i64
+      raw = JSON.parse(File.read(Session.claims_path(port)))
+      unless claims = raw.as_a?
+        raise ArgumentError.new("#{Session.claims_path(port)} is not a claims array")
+      end
+      claims << JSON::Any.new({
+        "pid"      => JSON::Any.new(pid),
+        "targetId" => JSON::Any.new(target),
+        "at"       => JSON::Any.new(Time.utc.to_unix_ms),
+      })
+      File.write(Session.claims_path(port), claims.to_json)
     end
 
     private class ScenarioReader

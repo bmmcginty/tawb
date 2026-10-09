@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('node:path');
+const fs = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
 const { PassThrough } = require('node:stream');
 
@@ -301,6 +302,51 @@ function inputImplementations(input) {
   return [javascript, {
     name: 'Crystal',
     scenario(script) { return call('input.scenario', script); },
+  }];
+}
+
+function sessionImplementations(session) {
+  const javascript = {
+    name: 'JavaScript',
+    async scenario(script) {
+      const { processAlive } = require('../src/proc');
+      const observations = [];
+      const planted = (who) => (who === 'dead' ? 0x7fffffff : process.ppid);
+      for (const step of script.script) {
+        switch (step.op) {
+          case 'reset':
+            fs.mkdirSync(path.dirname(session.claimsPath(step.port)), { recursive: true });
+            fs.writeFileSync(session.claimsPath(step.port), '[]');
+            break;
+          case 'claim':
+            session.claimTab(step.port, step.target);
+            break;
+          case 'release':
+            session.releaseTab(step.port);
+            break;
+          case 'inject': {
+            const claims = JSON.parse(fs.readFileSync(session.claimsPath(step.port), 'utf8'));
+            claims.push({ pid: planted(step.who), targetId: step.target, at: Date.now() });
+            fs.writeFileSync(session.claimsPath(step.port), JSON.stringify(claims));
+            break;
+          }
+          case 'other_readers':
+            observations.push(session.otherReadersOn(step.port));
+            break;
+          case 'claimed':
+            observations.push([...session.claimedTargets(step.port)]);
+            break;
+          default:
+            throw new Error(`unknown session scenario op ${step.op}`);
+        }
+      }
+      return observations;
+    },
+  };
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return [javascript];
+  return [javascript, {
+    name: 'Crystal',
+    scenario(script) { return call('session.scenario', script); },
   }];
 }
 
@@ -733,5 +779,5 @@ module.exports = {
   inputImplementations, interfaceImplementations, keymapImplementations, layoutImplementations,
   lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, marionetteImplementations, optionImplementations,
-  readerCommands, unicodeImplementations,
+  readerCommands, sessionImplementations, unicodeImplementations,
 };
