@@ -66,6 +66,16 @@ module Tawb
       end
     end
 
+    def self.release_stranded_session(port : Int32) : Bool
+      socket = TCPSocket.new("127.0.0.1", port)
+      socket.read_timeout = TIMEOUT
+      !!socket.read_byte
+    rescue
+      false
+    ensure
+      socket.try(&.close) rescue nil
+    end
+
     def self.clear_automation(port : Int32) : JSON::Any
       client = Client.new(port)
       begin

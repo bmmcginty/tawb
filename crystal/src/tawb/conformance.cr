@@ -138,6 +138,8 @@ module Tawb
         ))
       when "marionette.clear_automation"
         Marionette.clear_automation(payload.as_h["port"].as_i.to_i32)
+      when "marionette.release_stranded"
+        JSON::Any.new(Marionette.release_stranded_session(payload.as_h["port"].as_i.to_i32))
       when "transport.websocket_round_trip"
         socket = Transport::WebSocket.new(payload.as_h["url"].as_s)
         begin

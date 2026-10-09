@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const net = require('node:net');
-const { clearAutomationFlag } = require('../src/firefox');
+const { clearAutomationFlag, releaseStrandedSession } = require('../src/firefox');
 const { marionetteImplementations } = require('./crystal_impl');
 
 function packet(value) {
@@ -47,7 +47,9 @@ async function withMarionette(onCommand, run) {
   }
 }
 
-for (const implementation of marionetteImplementations({ clearAutomationFlag })) {
+for (const implementation of marionetteImplementations({
+  clearAutomationFlag, releaseStrandedSession,
+})) {
   test(`${implementation.name}: Marionette clears automation and installs persistent agents`, async () => {
     const commands = [];
     const result = await withMarionette((command) => {
@@ -84,5 +86,16 @@ for (const implementation of marionetteImplementations({ clearAutomationFlag }))
       after: { 'RemoteAgent:Active': false },
       libraryPort: 4567,
     });
+  });
+
+  test(`${implementation.name}: Marionette releases a stranded session without sending commands`, async () => {
+    const commands = [];
+    const released = await withMarionette((command) => {
+      commands.push(command);
+      return {};
+    }, (port) => implementation.releaseStranded(port));
+
+    assert.equal(released, true);
+    assert.deepEqual(commands, []);
   });
 }

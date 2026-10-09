@@ -302,12 +302,16 @@ function marionetteImplementations(javascript) {
   const implementations = [{
     name: 'JavaScript',
     clearAutomation(port) { return javascript.clearAutomationFlag({ port }); },
+    releaseStranded(port) { return javascript.releaseStrandedSession(port); },
   }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
   implementations.push({
     name: 'Crystal',
     clearAutomation(port) {
       return callAsync('marionette.clear_automation', { port });
+    },
+    releaseStranded(port) {
+      return callAsync('marionette.release_stranded', { port });
     },
   });
   return implementations;
