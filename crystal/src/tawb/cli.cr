@@ -81,6 +81,7 @@ module Tawb
       begin
         page = Cdp::Page.new(session.endpoint)
         page.navigate(target)
+        Dump.settle_embedded_frames(page)
         lynx = options["frontEnd"].as_s == "lynx"
         tree, documents = page.accessibility_documents(layout: lynx)
         blocks = Frames.build(tree, documents)

@@ -139,3 +139,88 @@ nodeTest('dump mode closes its temporary tab when extraction fails', async () =>
   );
   assert.equal(closed, true);
 });
+
+// The settle is the dump's one wait, and it must be a short one: a child
+// frame that commits ends it, a document that completes ends it, two
+// seconds end it regardless, and a page without the frame surface is not
+// held at all.
+nodeTest('the dump settles only while an embedded document is pending', async () => {
+  const { settleEmbeddedFrames } = javascript;
+
+  // A child that commits on the third look: the wait ends there, not at the
+  // deadline and not before the polls it owed.
+  let looks = 0;
+  const child = { url: () => (looks <= 2 ? 'about:blank' : 'http://localhost:1/') };
+  const committing = {
+    mainFrame: () => ({ childFrames: () => { looks += 1; return [child]; } }),
+    evaluate: async () => 'loading',
+  };
+  const started = Date.now();
+  await settleEmbeddedFrames(committing, { deadlineMs: 5000, stepMs: 20 });
+  assert.ok(Date.now() - started >= 40, 'committed without waiting for the polls');
+  assert.ok(looks >= 3, 'gave up on a child that was still pending');
+
+  // A page whose children are all committed is not held at all.
+  const settled = {
+    mainFrame: () => ({ childFrames: () => [{ url: () => 'http://localhost:1/' }] }),
+    evaluate: async () => 'loading',
+  };
+  const quick = Date.now();
+  await settleEmbeddedFrames(settled, { deadlineMs: 5000, stepMs: 20 });
+  assert.ok(Date.now() - quick < 100, 'held a page with nothing pending');
+
+  // A document that completes ends the wait even with a placeholder below
+  // it: nothing more is coming.
+  const complete = {
+    mainFrame: () => ({ childFrames: () => [{ url: () => 'about:blank' }] }),
+    evaluate: async () => 'complete',
+  };
+  const done = Date.now();
+  await settleEmbeddedFrames(complete, { deadlineMs: 5000, stepMs: 20 });
+  assert.ok(Date.now() - done < 100, 'held a document that had completed');
+
+  // A child that never commits and a document that never completes run out
+  // the deadline, and then the dump proceeds with what is there.
+  const hanging = {
+    mainFrame: () => ({ childFrames: () => [{ url: () => 'about:blank' }] }),
+    evaluate: async () => 'loading',
+  };
+  const deadline = Date.now();
+  await settleEmbeddedFrames(hanging, { deadlineMs: 150, stepMs: 20 });
+  const waited = Date.now() - deadline;
+  assert.ok(waited >= 140 && waited < 1000, `ran out the deadline in ${waited}ms`);
+
+  // A page without the frame surface — the fakes above, a driver yet to
+  // grow one — is not held at all.
+  const bare = Date.now();
+  await settleEmbeddedFrames({ evaluate: async () => 'loading' }, { deadlineMs: 150 });
+  assert.ok(Date.now() - bare < 100, 'held a page without the frame surface');
+});
+
+nodeTest('the dump gives an uncommitted child frame the chance to arrive', async () => {
+  // The scenario behind the settle, at the surface dumpAx itself sees: the
+  // page reports a placeholder child until the settle has polled, and the
+  // snapshot must run only once the child has committed.
+  let polls = 0;
+  let settledAt = null;
+  const page = {
+    async goto() {},
+    async close() {},
+    mainFrame: () => ({
+      childFrames: () => {
+        polls += 1;
+        return [{ url: () => (polls < 3 ? 'about:blank' : 'http://localhost:1/') }];
+      },
+    }),
+    evaluate: async () => 'loading',
+  };
+  const driver = { context: { async newPage() { return page; } } };
+  const snapshot = async () => {
+    settledAt = polls;
+    return [{ text: 'Body' }];
+  };
+
+  await dumpAx({ driver, target: 'https://example.com', snapshot, write: () => {} });
+  assert.ok(polls >= 3, 'snapshotted while the child was still pending');
+  assert.equal(settledAt, polls, 'the settle ran before the snapshot');
+});

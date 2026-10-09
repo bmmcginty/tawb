@@ -46,6 +46,39 @@ module Tawb
         wait_event("Page.domContentEventFired")
       end
 
+      # Whether a document embedded in the top one is still a placeholder. A
+      # child frame commits after the parent has parsed the <iframe>, and
+      # until it does its url is about:blank, which the frame walk reads as
+      # an empty document. Direct children only: a grandchild of a freshly
+      # committed child is reached only after the walk has spent its round
+      # trips on the parent, and that child's own document reports complete
+      # only once every frame below it is done.
+      def embedded_documents_pending? : Bool
+        tree = command("Page.getFrameTree").as_h["result"].as_h["frameTree"]
+        children = tree.as_h["childFrames"]?.try(&.as_a?) || [] of JSON::Any
+        children.any? { |child| placeholder?(child.dig?("frame", "url")) }
+      rescue
+        false # not answerable is not pending; the walk decides
+      end
+
+      # Whether the top document has finished loading: readyState reaches
+      # "complete" when the document and everything embedded in it have,
+      # which is the load event's own condition.
+      def top_document_complete? : Bool
+        response = command("Runtime.evaluate", {
+          "expression"    => JSON::Any.new("document.readyState"),
+          "returnByValue" => JSON::Any.new(true),
+        })
+        response.as_h["result"].as_h["result"].as_h["value"].as_s? == "complete"
+      rescue
+        false
+      end
+
+      private def placeholder?(url : JSON::Any?) : Bool
+        given = url.try(&.as_s?) || ""
+        given.empty? || given == "about:blank"
+      end
+
       def accessibility_documents(layout = false) : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))
         # Discovery events can still be in flight when the top document's DOM
         # event arrives. The listing is a synchronous census and closes that

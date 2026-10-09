@@ -118,6 +118,38 @@ module Tawb
         @url = result["url"]?.try(&.as_s?) || url
       end
 
+      # Whether a document embedded in the top one is still a placeholder.
+      # BiDi lists the browsing contexts below this one with their addresses,
+      # and one that has not committed yet is on about:blank, which the frame
+      # walk reads as an empty document. Direct children only: a grandchild
+      # of a freshly committed child is reached only after the walk has spent
+      # its round trips on the parent, and that child's own document reports
+      # complete only once every frame below it is done.
+      def embedded_documents_pending? : Bool
+        result = @protocol.command("browsingContext.getTree", {
+          "root" => JSON::Any.new(@context_id),
+        }).as_h
+        context = result["contexts"].as_a.first?
+        return false unless context
+        children = context.as_h["children"]?.try(&.as_a?) || [] of JSON::Any
+        children.any? do |child|
+          url = child.as_h["url"]?.try(&.as_s?) || ""
+          url.empty? || url == "about:blank"
+        end
+      rescue
+        false # not answerable is not pending; the walk decides
+      end
+
+      # Whether the top document has finished loading: readyState reaches
+      # "complete" when the document and everything embedded in it have,
+      # which is the load event's own condition.
+      def top_document_complete? : Bool
+        state = automation_state
+        state.try(&.["readyState"]?.try(&.as_s?)) == "complete"
+      rescue
+        false
+      end
+
       def close : Nil
         @protocol.command("browsingContext.close", {
           "context" => JSON::Any.new(@context_id),

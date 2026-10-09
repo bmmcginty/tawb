@@ -41,6 +41,68 @@ function formatAxBlocks(blocks, { escapeUnicode = false } = {}) {
   return text.map((line) => (escapeUnicode ? escapeNonAscii(line) : line)).join('\n') + '\n';
 }
 
+// The top document's DOMContentLoaded says nothing about the documents
+// embedded in it. A child frame commits after the parent has parsed the
+// <iframe> — an out-of-process one starts a renderer to do it, which on a
+// busy machine can still be pending when the frame walk asks — and a child
+// still on about:blank reads as an empty document. The interactive reader
+// re-renders as pages change, so a frame that missed the first picture
+// arrives with the next; a dump runs once, and there is no later re-render
+// to mend it. So the dump gives the embedded documents a bounded chance to
+// arrive: poll until no child frame is a placeholder, the top document
+// reports itself complete — a document is not complete while anything
+// embedded in it still loads — or two seconds pass. A placeholder that is
+// going nowhere is covered by the document completing, which it does as
+// soon as such a frame's own (empty) document does; the deadline is for a
+// page that hangs.
+const SETTLE_DEADLINE_MS = 2000;
+const SETTLE_STEP_MS = 50;
+
+function placeholderUrl(url) {
+  return !url || url === 'about:blank';
+}
+
+// The children the walk will descend into, and whether any of them is still
+// a placeholder. Direct children only: a grandchild of a freshly committed
+// child is reached only after the walk has spent its round trips on the
+// parent, and its own document reports complete only once every frame below
+// it is done.
+async function pendingChildFrames(frame) {
+  let children;
+  try {
+    children = await frame.childFrames();
+  } catch {
+    return false; // the frame went away mid-settle; let the walk decide
+  }
+  if (!Array.isArray(children)) return false;
+  return children.some((child) => {
+    let url = '';
+    try { url = child.url() || ''; } catch { url = ''; }
+    return placeholderUrl(url);
+  });
+}
+
+async function topDocumentComplete(page) {
+  try {
+    return (await page.evaluate(() => document.readyState)) === 'complete';
+  } catch {
+    return false; // not answerable is not complete; the deadline decides
+  }
+}
+
+async function settleEmbeddedFrames(page, {
+  deadlineMs = SETTLE_DEADLINE_MS, stepMs = SETTLE_STEP_MS,
+} = {}) {
+  // A page without the frame surface — the tests' fakes, a driver yet to
+  // grow one — has nothing to wait for that this can see.
+  if (typeof page.mainFrame !== 'function') return;
+  for (const deadline = Date.now() + deadlineMs; Date.now() < deadline;) {
+    if (!await pendingChildFrames(page.mainFrame())) return;
+    if (await topDocumentComplete(page)) return;
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
+  }
+}
+
 // The Lynx presentation as plain lines: the same renderLynxItem vocabulary,
 // numbering, joined prose and laid-out table columns the full-screen reader
 // shows, with the terminal's own styling left out because there is no
@@ -67,6 +129,7 @@ async function dumpAx({
   const page = await driver.context.newPage();
   try {
     await page.goto(target, { waitUntil: 'domcontentloaded' });
+    await settleEmbeddedFrames(page);
     // Only the Lynx display reads the extractor's inline-flow and table-cell
     // metadata, so only that front end asks for it. See needsLayoutMetadata.
     const blocks = await snapshot(page, 'ax', {
@@ -84,4 +147,6 @@ async function dumpAx({
   }
 }
 
-module.exports = { resolveDumpTarget, formatAxBlocks, formatLynxBlocks, dumpAx };
+module.exports = {
+  resolveDumpTarget, formatAxBlocks, formatLynxBlocks, dumpAx, settleEmbeddedFrames,
+};

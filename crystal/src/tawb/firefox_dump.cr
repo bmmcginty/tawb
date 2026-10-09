@@ -118,6 +118,7 @@ module Tawb
         page = FirefoxDriver::Page.new(session, context_id,
           top.as_h["url"]?.try(&.as_s?) || "about:blank")
         page.navigate(target)
+        Dump.settle_embedded_frames(page)
         tree, documents = page.accessibility_documents(layout)
         blocks = Frames.build(tree, documents)
         text = if layout

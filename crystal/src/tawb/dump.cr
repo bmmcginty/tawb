@@ -44,5 +44,30 @@ module Tawb
         end
       end
     end
+    # The top document's DOMContentLoaded says nothing about the documents
+    # embedded in it. A child frame commits after the parent has parsed the
+    # <iframe> — an out-of-process one starts a renderer to do it, which on a
+    # busy machine can still be pending when the frame walk asks — and a child
+    # still on about:blank reads as an empty document. The interactive reader
+    # re-renders as pages change, so a frame that missed the first picture
+    # arrives with the next; a dump runs once, and there is no later re-render
+    # to mend it. So the dump gives the embedded documents a bounded chance to
+    # arrive: poll until no child frame is a placeholder, the top document
+    # reports itself complete — a document is not complete while anything
+    # embedded in it still loads — or two seconds pass. A placeholder that is
+    # going nowhere is covered by the document completing, which it does as
+    # soon as such a frame's own (empty) document does; the deadline is for a
+    # page that hangs.
+    def self.settle_embedded_frames(page : Cdp::Page | FirefoxDriver::Page,
+                                    deadline_ms : Int64 = 2000,
+                                    step_ms : Int64 = 50) : Nil
+      deadline = Time.instant + deadline_ms.milliseconds
+      loop do
+        return unless page.embedded_documents_pending?
+        return if page.top_document_complete?
+        return if Time.instant >= deadline
+        sleep step_ms.milliseconds
+      end
+    end
   end
 end
