@@ -18,7 +18,7 @@ module Tawb
         @socket = Transport::WebSocket.new(@target.web_socket_url)
         @next_id = 0_i64
         @events = [] of JSON::Any
-        @contexts = {} of String => Int64
+        @contexts = {} of String => Tuple(Int64, String?)
         @iframe_targets = Set(String).new
         @frame_sessions = {} of String => String
         command("Page.enable")
@@ -30,17 +30,51 @@ module Tawb
       end
 
       def navigate(url : String) : Nil
-        command("Page.navigate", {"url" => JSON::Any.new(url)})
+        # Page.enable can replay about:blank's completion while another
+        # command is in flight. It predates this navigation and must never
+        # satisfy the wait for the requested document.
+        @events.reject! { |event| event.as_h["method"]?.try(&.as_s?) == "Page.domContentEventFired" }
+        response = command("Page.navigate", {"url" => JSON::Any.new(url)})
+        result = response.as_h["result"].as_h
+        if error = result["errorText"]?.try(&.as_s?)
+          raise IO::Error.new("navigation to #{url} failed: #{error}") unless error.empty?
+        end
         wait_event("Page.domContentEventFired")
       end
 
       def accessibility_documents : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))
+        # Discovery events can still be in flight when the top document's DOM
+        # event arrives. The listing is a synchronous census and closes that
+        # race without recursively auto-attaching to renderer workers.
+        targets = command("Target.getTargets").as_h["result"].as_h["targetInfos"].as_a
+        targets.each do |target|
+          info = target.as_h
+          @iframe_targets << info["targetId"].as_s if info["type"]?.try(&.as_s?) == "iframe"
+        end
         tree = command("Page.getFrameTree").as_h["result"].as_h["frameTree"]
+        known_frames = frame_ids(tree).to_set
+        # A tab session may omit an OOPIF from Page.getFrameTree. Its target
+        # still has a frame tree of its own; add that root to the parent list
+        # so the renderer can place it after the corresponding iframe marker.
+        children = tree.as_h["childFrames"]?.try(&.as_a?)
+        unless children
+          children = [] of JSON::Any
+          tree.as_h["childFrames"] = JSON::Any.new(children)
+        end
+        @iframe_targets.each do |target_id|
+          next if known_frames.includes?(target_id)
+          session_id = attach_frame(target_id)
+          child_tree = command("Page.getFrameTree", session_id: session_id).as_h["result"].as_h["frameTree"]
+          children << child_tree
+        end
+
         documents = {} of String => Array(JSON::Any)
         frame_ids(tree).each_with_index do |frame_id, index|
-          context_id = @contexts[frame_id]?
-          if context_id || index == 0
-            documents[frame_id] = evaluate_items(context_id)
+          context = @contexts[frame_id]?
+          if context
+            documents[frame_id] = evaluate_items(context[0], context[1])
+          elsif index == 0
+            documents[frame_id] = evaluate_items(nil)
           elsif @iframe_targets.includes?(frame_id)
             session_id = attach_frame(frame_id)
             documents[frame_id] = evaluate_items(nil, session_id)
@@ -143,12 +177,12 @@ module Tawb
           auxiliary = context["auxData"]?.try(&.as_h?)
           if auxiliary && auxiliary["isDefault"]?.try(&.as_bool?)
             if frame_id = auxiliary["frameId"]?.try(&.as_s?)
-              @contexts[frame_id] = context["id"].as_i64
+              @contexts[frame_id] = {context["id"].as_i64, object["sessionId"]?.try(&.as_s?)}
             end
           end
         when "Runtime.executionContextDestroyed"
           id = object["params"].as_h["executionContextId"].as_i64
-          @contexts.reject! { |_frame, context_id| context_id == id }
+          @contexts.reject! { |_frame, context| context[0] == id }
         when "Runtime.executionContextsCleared"
           @contexts.clear
         end

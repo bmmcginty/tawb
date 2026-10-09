@@ -107,6 +107,33 @@ test('the native dump includes an out-of-process iframe', { skip: !enabled }, as
   }
 });
 
+test('the native dump waits for the requested document DOM', { skip: !enabled }, async () => {
+  const root = tempDir('tawb-crystal-navigation-');
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.write('<!doctype html><p>Beginning</p>');
+    setTimeout(() => response.end('<p>Delayed ending</p>'), 300);
+  });
+  await listen(server, '127.0.0.1');
+  const env = {
+    ...process.env,
+    HOME: path.join(root, 'home'),
+    XDG_CONFIG_HOME: path.join(root, 'config'),
+    XDG_DATA_HOME: path.join(root, 'data'),
+    XDG_CACHE_HOME: path.join(root, 'cache'),
+  };
+  fs.mkdirSync(env.HOME, { recursive: true });
+  try {
+    const result = await runAsync(path.join(ROOT, 'dist', 'tawb-crystal'), [
+      '--dump', `http://127.0.0.1:${server.address().port}/`,
+    ], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, 'Beginning\nDelayed ending\n');
+  } finally {
+    await closeServer(server);
+  }
+});
+
 test('a kept native Chromium is rejoined through its profile', { skip: !enabled }, async () => {
   const root = tempDir('tawb-crystal-keep-');
   const profile = path.join(root, 'profile');
