@@ -82,6 +82,8 @@ module Tawb
         JSON::Any.new(LynxDisplay.number_blocks(object["blocks"].as_a, object["preferences"].as_h))
       when "lynx_display.group_flows"
         JSON::Any.new(LynxDisplay.group_flows(payload.as_h["blocks"].as_a))
+      when "lynx_display.group_table_rows"
+        JSON::Any.new(LynxDisplay.group_table_rows(payload.as_h["blocks"].as_a))
       when "lynx_display.row_text"
         object = payload.as_h
         line = object["line"]?

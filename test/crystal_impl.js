@@ -125,6 +125,9 @@ function lynxDisplayImplementations(javascript) {
     groupLynxFlows(blocks) {
       return call('lynx_display.group_flows', { blocks });
     },
+    groupLynxTableRows(blocks) {
+      return call('lynx_display.group_table_rows', { blocks });
+    },
     lynxRowText(line, text) {
       return call('lynx_display.row_text', { line, text });
     },

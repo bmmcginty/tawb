@@ -13,8 +13,9 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { layoutLines } = require('../src/layout');
-const { renderLynxItem } = require('../src/lynx_display');
+const { renderLynxItem, groupLynxTableRows } = require('../src/lynx_display');
 const { Keymap } = require('../src/keys');
+const { lynxDisplayImplementations } = require('./crystal_impl');
 const {
   blockUnder, currentBlock, handleBrowseKey, handleNumberKey, itemUnderCursor,
   openLinkNumberPrompt, positionForBlock, relayout, renderRow,
@@ -51,6 +52,43 @@ function quietly(fn) {
   const write = process.stdout.write;
   process.stdout.write = () => true;
   return Promise.resolve().then(fn).finally(() => { process.stdout.write = write; });
+}
+
+for (const implementation of lynxDisplayImplementations({ groupLynxTableRows })) {
+  test(`${implementation.name}: table rows align columns and retain source spans`, () => {
+    const blocks = [
+      { text: 'Name', item: item('text', 'Name', { table: at(0, 0) }) },
+      { text: 'Detail', item: item('text', 'Detail', { table: at(0, 1) }) },
+      {
+        text: 'Alpha', item: item('link', 'Alpha', { table: at(1, 0) }),
+        displayNumber: 1, displayPrefix: '[1]', displaySuffix: '',
+      },
+      { text: 'Picture', item: item('text', 'Picture', { table: at(1, 1) }) },
+    ];
+    const rows = implementation.groupLynxTableRows(blocks);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].spans.length, 2);
+    assert.equal(rows[1].spans.length, 2);
+    assert.equal(rows[0].text.indexOf('Detail'), rows[1].text.indexOf('Picture'));
+    assert.equal(rows[1].text.slice(rows[1].spans[0].start - 3, rows[1].spans[0].start), '[1]');
+    assert.deepEqual(rows[1].spans.map(({ blockIndex, displayNumber }) => ({
+      blockIndex, displayNumber,
+    })), [
+      { blockIndex: 2, displayNumber: 1 },
+      { blockIndex: 3, displayNumber: null },
+    ]);
+  });
+
+  test(`${implementation.name}: repeated table cells remain in reading order`, () => {
+    const blocks = [
+      { text: 'First', item: item('text', 'First', { table: at(0, 0) }) },
+      { text: 'Second', item: item('text', 'Second', { table: at(0, 0) }) },
+      { text: 'Other', item: item('text', 'Other', { table: at(0, 1) }) },
+    ];
+    const rows = implementation.groupLynxTableRows(blocks);
+    assert.deepEqual(rows.map((row) => row.text), ['First', 'Second', 'Other']);
+    assert.deepEqual(rows.map((row) => row.sourceIndex), [0, 1, 2]);
+  });
 }
 
 test('a row becomes one line with its columns lined up', () => {
