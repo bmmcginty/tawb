@@ -4,6 +4,7 @@ require "./aria"
 require "./blocks"
 require "./bidi"
 require "./dump"
+require "./endpoint"
 require "./firefox_agent"
 require "./firefox_driver"
 require "./firefox_launch"
@@ -66,6 +67,21 @@ module Tawb
         JSON::Any.new(Dump.format_ax_blocks(
           object["blocks"].as_a, object["escape_unicode"]?.try(&.as_bool?) || false
         ))
+      when "endpoint.free_port"
+        JSON::Any.new(Endpoint.free_port.to_i64)
+      when "endpoint.port_of"
+        port = Endpoint.port_of(payload.as_h["url"].as_s)
+        port ? JSON::Any.new(port.to_i64) : JSON::Any.new(nil)
+      when "endpoint.read"
+        record = Endpoint.read_record(payload.as_h["profile"].as_s)
+        record ? JSON::Any.new(record) : JSON::Any.new(nil)
+      when "endpoint.write"
+        object = payload.as_h
+        Endpoint.write_record(object["profile"].as_s, object["record"].as_h)
+        JSON::Any.new(true)
+      when "endpoint.running"
+        port = Endpoint.running(payload.as_h["profile"].as_s)
+        port ? JSON::Any.new(port.to_i64) : JSON::Any.new(nil)
       when "firefox.agent_request"
         object = payload.as_h
         port = object["port"]?.try(&.as_i?).try(&.to_i32)

@@ -181,6 +181,27 @@ function dumpImplementations(javascript) {
   return implementations;
 }
 
+function endpointImplementations(javascript) {
+  const implementations = [{
+    name: 'JavaScript',
+    read: javascript.readEndpointRecord,
+    write: javascript.writeEndpointRecord,
+    freePort: javascript.freePort,
+    running: javascript.runningEndpoint,
+    portOf: javascript.portOfEndpoint,
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    read(profile) { return call('endpoint.read', { profile }); },
+    write(profile, record) { return call('endpoint.write', { profile, record }); },
+    freePort() { return callAsync('endpoint.free_port', {}); },
+    running(profile) { return callAsync('endpoint.running', { profile }); },
+    portOf(url) { return call('endpoint.port_of', { url }); },
+  });
+  return implementations;
+}
+
 function firefoxAgentImplementations(javascript) {
   const implementations = [{ name: 'JavaScript', ask: javascript.askFirefoxLibrary }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
@@ -468,7 +489,7 @@ function unicodeImplementations(javascript) {
 
 module.exports = {
   call, addressImplementations, ariaImplementations, bidiImplementations,
-  blockImplementations, dumpImplementations, firefoxAgentImplementations,
+  blockImplementations, dumpImplementations, endpointImplementations, firefoxAgentImplementations,
   firefoxAutomationImplementations, firefoxLaunchImplementations, firefoxPageImplementations,
   layoutImplementations, lynxDisplayImplementations, lynxNumberImplementations, marionetteImplementations,
   optionImplementations,
