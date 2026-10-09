@@ -44,6 +44,8 @@ module Tawb
         JSON::Any.new(Aria.render_line(payload.as_h["item"]))
       when "bidi.from_remote"
         Bidi.from_remote(payload.as_h["value"]?)
+      when "bidi.session_scenario"
+        bidi_session_scenario(payload)
       when "blocks.build"
         JSON::Any.new(Blocks.build(payload.as_h["items"].as_a))
       when "blocks.fold"
@@ -132,6 +134,40 @@ module Tawb
       else
         raise ArgumentError.new("unknown conformance operation #{operation}")
       end
+    end
+
+    private def self.bidi_session_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      session = Bidi::Session.new(object["url"].as_s)
+      values = [] of JSON::Any
+      begin
+        object["actions"].as_a.each do |entry|
+          action = entry.as_h
+          case action["type"].as_s
+          when "command"
+            begin
+              result = session.command(
+                action["method"].as_s,
+                action["params"]?.try(&.as_h) || {} of String => JSON::Any
+              )
+              values << JSON::Any.new({"result" => result})
+            rescue error
+              values << JSON::Any.new({
+                "error" => JSON::Any.new(error.message || error.class.name),
+              })
+            end
+          when "event"
+            values << JSON::Any.new({
+              "event" => session.next_event(action["method"].as_s),
+            })
+          else
+            raise ArgumentError.new("unknown BiDi scenario action #{action["type"]}")
+          end
+        end
+      ensure
+        session.close
+      end
+      JSON::Any.new(values)
     end
   end
 end

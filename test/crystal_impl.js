@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 const binary = process.env.TAWB_CRYSTAL_BIN
   || path.join(__dirname, '..', 'dist', 'tawb-crystal');
@@ -23,6 +23,44 @@ function call(operation, payload) {
     throw new Error(response.error || child.stderr || `Crystal conformance call ${operation} failed`);
   }
   return response.value;
+}
+
+function callAsync(operation, payload) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary, ['--conformance', operation], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`Crystal conformance call ${operation} timed out`));
+    }, 10000);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on('close', (status) => {
+      clearTimeout(timer);
+      let response;
+      try {
+        response = JSON.parse(stdout.trim());
+      } catch {
+        reject(new Error(`Crystal conformance call ${operation} returned no JSON: ${stderr}`));
+        return;
+      }
+      if (status !== 0 || !response.ok) {
+        reject(new Error(response.error || stderr || `Crystal conformance call ${operation} failed`));
+        return;
+      }
+      resolve(response.value);
+    });
+    child.stdin.end(JSON.stringify(payload));
+  });
 }
 
 function ariaImplementations(javascript) {
@@ -54,12 +92,53 @@ function addressImplementations(javascript) {
 }
 
 function bidiImplementations(javascript) {
-  const implementations = [{ name: 'JavaScript', ...javascript }];
+  const sessionScenario = async (url, actions) => {
+    const session = await javascript.connect(url);
+    const events = new Map();
+    for (const { type, method } of actions) {
+      if (type !== 'event' || events.has(method)) continue;
+      const waiting = [];
+      const queued = [];
+      events.set(method, { waiting, queued });
+      session.on(method, (params) => {
+        const resolve = waiting.shift();
+        if (resolve) resolve(params);
+        else queued.push(params);
+      });
+    }
+    const nextEvent = (method) => {
+      const event = events.get(method);
+      if (event.queued.length) return Promise.resolve(event.queued.shift());
+      return new Promise((resolve) => event.waiting.push(resolve));
+    };
+    try {
+      const values = [];
+      for (const action of actions) {
+        if (action.type === 'event') {
+          values.push({ event: await nextEvent(action.method) });
+        } else {
+          try {
+            values.push({ result: await session.send(action.method, action.params || {}) });
+          } catch (error) {
+            values.push({ error: error.message });
+          }
+        }
+      }
+      return values;
+    } finally {
+      session.close();
+    }
+  };
+
+  const implementations = [{ name: 'JavaScript', ...javascript, sessionScenario }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
   implementations.push({
     name: 'Crystal',
     fromRemoteValue(value) {
       return call('bidi.from_remote', { value });
+    },
+    sessionScenario(url, actions) {
+      return callAsync('bidi.session_scenario', { url, actions });
     },
   });
   return implementations;
