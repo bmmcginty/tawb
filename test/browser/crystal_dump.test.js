@@ -70,6 +70,33 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
   assert.match(firefox.stderr, /native Firefox dump is not ported/);
 });
 
+test('the native dump reads a closed shadow root through CDP', { skip: !enabled }, () => {
+  const root = tempDir('tawb-crystal-shadow-');
+  const page = path.join(root, 'page.html');
+  fs.writeFileSync(page, `<!doctype html><div id="host"></div><script>
+    document.getElementById('host').attachShadow({ mode: 'closed' }).innerHTML = '<button>Closed shadow action</button>';
+  </script>`);
+  const env = {
+    ...process.env,
+    HOME: path.join(root, 'home'),
+    XDG_CONFIG_HOME: path.join(root, 'config'),
+    XDG_CACHE_HOME: path.join(root, 'cache'),
+  };
+  fs.mkdirSync(env.HOME, { recursive: true });
+  const run = (command, args, dataName) => spawnSync(command, args, {
+    cwd: ROOT,
+    env: { ...env, XDG_DATA_HOME: path.join(root, dataName) },
+    encoding: 'utf8',
+    timeout: 90000,
+  });
+  const javascript = run(process.execPath, ['src/index.js', '--dump', page], 'js-data');
+  const crystal = run(path.join(ROOT, 'dist', 'tawb-crystal'), ['--dump', page], 'crystal-data');
+  assert.equal(javascript.status, 0, javascript.stderr);
+  assert.equal(crystal.status, 0, crystal.stderr);
+  assert.equal(crystal.stdout, javascript.stdout);
+  assert.equal(crystal.stdout, '[*Closed shadow action]\n');
+});
+
 test('the native dump includes an out-of-process iframe', { skip: !enabled }, async () => {
   const root = tempDir('tawb-crystal-cross-frame-');
   const childServer = http.createServer((_request, response) => {

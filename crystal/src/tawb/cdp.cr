@@ -4,9 +4,13 @@ require "./transport"
 
 module Tawb
   module Cdp
-    EXTRACT_AX = {{ read_file("#{__DIR__}/../../assets/extract_ax_items.js") }}
+    EXTRACT_AX            = {{ read_file("#{__DIR__}/../../assets/extract_ax_items.js") }}
+    EXTRACT_AX_WITH_PAIRS = EXTRACT_AX
+      .sub(/^\/\/[^\n]*\n/, "")
+      .sub(/\(\{layout:false\}\)\s*$/, "({layout:false,pairs:this})")
 
     record Target, id : String, web_socket_url : String
+    record ShadowPair, host_id : Int64, root_id : Int64, kind : String
 
     class Page
       getter target : Target
@@ -151,7 +155,101 @@ module Tawb
         if exception = result["exceptionDetails"]?
           raise IO::Error.new("accessibility extraction failed: #{exception.to_json}")
         end
-        result["result"].as_h["value"].as_a
+        items = result["result"].as_h["value"].as_a
+        needs_privileged = items.empty? || has_media_controls?(context_id, session_id)
+        return items unless needs_privileged
+        privileged_items(context_id, session_id) || items
+      end
+
+      private def has_media_controls?(context_id : Int64?, session_id : String?) : Bool
+        parameters = {
+          "expression"    => JSON::Any.new("!!document.querySelector('video[controls],audio[controls]')"),
+          "returnByValue" => JSON::Any.new(true),
+        }
+        parameters["contextId"] = JSON::Any.new(context_id) if context_id
+        response = command("Runtime.evaluate", parameters, session_id)
+        response.as_h["result"].as_h["result"].as_h["value"].as_bool
+      rescue
+        false
+      end
+
+      private def privileged_items(context_id : Int64?, session_id : String?) : Array(JSON::Any)?
+        document = command("DOM.getDocument", {
+          "depth"  => JSON::Any.new(-1_i64),
+          "pierce" => JSON::Any.new(true),
+        }, session_id).as_h["result"].as_h["root"]
+        pairs = [] of ShadowPair
+        collect_shadow_pairs(document, pairs)
+        return nil if pairs.empty?
+
+        basket_params = {
+          "expression" => JSON::Any.new("[]"),
+        }
+        basket_params["contextId"] = JSON::Any.new(context_id) if context_id
+        basket_result = command("Runtime.evaluate", basket_params, session_id)
+        basket = basket_result.as_h["result"].as_h["result"].as_h["objectId"].as_s
+        registered = 0
+        begin
+          pairs.each do |pair|
+            resolve_params = {"nodeId" => JSON::Any.new(pair.host_id)}
+            resolve_params["executionContextId"] = JSON::Any.new(context_id) if context_id
+            host = command("DOM.resolveNode", resolve_params, session_id)
+              .as_h["result"].as_h["object"].as_h["objectId"].as_s
+            resolve_params["nodeId"] = JSON::Any.new(pair.root_id)
+            root = command("DOM.resolveNode", resolve_params, session_id)
+              .as_h["result"].as_h["object"].as_h["objectId"].as_s
+            arguments = [
+              JSON::Any.new({"objectId" => JSON::Any.new(host)}),
+              JSON::Any.new({"objectId" => JSON::Any.new(root)}),
+              JSON::Any.new({"value" => JSON::Any.new(pair.kind)}),
+            ]
+            command("Runtime.callFunctionOn", {
+              "objectId"            => JSON::Any.new(basket),
+              "functionDeclaration" => JSON::Any.new("function (host, root, kind) { this.push([host, root, null, kind]); }"),
+              "arguments"           => JSON::Any.new(arguments),
+            }, session_id)
+            registered += 1
+          rescue
+            # A node can disappear between the pierced listing and resolve.
+          end
+          return nil if registered == 0
+          answer = command("Runtime.callFunctionOn", {
+            "objectId"            => JSON::Any.new(basket),
+            "functionDeclaration" => JSON::Any.new("function () { return #{EXTRACT_AX_WITH_PAIRS}; }"),
+            "returnByValue"       => JSON::Any.new(true),
+          }, session_id).as_h["result"].as_h
+          if exception = answer["exceptionDetails"]?
+            raise IO::Error.new("privileged accessibility extraction failed: #{exception.to_json}")
+          end
+          answer["result"].as_h["value"].as_a
+        ensure
+          command("Runtime.releaseObject", {"objectId" => JSON::Any.new(basket)}, session_id) rescue nil
+        end
+      rescue
+        # A privileged scan is an enhancement. Keep the complete ordinary
+        # extraction if the document navigated or a pierced node disappeared.
+        nil
+      end
+
+      private def collect_shadow_pairs(node : JSON::Any, pairs : Array(ShadowPair)) : Nil
+        object = node.as_h
+        host_id = object["nodeId"]?.try(&.as_i64?)
+        if host_id && (roots = object["shadowRoots"]?)
+          roots.as_a.each do |root|
+            root_object = root.as_h
+            kind = root_object["shadowRootType"]?.try(&.as_s?) || "closed"
+            if kind == "closed" || kind == "user-agent"
+              pairs << ShadowPair.new(host_id, root_object["nodeId"].as_i64, kind)
+            end
+            collect_shadow_pairs(root, pairs)
+          end
+        end
+        if content = object["contentDocument"]?
+          collect_shadow_pairs(content, pairs)
+        end
+        if children = object["children"]?
+          children.as_a.each { |child| collect_shadow_pairs(child, pairs) }
+        end
       end
 
       private def frame_ids(tree : JSON::Any) : Array(String)
