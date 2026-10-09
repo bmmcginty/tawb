@@ -2,6 +2,7 @@
 
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
+const { PassThrough } = require('node:stream');
 
 const binary = process.env.TAWB_CRYSTAL_BIN
   || path.join(__dirname, '..', 'dist', 'tawb-crystal');
@@ -227,6 +228,80 @@ function interfaceImplementations(javascript) {
     },
   });
   return implementations;
+}
+
+// A scripted pass over the KeyReader: chunks written at particular moments,
+// waits between them, claims taken and released, and the keys that came out.
+// The observations are the same shapes on both runtimes: a key, or null for
+// the end of the stream, and {value} or {key} for a nextOr race.
+function inputImplementations(input) {
+  const javascript = {
+    name: 'JavaScript',
+    async scenario(script) {
+      const stream = new PassThrough();
+      const reader = new input.KeyReader(stream, { escapeMs: script.escape_ms });
+      const tokens = new Map();
+      const parked = new Map();
+      const observations = [];
+      const tick = () => new Promise((resolve) => setImmediate(resolve));
+      const key = (pressed) => (pressed === input.EOF ? null : pressed);
+      const owner = (step) => (step.owner ? tokens.get(step.owner) : null);
+      for (const step of script.script) {
+        switch (step.op) {
+          case 'write':
+            stream.write(step.chunk);
+            await tick();
+            break;
+          case 'wait':
+            await new Promise((resolve) => setTimeout(resolve, step.ms));
+            break;
+          case 'end':
+            stream.end();
+            await tick();
+            break;
+          case 'close':
+            reader.close();
+            break;
+          case 'claim':
+            tokens.set(step.owner, reader.claim());
+            break;
+          case 'release':
+            reader.release(tokens.get(step.owner));
+            break;
+          case 'next':
+            observations.push(key(await reader.next(owner(step))));
+            break;
+          case 'park':
+            parked.set(step.id, { kind: 'key', promise: reader.next(owner(step)) });
+            break;
+          case 'next_or': {
+            const operation = step.resolve === undefined
+              ? new Promise(() => {})
+              : Promise.resolve(step.resolve);
+            parked.set(step.id, { kind: 'race', promise: reader.nextOr(operation, owner(step)) });
+            break;
+          }
+          case 'await': {
+            const parkedWait = parked.get(step.id);
+            const outcome = await parkedWait.promise;
+            observations.push(parkedWait.kind === 'race'
+              ? (Object.hasOwn(outcome, 'value') ? { value: outcome.value } : { key: key(outcome.key) })
+              : key(outcome));
+            break;
+          }
+          default:
+            throw new Error(`unknown input scenario op ${step.op}`);
+        }
+      }
+      reader.close();
+      return observations;
+    },
+  };
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return [javascript];
+  return [javascript, {
+    name: 'Crystal',
+    scenario(script) { return call('input.scenario', script); },
+  }];
 }
 
 function keymapImplementations(javascript) {
@@ -655,7 +730,7 @@ module.exports = {
   call, callAsync, addressImplementations, ariaImplementations, bidiImplementations,
   blockImplementations, dumpImplementations, endpointImplementations, firefoxAgentImplementations,
   firefoxAutomationImplementations, firefoxLaunchImplementations, firefoxPageImplementations,
-  interfaceImplementations, keymapImplementations, layoutImplementations,
+  inputImplementations, interfaceImplementations, keymapImplementations, layoutImplementations,
   lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, marionetteImplementations, optionImplementations,
   readerCommands, unicodeImplementations,

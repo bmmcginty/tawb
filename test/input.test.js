@@ -1,126 +1,176 @@
 'use strict';
 
+// The input reader, differenced between the JavaScript original and the
+// Crystal port: the same chunks written at the same moments, the same waits
+// between them, and the same keys must come out — combined keys separated,
+// split sequences joined, Escape told from Alt, claims honoured, and the end
+// of the stream delivered as a keystroke of its own.
+//
+// Each check runs one scenario script. The script steps are the things a
+// reader's callers do: write, wait, claim, park a wait for later, and ask
+// for the next key. An observation is a key, or null when the stream ended.
+
 const test = require('node:test');
 const assert = require('node:assert');
 const { PassThrough } = require('node:stream');
 
 const { KeyReader, EOF } = require('../src/input');
+const { inputImplementations } = require('./crystal_impl');
 
-test('the input reader separates combined keys and joins split sequences', async () => {
+for (const implementation of inputImplementations({ KeyReader, EOF })) {
+  const check = (name, fn) => test(`${implementation.name}: ${name}`, fn);
+
+  check('the input reader separates combined keys and joins split sequences', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 5,
+      script: [
+        { op: 'write', chunk: 'ab\x1b[' },
+        { op: 'next' },
+        { op: 'next' },
+        { op: 'write', chunk: '6~z\x1b[6^' },
+        { op: 'next' },
+        { op: 'next' },
+        { op: 'next' },
+        { op: 'close' },
+      ],
+    });
+    assert.deepEqual(observations, ['a', 'b', '\x1b[6~', 'z', '\x1b[6^'],
+      'older CSI final bytes are complete keys too');
+  });
+
+  check('an Alt key split by network scheduling stays one key', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 80,
+      script: [
+        { op: 'write', chunk: '\x1b' },
+        { op: 'wait', ms: 45 },
+        { op: 'write', chunk: 'k' },
+        { op: 'next' },
+        { op: 'close' },
+      ],
+    });
+    assert.deepEqual(observations, ['\x1bk']);
+  });
+
+  check('the input reader distinguishes Escape from Alt keys', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 5,
+      script: [
+        { op: 'write', chunk: '\x1b' },
+        { op: 'next' },
+        { op: 'write', chunk: '\x1ba' },
+        { op: 'next' },
+        { op: 'close' },
+      ],
+    });
+    assert.deepEqual(observations, ['\x1b', '\x1ba']);
+  });
+
+  check('a claim takes the keyboard from the reading loop and gives it back', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 5,
+      script: [
+        { op: 'park', id: 'loop' },
+        { op: 'write', chunk: 'j' },
+        { op: 'await', id: 'loop' },
+        { op: 'park', id: 'waiting' },
+        { op: 'claim', owner: 'prompt' },
+        { op: 'write', chunk: 'bob\r' },
+        { op: 'next', owner: 'prompt' },
+        { op: 'next', owner: 'prompt' },
+        { op: 'next', owner: 'prompt' },
+        { op: 'next', owner: 'prompt' },
+        { op: 'release', owner: 'prompt' },
+        { op: 'write', chunk: 'k' },
+        { op: 'await', id: 'waiting' },
+        { op: 'close' },
+      ],
+    });
+    assert.deepEqual(observations, ['j', 'b', 'o', 'b', '\r', 'k'],
+      'the loop resumes with the next key after the prompt');
+  });
+
+  check('a claim drops what was typed before the prompt appeared', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 5,
+      script: [
+        { op: 'write', chunk: 'gg' },
+        { op: 'claim', owner: 'prompt' },
+        { op: 'write', chunk: 'x' },
+        { op: 'next', owner: 'prompt' },
+        { op: 'close' },
+      ],
+    });
+    assert.deepEqual(observations, ['x']);
+  });
+
+  check('the end of the stream answers everyone still waiting for a key', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 5,
+      script: [
+        { op: 'park', id: 'loop' },
+        { op: 'claim', owner: 'prompt' },
+        { op: 'park', id: 'prompt', owner: 'prompt' },
+        { op: 'write', chunk: '\x1b' },
+        { op: 'end' },
+        { op: 'await', id: 'prompt' },
+        { op: 'next', owner: 'prompt' },
+        { op: 'await', id: 'loop' },
+        { op: 'next' },
+        { op: 'close' },
+      ],
+    });
+    assert.deepEqual(observations, ['\x1b', null, null, null],
+      'the Escape held back for the Alt test was still delivered, then the keyboard is gone for everyone');
+  });
+
+  check('an operation winning a key race does not steal the next key', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 5,
+      script: [
+        { op: 'next_or', id: 'race', resolve: 'loaded' },
+        { op: 'await', id: 'race' },
+        { op: 'write', chunk: 'j' },
+        { op: 'next' },
+        { op: 'close' },
+      ],
+    });
+    assert.deepEqual(observations, [{ value: 'loaded' }, 'j']);
+  });
+
+  check('a key can interrupt an operation', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 5,
+      script: [
+        { op: 'next_or', id: 'race' },
+        { op: 'write', chunk: 'x' },
+        { op: 'await', id: 'race' },
+        { op: 'close' },
+      ],
+    });
+    assert.deepEqual(observations, [{ key: 'x' }]);
+  });
+
+  check('a reader that has been closed answers rather than hanging', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 5,
+      script: [
+        { op: 'close' },
+        { op: 'next' },
+      ],
+    });
+    assert.deepEqual(observations, [null]);
+  });
+}
+
+// Pausing the stream is Node's own bookkeeping: the standalone keyboard
+// wizard removes its listener when it leaves, and a still-flowing stdin
+// would keep the event loop alive with nothing left that can consume input.
+// The Crystal reader has no event loop to keep alive, so there is nothing
+// to difference here.
+test('closing releases the input stream', () => {
   const stream = new PassThrough();
   const reader = new KeyReader(stream, { escapeMs: 5 });
-  stream.write('ab\x1b[');
-  assert.equal(await reader.next(), 'a');
-  assert.equal(await reader.next(), 'b');
-  stream.write('6~z\x1b[6^');
-  assert.equal(await reader.next(), '\x1b[6~');
-  assert.equal(await reader.next(), 'z');
-  assert.equal(await reader.next(), '\x1b[6^', 'older CSI final bytes are complete keys too');
   reader.close();
   assert.equal(stream.isPaused(), true, 'closing releases the input stream');
-});
-
-test('an Alt key split by network scheduling stays one key', async () => {
-  const stream = new PassThrough();
-  const reader = new KeyReader(stream);
-  stream.write('\x1b');
-  await new Promise((resolve) => setTimeout(resolve, 45));
-  stream.write('k');
-  assert.equal(await reader.next(), '\x1bk');
-  reader.close();
-});
-
-test('the input reader distinguishes Escape from Alt keys', async () => {
-  const stream = new PassThrough();
-  const reader = new KeyReader(stream, { escapeMs: 5 });
-  stream.write('\x1b');
-  assert.equal(await reader.next(), '\x1b');
-  stream.write('\x1ba');
-  assert.equal(await reader.next(), '\x1ba');
-  reader.close();
-});
-
-test('a claim takes the keyboard from the reading loop and gives it back', async () => {
-  const stream = new PassThrough();
-  const reader = new KeyReader(stream, { escapeMs: 5 });
-
-  // The loop is waiting for a key, as it always is between keystrokes.
-  let loopSaw = null;
-  const loop = reader.next().then((key) => { loopSaw = key; });
-
-  stream.write('j');
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(loopSaw, 'j');
-
-  const waiting = reader.next();
-  const token = reader.claim();
-  stream.write('bob\r');
-  const typed = [];
-  for (let i = 0; i < 4; i += 1) typed.push(await reader.next(token));
-  assert.deepEqual(typed, ['b', 'o', 'b', '\r']);
-
-  reader.release(token);
-  stream.write('k');
-  assert.equal(await waiting, 'k', 'the loop resumes with the next key after the prompt');
-  await loop;
-  reader.close();
-});
-
-test('a claim drops what was typed before the prompt appeared', async () => {
-  const stream = new PassThrough();
-  const reader = new KeyReader(stream, { escapeMs: 5 });
-  stream.write('gg');
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  const token = reader.claim();
-  stream.write('x');
-  assert.equal(await reader.next(token), 'x');
-  reader.close();
-});
-
-test('the end of the stream answers everyone still waiting for a key', async () => {
-  const stream = new PassThrough();
-  const reader = new KeyReader(stream, { escapeMs: 5 });
-
-  // A prompt holds the keyboard; the reading loop is parked behind it. Both
-  // are waiting on a keyboard that is about to stop existing.
-  const loop = reader.next();
-  const token = reader.claim();
-  const prompt = reader.next(token);
-
-  // A last real keystroke, then the stream ends under both of them.
-  stream.write('\x1b');
-  stream.end();
-
-  assert.equal(await prompt, '\x1b', 'the Escape held back for the Alt test was still delivered');
-  assert.equal(await reader.next(token), EOF, 'and then the keyboard is gone');
-  assert.equal(await loop, EOF, 'including for the loop parked behind the claim');
-  assert.equal(await reader.next(), EOF, 'asking again says the same thing rather than hanging');
-  reader.close();
-});
-
-test('an operation winning a key race does not steal the next key', async () => {
-  const stream = new PassThrough();
-  const reader = new KeyReader(stream, { escapeMs: 5 });
-  const outcome = await reader.nextOr(Promise.resolve('loaded'));
-  assert.deepEqual(outcome, { value: 'loaded' });
-
-  stream.write('j');
-  assert.equal(await reader.next(), 'j');
-  reader.close();
-});
-
-test('a key can interrupt an operation', async () => {
-  const stream = new PassThrough();
-  const reader = new KeyReader(stream, { escapeMs: 5 });
-  const waiting = reader.nextOr(new Promise(() => {}));
-  stream.write('x');
-  assert.deepEqual(await waiting, { key: 'x' });
-  reader.close();
-});
-
-test('a reader that has been closed answers rather than hanging', async () => {
-  const stream = new PassThrough();
-  const reader = new KeyReader(stream, { escapeMs: 5 });
-  reader.close();
-  assert.equal(await reader.next(), EOF);
 });

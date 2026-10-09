@@ -9,6 +9,7 @@ require "./endpoint"
 require "./firefox_agent"
 require "./firefox_driver"
 require "./firefox_launch"
+require "./input"
 require "./interfaces"
 require "./keys"
 require "./layout"
@@ -82,6 +83,120 @@ module Tawb
         unsupported: (object["unsupported"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s),
         preferences: preferences,
       )
+    end
+
+    # A scripted pass over the reader: chunks written at particular moments,
+    # waits between them, claims taken and released, and the keys that came
+    # out. The JavaScript original runs the same script against a PassThrough
+    # stream, so the two runtimes must answer with the same observations.
+    private def self.input_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      escape_ms = object["escape_ms"]?.try(&.as_i?) || 80
+      read_io, write_io = IO.pipe(true, true)
+      reader = Input::KeyReader.new(read_io, escape_ms: escape_ms)
+      tokens = {} of String => Input::Token
+      parked = {} of String => Channel(JSON::Any)
+      observations = [] of JSON::Any
+      # Long enough for a written chunk to reach the parser fiber and be
+      # parsed, short enough to stay inside the Alt window of every script
+      # that leans on it.
+      settle = 15.milliseconds
+      owner_of = ->(step : Hash(String, JSON::Any)) : Input::Token? do
+        name = step["owner"]?.try(&.as_s?)
+        name ? tokens[name] : nil
+      end
+      object["script"].as_a.each do |step_value|
+        step = step_value.as_h
+        case step["op"].as_s
+        when "write"
+          write_io.write(step["chunk"].as_s.to_slice)
+          sleep settle
+        when "wait"
+          sleep step["ms"].as_i.milliseconds
+        when "end"
+          write_io.close
+          sleep settle
+        when "close"
+          reader.close
+        when "claim"
+          tokens[step["owner"].as_s] = reader.claim
+        when "release"
+          reader.release(tokens[step["owner"].as_s])
+        when "next"
+          observations.push(key_json(reader.next(owner_of.call(step))))
+        when "park"
+          done = Channel(JSON::Any).new(1)
+          parked[step["id"].as_s] = done
+          owner = owner_of.call(step)
+          spawn do
+            done.send(key_json(reader.next(owner)))
+          end
+        when "next_or"
+          done = Channel(JSON::Any).new(1)
+          parked[step["id"].as_s] = done
+          owner = owner_of.call(step)
+          operations = Channel(String).new
+          if (resolve = step["resolve"]?.try(&.as_s?))
+            delay = step["resolve_ms"]?.try(&.as_i?) || 0
+            spawn do
+              sleep delay.milliseconds if delay > 0
+              operations.send(resolve)
+            end
+          end
+          spawn do
+            done.send(outcome_json(reader.next_or(operations, owner)))
+          end
+        when "await"
+          observations.push(parked[step["id"].as_s].receive)
+        else
+          raise ArgumentError.new("unknown input scenario op #{step["op"]}")
+        end
+      end
+      reader.close
+      JSON::Any.new(observations)
+    end
+
+    private def self.key_json(key : Input::Key) : JSON::Any
+      key.is_a?(Input::Eof) ? JSON::Any.new(nil) : JSON::Any.new(key)
+    end
+
+    private def self.outcome_json(outcome : Input::OperationResult(String) | Input::KeyResult) : JSON::Any
+      if outcome.is_a?(Input::KeyResult)
+        JSON::Any.new({"key" => key_json(outcome.key)})
+      else
+        JSON::Any.new({"value" => JSON::Any.new(outcome.value)})
+      end
+    end
+
+    # Whether the reader can take the terminal raw here, and does: the flags
+    # while raw is held are reported, then the saved discipline is restored
+    # and compared with what was read at the start. Run under a pty (the test
+    # uses `script`) this exercises the termios round trip end to end.
+    private def self.input_raw_probe : JSON::Any
+      fd = STDIN.fd
+      unless LibC.isatty(fd) == 1
+        return JSON::Any.new({"tty" => JSON::Any.new(false)})
+      end
+      before = LibC::Termios.new
+      raise "tcgetattr failed" unless LibC.tcgetattr(fd, pointerof(before)) == 0
+      state = Input.grab_raw(fd)
+      raise "grab_raw returned nothing" unless state
+      raw = LibC::Termios.new
+      raise "tcgetattr failed" unless LibC.tcgetattr(fd, pointerof(raw)) == 0
+      restore_ok = Input.restore_raw(fd, state.not_nil!)
+      after = LibC::Termios.new
+      raise "tcgetattr failed" unless LibC.tcgetattr(fd, pointerof(after)) == 0
+      JSON::Any.new({
+        "tty" => JSON::Any.new(true),
+        "raw" => JSON::Any.new({
+          "icanon" => JSON::Any.new((raw.c_lflag & LibC::ICANON) != 0),
+          "echo"   => JSON::Any.new((raw.c_lflag & LibC::ECHO) != 0),
+          "isig"   => JSON::Any.new((raw.c_lflag & LibC::ISIG) != 0),
+          "opost"  => JSON::Any.new((raw.c_oflag & LibC::OPOST) != 0),
+        }),
+        "restored"   => JSON::Any.new(after == before),
+        "restore_ok" => JSON::Any.new(restore_ok),
+      })
     end
 
     private def self.string_labels(labels : NamedTuple) : JSON::Any
@@ -292,6 +407,10 @@ module Tawb
           object["interface"]?.try(&.as_s?) || "default",
           object["show_cursor"]?.try(&.as_bool?)
         ))
+      when "input.scenario"
+        input_scenario(payload)
+      when "input.raw_probe"
+        input_raw_probe
       when "keys.actions_for"
         JSON::Any.new(Keys.actions_for(payload.as_h["profile"].as_s).map do |action|
           JSON::Any.new({
