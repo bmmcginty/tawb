@@ -16,6 +16,7 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
   const page = path.join(root, 'page.html');
   fs.writeFileSync(page, `<!doctype html><html><body>
     <h1>Heading</h1><p>Hello <a href="https://example.test/">Docs</a> after</p>
+    <iframe title="Details" srcdoc="<h2>Inside</h2><p>Child words</p>"></iframe>
     <button>Save</button></body></html>`);
 
   const baseEnv = {
@@ -39,7 +40,7 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
   assert.equal(crystal.status, 0, crystal.stderr);
   assert.equal(crystal.stderr, '');
   assert.equal(crystal.stdout, javascript.stdout);
-  assert.equal(crystal.stdout, '# Heading\nHello\n{Docs}\nafter\n[*Save]\n');
+  assert.equal(crystal.stdout, '# Heading\nHello\n{Docs}\nafter\n<frame: Details>\n## Inside\nChild words\n[*Save]\n');
 
   const firefox = run(path.join(ROOT, 'dist', 'tawb-crystal'), [
     '--dump', '--browser', 'firefox', page,

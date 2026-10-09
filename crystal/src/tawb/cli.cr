@@ -2,6 +2,7 @@ require "./blocks"
 require "./browser"
 require "./cdp"
 require "./dump"
+require "./frames"
 require "./options"
 
 module Tawb
@@ -75,7 +76,8 @@ module Tawb
       begin
         page = Cdp::Page.new(session.endpoint)
         page.navigate(target)
-        blocks = Blocks.build(page.accessibility_items)
+        tree, documents = page.accessibility_documents
+        blocks = Frames.build(tree, documents)
         STDOUT << Dump.format_ax_blocks(blocks, options["escapeUnicode"].as_bool)
       ensure
         if current_page = page
