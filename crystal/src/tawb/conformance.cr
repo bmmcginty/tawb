@@ -3,6 +3,7 @@ require "./address"
 require "./aria"
 require "./blocks"
 require "./dump"
+require "./layout"
 require "./lynx_display"
 require "./lynx_number"
 require "./options"
@@ -56,6 +57,17 @@ module Tawb
         JSON::Any.new(Dump.format_ax_blocks(
           object["blocks"].as_a, object["escape_unicode"]?.try(&.as_bool?) || false
         ))
+      when "layout.wrap_with_offsets"
+        object = payload.as_h
+        JSON::Any.new(Layout.wrap_with_offsets(object["text"].as_s, object["width"].as_i))
+      when "layout.spans_within"
+        object = payload.as_h
+        JSON::Any.new(Layout.spans_within(
+          object["spans"].as_a, object["start"].as_i64, object["end"].as_i64
+        ))
+      when "layout.lines"
+        object = payload.as_h
+        JSON::Any.new(Layout.lines(object["blocks"].as_a, object["width"].as_i))
       when "lynx_display.render_item"
         object = payload.as_h
         JSON::Any.new(LynxDisplay.render_item(
