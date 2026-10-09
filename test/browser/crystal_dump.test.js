@@ -78,12 +78,52 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
   assert.match(crystalLynx.stdout, /^\s+Heading/m);
   assert.match(crystalLynx.stdout, /^\s+Hello \[1\]Docs after/m);
   assert.match(crystalLynx.stdout, /^\s+\[2\]Save/m);
+});
 
-  const firefox = run(path.join(ROOT, 'dist', 'tawb-crystal'), [
+test('the native Firefox dump matches JavaScript on a real Firefox page', { skip: !enabled }, () => {
+  const root = tempDir('tawb-crystal-firefox-dump-');
+  const page = path.join(root, 'page.html');
+  fs.writeFileSync(page, `<!doctype html><html><body>
+    <h1>Heading</h1><p>Hello <a href="https://example.test/">Docs</a> after</p>
+    <iframe title="Details" srcdoc="<h2>Inside</h2><p>Child words</p>"></iframe>
+    <button>Save</button></body></html>`);
+
+  const baseEnv = {
+    ...process.env,
+    HOME: path.join(root, 'home'),
+    XDG_CONFIG_HOME: path.join(root, 'config'),
+    XDG_CACHE_HOME: path.join(root, 'cache'),
+  };
+  fs.mkdirSync(baseEnv.HOME, { recursive: true });
+  const run = (command, args, dataName) => spawnSync(command, args, {
+    cwd: ROOT,
+    env: { ...baseEnv, XDG_DATA_HOME: path.join(root, dataName) },
+    encoding: 'utf8',
+    timeout: 120000,
+  });
+
+  const javascript = run(process.execPath, [
+    'src/index.js', '--dump', '--browser', 'firefox', page,
+  ], 'js-data');
+  const crystal = run(path.join(ROOT, 'dist', 'tawb-crystal'), [
     '--dump', '--browser', 'firefox', page,
-  ], 'crystal-firefox-data');
-  assert.equal(firefox.status, 1);
-  assert.match(firefox.stderr, /native Firefox dump is not ported/);
+  ], 'crystal-data');
+  assert.equal(javascript.status, 0, javascript.stderr);
+  assert.equal(crystal.status, 0, crystal.stderr);
+  assert.equal(crystal.stderr, '');
+  assert.equal(crystal.stdout, javascript.stdout);
+  assert.equal(crystal.stdout,
+    '# Heading\nHello\n{Docs}\nafter\n<frame: Details>\n## Inside\nChild words\n[*Save]\n');
+
+  const javascriptLynx = run(process.execPath, [
+    'src/index.js', '--front-end', 'lynx', '--dump', '--browser', 'firefox', page,
+  ], 'js-lynx-data');
+  const crystalLynx = run(path.join(ROOT, 'dist', 'tawb-crystal'), [
+    '--front-end', 'lynx', '--dump', '--browser', 'firefox', page,
+  ], 'crystal-lynx-data');
+  assert.equal(javascriptLynx.status, 0, javascriptLynx.stderr);
+  assert.equal(crystalLynx.status, 0, crystalLynx.stderr);
+  assert.equal(crystalLynx.stdout, javascriptLynx.stdout);
 });
 
 test('the native dump reads a closed shadow root through CDP', { skip: !enabled }, () => {
