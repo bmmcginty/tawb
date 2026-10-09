@@ -229,6 +229,93 @@ function interfaceImplementations(javascript) {
   return implementations;
 }
 
+function keymapImplementations(javascript) {
+  const build = (spec) => new javascript.Keymap({
+    terminfo: spec.terminfo ?? null,
+    profile: spec.profile,
+    file: spec.file ?? undefined,
+    load: spec.load ?? true,
+    bindings: spec.bindings ?? {},
+    unsupported: spec.unsupported ?? [],
+    preferences: spec.preferences ?? {},
+  });
+  const actions = (keys) => keys.actions.map((action) => ({
+    id: action.id, label: action.label, defaults: action.defaults, bindings: action.bindings,
+  }));
+  const implementations = [{
+    name: 'JavaScript',
+    actionsFor: (profile) => javascript.actionsFor(profile).map((action) => ({
+      id: action.id, label: action.label, defaults: action.defaults,
+    })),
+    configPath: (xdgConfigHome, home, profile) => javascript.configPath(
+      xdgConfigHome === undefined ? process.env : { XDG_CONFIG_HOME: xdgConfigHome }, home, profile),
+    readTerminfo: (term) => javascript.readTerminfo({
+      env: term === undefined ? process.env : { ...process.env, TERM: term },
+    }),
+    snapshot(spec) {
+      const keys = build(spec);
+      return {
+        profile: keys.profile, file: keys.file, terminfo: keys.terminfo,
+        actions: actions(keys),
+        function_names: Object.fromEntries(keys.functionNames),
+        unsupported: keys.unsupported, preferences: keys.preferences, labels: keys.labels,
+      };
+    },
+    actionFor: (spec, chunk) => build(spec).actionFor(chunk),
+    editingActionFor: (spec, chunk) => build(spec).editingActionFor(chunk),
+    nameForSequence: (spec, sequence) => build(spec).nameForSequence(sequence),
+    sequencesFor: (spec, binding) => build(spec).sequencesFor(binding),
+    isKey: (spec, sequence, name) => build(spec).isKey(sequence, name),
+    conflicts: (spec, id, binding) => build(spec).conflicts(id, binding).map((action) => action.id),
+    assign(spec, id, sequence, add) {
+      const keys = build(spec);
+      const result = keys.assign(id, sequence, { add: !!add });
+      return result && {
+        binding: result.binding,
+        displaced: result.displaced ? result.displaced.id : null,
+        actions: actions(keys),
+      };
+    },
+    unbind(spec, id) {
+      const keys = build(spec);
+      keys.unbind(id);
+      return { actions: actions(keys) };
+    },
+    reset(spec) {
+      const keys = build(spec);
+      keys.reset();
+      return { actions: actions(keys) };
+    },
+    save(spec) {
+      build(spec).save();
+      return true;
+    },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    actionsFor(profile) { return call('keys.actions_for', { profile }); },
+    configPath(xdgConfigHome, home, profile) {
+      return call('keys.config_path', { xdg_config_home: xdgConfigHome ?? null, home, profile });
+    },
+    readTerminfo(term) { return callAsync('keys.read_terminfo', { term: term ?? null }); },
+    snapshot(spec) { return call('keys.snapshot', spec); },
+    actionFor(spec, chunk) { return call('keys.action_for', { ...spec, chunk }); },
+    editingActionFor(spec, chunk) { return call('keys.editing_action_for', { ...spec, chunk }); },
+    nameForSequence(spec, sequence) { return call('keys.name_for_sequence', { ...spec, sequence }); },
+    sequencesFor(spec, binding) { return call('keys.sequences_for', { ...spec, spec: binding }); },
+    isKey(spec, sequence, name) { return call('keys.is_key', { ...spec, sequence, name }); },
+    conflicts(spec, id, binding) { return call('keys.conflicts', { ...spec, id, spec: binding }); },
+    assign(spec, id, sequence, add) {
+      return call('keys.assign', { ...spec, id, sequence, add: !!add });
+    },
+    unbind(spec, id) { return call('keys.unbind', { ...spec, id }); },
+    reset(spec) { return call('keys.reset', spec); },
+    save(spec) { return call('keys.save', spec); },
+  });
+  return implementations;
+}
+
 function lynxKeymapImplementations(javascript) {
   const implementations = [{
     name: 'JavaScript',
@@ -568,7 +655,8 @@ module.exports = {
   call, callAsync, addressImplementations, ariaImplementations, bidiImplementations,
   blockImplementations, dumpImplementations, endpointImplementations, firefoxAgentImplementations,
   firefoxAutomationImplementations, firefoxLaunchImplementations, firefoxPageImplementations,
-  interfaceImplementations, layoutImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
+  interfaceImplementations, keymapImplementations, layoutImplementations,
+  lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, marionetteImplementations, optionImplementations,
   readerCommands, unicodeImplementations,
 };

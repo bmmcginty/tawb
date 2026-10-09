@@ -10,6 +10,7 @@ require "./firefox_agent"
 require "./firefox_driver"
 require "./firefox_launch"
 require "./interfaces"
+require "./keys"
 require "./layout"
 require "./lynx_config"
 require "./lynx_display"
@@ -41,6 +42,46 @@ module Tawb
       built = {} of String => JSON::Any
       table.each { |key, value| built[key] = JSON::Any.new(value) }
       JSON::Any.new(built)
+    end
+
+    private def self.actions_json(actions : Array(Keys::Action)) : JSON::Any
+      JSON::Any.new(actions.map do |action|
+        JSON::Any.new({
+          "id"       => JSON::Any.new(action.id),
+          "label"    => JSON::Any.new(action.label),
+          "defaults" => JSON::Any.new(action.defaults.map { |binding| JSON::Any.new(binding) }),
+          "bindings" => JSON::Any.new(action.bindings.map { |binding| JSON::Any.new(binding) }),
+        })
+      end)
+    end
+
+    private def self.build_keymap(payload : JSON::Any) : Keys::Keymap
+      object = payload.as_h
+      bindings = {} of String => Array(String)
+      object["bindings"]?.try(&.as_h?).try do |given|
+        given.each do |id, list|
+          bindings[id] = list.as_a.map(&.as_s)
+        end
+      end
+      preferences = {} of String => JSON::Any
+      object["preferences"]?.try(&.as_h?).try do |given|
+        given.each { |key, value| preferences[key] = value }
+      end
+      terminfo = nil
+      object["terminfo"]?.try(&.as_h?).try do |given|
+        map = {} of String => String
+        given.each { |name, sequence| map[name] = sequence.as_s }
+        terminfo = map
+      end
+      Keys::Keymap.new(
+        terminfo: terminfo,
+        profile: object["profile"]?.try(&.as_s?) || "default",
+        file: object["file"]?.try(&.as_s?),
+        read_file: object["load"]?.try(&.as_bool?) != false,
+        bindings: bindings,
+        unsupported: (object["unsupported"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s),
+        preferences: preferences,
+      )
     end
 
     private def self.string_labels(labels : NamedTuple) : JSON::Any
@@ -251,6 +292,83 @@ module Tawb
           object["interface"]?.try(&.as_s?) || "default",
           object["show_cursor"]?.try(&.as_bool?)
         ))
+      when "keys.actions_for"
+        JSON::Any.new(Keys.actions_for(payload.as_h["profile"].as_s).map do |action|
+          JSON::Any.new({
+            "id"       => JSON::Any.new(action[:id]),
+            "label"    => JSON::Any.new(action[:label]),
+            "defaults" => JSON::Any.new(action[:defaults].map { |binding| JSON::Any.new(binding) }),
+          })
+        end)
+      when "keys.config_path"
+        object = payload.as_h
+        JSON::Any.new(Keys.config_path(
+          object["xdg_config_home"]?.try(&.as_s?),
+          object["home"]?.try(&.as_s?) || Path.home.to_s,
+          object["profile"]?.try(&.as_s?) || "default"
+        ))
+      when "keys.read_terminfo"
+        table = Keys.read_terminfo(term: payload.as_h["term"]?.try(&.as_s?))
+        table_json = {} of String => JSON::Any
+        table.each { |name, sequence| table_json[name] = JSON::Any.new(sequence) }
+        JSON::Any.new(table_json)
+      when "keys.snapshot"
+        keys = build_keymap(payload)
+        JSON::Any.new({
+          "profile"        => JSON::Any.new(keys.profile),
+          "file"           => JSON::Any.new(keys.file),
+          "terminfo"       => string_table(keys.terminfo),
+          "actions"        => actions_json(keys.actions),
+          "function_names" => string_table(keys.function_names),
+          "unsupported"    => JSON::Any.new(keys.unsupported.map { |name| JSON::Any.new(name) }),
+          "preferences"    => JSON::Any.new(keys.preferences),
+          "labels"         => string_table(keys.labels),
+        })
+      when "keys.action_for"
+        found = build_keymap(payload).action_for(payload.as_h["chunk"].as_s)
+        found ? JSON::Any.new(found) : JSON::Any.new(nil)
+      when "keys.editing_action_for"
+        found = build_keymap(payload).editing_action_for(payload.as_h["chunk"].as_s)
+        found ? JSON::Any.new(found) : JSON::Any.new(nil)
+      when "keys.name_for_sequence"
+        JSON::Any.new(build_keymap(payload).name_for_sequence(payload.as_h["sequence"].as_s))
+      when "keys.sequences_for"
+        JSON::Any.new(build_keymap(payload).sequences_for(payload.as_h["spec"].as_s).map { |sequence| JSON::Any.new(sequence) })
+      when "keys.is_key"
+        object = payload.as_h
+        JSON::Any.new(build_keymap(payload).is_key(object["sequence"].as_s, object["name"].as_s))
+      when "keys.conflicts"
+        JSON::Any.new(build_keymap(payload).conflicts(
+          payload.as_h["id"].as_s, payload.as_h["spec"].as_s
+        ).map(&.id).map { |id| JSON::Any.new(id) })
+      when "keys.assign"
+        object = payload.as_h
+        keys = build_keymap(payload)
+        result = keys.assign(
+          object["id"].as_s, object["sequence"].as_s,
+          object["add"]?.try(&.as_bool?) == true
+        )
+        if result
+          JSON::Any.new({
+            "binding"   => JSON::Any.new(result[:binding]),
+            "displaced" => result[:displaced] ? JSON::Any.new(result[:displaced].not_nil!.id) : JSON::Any.new(nil),
+            "actions"   => actions_json(keys.actions),
+          })
+        else
+          JSON::Any.new(nil)
+        end
+      when "keys.unbind"
+        object = payload.as_h
+        keys = build_keymap(payload)
+        keys.unbind(object["id"].as_s)
+        JSON::Any.new({"actions" => actions_json(keys.actions)})
+      when "keys.reset"
+        keys = build_keymap(payload)
+        keys.reset
+        JSON::Any.new({"actions" => actions_json(keys.actions)})
+      when "keys.save"
+        build_keymap(payload).save
+        JSON::Any.new(true)
       when "lynx_keymap.table"
         string_table(LynxKeymap::FUNCTION_ACTIONS)
       when "lynx_keymap.action_names"
