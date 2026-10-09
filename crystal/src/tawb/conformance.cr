@@ -4,6 +4,7 @@ require "./aria"
 require "./blocks"
 require "./bidi"
 require "./core"
+require "./edit"
 require "./remap"
 require "./broker"
 require "./dump"
@@ -293,6 +294,30 @@ module Tawb
           "index" => JSON::Any.new(remapped.index.to_i64),
           "exact" => JSON::Any.new(remapped.exact),
         })
+      when "edit.action"
+        object = payload.as_h
+        found = Edit.edit_action(object["key"].as_s, build_keymap(payload))
+        found ? JSON::Any.new(found) : JSON::Any.new(nil)
+      when "edit.apply"
+        object = payload.as_h
+        buffer = Edit::Buffer.new(object["text"].as_s, object["caret"].as_i)
+        applied = Edit.apply_buffer_edit(buffer, object["action"].as_s)
+        JSON::Any.new({
+          "ok"    => JSON::Any.new(applied),
+          "text"  => JSON::Any.new(buffer.text),
+          "caret" => JSON::Any.new(buffer.caret.to_i64),
+        })
+      when "edit.word_start"
+        object = payload.as_h
+        JSON::Any.new(Edit.word_start(object["text"].as_s, object["caret"].as_i).to_i64)
+      when "edit.word_end"
+        object = payload.as_h
+        JSON::Any.new(Edit.word_end(object["text"].as_s, object["caret"].as_i).to_i64)
+      when "edit.keys_for"
+        pressed = [] of JSON::Any
+        sent = Edit.send_field_edit(->(key : String) { pressed << JSON::Any.new(key); nil },
+          payload.as_h["action"].as_s)
+        sent ? JSON::Any.new(pressed) : JSON::Any.new(nil)
       when "dump.resolve_target"
         object = payload.as_h
         existing = object["existing"].as_a.map(&.as_s).to_set

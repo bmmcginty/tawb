@@ -625,6 +625,42 @@ function lynxKeymapImplementations(javascript) {
   return implementations;
 }
 
+// The field-editing buffer, differenced between the JavaScript original and
+// the Crystal port: the same keymap answers, the same buffer edits, and the
+// same key sequences sent into a real field.
+function editImplementations(edit, keys) {
+  const build = (spec) => new keys.Keymap({ terminfo: {}, profile: 'default', load: false, ...spec });
+  const implementations = [{
+    name: 'JavaScript',
+    actionFor: (spec, key) => edit.editAction(key, build(spec)),
+    apply: (buffer, action) => {
+      const edited = { text: buffer.text, caret: buffer.caret };
+      const ok = edit.applyBufferEdit(edited, action);
+      return { ok, text: edited.text, caret: edited.caret };
+    },
+    wordStart: (text, caret) => edit.wordStart(text, caret),
+    wordEnd: (text, caret) => edit.wordEnd(text, caret),
+    keysFor: async (action) => {
+      const pressed = [];
+      const sent = await edit.sendFieldEdit(
+        { press: async (key) => { pressed.push(key); } }, action);
+      return sent ? pressed : null;
+    },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    actionFor(spec, key) { return call('edit.action', { key, ...spec }); },
+    apply(buffer, action) {
+      return call('edit.apply', { text: buffer.text, caret: buffer.caret, action });
+    },
+    wordStart(text, caret) { return call('edit.word_start', { text, caret }); },
+    wordEnd(text, caret) { return call('edit.word_end', { text, caret }); },
+    keysFor(action) { return call('edit.keys_for', { action }); },
+  });
+  return implementations;
+}
+
 function endpointImplementations(javascript) {
   const implementations = [{
     name: 'JavaScript',
@@ -941,7 +977,8 @@ function unicodeImplementations(javascript) {
 
 module.exports = {
   call, callAsync, addressImplementations, ariaImplementations, bidiImplementations,
-  blockImplementations, coreImplementations, dumpImplementations, endpointImplementations,
+  blockImplementations, coreImplementations, dumpImplementations, editImplementations,
+  endpointImplementations,
   firefoxAgentImplementations,
   firefoxAutomationImplementations, firefoxLaunchImplementations, firefoxPageImplementations,
   inputImplementations, interfaceImplementations, keymapImplementations, layoutImplementations,
