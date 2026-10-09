@@ -3,6 +3,7 @@ require "./address"
 require "./aria"
 require "./blocks"
 require "./dump"
+require "./lynx_display"
 require "./lynx_number"
 require "./options"
 require "./transport"
@@ -55,6 +56,23 @@ module Tawb
         JSON::Any.new(Dump.format_ax_blocks(
           object["blocks"].as_a, object["escape_unicode"]?.try(&.as_bool?) || false
         ))
+      when "lynx_display.render_item"
+        object = payload.as_h
+        JSON::Any.new(LynxDisplay.render_item(
+          object["item"]?, object["fallback"]?.try(&.as_s?) || "",
+          object["escape_unicode"]?.try(&.as_bool?) || false
+        ))
+      when "lynx_display.render_block"
+        object = payload.as_h
+        LynxDisplay.render_block(object["block"], object["escape_unicode"]?.try(&.as_bool?) || false)
+      when "lynx_display.number_blocks"
+        object = payload.as_h
+        JSON::Any.new(LynxDisplay.number_blocks(object["blocks"].as_a, object["preferences"].as_h))
+      when "lynx_display.row_text"
+        object = payload.as_h
+        line = object["line"]?
+        line = nil if line.try(&.raw.nil?)
+        JSON::Any.new(LynxDisplay.row_text(line, object["text"].as_s))
       when "lynx_number.parse"
         parsed = LynxNumber.parse(payload.as_h["text"].as_s)
         parsed ? JSON::Any.new(parsed) : JSON::Any.new(nil)

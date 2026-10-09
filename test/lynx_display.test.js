@@ -14,22 +14,27 @@ const {
   parkCursor, parseLynxNumberExpression, relativeLinkNumber, relayout, renderRow, typingText,
 } = require('../src/index');
 const { Keymap } = require('../src/keys');
+const { lynxDisplayImplementations } = require('./crystal_impl');
 
 function item(role, name, extra = {}) { return { role, name, ...extra }; }
 
-test('a plain Lynx row is the margin and the marker around its text', () => {
-  // The full-screen renderer and the dump both compose a row this way; only
-  // the former adds reverse video or bold on top.
-  assert.equal(
-    lynxRowText({ displayIndent: 3, displayPrefix: '[1]', displaySuffix: '' }, 'Docs'),
-    '   [1]Docs',
-  );
-  assert.equal(
-    lynxRowText({ displayIndent: 0, displayPrefix: '', displaySuffix: '[2]' }, 'Pay'),
-    'Pay[2]',
-  );
-  assert.equal(lynxRowText(null, 'bare'), 'bare');
-  // A row the cursor is not on is that same text, unstyled.
+for (const implementation of lynxDisplayImplementations({ lynxRowText })) {
+  test(`${implementation.name}: a plain Lynx row composes its margin and marker`, () => {
+    assert.equal(
+      implementation.lynxRowText(
+        { displayIndent: 3, displayPrefix: '[1]', displaySuffix: '' }, 'Docs'),
+      '   [1]Docs',
+    );
+    assert.equal(
+      implementation.lynxRowText(
+        { displayIndent: 0, displayPrefix: '', displaySuffix: '[2]' }, 'Pay'),
+      'Pay[2]',
+    );
+    assert.equal(implementation.lynxRowText(null, 'bare'), 'bare');
+  });
+}
+
+test('an unselected Lynx row is the same plain composed text', () => {
   const line = { displayIndent: 2, displayPrefix: '', displaySuffix: '', blockIndex: 0 };
   assert.equal(
     renderLynxRow({ text: 'plain', line, selected: null, current: null, blocks: [{}] }),
@@ -79,75 +84,88 @@ test('the Lynx browse hint uses Lynx wording', () => {
     "Commands: Use arrow keys to move, '?' for help, 'q' to quit, '<-' to go back.");
 });
 
-test('the Lynx renderer uses Lynx form markers', () => {
-  assert.equal(renderLynxItem(item('link', 'News')), 'News');
-  assert.equal(renderLynxItem(item('button', 'Submit')), 'Submit');
-  assert.equal(renderLynxItem(item('checkbox', 'Updates', { checked: false })), '[ ] Updates');
-  assert.equal(renderLynxItem(item('checkbox', 'Updates', { checked: true })), '[X] Updates');
-  assert.equal(renderLynxItem(item('checkbox', 'Updates', { checked: 'mixed' })), '[-] Updates');
-  assert.equal(renderLynxItem(item('radio', 'Weekly', { checked: false })), '( ) Weekly');
-  assert.equal(renderLynxItem(item('radio', 'Weekly', { checked: true })), '(*) Weekly');
-  assert.equal(
-    renderLynxItem(item('textbox', 'Search', { value: 'lynx' })),
-    `Search lynx${'_'.repeat(16)}`,
-  );
-  assert.equal(renderLynxItem(item('combobox', 'Country', { value: 'Canada' })),
-    'Country [Canada]');
-  assert.equal(renderLynxItem(item('img', 'Map')), 'Map');
-  assert.equal(renderLynxItem(item('img', '')), '[IMAGE]');
-  assert.equal(renderLynxItem(item('iframe', 'about:blank')), 'IFRAME: about:blank');
-  assert.equal(renderLynxItem(item('iframe', '')), 'IFRAME:');
-  // The remaining interactive roles use the marker family that matches how
-  // they are operated: toggled in place, chosen, or typed into.
-  assert.equal(renderLynxItem(item('switch', 'Night mode', { checked: true })), '[X] Night mode');
-  assert.equal(renderLynxItem(item('menuitemcheckbox', 'Bold', { checked: 'mixed' })), '[-] Bold');
-  assert.equal(renderLynxItem(item('menuitemradio', 'Blue', { checked: true })), '(*) Blue');
-  assert.equal(renderLynxItem(item('option', 'France')), 'France');
-  assert.equal(renderLynxItem(item('listbox', 'Country', { value: 'Canada' })),
-    'Country [Canada]');
-  assert.equal(renderLynxItem(item('listbox', 'Country', {})),
-    'Country [Country]');
-  assert.equal(renderLynxItem(item('searchbox', 'Query', { value: 'lynx' })),
-    `Query lynx${'_'.repeat(16)}`);
-  assert.equal(renderLynxItem(item('slider', 'Volume', { value: '7' })), 'Volume [7]');
-  assert.equal(renderLynxItem(item('spinbutton', 'Seats', {})), 'Seats [0]');
-  assert.equal(renderLynxItem(item('video', 'playing, 0:01 of 3:00')),
-    '[playing, 0:01 of 3:00]');
-  assert.equal(renderLynxItem(item('audio', '')), '[audio]');
-  assert.equal(renderLynxItem(item('group', 'Group')), 'Group');
-  assert.equal(renderLynxItem(undefined, 'fallback'), 'fallback');
-});
-
-test('Lynx numbering follows the links, fields, and both keypad modes', () => {
-  const blocks = [
-    { text: 'News', item: item('link', 'News') },
-    { text: 'Go', item: item('button', 'Go') },
-    { text: '[ ] Updates', item: item('checkbox', 'Updates', { checked: false }) },
-    { text: 'Search', item: item('textbox', 'Search') },
-    { text: 'France', item: item('option', 'France') },
-  ];
-  const numbers = (preferences) => numberLynxBlocks(blocks, preferences)
-    .map((block) => block.displayNumber);
-
-  // Numbers as arrows: nothing is numbered at all.
-  assert.deepEqual(numbers({ numberLinks: false, numberFields: false }),
-    [undefined, undefined, undefined, undefined, undefined]);
-  assert.deepEqual(numbers({ numberLinks: true, numberFields: false }),
-    [1, undefined, undefined, undefined, undefined]);
-  assert.deepEqual(numbers({ numberLinks: false, numberFields: true }),
-    [undefined, 1, 2, 3, undefined]);
-  assert.deepEqual(numbers({ numberLinks: true, numberFields: true }),
-    [1, 2, 3, 4, undefined], 'an option is part of a select, not a control of its own');
-
-  // Fields on the right put the marker after the control, like Lynx's
-  // NUMBER_FIELDS_ON_LEFT=FALSE.
-  const right = numberLynxBlocks(blocks, {
-    numberLinks: false, numberFields: true, numberFieldsOnLeft: false,
+for (const implementation of lynxDisplayImplementations({
+  renderLynxItem, renderLynxBlock, numberLynxBlocks, lynxRowText,
+})) {
+  test(`${implementation.name}: the Lynx renderer uses Lynx form markers`, () => {
+    const render = implementation.renderLynxItem;
+    assert.equal(render(item('link', 'News')), 'News');
+    assert.equal(render(item('button', 'Submit')), 'Submit');
+    assert.equal(render(item('checkbox', 'Updates', { checked: false })), '[ ] Updates');
+    assert.equal(render(item('checkbox', 'Updates', { checked: true })), '[X] Updates');
+    assert.equal(render(item('checkbox', 'Updates', { checked: 'mixed' })), '[-] Updates');
+    assert.equal(render(item('radio', 'Weekly', { checked: false })), '( ) Weekly');
+    assert.equal(render(item('radio', 'Weekly', { checked: true })), '(*) Weekly');
+    assert.equal(render(item('textbox', 'Search', { value: 'lynx' })),
+      `Search lynx${'_'.repeat(16)}`);
+    assert.equal(render(item('combobox', 'Country', { value: 'Canada' })), 'Country [Canada]');
+    assert.equal(render(item('img', 'Map')), 'Map');
+    assert.equal(render(item('img', '')), '[IMAGE]');
+    assert.equal(render(item('iframe', 'about:blank')), 'IFRAME: about:blank');
+    assert.equal(render(item('iframe', '')), 'IFRAME:');
+    assert.equal(render(item('switch', 'Night mode', { checked: true })), '[X] Night mode');
+    assert.equal(render(item('menuitemcheckbox', 'Bold', { checked: 'mixed' })), '[-] Bold');
+    assert.equal(render(item('menuitemradio', 'Blue', { checked: true })), '(*) Blue');
+    assert.equal(render(item('option', 'France')), 'France');
+    assert.equal(render(item('listbox', 'Country', { value: 'Canada' })), 'Country [Canada]');
+    assert.equal(render(item('listbox', 'Country', {})), 'Country [Country]');
+    assert.equal(render(item('searchbox', 'Query', { value: 'lynx' })),
+      `Query lynx${'_'.repeat(16)}`);
+    assert.equal(render(item('textbox', '', { value: `${'a'.repeat(18)}😀` })),
+      `${'a'.repeat(18)}😀`, 'field width counts browser UTF-16 cells');
+    assert.equal(render(item('slider', 'Volume', { value: '7' })), 'Volume [7]');
+    assert.equal(render(item('spinbutton', 'Seats', {})), 'Seats [0]');
+    assert.equal(render(item('video', 'playing, 0:01 of 3:00')), '[playing, 0:01 of 3:00]');
+    assert.equal(render(item('audio', '')), '[audio]');
+    assert.equal(render(item('group', 'Group')), 'Group');
+    assert.equal(render(undefined, 'fallback'), 'fallback');
   });
-  assert.equal(right[1].displayPrefix, '');
-  assert.equal(right[1].displaySuffix, '[1]');
-  assert.equal(right[3].displaySuffix, '[3]');
-});
+
+  test(`${implementation.name}: Lynx blocks carry margin and heading layout metadata`, () => {
+    assert.deepEqual(
+      implementation.renderLynxBlock({ text: '# Main', item: item('heading', 'Main', { level: 1 }) }),
+      { text: 'Main', item: item('heading', 'Main', { level: 1 }), displayAlign: 'center' },
+    );
+    assert.equal(
+      implementation.renderLynxBlock({ text: 'Body', item: item('text', 'Body') }).displayIndent,
+      3,
+    );
+    assert.equal(
+      implementation.renderLynxItem(item('text', 'Caption', { table: { caption: true } }), 'Caption'),
+      'CAPTION: Caption',
+    );
+  });
+}
+
+for (const implementation of lynxDisplayImplementations({ numberLynxBlocks })) {
+  test(`${implementation.name}: Lynx numbering follows links, fields, and keypad modes`, () => {
+    const blocks = [
+      { text: 'News', item: item('link', 'News') },
+      { text: 'Go', item: item('button', 'Go') },
+      { text: '[ ] Updates', item: item('checkbox', 'Updates', { checked: false }) },
+      { text: 'Search', item: item('textbox', 'Search') },
+      { text: 'France', item: item('option', 'France') },
+    ];
+    const numbers = (preferences) => implementation.numberLynxBlocks(blocks, preferences)
+      .map((block) => block.displayNumber);
+
+    assert.deepEqual(numbers({ numberLinks: false, numberFields: false }),
+      [undefined, undefined, undefined, undefined, undefined]);
+    assert.deepEqual(numbers({ numberLinks: true, numberFields: false }),
+      [1, undefined, undefined, undefined, undefined]);
+    assert.deepEqual(numbers({ numberLinks: false, numberFields: true }),
+      [undefined, 1, 2, 3, undefined]);
+    assert.deepEqual(numbers({ numberLinks: true, numberFields: true }),
+      [1, 2, 3, 4, undefined], 'an option is part of a select, not a control of its own');
+
+    const right = implementation.numberLynxBlocks(blocks, {
+      numberLinks: false, numberFields: true, numberFieldsOnLeft: false,
+    });
+    assert.equal(right[1].displayPrefix, '');
+    assert.equal(right[1].displaySuffix, '[1]');
+    assert.equal(right[3].displaySuffix, '[3]');
+  });
+}
 
 test('an internal Lynx view is neither re-rendered nor numbered', () => {
   const core = { blocks: [{ text: '{News}', item: item('link', 'News') }], at() {} };

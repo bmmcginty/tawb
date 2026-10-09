@@ -90,6 +90,27 @@ function dumpImplementations(javascript) {
   return implementations;
 }
 
+function lynxDisplayImplementations(javascript) {
+  const implementations = [{ name: 'JavaScript', ...javascript }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    renderLynxItem(item, fallback = '') {
+      return call('lynx_display.render_item', { item, fallback });
+    },
+    renderLynxBlock(block) {
+      return call('lynx_display.render_block', { block });
+    },
+    numberLynxBlocks(blocks, preferences = {}) {
+      return call('lynx_display.number_blocks', { blocks, preferences });
+    },
+    lynxRowText(line, text) {
+      return call('lynx_display.row_text', { line, text });
+    },
+  });
+  return implementations;
+}
+
 function lynxNumberImplementations(javascript) {
   const implementations = [{ name: 'JavaScript', ...javascript }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
@@ -149,6 +170,6 @@ function unicodeImplementations(javascript) {
 
 module.exports = {
   call, addressImplementations, ariaImplementations, blockImplementations, dumpImplementations,
-  lynxNumberImplementations, optionImplementations,
+  lynxDisplayImplementations, lynxNumberImplementations, optionImplementations,
   readerCommands, unicodeImplementations,
 };
