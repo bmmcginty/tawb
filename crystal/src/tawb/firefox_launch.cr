@@ -4,6 +4,10 @@ require "./marionette"
 
 module Tawb
   module FirefoxLaunch
+    lib ProcessGroup
+      fun setpgid(pid : LibC::PidT, pgid : LibC::PidT) : LibC::Int
+    end
+
     CANDIDATES = {"firefox", "firefox-esr", "librewolf"}
 
     def self.find_firefox(path = ENV["PATH"]? || "") : NamedTuple(executable: String, name: String)?
@@ -43,7 +47,7 @@ module Tawb
       getter profile_dir : String
 
       def initialize(@endpoint, @port, @marionette_port, @library_port, @profile_dir,
-                     @process : Process? = nil, @owned = false)
+                     @process : Process? = nil, @owned = false, @grouped = false)
       end
 
       def owned? : Bool
@@ -53,10 +57,48 @@ module Tawb
       def close : Nil
         process = @process
         return unless process
+        if @grouped
+          # The browser was made its own process group when it was spawned, so
+          # the signalled group takes the wrapper (xvfb-run) and every browser
+          # process with it — the territory JavaScript's detached spawn and
+          # killProcessGroup cover.
+          LibC.kill(-process.pid, LibC::SIGTERM)
+        end
+        # The group is won or lost in the race between this process's setpgid
+        # and the child's exec, so the outcome is not assumed: everything
+        # still descended from the browser we started is signalled too. A
+        # wrapper that dies alone orphans the browser, which then holds the
+        # profile and refuses the next launch.
+        signal_descendants(process.pid)
         process.terminate
         process.wait
         File.delete?(Endpoint.record_path(@profile_dir))
       rescue
+      end
+
+      private def signal_descendants(root : Int64) : Nil
+        parent_of = {} of Int64 => Int64
+        Dir.each_child("/proc") do |entry|
+          next unless entry.matches?(/^\d+$/)
+          stat = File.read("/proc/#{entry}/stat")
+          after = stat.rindex(')') || next
+          fields = stat[after + 2..].split
+          ppid = fields[1]?.try(&.to_i64?) || next
+          parent_of[entry.to_i] = ppid
+        rescue
+          # a process that left while it was being read has no vote
+        end
+        children = {} of Int64 => Array(Int64)
+        parent_of.each do |child, parent|
+          (children[parent] ||= [] of Int64) << child
+        end
+        queue = [root]
+        until queue.empty?
+          (children[queue.shift]? || [] of Int64).each do |pid|
+            LibC.kill(pid, LibC::SIGTERM) rescue nil
+            queue << pid
+          end
+        end
       end
     end
 
@@ -103,6 +145,10 @@ module Tawb
         input: Process::Redirect::Close,
         output: Process::Redirect::Close,
         error: Process::Redirect::Close)
+      # Detached from this reader's process group, so a terminal's Ctrl+C
+      # spares a browser somebody may be reading, and so close can take the
+      # browser's whole group down with the wrapper that started it.
+      grouped = ProcessGroup.setpgid(process.pid, process.pid) == 0
       deadline = Time.instant + timeout_ms.milliseconds
       unless Endpoint.wait(port, deadline)
         process.terminate rescue nil
@@ -130,7 +176,7 @@ module Tawb
       Endpoint.write_record(profile_dir, record)
       Started.new(
         "ws://127.0.0.1:#{port}/session", port, marionette_port, library_port,
-        profile_dir, process, owned: true
+        profile_dir, process, owned: true, grouped: grouped
       )
     rescue error
       process.try(&.terminate) rescue nil

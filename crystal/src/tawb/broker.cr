@@ -6,6 +6,10 @@ require "./transport"
 
 module Tawb
   module Broker
+    lib ProcessGroup
+      fun setpgid(pid : LibC::PidT, pgid : LibC::PidT) : LibC::Int
+    end
+
     GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
     # One Firefox, more than one reader.
@@ -139,6 +143,9 @@ module Tawb
           child = Process.new(executable, [INTERNAL_BROKER_ARG, endpoint, fresh.to_s, profile_dir],
             input: Process::Redirect::Close, output: Process::Redirect::Close,
             error: Process::Redirect::Close)
+          # Detached from this reader's process group: a terminal's Ctrl+C
+          # ends the reader, not the broker holding the browser's session.
+          ProcessGroup.setpgid(child.pid, child.pid)
           if Endpoint.wait(fresh, Time.instant + 15.seconds)
             write_record(profile_dir, {
               "pid"      => JSON::Any.new(child.pid.to_i64),
