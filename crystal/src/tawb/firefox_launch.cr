@@ -1,4 +1,6 @@
 require "json"
+require "./endpoint"
+require "./marionette"
 
 module Tawb
   module FirefoxLaunch
@@ -31,6 +33,110 @@ module Tawb
         return File.join(home, "snap", snap, "common", "tawb", "firefox-profile")
       end
       File.join(xdg_data_home || File.join(home, ".local", "share"), "tawb", "firefox-profile")
+    end
+
+    class Started
+      getter endpoint : String
+      getter port : Int32
+      getter marionette_port : Int32?
+      getter library_port : Int32?
+      getter profile_dir : String
+
+      def initialize(@endpoint, @port, @marionette_port, @library_port, @profile_dir,
+                     @process : Process? = nil, @owned = false)
+      end
+
+      def owned? : Bool
+        @owned
+      end
+
+      def close : Nil
+        process = @process
+        return unless process
+        process.terminate
+        process.wait
+        File.delete?(Endpoint.record_path(@profile_dir))
+      rescue
+      end
+    end
+
+    def self.launch(profile_dir : String, timeout_ms = 45000_i64,
+                    path = ENV["PATH"]? || "", display = ENV["DISPLAY"]?) : Started
+      process : Process? = nil
+      Dir.mkdir_p(profile_dir)
+      if port = Endpoint.running(profile_dir)
+        record = Endpoint.read_record(profile_dir) || {} of String => JSON::Any
+        return Started.new(
+          "ws://127.0.0.1:#{port}/session", port,
+          record["marionettePort"]?.try(&.as_i?).try(&.to_i32),
+          record["libraryPort"]?.try(&.as_i?).try(&.to_i32), profile_dir
+        )
+      end
+
+      found = find_firefox(path) || raise IO::Error.new(
+        "No Firefox found. Looked for: #{CANDIDATES.join(", ")}. Install Firefox, or use --browser chromium."
+      )
+      require_compatible_profile(found[:executable], found[:name], profile_dir)
+      port = Endpoint.free_port
+      marionette_port = Endpoint.free_port
+      write_profile_prefs(profile_dir, launch_preferences(marionette_port))
+      arguments = [
+        "--no-remote",
+        "-profile", profile_dir,
+        "--remote-debugging-port=#{port}",
+        "--marionette",
+        "--remote-allow-system-access",
+        "about:blank",
+      ]
+      command = found[:executable]
+      unless display && !display.empty?
+        xvfb = which("xvfb-run", path) || raise IO::Error.new(
+          "No DISPLAY is set and xvfb-run was not found. A browser with a display is required " +
+          "(headless browsers fail bot checks that a real one passes). Install xvfb, or run " +
+          "inside a graphical session."
+        )
+        command = xvfb
+        arguments = [xvfb_display_option(xvfb), "-s", "-screen 0 1280x1024x24", found[:executable]] + arguments
+      end
+
+      process = Process.new(command, arguments,
+        input: Process::Redirect::Close,
+        output: Process::Redirect::Close,
+        error: Process::Redirect::Close)
+      deadline = Time.instant + timeout_ms.milliseconds
+      unless Endpoint.wait(port, deadline)
+        process.terminate rescue nil
+        process.wait rescue nil
+        raise IO::TimeoutError.new(
+          "#{found[:name]} did not open its debugging port within #{timeout_ms}ms"
+        )
+      end
+
+      Endpoint.write_record(profile_dir, {
+        "port"           => JSON::Any.new(port.to_i64),
+        "marionettePort" => JSON::Any.new(marionette_port.to_i64),
+        "pid"            => JSON::Any.new(process.pid.to_i64),
+        "startedAt"      => JSON::Any.new(Time.utc.to_unix_ms),
+      })
+      unless Endpoint.wait(marionette_port, Time.instant + Marionette::TIMEOUT)
+        process.terminate rescue nil
+        process.wait rescue nil
+        raise IO::TimeoutError.new("Marionette never opened its port")
+      end
+      cleared = Marionette.clear_automation(marionette_port).as_h
+      library_port = cleared["libraryPort"]?.try(&.as_i?).try(&.to_i32)
+      record = Endpoint.read_record(profile_dir) || {} of String => JSON::Any
+      record["libraryPort"] = library_port ? JSON::Any.new(library_port.to_i64) : JSON::Any.new(nil)
+      Endpoint.write_record(profile_dir, record)
+      Started.new(
+        "ws://127.0.0.1:#{port}/session", port, marionette_port, library_port,
+        profile_dir, process, owned: true
+      )
+    rescue error
+      process.try(&.terminate) rescue nil
+      process.try(&.wait) rescue nil
+      File.delete?(Endpoint.record_path(profile_dir))
+      raise error
     end
 
     def self.write_profile_prefs(profile_dir : String, preferences : Hash(String, JSON::Any)) : Nil
@@ -125,6 +231,15 @@ module Tawb
       name if name && File.exists?("/snap/bin/#{name}")
     rescue
       nil
+    end
+
+    private def self.xvfb_display_option(executable : String) : String
+      output = IO::Memory.new
+      status = Process.run(executable, ["--help"],
+        input: Process::Redirect::Close, output: output, error: Process::Redirect::Close)
+      status.success? && output.to_s.includes?("--auto-display") ? "-d" : "-a"
+    rescue
+      "-a"
     end
 
     private def self.snap_name_of_path(target : String) : String?

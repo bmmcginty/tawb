@@ -25,10 +25,11 @@ function call(operation, payload) {
   return response.value;
 }
 
-function callAsync(operation, payload) {
+function callAsync(operation, payload, { env = {} } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, ['--conformance', operation], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, ...env },
     });
     let stdout = '';
     let stderr = '';
@@ -312,6 +313,14 @@ function firefoxLaunchImplementations(javascript) {
     },
     launchPreferences(port) {
       return call('firefox.launch_preferences', { port });
+    },
+    launchScenario(options) {
+      return callAsync('firefox.launch_scenario', {
+        profile: options.profile,
+        timeout_ms: options.timeoutMs,
+        path: options.path,
+        display: options.display,
+      }, { env: { FAKE_FIREFOX_LOG: options.log } });
     },
   });
   return implementations;

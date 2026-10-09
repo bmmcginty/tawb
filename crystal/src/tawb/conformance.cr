@@ -103,6 +103,8 @@ module Tawb
         end
       when "firefox.launch_preferences"
         JSON::Any.new(FirefoxLaunch.launch_preferences(payload.as_h["port"].as_i.to_i32))
+      when "firefox.launch_scenario"
+        firefox_launch_scenario(payload)
       when "firefox.default_profile"
         object = payload.as_h
         JSON::Any.new(FirefoxLaunch.default_profile(
@@ -200,6 +202,26 @@ module Tawb
         JSON::Any.new(UnicodeEscape.escaped_offset(value, offset).to_i64)
       else
         raise ArgumentError.new("unknown conformance operation #{operation}")
+      end
+    end
+
+    private def self.firefox_launch_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      started = FirefoxLaunch.launch(
+        object["profile"].as_s, object["timeout_ms"].as_i64,
+        object["path"].as_s, object["display"]?.try(&.as_s?)
+      )
+      begin
+        JSON::Any.new({
+          "endpoint"       => JSON::Any.new(started.endpoint),
+          "port"           => JSON::Any.new(started.port.to_i64),
+          "marionettePort" => started.marionette_port.try { |port| JSON::Any.new(port.to_i64) } || JSON::Any.new(nil),
+          "libraryPort"    => started.library_port.try { |port| JSON::Any.new(port.to_i64) } || JSON::Any.new(nil),
+          "owned"          => JSON::Any.new(started.owned?),
+          "record"         => JSON::Any.new(Endpoint.read_record(started.profile_dir) || {} of String => JSON::Any),
+        })
+      ensure
+        started.close
       end
     end
 
