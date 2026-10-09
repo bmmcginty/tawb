@@ -1,11 +1,13 @@
 require "file_utils"
+require "json"
 require "socket"
 require "./transport"
 
 module Tawb
   module Browser
-    CANDIDATES  = {"google-chrome-stable", "google-chrome", "chromium", "chromium-browser"}
-    PORT_RECORD = ".tawb-devtools-port"
+    CANDIDATES      = {"google-chrome-stable", "google-chrome", "chromium", "chromium-browser"}
+    ENDPOINT_RECORD = "tawb-endpoint.json"
+    LEGACY_RECORD   = ".tawb-devtools-port"
 
     class Session
       getter endpoint : String
@@ -25,7 +27,8 @@ module Tawb
       rescue
       ensure
         if profile_dir = @profile_dir
-          File.delete?(File.join(profile_dir, PORT_RECORD))
+          File.delete?(File.join(profile_dir, ENDPOINT_RECORD))
+          File.delete?(File.join(profile_dir, LEGACY_RECORD))
         end
       end
     end
@@ -66,7 +69,11 @@ module Tawb
       loop do
         begin
           Transport.http(endpoint, "GET", "/json/version")
-          File.write(File.join(profile_dir, PORT_RECORD), "#{port}\n")
+          File.write(File.join(profile_dir, ENDPOINT_RECORD), {
+            "port"      => JSON::Any.new(port.to_i64),
+            "pid"       => JSON::Any.new(process.pid.to_i64),
+            "startedAt" => JSON::Any.new(Time.utc.to_unix_ms),
+          }.to_json)
           return Session.new(endpoint, process, owned: true, profile_dir: profile_dir)
         rescue error
           last_error = error
@@ -91,11 +98,16 @@ module Tawb
     end
 
     private def self.running_endpoint(profile_dir : String) : String?
-      own_record = File.join(profile_dir, PORT_RECORD)
+      endpoint_record = File.join(profile_dir, ENDPOINT_RECORD)
+      legacy_record = File.join(profile_dir, LEGACY_RECORD)
       chromium_record = File.join(profile_dir, "DevToolsActivePort")
-      record = File.file?(own_record) ? own_record : chromium_record
-      return nil unless File.file?(record)
-      port = File.read_lines(record).first?.try(&.strip.to_i?)
+      port = if File.file?(endpoint_record)
+               JSON.parse(File.read(endpoint_record)).as_h["port"].as_i
+             elsif File.file?(legacy_record)
+               File.read_lines(legacy_record).first?.try(&.strip.to_i?)
+             elsif File.file?(chromium_record)
+               File.read_lines(chromium_record).first?.try(&.strip.to_i?)
+             end
       return nil unless port
       endpoint = "http://127.0.0.1:#{port}"
       Transport.http(endpoint, "GET", "/json/version")
@@ -114,7 +126,7 @@ module Tawb
 
     private def self.default_profile : String
       base = ENV["XDG_DATA_HOME"]? || File.join(Path.home, ".local", "share")
-      File.join(base, "tawb", "profile-crystal")
+      File.join(base, "tawb", "profile")
     end
 
     private def self.free_port : Int32

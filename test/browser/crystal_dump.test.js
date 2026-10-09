@@ -161,7 +161,7 @@ test('the native dump waits for the requested document DOM', { skip: !enabled },
   }
 });
 
-test('a kept native Chromium is rejoined through its profile', { skip: !enabled }, async () => {
+test('a kept Chromium is rejoined across the Crystal and JavaScript runtimes', { skip: !enabled }, async () => {
   const root = tempDir('tawb-crystal-keep-');
   const profile = path.join(root, 'profile');
   const page = path.join(root, 'page.html');
@@ -181,10 +181,16 @@ test('a kept native Chromium is rejoined through its profile', { skip: !enabled 
 
   const first = run('--keep-browser');
   assert.equal(first.status, 0, first.stderr);
-  const port = fs.readFileSync(path.join(profile, '.tawb-devtools-port'), 'utf8').trim();
-  const endpoint = `http://127.0.0.1:${port}`;
+  const record = JSON.parse(fs.readFileSync(path.join(profile, 'tawb-endpoint.json'), 'utf8'));
+  const endpoint = `http://127.0.0.1:${record.port}`;
   let connection;
   try {
+    const javascript = spawnSync(process.execPath, [
+      'src/index.js', '--dump', '--profile', profile, page,
+    ], { cwd: ROOT, env, encoding: 'utf8', timeout: 90000 });
+    assert.equal(javascript.status, 0, javascript.stderr);
+    assert.equal(javascript.stdout, first.stdout);
+
     const second = run();
     assert.equal(second.status, 0, second.stderr);
     assert.equal(second.stdout, first.stdout);
