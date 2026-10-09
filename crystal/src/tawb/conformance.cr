@@ -3,6 +3,7 @@ require "./address"
 require "./aria"
 require "./blocks"
 require "./bidi"
+require "./broker"
 require "./dump"
 require "./endpoint"
 require "./firefox_agent"
@@ -51,6 +52,10 @@ module Tawb
         Bidi.from_remote(payload.as_h["value"]?)
       when "bidi.session_scenario"
         bidi_session_scenario(payload)
+      when "broker.handshake_accept"
+        JSON::Any.new(Broker.handshake_accept(payload.as_h["key"].as_s))
+      when "broker.scenario"
+        broker_scenario(payload)
       when "blocks.build"
         JSON::Any.new(Blocks.build(payload.as_h["items"].as_a))
       when "blocks.fold"
@@ -296,6 +301,131 @@ module Tawb
         session.close
       end
       JSON::Any.new(values)
+    end
+
+    private class ScenarioReader
+      @mutex = Mutex.new
+      @messages = [] of JSON::Any
+      @socket : Transport::WebSocket
+
+      def initialize(url : String)
+        socket = Transport::WebSocket.new(url, read_timeout: nil)
+        @socket = socket
+        spawn do
+          loop do
+            message = JSON.parse(socket.receive)
+            @mutex.synchronize { @messages << message }
+          end
+        rescue
+          # the scenario closed this reader, or the broker went away
+        end
+      end
+
+      def send(text : String) : Nil
+        @socket.send(text)
+      end
+
+      def close : Nil
+        @socket.close
+      rescue
+      end
+
+      def messages : Array(JSON::Any)
+        @mutex.synchronize { @messages.dup }
+      end
+
+      def find(&predicate : JSON::Any -> Bool) : JSON::Any?
+        @mutex.synchronize { @messages.find { |message| predicate.call(message) } }
+      end
+    end
+
+    # Runs a whole broker conversation inside this process: the broker serves
+    # readers that live here, while the fake browser on the far side of the
+    # upstream URL is driven by the test that wrote the steps.
+    private def self.broker_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      idle_ms = object["idle_ms"]?.try(&.as_i64?) || Broker::IDLE_EXIT_MS
+      grace_ms = object["grace_ms"]?.try(&.as_i64?) || Broker::STARTUP_GRACE_MS
+      reasons = [] of String
+      server = Broker::Server.new(
+        object["upstream"].as_s, 0, idle_ms, grace_ms,
+        ->(reason : String) { reasons << reason; nil }
+      )
+      server.start
+      readers = [] of ScenarioReader
+      timeline = [] of JSON::Any
+      stopped = false
+      broker_url = "ws://127.0.0.1:#{server.port}/session"
+      begin
+        object["steps"].as_a.each_with_index do |step_any, index|
+          step = step_any.as_h
+          case step["type"].as_s
+          when "reader"
+            readers << ScenarioReader.new(broker_url)
+          when "send"
+            id = step["id"]? || raise ArgumentError.new("send needs an id")
+            readers[reader_index(step)].send({
+              "id"     => id,
+              "method" => JSON::Any.new(step["method"].as_s),
+              "params" => step["params"]? || JSON::Any.new({} of String => JSON::Any),
+            }.to_json)
+          when "wait"
+            found = wait_for_reader(readers[reader_index(step)], step, index)
+            timeline << JSON::Any.new({
+              "waited"  => JSON::Any.new(index.to_i64),
+              "message" => found,
+            })
+          when "sleep"
+            sleep step["ms"].as_i64.milliseconds
+          when "close"
+            readers[reader_index(step)].close
+          when "reasons"
+            timeline << JSON::Any.new({
+              "reasons" => JSON::Any.new(reasons.map { |reason| JSON::Any.new(reason) }),
+            })
+          when "clients"
+            timeline << JSON::Any.new({
+              "clients" => JSON::Any.new(server.client_count.to_i64),
+            })
+          when "stop"
+            server.close(step["end_session"]?.try(&.as_bool?) != false)
+            stopped = true
+          else
+            raise ArgumentError.new("unknown broker scenario step #{step["type"]}")
+          end
+        end
+      ensure
+        server.close(false) unless stopped
+      end
+      JSON::Any.new({
+        "port"     => JSON::Any.new(server.port.to_i64),
+        "readers"  => JSON::Any.new(readers.map { |reader| JSON::Any.new(reader.messages) }),
+        "timeline" => JSON::Any.new(timeline),
+        "reasons"  => JSON::Any.new(reasons.map { |reason| JSON::Any.new(reason) }),
+      })
+    end
+
+    private def self.reader_index(step : Hash(String, JSON::Any)) : Int32
+      step["reader"].as_i
+    end
+
+    private def self.wait_for_reader(reader : ScenarioReader, step : Hash(String, JSON::Any), index : Int32) : JSON::Any
+      id = step["id"]?
+      method = step["method"]?.try(&.as_s?)
+      raise ArgumentError.new("wait needs an id or a method") unless id || method
+      timeout = step["timeout"]?.try(&.as_i?) || 5000
+      deadline = Time.instant + timeout.milliseconds
+      loop do
+        found = reader.find do |message|
+          object = message.as_h?
+          next false unless object
+          (id ? object["id"]? == id : true) &&
+            (method ? object["method"]?.try(&.as_s?) == method : true)
+        end
+        return found.not_nil! if found
+        raise IO::TimeoutError.new("broker scenario step #{index} timed out") if Time.instant >= deadline
+        sleep 10.milliseconds
+      end
     end
   end
 end

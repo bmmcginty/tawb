@@ -497,7 +497,7 @@ function unicodeImplementations(javascript) {
 }
 
 module.exports = {
-  call, addressImplementations, ariaImplementations, bidiImplementations,
+  call, callAsync, addressImplementations, ariaImplementations, bidiImplementations,
   blockImplementations, dumpImplementations, endpointImplementations, firefoxAgentImplementations,
   firefoxAutomationImplementations, firefoxLaunchImplementations, firefoxPageImplementations,
   layoutImplementations, lynxDisplayImplementations, lynxNumberImplementations, marionetteImplementations,

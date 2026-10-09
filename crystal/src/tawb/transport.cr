@@ -72,10 +72,10 @@ module Tawb
     end
 
     class WebSocket
-      def initialize(url : String)
+      def initialize(url : String, read_timeout : Time::Span? = 30.seconds)
         target = Transport.parse_url(url, "ws")
         @socket = TCPSocket.new(target.host, target.port)
-        @socket.read_timeout = 30.seconds
+        @socket.read_timeout = read_timeout
         key = Base64.strict_encode(Random::Secure.random_bytes(16))
         @socket << "GET #{target.path} HTTP/1.1\r\nHost: #{target.host}:#{target.port}\r\n"
         @socket << "Upgrade: websocket\r\nConnection: Upgrade\r\n"
