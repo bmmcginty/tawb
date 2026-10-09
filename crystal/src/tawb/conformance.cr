@@ -68,6 +68,12 @@ module Tawb
       when "layout.lines"
         object = payload.as_h
         JSON::Any.new(Layout.lines(object["blocks"].as_a, object["width"].as_i))
+      when "lynx_display.blocks"
+        object = payload.as_h
+        JSON::Any.new(LynxDisplay.blocks(
+          object["blocks"].as_a, object["preferences"].as_h,
+          object["escape_unicode"]?.try(&.as_bool?) || false
+        ))
       when "lynx_display.render_item"
         object = payload.as_h
         JSON::Any.new(LynxDisplay.render_item(

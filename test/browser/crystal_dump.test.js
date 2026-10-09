@@ -63,6 +63,22 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
   assert.equal(crystal.stdout, javascript.stdout);
   assert.equal(crystal.stdout, '# Heading\nHello\n{Docs}\nafter\n<frame: Details>\n## Inside\nChild words\n[*Save]\n');
 
+  fs.mkdirSync(path.join(baseEnv.XDG_CONFIG_HOME, 'tawb'), { recursive: true });
+  fs.writeFileSync(path.join(baseEnv.XDG_CONFIG_HOME, 'tawb', 'settings.lynx.json'), JSON.stringify({
+    version: 1,
+    lynx: { keypadMode: 'LINKS_AND_FIELDS_ARE_NUMBERED' },
+  }));
+  const javascriptLynx = run(process.execPath,
+    ['src/index.js', '--front-end', 'lynx', '--dump', page], 'js-lynx-data');
+  const crystalLynx = run(path.join(ROOT, 'dist', 'tawb-crystal'),
+    ['--front-end', 'lynx', '--dump', page], 'crystal-lynx-data');
+  assert.equal(javascriptLynx.status, 0, javascriptLynx.stderr);
+  assert.equal(crystalLynx.status, 0, crystalLynx.stderr);
+  assert.equal(crystalLynx.stdout, javascriptLynx.stdout);
+  assert.match(crystalLynx.stdout, /^\s+Heading/m);
+  assert.match(crystalLynx.stdout, /^\s+Hello \[1\]Docs after/m);
+  assert.match(crystalLynx.stdout, /^\s+\[2\]Save/m);
+
   const firefox = run(path.join(ROOT, 'dist', 'tawb-crystal'), [
     '--dump', '--browser', 'firefox', page,
   ], 'crystal-firefox-data');

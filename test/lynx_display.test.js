@@ -756,13 +756,15 @@ test('renderLynxRow highlights only the caret\'s span on a composite row', () =>
   }), 'Alpha and Beta');
 });
 
-test('lynxBlocks renders, numbers and reflows in one call', () => {
-  const blocks = [
-    { text: 'Prose', item: item('text', 'Prose', { flow: 1 }) },
-    { text: 'News', item: item('link', 'News', { flow: 1 }) },
-  ];
-  const out = lynxBlocks(blocks, {}, String);
-  assert.equal(out.length, 1, 'the inline run is rejoined');
-  assert.equal(out[0].text, 'Prose News');
-  assert.equal(out[0].spans.length, 2);
-});
+for (const implementation of lynxDisplayImplementations({ lynxBlocks })) {
+  test(`${implementation.name}: lynxBlocks renders, numbers and reflows in one call`, () => {
+    const blocks = [
+      { text: 'Prose', item: item('text', 'Prose', { flow: 1 }) },
+      { text: 'News', item: item('link', 'News', { flow: 1 }) },
+    ];
+    const out = implementation.lynxBlocks(blocks, {});
+    assert.equal(out.length, 1, 'the inline run is rejoined');
+    assert.equal(out[0].text, 'Prose News');
+    assert.equal(out[0].spans.length, 2);
+  });
+}

@@ -113,6 +113,9 @@ function lynxDisplayImplementations(javascript) {
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
   implementations.push({
     name: 'Crystal',
+    lynxBlocks(blocks, preferences = {}) {
+      return call('lynx_display.blocks', { blocks, preferences });
+    },
     renderLynxItem(item, fallback = '') {
       return call('lynx_display.render_item', { item, fallback });
     },

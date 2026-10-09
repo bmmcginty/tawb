@@ -3,6 +3,9 @@ require "./browser"
 require "./cdp"
 require "./dump"
 require "./frames"
+require "./layout"
+require "./lynx_display"
+require "./lynx_settings"
 require "./options"
 
 module Tawb
@@ -37,8 +40,8 @@ module Tawb
     Other:
       -h, --help                    show this help and exit
 
-    The native Crystal reader is being ported incrementally. Chromium --dump
-    is available; interactive, Firefox, Lynx, and edb sessions are not yet.
+    The native Crystal reader is being ported incrementally. Default and Lynx
+    Chromium --dump are available; interactive, Firefox, and edb are not yet.
     TEXT
 
     def self.run(argv : Array(String) = ARGV, env : Hash(String, String) = ENV.to_h) : Nil
@@ -54,7 +57,6 @@ module Tawb
         raise ArgumentError.new("--keyboard cannot be combined with --dump")
       end
       if options["dump"].as_bool
-        raise ArgumentError.new("the native Lynx dump is not ported yet") if options["frontEnd"].as_s == "lynx"
         unless options["engine"].as_s == "chromium"
           raise ArgumentError.new("the native Firefox dump is not ported yet")
         end
@@ -76,9 +78,18 @@ module Tawb
       begin
         page = Cdp::Page.new(session.endpoint)
         page.navigate(target)
-        tree, documents = page.accessibility_documents
+        lynx = options["frontEnd"].as_s == "lynx"
+        tree, documents = page.accessibility_documents(layout: lynx)
         blocks = Frames.build(tree, documents)
-        STDOUT << Dump.format_ax_blocks(blocks, options["escapeUnicode"].as_bool)
+        if lynx
+          display = LynxDisplay.blocks(blocks, LynxSettings.preferences, options["escapeUnicode"].as_bool)
+          lines = Layout.lines(display, 80)
+          unless lines.empty?
+            STDOUT << lines.map { |line| LynxDisplay.row_text(line, line.as_h["text"].as_s) }.join('\n') << '\n'
+          end
+        else
+          STDOUT << Dump.format_ax_blocks(blocks, options["escapeUnicode"].as_bool)
+        end
       ensure
         if current_page = page
           if session.owned? && !options["keepBrowser"].as_bool

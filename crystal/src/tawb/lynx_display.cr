@@ -105,6 +105,11 @@ module Tawb
       end
     end
 
+    def self.blocks(blocks : Array(JSON::Any), preferences : Hash(String, JSON::Any), escape_unicode = false) : Array(JSON::Any)
+      rendered = blocks.map { |block| render_block(block, escape_unicode) }
+      group_table_rows(group_flows(number_blocks(rendered, preferences)))
+    end
+
     def self.group_flows(blocks : Array(JSON::Any)) : Array(JSON::Any)
       output = [] of JSON::Any
       index = 0

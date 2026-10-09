@@ -55,8 +55,8 @@ Chrome DevTools Protocol or WebDriver BiDi.
 
 A native Crystal implementation is being developed so a future release can be
 copied to a Linux machine without installing Node or extracting another runtime.
-It can currently produce a default Chromium `--dump`; the interactive reader,
-Firefox, the Lynx presentation, and edb are still being ported.
+It can currently produce default and Lynx Chromium `--dump` output; the
+interactive reader, Firefox, and edb are still being ported.
 
 Build it with Crystal 1.21 or newer:
 

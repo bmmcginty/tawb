@@ -46,7 +46,7 @@ module Tawb
         wait_event("Page.domContentEventFired")
       end
 
-      def accessibility_documents : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))
+      def accessibility_documents(layout = false) : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))
         # Discovery events can still be in flight when the top document's DOM
         # event arrives. The listing is a synchronous census and closes that
         # race without recursively auto-attaching to renderer workers.
@@ -76,12 +76,12 @@ module Tawb
         frame_ids(tree).each_with_index do |frame_id, index|
           context = @contexts[frame_id]?
           if context
-            documents[frame_id] = evaluate_items(context[0], context[1])
+            documents[frame_id] = evaluate_items(context[0], context[1], layout)
           elsif index == 0
-            documents[frame_id] = evaluate_items(nil)
+            documents[frame_id] = evaluate_items(nil, nil, layout)
           elsif @iframe_targets.includes?(frame_id)
             session_id = attach_frame(frame_id)
-            documents[frame_id] = evaluate_items(nil, session_id)
+            documents[frame_id] = evaluate_items(nil, session_id, layout)
           end
         end
         {tree, documents}
@@ -143,9 +143,10 @@ module Tawb
         session
       end
 
-      private def evaluate_items(context_id : Int64?, session_id : String? = nil) : Array(JSON::Any)
+      private def evaluate_items(context_id : Int64?, session_id : String? = nil, layout = false) : Array(JSON::Any)
+        expression = layout ? EXTRACT_AX.sub("{layout:false}", "{layout:true}") : EXTRACT_AX
         parameters = {
-          "expression"    => JSON::Any.new(EXTRACT_AX),
+          "expression"    => JSON::Any.new(expression),
           "returnByValue" => JSON::Any.new(true),
           "awaitPromise"  => JSON::Any.new(true),
         }
@@ -158,7 +159,7 @@ module Tawb
         items = result["result"].as_h["value"].as_a
         needs_privileged = items.empty? || has_media_controls?(context_id, session_id)
         return items unless needs_privileged
-        privileged_items(context_id, session_id) || items
+        privileged_items(context_id, session_id, layout) || items
       end
 
       private def has_media_controls?(context_id : Int64?, session_id : String?) : Bool
@@ -173,7 +174,7 @@ module Tawb
         false
       end
 
-      private def privileged_items(context_id : Int64?, session_id : String?) : Array(JSON::Any)?
+      private def privileged_items(context_id : Int64?, session_id : String?, layout : Bool) : Array(JSON::Any)?
         document = command("DOM.getDocument", {
           "depth"  => JSON::Any.new(-1_i64),
           "pierce" => JSON::Any.new(true),
@@ -213,9 +214,10 @@ module Tawb
             # A node can disappear between the pierced listing and resolve.
           end
           return nil if registered == 0
+          paired_expression = layout ? EXTRACT_AX_WITH_PAIRS.sub("layout:false", "layout:true") : EXTRACT_AX_WITH_PAIRS
           answer = command("Runtime.callFunctionOn", {
             "objectId"            => JSON::Any.new(basket),
-            "functionDeclaration" => JSON::Any.new("function () { return #{EXTRACT_AX_WITH_PAIRS}; }"),
+            "functionDeclaration" => JSON::Any.new("function () { return #{paired_expression}; }"),
             "returnByValue"       => JSON::Any.new(true),
           }, session_id).as_h["result"].as_h
           if exception = answer["exceptionDetails"]?
