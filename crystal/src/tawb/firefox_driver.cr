@@ -151,10 +151,26 @@ module Tawb
       end
 
       def accessibility_items(context_id = @context_id, layout = false) : Array(JSON::Any)
-        expression = layout ? EXTRACT_AX.sub("{layout:false}", "{layout:true}") : EXTRACT_AX
+        # The function is sent the way the JavaScript driver sends it: the bare
+        # function source, with the walker's options as the call's argument.
+        # Wrapping the source in a return statement answered undefined on real
+        # Firefox, and handing the generated call its options inside the
+        # source is a second way to lose them.
+        declaration = EXTRACT_AX.sub(/\)\(\{layout:false\}\)\s*\z/m, ")")
+        layout_argument = JSON::Any.new([
+          JSON::Any.new("layout"),
+          JSON::Any.new({
+            "type"  => JSON::Any.new("boolean"),
+            "value" => JSON::Any.new(layout),
+          }),
+        ])
+        arguments = JSON::Any.new([JSON::Any.new({
+          "type"  => JSON::Any.new("object"),
+          "value" => JSON::Any.new([layout_argument]),
+        })])
         result = @protocol.command("script.callFunction", {
-          "functionDeclaration" => JSON::Any.new("function () { return #{expression}; }"),
-          "arguments"           => JSON::Any.new([] of JSON::Any),
+          "functionDeclaration" => JSON::Any.new(declaration),
+          "arguments"           => arguments,
           "target"              => JSON::Any.new({"context" => JSON::Any.new(context_id)}),
           "awaitPromise"        => JSON::Any.new(true),
           "resultOwnership"     => JSON::Any.new("none"),
