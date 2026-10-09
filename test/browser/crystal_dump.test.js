@@ -8,6 +8,7 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { tempDir } = require('../tmpdir');
 const cdp = require('../../src/cdp');
+const { processesUsing } = require('../../src/proc');
 
 const ROOT = path.join(__dirname, '..', '..');
 const enabled = process.env.TAWB_TEST_CRYSTAL_BROWSER === '1';
@@ -262,4 +263,69 @@ test('a kept Chromium is rejoined across the Crystal and JavaScript runtimes', {
     }
     if (connection) connection.close();
   }
+});
+
+test('a kept Firefox is rejoined across the Crystal and JavaScript runtimes', { skip: !enabled }, async () => {
+  const root = tempDir('tawb-crystal-firefox-keep-');
+  const profile = path.join(root, 'profile');
+  const page = path.join(root, 'page.html');
+  fs.writeFileSync(page, '<!doctype html><title>Kept</title><p>Still here</p>');
+  const env = {
+    ...process.env,
+    HOME: path.join(root, 'home'),
+    XDG_CONFIG_HOME: path.join(root, 'config'),
+    XDG_DATA_HOME: path.join(root, 'data'),
+    XDG_CACHE_HOME: path.join(root, 'cache'),
+  };
+  fs.mkdirSync(env.HOME, { recursive: true });
+  const executable = path.join(ROOT, 'dist', 'tawb-crystal');
+  const run = (...extra) => spawnSync(executable, [
+    '--dump', '--browser', 'firefox', '--profile', profile, ...extra, page,
+  ], { cwd: ROOT, env, encoding: 'utf8', timeout: 120000 });
+  const runJavascript = (...extra) => spawnSync(process.execPath, [
+    'src/index.js', '--dump', '--browser', 'firefox', '--profile', profile, ...extra, page,
+  ], { cwd: ROOT, env, encoding: 'utf8', timeout: 120000 });
+
+  let record = null;
+  try {
+    record = JSON.parse(fs.readFileSync(path.join(profile, 'tawb-endpoint.json'), 'utf8'));
+  } catch { /* read again after the keep below */ }
+
+  // A kept Firefox has no CDP to close it with. The broker in the record was
+  // detached into its own process group when the reader spawned it, and every
+  // browser process still names the profile on its command line, so between
+  // the group signal and the profile search nothing survives.
+  const stopKept = () => {
+    if (!record) return;
+    try { process.kill(-record.pid, 'SIGTERM'); } catch { /* already gone */ }
+    for (const pid of processesUsing(profile)) {
+      try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
+    }
+  };
+
+  try {
+    const first = run('--keep-browser');
+    assert.equal(first.status, 0, first.stderr);
+    record = JSON.parse(fs.readFileSync(path.join(profile, 'tawb-endpoint.json'), 'utf8'));
+
+    const javascript = runJavascript();
+    assert.equal(javascript.status, 0, javascript.stderr);
+    assert.equal(javascript.stdout, first.stdout);
+
+    const second = run(executable);
+    assert.equal(second.status, 0, second.stderr);
+    assert.equal(second.stdout, first.stdout);
+    assert.equal(second.stdout, 'Still here\n');
+  } finally {
+    stopKept();
+  }
+
+  const deadline = Date.now() + 20000;
+  while (processesUsing(profile).length > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  for (const pid of processesUsing(profile)) {
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+  }
+  assert.deepEqual(processesUsing(profile), []);
 });
