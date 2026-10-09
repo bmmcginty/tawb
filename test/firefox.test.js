@@ -9,6 +9,7 @@ const path = require('node:path');
 const {
   MARIONETTE_TIMEOUT_MS, libraryParentScript, firefoxRuntimeInfo, CLEAR_SCRIPT,
   requireCompatibleProfile, profileLastVersion, installedFirefoxVersion, writeProfilePrefs,
+  findFirefox, defaultProfileDir, MEDIA_PREFS, PASSWORD_PREFS,
 } = require('../src/firefox');
 const { tempDir, removeTempDir } = require('./tmpdir');
 const { firefoxLaunchImplementations } = require('./crystal_impl');
@@ -415,8 +416,34 @@ function profileLastUsedBy(dir, version) {
 
 for (const implementation of firefoxLaunchImplementations({
   requireCompatibleProfile, profileLastVersion, installedFirefoxVersion, writeProfilePrefs,
+  findFirefox, defaultProfileDir, MEDIA_PREFS, PASSWORD_PREFS,
 })) {
   const check = (name, fn) => test(`${implementation.name}: ${name}`, fn);
+
+  check('Firefox launch preparation discovers the browser, profile, and managed preferences', () => {
+    const bin = tempDir('tweb-ff-bin-');
+    const librewolf = path.join(bin, 'librewolf');
+    const firefoxEsr = path.join(bin, 'firefox-esr');
+    fs.writeFileSync(librewolf, '#!/bin/sh\n', { mode: 0o755 });
+    fs.writeFileSync(firefoxEsr, '#!/bin/sh\n', { mode: 0o755 });
+
+    assert.deepEqual(implementation.findFirefox(bin), {
+      executable: firefoxEsr, name: 'firefox-esr',
+    });
+    assert.equal(implementation.defaultProfile(firefoxEsr, {
+      home: '/home/reader', xdgDataHome: '/state',
+    }), '/state/tawb/firefox-profile');
+    assert.deepEqual(implementation.launchPreferences(43210), {
+      'media.autoplay.default': 0,
+      'media.autoplay.blocking_policy': 0,
+      'media.block-autoplay-until-in-foreground': false,
+      'signon.rememberSignons': true,
+      'signon.autofillForms': true,
+      'browser.altClickSave': true,
+      'marionette.port': 43210,
+    });
+    removeTempDir(bin);
+  });
 
   check('managed Firefox preferences replace stale values without removing user settings', () => {
     const profile = tempDir('tweb-ff-profile-');

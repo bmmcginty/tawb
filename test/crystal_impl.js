@@ -232,7 +232,40 @@ function firefoxAutomationImplementations({
 }
 
 function firefoxLaunchImplementations(javascript) {
-  const implementations = [{ name: 'JavaScript', ...javascript }];
+  const withEnvironment = (values, fn) => {
+    const before = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));
+    try {
+      for (const [name, value] of Object.entries(values)) {
+        if (value == null) delete process.env[name];
+        else process.env[name] = value;
+      }
+      return fn();
+    } finally {
+      for (const [name, value] of Object.entries(before)) {
+        if (value == null) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  };
+  const implementations = [{
+    name: 'JavaScript',
+    ...javascript,
+    findFirefox(pathValue) {
+      return withEnvironment({ PATH: pathValue }, () => javascript.findFirefox());
+    },
+    defaultProfile(executable, { home, xdgDataHome }) {
+      return withEnvironment({ HOME: home, XDG_DATA_HOME: xdgDataHome },
+        () => javascript.defaultProfileDir(executable));
+    },
+    launchPreferences(port) {
+      return {
+        ...javascript.MEDIA_PREFS,
+        ...javascript.PASSWORD_PREFS,
+        'browser.altClickSave': true,
+        'marionette.port': port,
+      };
+    },
+  }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
   implementations.push({
     name: 'Crystal',
@@ -247,6 +280,17 @@ function firefoxLaunchImplementations(javascript) {
     },
     writeProfilePrefs(profile, preferences) {
       return call('firefox.write_profile_prefs', { profile, preferences });
+    },
+    findFirefox(pathValue) {
+      return call('firefox.find', { path: pathValue });
+    },
+    defaultProfile(executable, { home, xdgDataHome }) {
+      return call('firefox.default_profile', {
+        executable, home, xdg_data_home: xdgDataHome,
+      });
+    },
+    launchPreferences(port) {
+      return call('firefox.launch_preferences', { port });
     },
   });
   return implementations;

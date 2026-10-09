@@ -74,6 +74,25 @@ module Tawb
         firefox_page_scenario(payload)
       when "firefox.verified_session"
         firefox_verified_session(payload)
+      when "firefox.find"
+        object = payload.as_h
+        found = FirefoxLaunch.find_firefox(object["path"].as_s)
+        if found
+          JSON::Any.new({
+            "executable" => JSON::Any.new(found[:executable]),
+            "name"       => JSON::Any.new(found[:name]),
+          })
+        else
+          JSON::Any.new(nil)
+        end
+      when "firefox.launch_preferences"
+        JSON::Any.new(FirefoxLaunch.launch_preferences(payload.as_h["port"].as_i.to_i32))
+      when "firefox.default_profile"
+        object = payload.as_h
+        JSON::Any.new(FirefoxLaunch.default_profile(
+          object["executable"]?.try(&.as_s?), object["home"].as_s,
+          object["xdg_data_home"]?.try(&.as_s?)
+        ))
       when "firefox.profile_last_version"
         value = FirefoxLaunch.profile_last_version(payload.as_h["profile"].as_s)
         value ? JSON::Any.new(value) : JSON::Any.new(nil)

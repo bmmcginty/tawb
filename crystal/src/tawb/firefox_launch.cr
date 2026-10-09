@@ -2,6 +2,37 @@ require "json"
 
 module Tawb
   module FirefoxLaunch
+    CANDIDATES = {"firefox", "firefox-esr", "librewolf"}
+
+    def self.find_firefox(path = ENV["PATH"]? || "") : NamedTuple(executable: String, name: String)?
+      CANDIDATES.each do |name|
+        if executable = which(name, path)
+          return {executable: executable, name: name}
+        end
+      end
+      nil
+    end
+
+    def self.launch_preferences(marionette_port : Int32) : Hash(String, JSON::Any)
+      {
+        "media.autoplay.default"                   => JSON::Any.new(0_i64),
+        "media.autoplay.blocking_policy"           => JSON::Any.new(0_i64),
+        "media.block-autoplay-until-in-foreground" => JSON::Any.new(false),
+        "signon.rememberSignons"                   => JSON::Any.new(true),
+        "signon.autofillForms"                     => JSON::Any.new(true),
+        "browser.altClickSave"                     => JSON::Any.new(true),
+        "marionette.port"                          => JSON::Any.new(marionette_port.to_i64),
+      }
+    end
+
+    def self.default_profile(executable : String? = nil, home = Path.home.to_s,
+                             xdg_data_home = ENV["XDG_DATA_HOME"]?) : String
+      if snap = snap_package_name(executable)
+        return File.join(home, "snap", snap, "common", "tawb", "firefox-profile")
+      end
+      File.join(xdg_data_home || File.join(home, ".local", "share"), "tawb", "firefox-profile")
+    end
+
     def self.write_profile_prefs(profile_dir : String, preferences : Hash(String, JSON::Any)) : Nil
       target = File.join(profile_dir, "user.js")
       names = preferences.keys
@@ -62,6 +93,46 @@ module Tawb
         "once yourself — which lets Firefox #{installed} keep the profile, and can lose what " +
         "Firefox #{wrote_it_last} saved in it."
       )
+    end
+
+    private def self.which(command : String, path : String) : String?
+      path.split(':').each do |directory|
+        candidate = File.join(directory, command)
+        info = File.info?(candidate)
+        return candidate if info && info.file? && File::Info.executable?(candidate)
+      end
+      nil
+    end
+
+    private def self.snap_package_name(executable : String?) : String?
+      return nil unless executable
+      current = executable
+      10.times do
+        if name = snap_name_of_path(current)
+          return name
+        end
+        target = File.readlink?(current)
+        break unless target
+        current = Path[target].absolute? ? target : File.expand_path(target, File.dirname(current))
+      end
+
+      script = File.read(current)
+      return nil unless script.starts_with?("#!")
+      names = script.scan(%r{/snap/bin/([A-Za-z0-9][\w.+-]*)|snap\s+run\s+([A-Za-z0-9][\w.+-]*)}).map do |match|
+        match[1]? || match[2]?
+      end.compact
+      name = names.last?
+      name if name && File.exists?("/snap/bin/#{name}")
+    rescue
+      nil
+    end
+
+    private def self.snap_name_of_path(target : String) : String?
+      if target.starts_with?("/snap/bin/")
+        File.basename(target).presence
+      elsif target.starts_with?("/snap/")
+        target.split('/')[2]?
+      end
     end
 
     private def self.version_parts(text : String) : Array(Int32)?
