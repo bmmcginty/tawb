@@ -4,6 +4,7 @@ require "./aria"
 require "./blocks"
 require "./bidi"
 require "./dump"
+require "./firefox_agent"
 require "./firefox_driver"
 require "./firefox_launch"
 require "./layout"
@@ -65,6 +66,10 @@ module Tawb
         JSON::Any.new(Dump.format_ax_blocks(
           object["blocks"].as_a, object["escape_unicode"]?.try(&.as_bool?) || false
         ))
+      when "firefox.agent_request"
+        object = payload.as_h
+        port = object["port"]?.try(&.as_i?).try(&.to_i32)
+        FirefoxAgent.ask(port, object["request"])
       when "firefox.page_scenario"
         firefox_page_scenario(payload)
       when "firefox.profile_last_version"
