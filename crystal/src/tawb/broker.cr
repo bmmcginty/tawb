@@ -1,6 +1,7 @@
 require "json"
 require "mutex"
 require "socket"
+require "./endpoint"
 require "./transport"
 
 module Tawb
@@ -45,6 +46,193 @@ module Tawb
 
     # And if the reader that started us never arrives at all.
     STARTUP_GRACE_MS = 30000_i64
+
+    # The broker is recorded beside the browser it serves, because that is
+    # what it belongs to: one per browser, found by any reader that joins
+    # that browser.
+    BROKER_FILE = "tawb-broker.json"
+
+    # A compiled executable has no broker.js beside it, so it restarts itself
+    # in a private dispatch mode named by this argument.
+    INTERNAL_BROKER_ARG = "--tawb-internal-firefox-broker"
+
+    def self.record_path(profile_dir : String) : String
+      File.join(profile_dir, BROKER_FILE)
+    end
+
+    def self.read_record(profile_dir : String) : Hash(String, JSON::Any)?
+      JSON.parse(File.read(record_path(profile_dir))).as_h
+    rescue
+      nil
+    end
+
+    def self.clear_record(profile_dir : String) : Nil
+      File.delete?(record_path(profile_dir))
+    rescue
+      # already gone
+    end
+
+    def self.write_record(profile_dir : String, record : Hash(String, JSON::Any)) : Nil
+      File.write(record_path(profile_dir), record.to_json)
+    rescue
+      # a lost record costs a second broker, not a crash
+    end
+
+    # Written with an exclusive create, so that two readers starting at the
+    # same moment cannot both decide they are the one to start the browser's
+    # broker.
+    def self.claim(profile_dir : String, record : Hash(String, JSON::Any)) : Bool
+      Dir.mkdir_p(profile_dir)
+      target = record_path(profile_dir)
+      staging = "#{target}.#{Process.pid}.#{Random::Secure.hex(4)}"
+      File.write(staging, record.to_json)
+      begin
+        File.link(staging, target)
+      ensure
+        File.delete?(staging)
+      end
+      true
+    rescue File::Error
+      false
+    end
+
+    def self.url(port : Int32) : String
+      "ws://127.0.0.1:#{port}/session"
+    end
+
+    def self.executable : String
+      Process.executable_path || File.realpath("/proc/self/exe")
+    end
+
+    def self.process_alive?(pid : Int64) : Bool
+      return false unless pid.in?(1..Int32::MAX)
+      Process.exists?(pid.to_i32)
+    rescue
+      false
+    end
+
+    # The broker for this browser: the one already running, or one started
+    # here.
+    def self.ensure(profile_dir : String, endpoint : String) : NamedTuple(port: Int32, pid: Int64, url: String)
+      40.times do
+        record = read_record(profile_dir)
+        pid = record.try(&.["pid"]?.try(&.as_i64?)) || 0_i64
+        port = record.try(&.["port"]?.try(&.as_i?).try(&.to_i32))
+        if record && record["upstream"]?.try(&.as_s?) == endpoint && process_alive?(pid)
+          # It may still be opening its port; it was recorded before it
+          # answered.
+          if port && Endpoint.wait(port, Time.instant + 10.seconds)
+            return {port: port, pid: pid, url: url(port)}
+          end
+        end
+        unless record && process_alive?(pid) && port && Endpoint.ready?(port)
+          clear_record(profile_dir)
+        end
+
+        fresh = Endpoint.free_port
+        if claim(profile_dir, {
+             "pid"      => JSON::Any.new(Process.pid.to_i64),
+             "port"     => JSON::Any.new(fresh.to_i64),
+             "upstream" => JSON::Any.new(endpoint),
+             "at"       => JSON::Any.new(Time.utc.to_unix_ms),
+           })
+          child = Process.new(executable, [INTERNAL_BROKER_ARG, endpoint, fresh.to_s, profile_dir],
+            input: Process::Redirect::Close, output: Process::Redirect::Close,
+            error: Process::Redirect::Close)
+          if Endpoint.wait(fresh, Time.instant + 15.seconds)
+            write_record(profile_dir, {
+              "pid"      => JSON::Any.new(child.pid.to_i64),
+              "port"     => JSON::Any.new(fresh.to_i64),
+              "upstream" => JSON::Any.new(endpoint),
+              "at"       => JSON::Any.new(Time.utc.to_unix_ms),
+            })
+            return {port: fresh, pid: child.pid.to_i64, url: url(fresh)}
+          end
+          clear_record(profile_dir)
+          raise IO::TimeoutError.new("the broker did not open its port")
+        end
+        sleep 150.milliseconds # somebody else is starting it; wait and join theirs
+      end
+      raise IO::Error.new("could not reach a broker for this browser")
+    end
+
+    # As a program: hold the browser's one session and serve readers until
+    # there is no reason left to keep it.
+    def self.run_process(args : Array(String)) : Nil
+      upstream = args[0]?
+      port_text = args[1]?
+      profile_dir = args[2]?
+      unless upstream && port_text && profile_dir
+        raise ArgumentError.new("the broker process needs an upstream, a port and a profile directory")
+      end
+      port = port_text.to_i?
+      unless port && port.in?(0..65_535)
+        raise ArgumentError.new("unreadable broker port #{port_text}")
+      end
+      Runner.new(upstream, port.to_i32, profile_dir).run
+    end
+
+    private class Runner
+      @server : Server?
+
+      def initialize(@upstream : String, @port : Int32, @profile_dir : String)
+      end
+
+      def run : Nil
+        server = Server.new(@upstream, @port, on_idle: ->(reason : String) { departing(reason); nil })
+        @server = server
+        server.start
+        STDOUT << %({"ready": true, "port": #{server.port}}) << '\n' unless STDOUT.tty?
+        {Signal::INT, Signal::TERM, Signal::HUP}.each do |signal|
+          signal.trap do
+            spawn do
+              signalled
+              exit 0
+            end
+          end
+        end
+        sleep
+      end
+
+      # A signal means going now: the session is ended on the way out so the
+      # next broker is not met by one Firefox still holds. A record left
+      # behind names a broker nobody is serving, which is exactly what a
+      # crashed broker leaves, and the next reader treats them the same.
+      private def signalled : Nil
+        @server.try(&.close)
+      end
+
+      private def departing(reason : String) : Nil
+        # The record goes first. A reader that arrives from here on starts a
+        # broker of its own rather than joining one that is leaving — and the
+        # gap between deciding to go and having gone is exactly when a reader
+        # would otherwise connect to a socket about to close under it.
+        if record = Broker.read_record(@profile_dir)
+          Broker.clear_record(@profile_dir) if record["port"]?.try(&.as_i64?) == @port.to_i64
+        end
+        if reason == "idle"
+          # The reprieve is for having no readers, which a reader arriving
+          # undoes. It is not for having no browser: a broker whose browser
+          # has gone can serve nobody, and staying to be found again would
+          # hand the next reader a broker that answers nothing — their
+          # session.new would wait out its whole timeout against a socket
+          # that is never coming back.
+          sleep 250.milliseconds
+          if (@server.try(&.client_count) || 0) > 0
+            # Somebody came in through that gap. Stay, and be findable again.
+            Broker.write_record(@profile_dir, {
+              "pid"      => JSON::Any.new(Process.pid.to_i64),
+              "port"     => JSON::Any.new(@port.to_i64),
+              "upstream" => JSON::Any.new(@upstream),
+              "at"       => JSON::Any.new(Time.utc.to_unix_ms),
+            })
+            return
+          end
+        end
+        @server.try(&.close)
+        exit 0
+      end
+    end
 
     # The WebSocket handshake needs SHA-1, and the static artifact must not
     # grow a libcrypto dependency for it.
@@ -241,6 +429,7 @@ module Tawb
       @server : TCPServer?
 
       getter port : Int32
+      getter upstream_url : String
 
       def initialize(@upstream_url : String, @port : Int32 = 0,
                      @idle_ms : Int64 = IDLE_EXIT_MS, @grace_ms : Int64 = STARTUP_GRACE_MS,

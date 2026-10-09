@@ -56,6 +56,24 @@ module Tawb
         JSON::Any.new(Broker.handshake_accept(payload.as_h["key"].as_s))
       when "broker.scenario"
         broker_scenario(payload)
+      when "broker.claim"
+        object = payload.as_h
+        JSON::Any.new(Broker.claim(object["profile"].as_s, object["record"].as_h))
+      when "broker.read"
+        record = Broker.read_record(payload.as_h["profile"].as_s)
+        record ? JSON::Any.new(record) : JSON::Any.new(nil)
+      when "broker.clear"
+        Broker.clear_record(payload.as_h["profile"].as_s)
+        JSON::Any.new(true)
+      when "broker.ensure_scenario"
+        object = payload.as_h
+        found = Broker.ensure(object["profile"].as_s, object["upstream"].as_s)
+        JSON::Any.new({
+          "url"      => JSON::Any.new(found[:url]),
+          "port"     => JSON::Any.new(found[:port].to_i64),
+          "pid"      => JSON::Any.new(found[:pid]),
+          "upstream" => JSON::Any.new(object["upstream"].as_s),
+        })
       when "blocks.build"
         JSON::Any.new(Blocks.build(payload.as_h["items"].as_a))
       when "blocks.fold"
