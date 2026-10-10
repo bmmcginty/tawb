@@ -716,6 +716,116 @@ function keymapImplementations(javascript) {
 // The Lynx effective-configuration importer, differenced between the
 // JavaScript original and the Crystal port: the same key descriptions, map
 // dumps, preference files, and injected lynx runs answer both.
+// The Lynx key decisions, differenced between the JavaScript original and
+// the Crystal port: the same interface gates, digit prompts, screen actions,
+// and Tab rules, driven against a fake host that records every call.
+function lynxActionsImplementations() {
+  const { createLynxActions } = require('../src/lynx_actions');
+  const { Keymap } = require('../src/keys');
+  const implementations = [{
+    name: 'JavaScript',
+    harness() {
+      const calls = [];
+      const fakeKeymap = ({ browse = {}, edit = {} } = {}) => ({
+        actionFor: (chunk) => browse[chunk] || null,
+        editingActionFor: (chunk) => edit[chunk] || null,
+      });
+      const actions = createLynxActions({
+        fallbackKeymap: fakeKeymap(),
+        keyIs: (chunk, name) => chunk === `[${name}]`,
+        setStatus: (state, msg) => calls.push(['status', msg]),
+        currentItem: (state) => state.item || null,
+        isField: (role) => role === 'textbox',
+        async beginTyping() { calls.push(['beginTyping']); return true; },
+        openLinkNumberPrompt: (state, digits) => calls.push(['number', digits]),
+        openHelp: () => calls.push(['help']),
+        describeCurrent: () => calls.push(['describe']),
+        async openMainMenu() { calls.push(['main-menu']); },
+        openOptions: () => calls.push(['options']),
+        async openTraceLog() { calls.push(['trace-log']); },
+        async toggleTrace() { calls.push(['toggle-trace']); },
+      });
+      return {
+        calls,
+        reader: (interfaceName = 'lynx', extra = {}) => ({
+          interface: interfaceName,
+          keys: new Keymap({ terminfo: {}, profile: interfaceName === 'lynx' ? 'lynx' : 'default', load: false }),
+          ...extra,
+        }),
+        setInterface: (state, name) => { state.interface = name; },
+        setItem: (state, item) => { state.item = item; },
+        setPreferences: (state, prefs) => { state.keys.preferences = prefs; },
+        setKeys: (state, map) => { state.keys = map; },
+        keymap: fakeKeymap,
+        active: (state) => actions.active(state),
+        digit: (chunk, state) => actions.digit(chunk, state),
+        action: (action, state, page) => actions.action(action, state, page),
+        afterQuickNav: (found, state, page) => actions.afterQuickNav(found, state, page),
+        popupCloseHint: (state) => actions.popupCloseHint(state),
+        searchCase: (state) => actions.searchCase(state),
+        libraryAction: (state, chunk) => actions.libraryAction(state, chunk),
+        libraryKeepsBrowseMap: (state) => actions.libraryKeepsBrowseMap(state),
+        tabArrow: (state, chunk) => actions.tabArrow(state, chunk),
+        tabNeedsActivation: (state) => actions.tabNeedsActivation(state),
+        tabTypingStatus: (state, name) => actions.tabTypingStatus(state, name),
+        tabLandedMode: (state) => actions.tabLandedMode(state),
+        typeCommand: (state, chunk) => actions.typeCommand(state, chunk),
+      };
+    },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    harness() {
+      const calls = [];
+      // The reader state lives here and rides along with every question, so
+      // the Crystal op can rebuild it call by call.
+      const current = { interface: 'lynx', keys: null, item: null };
+      const send = (method, payload = {}) => {
+        const answer = call('lynx_actions.call', {
+          method,
+          interface: current.interface,
+          keys: current.keys,
+          item: current.item,
+          ...payload,
+        });
+        calls.push(...answer.calls);
+        return answer.value;
+      };
+      return {
+        calls,
+        reader: (interfaceName = 'lynx', extra = {}) => {
+          current.interface = interfaceName;
+          current.keys = extra.keys || { profile: interfaceName, terminfo: {}, load: false };
+          current.item = extra.item || null;
+          return current;
+        },
+        setInterface: (state, name) => { current.interface = name; },
+        setItem: (state, item) => { current.item = item; },
+        setPreferences: (state, prefs) => {
+          current.keys = { ...current.keys, preferences: prefs };
+        },
+        setKeys: (state, map) => { current.keys = { fake: map }; },
+        keymap: (map) => map,
+        active: () => send('active'),
+        digit: (chunk) => send('digit', { chunk }),
+        action: (action) => send('action', { action }),
+        afterQuickNav: (found) => send('after_quick_nav', { found: !!found }),
+        popupCloseHint: () => send('popup_close_hint'),
+        searchCase: () => send('search_case'),
+        libraryAction: (state, chunk) => send('library_action', { chunk }),
+        libraryKeepsBrowseMap: () => send('library_keeps_browse_map'),
+        tabArrow: (state, chunk) => send('tab_arrow', { chunk }),
+        tabNeedsActivation: () => send('tab_needs_activation'),
+        tabTypingStatus: (state, name) => send('tab_typing_status', { name }),
+        tabLandedMode: () => send('tab_landed_mode'),
+        typeCommand: (state, chunk) => send('type_command', { chunk }),
+      };
+    },
+  });
+  return implementations;
+}
+
 function lynxConfigImplementations(lynxConfig) {
   const implementations = [{
     name: 'JavaScript',
@@ -1452,7 +1562,7 @@ module.exports = {
   firefoxAutomationImplementations, firefoxHandleImplementations, firefoxLaunchImplementations,
   firefoxPageImplementations,
   inputImplementations, interfaceImplementations, keymapImplementations, layoutImplementations,
-  liveImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
+  liveImplementations, lynxActionsImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, marionetteImplementations, optionImplementations,
   placeImplementations, readerCommands, sessionImplementations, unicodeImplementations,
 };

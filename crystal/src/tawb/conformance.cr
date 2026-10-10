@@ -20,6 +20,7 @@ require "./keyboard"
 require "./keys"
 require "./layout"
 require "./live"
+require "./lynx_actions"
 require "./lynx_config"
 require "./lynx_display"
 require "./lynx_keymap"
@@ -592,6 +593,8 @@ module Tawb
       when "keys.save"
         build_keymap(payload).save
         JSON::Any.new(true)
+      when "lynx_actions.call"
+        lynx_actions_call(payload)
       when "lynx_config.key_spec"
         JSON::Any.new(LynxConfig.key_spec(payload.as_h["text"].as_s))
       when "lynx_config.parse_browse_map"
@@ -953,6 +956,162 @@ module Tawb
         "start" => JSON::Any.new(region.start.to_i64),
         "end"   => JSON::Any.new(region.stop.to_i64),
       })
+    end
+
+    private def self.lynx_actions_call(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      item_role = object["item"]?.try(&.as_h?).try(&.["role"]?.try(&.as_s?))
+      recorder = LynxActionsRecorder.new(item_role)
+      state = LynxActions::State.new(object["interface"]?.try(&.as_s?) || "default")
+      state.keys = object["keys"]?.try do |raw|
+        raw.raw.nil? ? nil : build_keymap(lynx_keymap_descriptor(raw))
+      end
+      actions = LynxActions.new(recorder)
+      method = object["method"].as_s
+      chunk = -> { object["chunk"]?.try(&.as_s?) || "" }
+      value = case method
+              when "active"
+                actions.active?(state)
+              when "digit"
+                actions.digit?(chunk.call, state)
+              when "action"
+                actions.action?(object["action"].as_s, state, nil)
+              when "after_quick_nav"
+                actions.after_quick_nav(object["found"]?.try(&.as_bool?) == true, state, nil)
+                nil
+              when "popup_close_hint"
+                actions.popup_close_hint(state)
+              when "search_case"
+                actions.search_case(state)
+              when "library_action"
+                actions.library_action(state, chunk.call)
+              when "library_keeps_browse_map"
+                actions.library_keeps_browse_map?(state)
+              when "tab_arrow"
+                actions.tab_arrow?(state, chunk.call)
+              when "tab_needs_activation"
+                actions.tab_needs_activation?(state)
+              when "tab_typing_status"
+                actions.tab_typing_status(state, object["name"]?.try(&.as_s?) || "")
+              when "tab_landed_mode"
+                actions.tab_landed_mode(state)
+              when "type_command"
+                actions.type_command?(state, chunk.call)
+              else
+                raise ArgumentError.new("unknown lynx action method #{method}")
+              end
+      JSON::Any.new({
+        "value" => JSON::Any.new(value),
+        "calls" => JSON::Any.new(recorder.calls.map do |entry|
+          JSON::Any.new(entry.map { |part| JSON::Any.new(part) })
+        end),
+      })
+    end
+
+    # The keymap a Lynx actions question carries: either a straight keymap
+    # descriptor for build_keymap, or a fake browse/edit map inverted into
+    # bindings, mirroring the fake keymaps the JavaScript tests use.
+    private def self.lynx_keymap_descriptor(raw : JSON::Any) : JSON::Any
+      object = raw.as_h
+      fake = object["fake"]?.try(&.as_h?)
+      return raw unless fake
+      bindings = {} of String => JSON::Any
+      {"browse", "edit"}.each do |keyboard|
+        fake[keyboard]?.try(&.as_h?).try do |map|
+          map.each do |chunk, action|
+            id = action.as_s
+            list = bindings[id]?.try(&.as_a) || [] of JSON::Any
+            list << JSON::Any.new(chunk)
+            bindings[id] = JSON::Any.new(list)
+          end
+        end
+      end
+      JSON::Any.new({
+        # The fake maps stand in for a Lynx keymap, so the actions they name
+        # must exist in the profile's action list to be bound at all.
+        "profile"  => JSON::Any.new("lynx"),
+        "bindings" => JSON::Any.new(bindings),
+        "terminfo" => JSON::Any.new({} of String => JSON::Any),
+        "load"     => JSON::Any.new(false),
+      } of String => JSON::Any)
+    end
+
+    # The fake host the Lynx actions run against over the wire: it answers
+    # exactly what the JavaScript tests' fake host answers, and records the
+    # calls it received so both runtimes can be compared call for call.
+    private class LynxActionsRecorder
+      include LynxActions::Host
+
+      getter calls : Array(Array(String?))
+
+      def initialize(item_role : String?)
+        @item_role = item_role
+        @calls = [] of Array(String?)
+      end
+
+      def fallback_keymap : Keys::Keymap
+        Keys::Keymap.new(terminfo: {} of String => String, read_file: false)
+      end
+
+      def key_is(chunk : String, name : String, state : LynxActions::State) : Bool
+        chunk == "[#{name}]"
+      end
+
+      def set_status(state : LynxActions::State, message : String) : Nil
+        note_with("status", message)
+      end
+
+      def current_item(state : LynxActions::State) : LynxActions::Item?
+        @item_role ? LynxActions::Item.new(@item_role.not_nil!) : nil
+      end
+
+      def is_field(role : String) : Bool
+        role == "textbox"
+      end
+
+      def begin_typing(state : LynxActions::State, page, item : LynxActions::Item) : Bool
+        note("beginTyping")
+        true
+      end
+
+      def open_link_number_prompt(state : LynxActions::State, digits : String?) : Nil
+        note_with("number", digits)
+      end
+
+      def open_help(state : LynxActions::State, page) : Nil
+        note("help")
+      end
+
+      def describe_current(state : LynxActions::State, page) : Nil
+        note("describe")
+      end
+
+      def open_main_menu(state : LynxActions::State, page) : Nil
+        note("main-menu")
+      end
+
+      def open_options(state : LynxActions::State, page) : Nil
+        note("options")
+      end
+
+      def open_trace_log(state : LynxActions::State, page) : Nil
+        note("trace-log")
+      end
+
+      def toggle_trace(state : LynxActions::State) : Nil
+        note("toggle-trace")
+      end
+
+      private def note(name : String) : Nil
+        @calls << [name] of String?
+      end
+
+      private def note_with(name : String, extra : String?) : Nil
+        entry = Array(String?).new
+        entry << name
+        entry << extra
+        @calls << entry
+      end
     end
 
     private def self.lynx_bindings_json(parsed : LynxConfig::Bindings) : JSON::Any
