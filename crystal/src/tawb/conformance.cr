@@ -259,6 +259,8 @@ module Tawb
         JSON::Any.new(Blocks.fold(payload.as_h["blocks"].as_a))
       when "core.scenario"
         core_scenario(payload)
+      when "core.tab_scenario"
+        core_tab_scenario(payload)
       when "core.diff_blocks"
         object = payload.as_h
         previous = object["previous_texts"].as_a.map(&.as_s)
@@ -674,6 +676,63 @@ module Tawb
         }) if item.nil? || item.raw.nil?
         Core::Block.new(object["text"].as_s, item)
       end
+    end
+
+    # A pass over the core's tab policy against a scripted BiDi endpoint.
+    # Pages come from the real native Firefox driver, while the observations
+    # are the same ones the JavaScript Core scenario records.
+    private def self.core_tab_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      browser = FirefoxDriver::BrowserSession.new(object["url"].as_s)
+      port = object["browser_port"]?.try(&.as_i?) || 0
+      observations = [] of JSON::Any
+      browser.start
+      core = Core.new(driver: browser, browser_port: port)
+      find_page = ->(id : String) do
+        core.tabs.find { |page| page.context_id == id } ||
+        raise ArgumentError.new("no tab #{id}")
+      end
+      begin
+        object["script"].as_a.each do |step_value|
+          step = step_value.as_h
+          case step["op"].as_s
+          when "tabs"
+            observations.push(JSON::Any.new(core.tabs.map { |page| JSON::Any.new(page.context_id) }))
+          when "adopt"
+            observations.push(JSON::Any.new(core.adopt_tab(find_page.call(step["id"].as_s))))
+          when "where"
+            where = core.where
+            observations.push(JSON::Any.new({
+              "position" => JSON::Any.new(where.position.to_i64),
+              "of"       => JSON::Any.new(where.of.to_i64),
+            }))
+          when "next"
+            page = core.next_tab(step["direction"].as_i)
+            observations.push(JSON::Any.new(page.try(&.context_id)))
+          when "after"
+            page = core.tab_after(find_page.call(step["id"].as_s))
+            observations.push(JSON::Any.new(page.try(&.context_id)))
+          when "label"
+            observations.push(JSON::Any.new(core.tab_label(find_page.call(step["id"].as_s))))
+          when "foreground"
+            observations.push(JSON::Any.new(core.foreground?(find_page.call(step["id"].as_s))))
+          when "new"
+            observations.push(JSON::Any.new(core.new_tab.context_id))
+          when "close"
+            core.close_tab(find_page.call(step["id"].as_s))
+            observations.push(JSON::Any.new(nil))
+          when "claimed_self"
+            claim = Session.read_claims(port).find { |entry| entry.pid == Process.pid }
+            observations.push(JSON::Any.new(claim.try(&.target_id)))
+          else
+            raise ArgumentError.new("unknown core tab scenario op #{step["op"]}")
+          end
+        end
+      ensure
+        Session.release_tab(port)
+        browser.close
+      end
+      JSON::Any.new(observations)
     end
 
     # A scripted pass over the core's buffer: blocks set, the shadow cursor

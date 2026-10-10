@@ -12,6 +12,7 @@ module Tawb
       def initialize(url : String)
         @protocol = Bidi::Session.new(url)
         @started = false
+        @pages = {} of String => Page
       end
 
       def start : JSON::Any
@@ -42,19 +43,44 @@ module Tawb
         })
       end
 
-      def existing_page : Page
+      # Every top-level browsing context is a tab. Keep one Page object per
+      # context so the core can compare its current page by identity while a
+      # fresh getTree answer updates the address behind that object.
+      def list_pages : Array(Page)
         result = @protocol.command("browsingContext.getTree")
-        context = result.as_h["contexts"].as_a.first?
-        raise IO::Error.new("Firefox exposed no browsing context") unless context
-        object = context.as_h
-        Page.new(@protocol, object["context"].as_s, object["url"]?.try(&.as_s?) || "about:blank")
+        (result.as_h["contexts"]?.try(&.as_a?) || [] of JSON::Any).map do |context|
+          object = context.as_h
+          page_for(object["context"].as_s,
+            object["url"]?.try(&.as_s?) || "about:blank")
+        end
+      end
+
+      def existing_page : Page
+        list_pages.first? || raise IO::Error.new("Firefox exposed no browsing context")
       end
 
       def create_page(background = false) : Page
         params = {"type" => JSON::Any.new("tab")}
         params["background"] = JSON::Any.new(true) if background
         result = @protocol.command("browsingContext.create", params).as_h
-        Page.new(@protocol, result["context"].as_s, "about:blank")
+        page_for(result["context"].as_s, "about:blank")
+      end
+
+      # A BiDi browsing-context id is stable for the life of a tab and means
+      # the same thing in every reader process, which is exactly what claims
+      # need from a tab name.
+      def target_id_for(page : Page) : String
+        page.context_id
+      end
+
+      private def page_for(context_id : String, url : String) : Page
+        if page = @pages[context_id]?
+          page.set_url(url)
+          return page
+        end
+        page = Page.new(@protocol, context_id, url)
+        @pages[context_id] = page
+        page
       end
 
       def close(end_session = true) : Nil
@@ -332,6 +358,39 @@ module Tawb
       getter url : String
 
       def initialize(@protocol : Bidi::Session, @context_id : String, @url = "about:blank")
+        @closed = false
+      end
+
+      def set_url(url : String) : Nil
+        @url = url
+      end
+
+      def closed? : Bool
+        @closed
+      end
+
+      def title : String
+        evaluate("() => document.title").as_s? || ""
+      rescue
+        ""
+      end
+
+      def foreground? : Bool
+        evaluate("() => document.visibilityState === 'visible'").as_bool? || false
+      rescue
+        false
+      end
+
+      # BiDi commands carry their own bound; these preserve the page contract
+      # the core applies when it adopts a tab.
+      def set_default_timeout(milliseconds : Int32) : Nil
+      end
+
+      def set_default_navigation_timeout(milliseconds : Int32) : Nil
+      end
+
+      def evaluate(fn : String, arg : JSON::Any? = nil, expression = false) : JSON::Any
+        Frame.new(@protocol, @context_id, self, @url).evaluate(fn, arg, expression)
       end
 
       def navigate(url : String, wait = "interactive") : Nil
@@ -379,6 +438,7 @@ module Tawb
         @protocol.command("browsingContext.close", {
           "context" => JSON::Any.new(@context_id),
         })
+        @closed = true
       end
 
       # Give a file input its files directly, for the ordinary case where the

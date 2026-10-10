@@ -51,7 +51,9 @@ require "json"
 require "set"
 require "uri"
 require "./aria"
+require "./firefox_driver"
 require "./remap"
+require "./session"
 
 module Tawb
   class Core
@@ -146,6 +148,8 @@ module Tawb
     # Paths supplied to one file control, and the only part the browser lets
     # a page read back to prove those paths are still selected.
     record AttachedFile, paths : Array(String), names : Array(String)
+    # A tab's one-based position in the browser and the number of tabs there.
+    record TabPosition, position : Int32, of : Int32
 
     # An open dropdown, whose entries are spliced into the block list under
     # the control they belong to. See open_chooser().
@@ -370,9 +374,16 @@ module Tawb
     property exhausted : Exhausted?
     getter chooser : Chooser?
     getter change_index : Int32
+    getter page : FirefoxDriver::Page?
 
-    def initialize(source : String = "ax", layout : Bool = false)
+    def initialize(source : String = "ax", layout : Bool = false,
+                   driver : FirefoxDriver::BrowserSession? = nil,
+                   page : FirefoxDriver::Page? = nil,
+                   browser_port : Int32? = nil)
       @source = source
+      @driver = driver
+      @page = page
+      @browser_port = browser_port
       # Whether the extraction records the inline-flow and table-cell placement
       # the Lynx display lays a page out with. Nothing else reads it, so a
       # reader who has not asked for Lynx does not pay for it.
@@ -747,6 +758,82 @@ module Tawb
       end
 
       PatchResult.new(touched, @generation, undo)
+    end
+
+    # -----------------------------------------------------------------------
+    # Tabs
+    #
+    # Which tabs exist, which one is ours, and taking one over. What a tab
+    # switch then means — that the buffer describes a different document now,
+    # so there is no place to keep — is decided by whoever asked for it.
+    # -----------------------------------------------------------------------
+
+    def tabs : Array(FirefoxDriver::Page)
+      driver = @driver || return [] of FirefoxDriver::Page
+      driver.list_pages.reject(&.closed?)
+    end
+
+    def tab_label(page : FirefoxDriver::Page) : String
+      title = page.title.gsub(/\s+/, " ").strip
+      value = title.empty? ? page.url : title
+      value = "untitled" if value.empty?
+      value[0, Math.min(value.size, 60)]
+    rescue
+      "untitled"
+    end
+
+    # A background document reports itself hidden, which asks the same
+    # question on every browser without needing a protocol feature of its own.
+    def foreground?(page : FirefoxDriver::Page) : Bool
+      page.foreground?
+    end
+
+    def where(page : FirefoxDriver::Page? = @page) : TabPosition
+      all = tabs
+      position = page ? (all.index(page) || -1) + 1 : 0
+      TabPosition.new(position, all.size)
+    end
+
+    # The tab > or < would move to, or nil when there is only one.
+    def next_tab(direction : Int32) : FirefoxDriver::Page?
+      all = tabs
+      return nil if all.size < 2
+      current = @page.try { |page| all.index(page) } || -1
+      from = current < 0 ? 0 : current
+      all[(from + direction + all.size) % all.size]
+    end
+
+    # Closing repeatedly walks forward rather than doubling back.
+    def tab_after(page : FirefoxDriver::Page) : FirefoxDriver::Page?
+      all = tabs
+      return nil if all.size < 2
+      index = all.index(page) || -1
+      all[((index < 0 ? 0 : index) + 1) % all.size]
+    end
+
+    # Take a tab as ours. The process-wide claim moves with us, so another
+    # reader avoids this one and is free to use the tab we left.
+    def adopt_tab(page : FirefoxDriver::Page) : String?
+      target_id = @driver.try(&.target_id_for(page))
+      if target_id && (port = @browser_port)
+        Session.claim_tab(port, target_id)
+      end
+      # Intercept only this tab's chooser. Taking one from somebody else's tab
+      # suppresses the browser's own dialog and leaves them unable to answer.
+      page.arm_file_chooser rescue nil
+      page.set_default_timeout(OPERATION_TIMEOUT_MS)
+      page.set_default_navigation_timeout(NAVIGATION_TIMEOUT_MS)
+      @page = page
+      target_id
+    end
+
+    def new_tab : FirefoxDriver::Page
+      driver = @driver || raise IO::Error.new("this core has no browser")
+      driver.create_page
+    end
+
+    def close_tab(page : FirefoxDriver::Page) : Nil
+      page.close
     end
 
     # -----------------------------------------------------------------------

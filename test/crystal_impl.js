@@ -357,6 +357,83 @@ function coreImplementations(javascript) {
   return implementations;
 }
 
+// Tab inventory and adoption over the same Core policy. The JavaScript side
+// uses in-memory pages; the native side is given a scripted BiDi endpoint so
+// its real Firefox page objects and protocol requests are exercised too.
+function coreTabImplementations(javascript, session) {
+  const scenario = async (_url, payload) => {
+    const pages = payload.pages.map((given) => {
+      const page = {
+        contextId: given.id,
+        _url: given.url,
+        _closed: false,
+        _armed: 0,
+        url: () => page._url,
+        title: async () => given.title,
+        isClosed: () => page._closed,
+        evaluate: async () => given.foreground,
+        close: async () => { page._closed = true; },
+        setDefaultTimeout: () => {},
+        setDefaultNavigationTimeout: () => {},
+      };
+      return page;
+    });
+    const driver = {
+      listTabs: () => pages,
+      targetIdFor: async (page) => page.contextId,
+      armFileChooser: async (page) => { page._armed += 1; return true; },
+      newTab: async () => {
+        const page = {
+          contextId: 'created-context', _url: 'about:blank', _closed: false,
+          url: () => page._url, title: async () => '', isClosed: () => page._closed,
+          evaluate: async () => false, close: async () => { page._closed = true; },
+          setDefaultTimeout: () => {}, setDefaultNavigationTimeout: () => {},
+        };
+        pages.push(page);
+        return page;
+      },
+    };
+    const core = new javascript.Core({
+      driver, page: null, source: 'ax', sources: ['ax'], browserPort: payload.browser_port,
+    });
+    const observations = [];
+    const find = (id) => pages.find((page) => page.contextId === id && !page._closed);
+    try {
+      for (const step of payload.script) {
+        switch (step.op) {
+          case 'tabs': observations.push(core.tabs().map((page) => page.contextId)); break;
+          case 'adopt': observations.push(await core.adoptTab(find(step.id))); break;
+          case 'where': observations.push(core.where()); break;
+          case 'next': observations.push(core.nextTab(step.direction)?.contextId ?? null); break;
+          case 'after': observations.push(core.tabAfter(find(step.id))?.contextId ?? null); break;
+          case 'label': observations.push(await core.tabLabel(find(step.id))); break;
+          case 'foreground': observations.push(await core.isForeground(find(step.id))); break;
+          case 'new': observations.push((await core.newTab()).contextId); break;
+          case 'close': await core.closeTab(find(step.id)); observations.push(null); break;
+          case 'claimed_self': {
+            const claim = session.readClaims(payload.browser_port)
+              .find((entry) => entry.pid === process.pid);
+            observations.push(claim?.targetId ?? null);
+            break;
+          }
+          default: throw new Error(`unknown core tab scenario op ${step.op}`);
+        }
+      }
+    } finally {
+      session.releaseTab(payload.browser_port);
+    }
+    return observations;
+  };
+
+  const implementations = [{ name: 'JavaScript', scenario }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    scenario(url, payload) { return callAsync('core.tab_scenario', { url, ...payload }); },
+  });
+  return implementations;
+}
+
 function dumpImplementations(javascript) {
   const implementations = [{ name: 'JavaScript', ...javascript }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
@@ -1239,7 +1316,8 @@ function unicodeImplementations(javascript) {
 
 module.exports = {
   call, callAsync, addressImplementations, ariaImplementations, bidiImplementations,
-  blockImplementations, coreImplementations, dumpImplementations, editImplementations,
+  blockImplementations, coreImplementations, coreTabImplementations,
+  dumpImplementations, editImplementations,
   endpointImplementations,
   firefoxAgentImplementations,
   firefoxAutomationImplementations, firefoxHandleImplementations, firefoxLaunchImplementations,
