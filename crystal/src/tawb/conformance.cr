@@ -33,6 +33,7 @@ require "./lynx_state"
 require "./marionette"
 require "./options"
 require "./reader"
+require "./reader_keys"
 require "./quicknav"
 require "./place"
 require "./session"
@@ -1405,6 +1406,12 @@ module Tawb
           find["text"]?.try(&.as_s?) || "",
           (find["caret"]?.try(&.as_i64?) || 0).to_i32)
       end
+      if last_find = object["lastFind"]?.try(&.as_h?)
+        state.last_find = Reader::Find.new(
+          (last_find["direction"]?.try(&.as_i64?) || 1).to_i32,
+          last_find["text"]?.try(&.as_s?) || "",
+          (last_find["caret"]?.try(&.as_i64?) || 0).to_i32)
+      end
       if line = object["line"]?.try(&.as_h?)
         buffer = line["buffer"]?.try(&.as_h?)
         state.line_prompt = Reader::LinePrompt.new(
@@ -1554,6 +1561,18 @@ module Tawb
         return JSON::Any.new(nil) unless paragraph
         return JSON::Any.new({"line" => JSON::Any.new(paragraph[:line].to_i64),
                               "col" => JSON::Any.new(paragraph[:col].to_i64)})
+      when "findKey"
+        ReaderKeys.handle_find_key(output, state, page_url, action["chunk"].as_s)
+      when "findText"
+        found = ReaderKeys.find_text(state, action["needle"].as_s,
+          (action["direction"]?.try(&.as_i64?) || 1).to_i32)
+        return JSON::Any.new(nil) unless found
+        return JSON::Any.new({"line" => JSON::Any.new(found[:line].to_i64),
+                              "col" => JSON::Any.new(found[:col].to_i64),
+                              "wrapped" => JSON::Any.new(found[:wrapped])})
+      when "runSearch"
+        ReaderKeys.run_search(output, state, page_url, action["needle"].as_s,
+          (action["direction"]?.try(&.as_i64?) || 1).to_i32)
       when "jumpTo"
         jump_found = nil
         if found_json = action["found"]?
@@ -1618,6 +1637,14 @@ module Tawb
         "text"      => JSON::Any.new(state.find.not_nil!.text),
         "caret"     => JSON::Any.new(state.find.not_nil!.caret.to_i64),
       }) : JSON::Any.new(nil)
+      last_find_json = if state.last_find
+        JSON::Any.new({
+          "direction" => JSON::Any.new(state.last_find.not_nil!.direction.to_i64),
+          "text"      => JSON::Any.new(state.last_find.not_nil!.text),
+        })
+      else
+        JSON::Any.new(nil)
+      end
       address_caret = JSON::Any.new(nil)
       if caret = state.drawn.address_caret_col
         address_caret = JSON::Any.new(caret.to_i64)
@@ -1640,6 +1667,8 @@ module Tawb
         "typing"    => typing,
         "auth"      => auth,
         "find"      => find,
+        "lastFind"  => last_find_json,
+        "inputMarks" => JSON::Any.new(state.core.input_marks.to_i64),
         "atCalls"   => JSON::Any.new(state.core.at_calls.map { |call| JSON::Any.new(call) }),
       })
     end

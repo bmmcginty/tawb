@@ -144,14 +144,23 @@ module Tawb
       property popup : JSON::Any?
       property popup_at : Int64
       property at_calls : Array(Int64)
+      property input_marks : Int32
 
       def initialize(@source = "ax", @blocks = [] of JSON::Any,
                      @popup = nil, @popup_at = -1_i64)
         @at_calls = [] of Int64
+        @input_marks = 0
       end
 
       def at(index : Int32) : Nil
         @at_calls << index.to_i64
+      end
+
+      # The reader just did something; live refreshes hold off while this is
+      # recent. Recorded, not timestamped: the conformance boundary compares
+      # counts, and the real loop owns the clock.
+      def mark_input : Nil
+        @input_marks += 1
       end
     end
 
@@ -181,6 +190,8 @@ module Tawb
       property library : JSON::Any?
       property dialog : JSON::Any?
       property options : JSON::Any?
+      property last_find : Find?
+      property page_keyboard_exit_until : Int64
 
       def initialize
         @rows = 24
@@ -208,6 +219,8 @@ module Tawb
         @library = nil
         @dialog = nil
         @options = nil
+        @last_find = nil
+        @page_keyboard_exit_until = 0
       end
     end
 

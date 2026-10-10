@@ -30,6 +30,23 @@ module Tawb
       def initialize(@keys : Keys::Keymap?)
         @interface = "default"
       end
+
+      def initialize(@interface : String, @keys : Keys::Keymap?); end
+
+      # The one gate every other decision in this class begins with. Kept as
+      # a named predicate so the string itself lives only here and in the
+      # interface policy.
+      def active? : Bool
+        @interface == "lynx"
+      end
+
+      # What the Searching Type option says, when the Lynx interface is in
+      # charge. A pure question of the interface and the loaded preferences,
+      # so the search code can ask it without a host.
+      def search_case : String?
+        return nil unless active?
+        @keys.try(&.preferences).try(&.["searchCase"]?).try(&.as_s?)
+      end
     end
 
     # The item under the cursor, as far as these decisions see it: they only
@@ -69,7 +86,7 @@ module Tawb
     # named predicate so the string itself lives only here and in the
     # interface policy.
     def active?(state : State) : Bool
-      state.interface == "lynx"
+      state.active?
     end
 
     # A digit starts a number prompt when the profile numbers links or
@@ -140,8 +157,7 @@ module Tawb
     # than TAWB's smart case. Nil outside the interface, which leaves the
     # ordinary rule in charge.
     def search_case(state : State) : String?
-      return nil unless active?(state)
-      state.keys.try(&.preferences).try(&.["searchCase"]?).try(&.as_s?)
+      state.search_case
     end
 
     # Which action, if any, this list key names. Read through the browse map

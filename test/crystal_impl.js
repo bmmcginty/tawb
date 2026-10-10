@@ -1156,6 +1156,7 @@ function readerImplementations(index, keysModule) {
         popup: spec.core?.popup ?? null,
         popupAt: () => (spec.core?.popupAt ?? -1),
         at: (index) => { atCalls.push(index); },
+        markInput() { this.inputMarks = (this.inputMarks ?? 0) + 1; },
       },
       keys: spec.keys ? buildKeys(spec.keys) : null,
       typing: spec.typing ? {
@@ -1175,6 +1176,9 @@ function readerImplementations(index, keysModule) {
         direction: spec.find.direction ?? 1, text: spec.find.text ?? '',
         caret: spec.find.caret ?? 0,
       } : null,
+      lastFind: spec.lastFind
+        ? { direction: spec.lastFind.direction ?? 1, text: spec.lastFind.text ?? '' }
+        : null,
       line: spec.line ? {
         label: spec.line.label ?? '',
         buffer: { text: spec.line.buffer?.text ?? '', caret: spec.line.buffer?.caret ?? 0 },
@@ -1350,6 +1354,16 @@ function readerImplementations(index, keysModule) {
               value = found ? { line: found.line, col: found.col } : null;
               break;
             }
+            case 'findKey':
+              index.handleFindKey(action.chunk, state, page); break;
+            case 'findText': {
+              const found = index.findText(state, action.needle, action.direction ?? 1);
+              value = found ? { line: found.line, col: found.col, wrapped: found.wrapped } : null;
+              break;
+            }
+            case 'runSearch':
+              index.runSearch(state, page, action.needle, action.direction ?? 1);
+              break;
             case 'jumpTo': {
               const found = action.found ? { line: action.found.line, col: action.found.col } : null;
               index.jumpTo(state, page, found, action.label, action.direction ?? 1);
@@ -1403,7 +1417,11 @@ function readerImplementations(index, keysModule) {
           find: state.find
             ? { direction: state.find.direction, text: state.find.text, caret: state.find.caret }
             : null,
+          lastFind: state.lastFind
+            ? { direction: state.lastFind.direction, text: state.lastFind.text }
+            : null,
           atCalls,
+          inputMarks: state.core.inputMarks ?? 0,
         },
       };
     },
