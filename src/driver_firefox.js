@@ -217,6 +217,48 @@ class FirefoxHandle {
   }
 }
 
+// A slider's track, measured after the first pointer move has revealed
+// whatever hover-only chrome the page keeps hidden. The requested
+// orientation wins; without one, a box taller than it is wide is a vertical
+// slider. Exported so the native runtime can embed the same walk
+// (crystal/assets/slider_geometry.js).
+function sliderGeometry(el, requested) {
+  const root = el.getBoundingClientRect();
+  const vertical = requested === 'vertical'
+    || (!requested && root.height > root.width * 1.5);
+  let start = 2;
+  let end = (vertical ? root.height : root.width) - 2;
+  // A composite slider may keep its mute button inside the slider's own box.
+  // That button is not track: clicking a low volume on it toggles mute
+  // instead of setting the requested value.
+  for (const child of el.querySelectorAll('button,[role="button"]')) {
+    const part = child.getBoundingClientRect();
+    if (!part.width || !part.height) continue;
+    const nearStart = vertical ? part.top <= root.top + 2 : part.left <= root.left + 2;
+    const nearEnd = vertical ? part.bottom >= root.bottom - 2 : part.right >= root.right - 2;
+    if (nearStart) start = Math.max(start, vertical ? part.bottom - root.top : part.right - root.left);
+    if (nearEnd) end = Math.min(end, vertical ? part.top - root.top : part.left - root.left);
+  }
+  let track = null;
+  for (const child of el.querySelectorAll('*:not(button):not([role="button"])')) {
+    const part = child.getBoundingClientRect();
+    const along = vertical ? part.height : part.width;
+    const across = vertical ? part.width : part.height;
+    const rootAlong = vertical ? root.height : root.width;
+    const rootAcross = vertical ? root.width : root.height;
+    if (along < rootAlong * 0.3 || across >= rootAcross * 0.8) continue;
+    if (!track || along > track.along) {
+      track = {
+        along,
+        start: vertical ? part.top - root.top : part.left - root.left,
+        end: vertical ? part.bottom - root.top : part.right - root.left,
+      };
+    }
+  }
+  if (track) { start = track.start; end = track.end; }
+  return { width: root.width, height: root.height, vertical, start, end: Math.max(start, end) };
+}
+
 // Keys as WebDriver names them: printable characters are themselves, and
 // everything else is a code point in a private-use block. This is the mapping
 // Playwright's key names go through to reach the same place.
@@ -522,6 +564,50 @@ class FirefoxPage {
         ],
       }],
     });
+  }
+
+  // A slider put at a requested position on its own track, by trusted
+  // pointer input. Used when a custom ARIA slider advertises a range and
+  // then ignores every standard key: core.adjustControlHandle maps the
+  // requested value onto the range, this maps it onto the pixels. The first
+  // move reveals hover-only tracks; the geometry is read after it, and the
+  // press lands at the mapped point on the track the page actually has.
+  async clickSlider(scope, handle, ratio, orientation = null) {
+    if (!handle || !handle.sharedId) {
+      throw new Error('this slider carries no element reference');
+    }
+    const context = scope && scope.contextId ? scope.contextId : this.contextId;
+    const target = { type: 'element', element: { sharedId: handle.sharedId } };
+    try {
+      // Element-origin offsets are from its centre in WebDriver actions, so
+      // the second move needs only the dimensions after the disclosure.
+      await this.session.send('input.performActions', {
+        context,
+        actions: [{
+          type: 'pointer', id: 'tweb-slider', parameters: { pointerType: 'mouse' },
+          actions: [{ type: 'pointerMove', x: 0, y: 0, origin: target }],
+        }],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const geometry = await handle.evaluate(sliderGeometry, orientation);
+      const along = geometry.start + (geometry.vertical ? 1 - ratio : ratio)
+        * (geometry.end - geometry.start);
+      const x = geometry.vertical ? 0 : Math.round(along - geometry.width / 2);
+      const y = geometry.vertical ? Math.round(along - geometry.height / 2) : 0;
+      await this.session.send('input.performActions', {
+        context,
+        actions: [{
+          type: 'pointer', id: 'tweb-slider', parameters: { pointerType: 'mouse' },
+          actions: [
+            { type: 'pointerMove', x, y, origin: target },
+            { type: 'pointerDown', button: 0 },
+            { type: 'pointerUp', button: 0 },
+          ],
+        }],
+      });
+    } finally {
+      await this.session.send('input.releaseActions', { context }).catch(() => {});
+    }
   }
 
   async close() {
@@ -1368,78 +1454,8 @@ async function openFirefox({
       return page.hover(scope, handle, at);
     },
 
-    async clickSlider(scope, handle, ratio, orientation = null) {
-      if (!handle || !handle.sharedId) {
-        throw new Error('this slider carries no element reference');
-      }
-      const context = scope && scope.contextId ? scope.contextId : page.contextId;
-      const target = { type: 'element', element: { sharedId: handle.sharedId } };
-      try {
-        // The first move reveals hover-only tracks. Element-origin offsets
-        // are from its centre in WebDriver actions, so the second move needs
-        // only the dimensions after that disclosure has happened.
-        await session.send('input.performActions', {
-          context,
-          actions: [{
-            type: 'pointer', id: 'tweb-slider', parameters: { pointerType: 'mouse' },
-            actions: [{ type: 'pointerMove', x: 0, y: 0, origin: target }],
-          }],
-        });
-        await new Promise((resolve) => setTimeout(resolve, 120));
-        const geometry = await handle.evaluate((el, requested) => {
-          const root = el.getBoundingClientRect();
-          const vertical = requested === 'vertical'
-            || (!requested && root.height > root.width * 1.5);
-          let start = 2;
-          let end = (vertical ? root.height : root.width) - 2;
-          // A composite slider may keep its mute button inside the slider's
-          // own box. That button is not track: clicking a low volume on it
-          // toggles mute instead of setting the requested value.
-          for (const child of el.querySelectorAll('button,[role="button"]')) {
-            const part = child.getBoundingClientRect();
-            if (!part.width || !part.height) continue;
-            const nearStart = vertical ? part.top <= root.top + 2 : part.left <= root.left + 2;
-            const nearEnd = vertical ? part.bottom >= root.bottom - 2 : part.right >= root.right - 2;
-            if (nearStart) start = Math.max(start, vertical ? part.bottom - root.top : part.right - root.left);
-            if (nearEnd) end = Math.min(end, vertical ? part.top - root.top : part.left - root.left);
-          }
-          let track = null;
-          for (const child of el.querySelectorAll('*:not(button):not([role="button"])')) {
-            const part = child.getBoundingClientRect();
-            const along = vertical ? part.height : part.width;
-            const across = vertical ? part.width : part.height;
-            const rootAlong = vertical ? root.height : root.width;
-            const rootAcross = vertical ? root.width : root.height;
-            if (along < rootAlong * 0.3 || across >= rootAcross * 0.8) continue;
-            if (!track || along > track.along) {
-              track = {
-                along,
-                start: vertical ? part.top - root.top : part.left - root.left,
-                end: vertical ? part.bottom - root.top : part.right - root.left,
-              };
-            }
-          }
-          if (track) { start = track.start; end = track.end; }
-          return { width: root.width, height: root.height, vertical, start, end: Math.max(start, end) };
-        }, orientation);
-        const along = geometry.start + (geometry.vertical ? 1 - ratio : ratio)
-          * (geometry.end - geometry.start);
-        const x = geometry.vertical ? 0 : Math.round(along - geometry.width / 2);
-        const y = geometry.vertical ? Math.round(along - geometry.height / 2) : 0;
-        await session.send('input.performActions', {
-          context,
-          actions: [{
-            type: 'pointer', id: 'tweb-slider', parameters: { pointerType: 'mouse' },
-            actions: [
-              { type: 'pointerMove', x, y, origin: target },
-              { type: 'pointerDown', button: 0 },
-              { type: 'pointerUp', button: 0 },
-            ],
-          }],
-        });
-      } finally {
-        await session.send('input.releaseActions', { context }).catch(() => {});
-      }
+    async clickSlider(scope, handle, ratio, orientation) {
+      return page.clickSlider(scope, handle, ratio, orientation);
     },
 
     // Firefox's native Alt-click save gesture. Keyboard and pointer sources
@@ -1582,6 +1598,7 @@ async function openFirefox({
 
 module.exports = {
   openFirefox, FirefoxPage, FirefoxFrame, FirefoxHandle, FirefoxKeyboard,
+  sliderGeometry,
   readAutomationState, clearWebdriverAfterSession, probeExistingContext,
   verifyWebdriverFlag, WEBDRIVER_READY_TIMEOUT_MS, toRemoteArgument, WEBDRIVER_KEYS,
 };

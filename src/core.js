@@ -236,6 +236,20 @@ function sliderTarget({ value, min = 0, max = 100, step = null }, key) {
   return Math.min(high, Math.max(low, target));
 }
 
+// A slider's advertised range as the page states it, read for
+// adjustControlHandle: the ARIA attributes where they are given, the
+// element's own properties where they are not. Exported so the native
+// runtime can embed the same walk (crystal/assets/slider_state.js).
+function sliderStateOf(el) {
+  return {
+    value: el.getAttribute('aria-valuenow') ?? (typeof el.value === 'string' ? el.value : null),
+    min: el.getAttribute('aria-valuemin') ?? (el.min || 0),
+    max: el.getAttribute('aria-valuemax') ?? (el.max || 100),
+    step: el.getAttribute('aria-valuestep') ?? (el.step || null),
+    orientation: el.getAttribute('aria-orientation') || null,
+  };
+}
+
 // The page side of the read, embedded as an asset for the native runtime
 // (crystal/assets/read_field_state.js) so both runtimes send the same bytes
 // to the page. Real <input>/<textarea> elements expose selectionStart, which
@@ -1269,61 +1283,61 @@ class Core {
 
     const handle = await withTimeout(
       this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating control');
-    const read = () => handle.evaluate((el) => ({
-      value: el.getAttribute('aria-valuenow') ?? (typeof el.value === 'string' ? el.value : null),
-      min: el.getAttribute('aria-valuemin') ?? (el.min || 0),
-      max: el.getAttribute('aria-valuemax') ?? (el.max || 100),
-      step: el.getAttribute('aria-valuestep') ?? (el.step || null),
-      orientation: el.getAttribute('aria-orientation') || null,
-    }));
     try {
-      await handle.evaluate((el) => el.focus());
-      const before = await read();
-      const target = item.role === 'slider' ? sliderTarget(before, key) : null;
-      await page.keyboard.press(key);
-      await new Promise((resolve) => setTimeout(resolve, 120));
-      let after = await read().catch(() => null);
-      if (target == null || !after || String(after.value) !== String(before.value)
-        || target === Number(before.value)) {
-        return {
-          changed: !!after && String(after.value) !== String(before.value),
-          fallback: false, before: before.value, after: after && after.value,
-        };
-      }
-
-      if (typeof this.driver.clickSlider !== 'function') {
-        return { changed: false, fallback: false, before: before.value, after: after.value };
-      }
-      const low = Number(before.min);
-      const high = Number(before.max);
-      const ratio = (target - low) / (high - low);
-      await withTimeout(
-        this.driver.clickSlider(item.frame || page, handle, ratio, before.orientation),
-        ACTION_TIMEOUT_MS, 'Adjusting slider with the pointer');
-      await new Promise((resolve) => setTimeout(resolve, 120));
-      after = await read().catch(() => null);
-      // Some composite media controls use the first pointer press only to
-      // leave their muted state, restoring the previous volume rather than
-      // honoring the point on the track. Once awake, the same trusted press
-      // reaches the advertised value. Retry only when the numeric result is
-      // plainly not the requested position; a slider that snaps to nearby
-      // discrete values has already answered correctly.
-      const actual = Number(after && after.value);
-      const tolerance = Math.max(Number(before.step) || 0, (high - low) * 0.03);
-      if (Number.isFinite(actual) && Math.abs(actual - target) > tolerance) {
-        await withTimeout(
-          this.driver.clickSlider(item.frame || page, handle, ratio, before.orientation),
-          ACTION_TIMEOUT_MS, 'Finishing slider adjustment');
-        await new Promise((resolve) => setTimeout(resolve, 120));
-        after = await read().catch(() => after);
-      }
-      return {
-        changed: !!after && String(after.value) !== String(before.value),
-        fallback: true, before: before.value, after: after && after.value, target,
-      };
+      return await this.adjustControlHandle(
+        page.keyboard, item.frame || page, item.role, handle, key);
     } finally {
       await handle.dispose().catch(() => {});
     }
+  }
+
+  // As activateHandle: the adjusting half, for whoever already has the
+  // element and the keyboard. Split out because not every front end finds
+  // its elements the same way; what happens next is the same, and so are the
+  // bounds on how long it may take. The keyboard and the scope are passed in
+  // separately: the keyboard belongs to the page the reader holds, the
+  // slider may sit in a frame.
+  async adjustControlHandle(keyboard, scope, role, handle, key) {
+    await handle.evaluate((el) => el.focus());
+    const before = await handle.evaluate(sliderStateOf);
+    const target = role === 'slider' ? sliderTarget(before, key) : null;
+    await keyboard.press(key);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    let after = await handle.evaluate(sliderStateOf).catch(() => null);
+    if (target == null || !after || String(after.value) !== String(before.value)
+      || target === Number(before.value)) {
+      return {
+        changed: !!after && String(after.value) !== String(before.value),
+        fallback: false, before: before.value, after: after && after.value,
+      };
+    }
+
+    if (typeof this.driver.clickSlider !== 'function') {
+      return { changed: false, fallback: false, before: before.value, after: after.value };
+    }
+    const low = Number(before.min);
+    const high = Number(before.max);
+    const ratio = (target - low) / (high - low);
+    await this.driver.clickSlider(scope, handle, ratio, before.orientation);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    after = await handle.evaluate(sliderStateOf).catch(() => null);
+    // Some composite media controls use the first pointer press only to
+    // leave their muted state, restoring the previous volume rather than
+    // honoring the point on the track. Once awake, the same trusted press
+    // reaches the advertised value. Retry only when the numeric result is
+    // plainly not the requested position; a slider that snaps to nearby
+    // discrete values has already answered correctly.
+    const actual = Number(after && after.value);
+    const tolerance = Math.max(Number(before.step) || 0, (high - low) * 0.03);
+    if (Number.isFinite(actual) && Math.abs(actual - target) > tolerance) {
+      await this.driver.clickSlider(scope, handle, ratio, before.orientation);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      after = await handle.evaluate(sliderStateOf).catch(() => after);
+    }
+    return {
+      changed: !!after && String(after.value) !== String(before.value),
+      fallback: true, before: before.value, after: after && after.value, target,
+    };
   }
 
   // The DOM's own default action, rather than a mouse-coordinate click: a
@@ -1599,7 +1613,7 @@ class Core {
 }
 
 module.exports = {
-  Core, ActionTimeout, withTimeout, sliderTarget, readFieldState, readFieldStateInPage,
+  Core, ActionTimeout, withTimeout, sliderTarget, sliderStateOf, readFieldState, readFieldStateInPage,
   ACTION_TIMEOUT_MS, OPERATION_TIMEOUT_MS, NAVIGATION_TIMEOUT_MS,
   REANCHOR_WINDOW, CONTEXT_RADIUS,
   ALL_SOURCES, SOURCE_LABELS, DOM_SOURCES,

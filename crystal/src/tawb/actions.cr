@@ -25,7 +25,12 @@ module Tawb
       {{ read_file("#{__DIR__}/../../assets/click_through.js") }})
     SUBMITS_AUTOFILLED = asset_source(
       {{ read_file("#{__DIR__}/../../assets/submits_autofilled.js") }})
+    SLIDER_STATE = asset_source(
+      {{ read_file("#{__DIR__}/../../assets/slider_state.js") }})
+    SLIDER_GEOMETRY = asset_source(
+      {{ read_file("#{__DIR__}/../../assets/slider_geometry.js") }})
     FOCUS_CONTROL = "(el) => { el.focus(); return true; }"
+    FOCUS_ELEMENT = "(el) => el.focus()"
 
     # Activation through the element's own default action, aimed at the
     # deepest descendant covering its first line box: a handler bound below
@@ -62,8 +67,8 @@ module Tawb
       ready = handle.evaluate(PREPARE_REAL_CLICK)
       return ready unless ready?(ready)
       point = pointer_point(ready.as_h)
-      session.command("input.performActions", perform_actions_params(
-        context_id,
+      session.command("input.performActions", pointer_params(
+        context_id, "tweb-mouse",
         [
           pointer_move(point[:from_x], point[:from_y], JSON::Any.new("viewport")),
           pointer_move(point[:x], point[:y], JSON::Any.new("viewport")),
@@ -75,16 +80,133 @@ module Tawb
       ready.as_h?.try(&.["ok"]?.try(&.as_bool?)) || false
     end
 
+    # The track of a slider, and a trusted press at the point a requested
+    # position maps onto. Used when a custom ARIA slider advertises a range
+    # and then ignores every standard key: Core.slider_target maps the value
+    # onto the range, this maps it onto the pixels the page actually has.
+    def self.click_slider(session : Bidi::Session, context_id : String, handle : FirefoxDriver::Handle, ratio : Float64, orientation : JSON::Any?) : Nil
+      shared = handle.shared_id
+      raise IO::Error.new("this slider carries no element reference") unless shared
+      target = element_reference(shared)
+      begin
+        # The first move reveals hover-only tracks. Element-origin offsets
+        # are from its centre in WebDriver actions, so the second move needs
+        # only the dimensions after that disclosure has happened.
+        session.command("input.performActions", pointer_params(
+          context_id, "tweb-slider",
+          [pointer_move(JSON::Any.new(0), JSON::Any.new(0), target)]))
+        sleep(120.milliseconds)
+        geometry = handle.evaluate(SLIDER_GEOMETRY, orientation || JSON::Any.new(nil)).as_h
+        vertical = geometry["vertical"]?.try(&.as_bool?) || false
+        start = Core.js_number(geometry["start"]?)
+        finish = Core.js_number(geometry["end"]?)
+        width = Core.js_number(geometry["width"]?)
+        height = Core.js_number(geometry["height"]?)
+        along = start + (vertical ? 1 - ratio : ratio) * (finish - start)
+        x = vertical ? JSON::Any.new(0) : JSON::Any.new(Core.js_round(along - width / 2).to_i64)
+        y = vertical ? JSON::Any.new(Core.js_round(along - height / 2).to_i64) : JSON::Any.new(0)
+        session.command("input.performActions", pointer_params(
+          context_id, "tweb-slider",
+          [
+            pointer_move(x, y, target),
+            JSON::Any.new({"type" => JSON::Any.new("pointerDown"), "button" => JSON::Any.new(0)}),
+            JSON::Any.new({"type" => JSON::Any.new("pointerUp"), "button" => JSON::Any.new(0)}),
+          ]))
+      ensure
+        session.command("input.releaseActions",
+          {"context" => JSON::Any.new(context_id)}) rescue nil
+      end
+    end
+
+    # Adjust an already-focused control with the keyboard it is required to
+    # support (src/core.js Core.prototype.adjustControlHandle). The value is
+    # read back either way, so callers never claim an adjustment merely
+    # because an event was sent; when the keyboard did nothing and the
+    # control is a slider, the requested value is mapped onto its visual
+    # track and pressed there with trusted pointer input instead.
+    def self.adjust_control(keyboard : FirefoxDriver::Keyboard, scope_context_id : String, role : String?, handle : FirefoxDriver::Handle, key : String) : JSON::Any
+      handle.evaluate(FOCUS_ELEMENT)
+      before = handle.evaluate(SLIDER_STATE)
+      target = role == "slider" ? Core.slider_target(before, key) : nil
+      keyboard.press(key)
+      sleep(120.milliseconds)
+      after = read_slider_state(handle)
+      before_value = before.as_h["value"]?
+      after_value = state_value(after)
+
+      if target.nil? || after.nil? || js_string(after_value) != js_string(before_value) ||
+         target == Core.js_number(before_value)
+        changed = !after.nil? && js_string(after_value) != js_string(before_value)
+        return JSON::Any.new({
+          "changed"  => JSON::Any.new(changed),
+          "fallback" => JSON::Any.new(false),
+          "before"   => before_value || JSON::Any.new(nil),
+          "after"    => after_value || JSON::Any.new(nil),
+        })
+      end
+
+      low = Core.js_number(before.as_h["min"]?)
+      high = Core.js_number(before.as_h["max"]?)
+      ratio = (target.not_nil! - low) / (high - low)
+      orientation = before.as_h["orientation"]?
+      click_slider(keyboard.session, scope_context_id, handle, ratio, orientation)
+      sleep(120.milliseconds)
+      after = read_slider_state(handle)
+      # Some composite media controls use the first pointer press only to
+      # leave their muted state, restoring the previous volume rather than
+      # honoring the point on the track. Once awake, the same trusted press
+      # reaches the advertised value. Retry only when the numeric result is
+      # plainly not the requested position; a slider that snaps to nearby
+      # discrete values has already answered correctly.
+      actual = Core.js_number(state_value(after))
+      step = Core.js_number(before.as_h["step"]?)
+      tolerance = Math.max(step.finite? ? step : 0.0, (high - low) * 0.03)
+      if actual.finite? && (actual - target.not_nil!).abs > tolerance
+        click_slider(keyboard.session, scope_context_id, handle, ratio, orientation)
+        sleep(120.milliseconds)
+        after = read_slider_state(handle) || after
+      end
+      changed = !after.nil? && js_string(state_value(after)) != js_string(before_value)
+      JSON::Any.new({
+        "changed"  => JSON::Any.new(changed),
+        "fallback" => JSON::Any.new(true),
+        "before"   => before_value || JSON::Any.new(nil),
+        "after"    => state_value(after) || JSON::Any.new(nil),
+        "target"   => JSON::Any.new(target.not_nil!),
+      })
+    end
+
+    private def self.read_slider_state(handle : FirefoxDriver::Handle) : JSON::Any?
+      handle.evaluate(SLIDER_STATE)
+    rescue
+      nil
+    end
+
+    private def self.state_value(state : JSON::Any?) : JSON::Any?
+      state.try(&.as_h?).try(&.["value"]?)
+    end
+
+    # JavaScript's String(): what the reader compares a read-back value by.
+    def self.js_string(value : JSON::Any?) : String
+      case raw = value.try(&.raw)
+      when Nil        then "null"
+      when String     then raw
+      when Bool       then raw ? "true" : "false"
+      when Int64      then raw.to_s
+      when Float64
+        whole = raw.trunc
+        raw == whole && raw.abs < 1e21 ? whole.to_i64.to_s : raw.to_s
+      else "null"
+      end
+    end
+
     private def self.perform_click(session : Bidi::Session, context_id : String, handle : FirefoxDriver::Handle) : Nil
       shared = handle.shared_id
       raise IO::Error.new("this line carries no element reference to click") unless shared
-      target = JSON::Any.new({
-        "type"    => JSON::Any.new("element"),
-        "element" => JSON::Any.new({"sharedId" => JSON::Any.new(shared)}),
-      })
+      target = element_reference(shared)
       begin
-        session.command("input.performActions", perform_actions_params(
-          context_id,
+        session.command("input.performActions", pointer_params(
+          context_id, "tweb-mouse",
           [
             pointer_move(JSON::Any.new(0), JSON::Any.new(0), target),
             JSON::Any.new({"type" => JSON::Any.new("pointerDown"), "button" => JSON::Any.new(0)}),
@@ -98,12 +220,19 @@ module Tawb
       end
     end
 
-    private def self.perform_actions_params(context_id : String, actions : Array(JSON::Any)) : Hash(String, JSON::Any)
+    private def self.element_reference(shared : String) : JSON::Any
+      JSON::Any.new({
+        "type"    => JSON::Any.new("element"),
+        "element" => JSON::Any.new({"sharedId" => JSON::Any.new(shared)}),
+      })
+    end
+
+    private def self.pointer_params(context_id : String, id : String, actions : Array(JSON::Any)) : Hash(String, JSON::Any)
       {
         "context" => JSON::Any.new(context_id),
         "actions" => JSON::Any.new([JSON::Any.new({
           "type"       => JSON::Any.new("pointer"),
-          "id"         => JSON::Any.new("tweb-mouse"),
+          "id"         => JSON::Any.new(id),
           "parameters" => JSON::Any.new({"pointerType" => JSON::Any.new("mouse")}),
           "actions"    => JSON::Any.new(actions),
         })]),

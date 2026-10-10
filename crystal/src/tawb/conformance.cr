@@ -1090,6 +1090,10 @@ module Tawb
             rescue error
               observations.push JSON::Any.new(error.message || "error")
             end
+          when "click_slider"
+            Actions.click_slider(session, current.not_nil!.context_id, handle.not_nil!,
+              step["ratio"].as_f, step["orientation"]?)
+            observations.push JSON::Any.new(nil)
           else
             raise ArgumentError.new("unknown handle scenario op #{step["op"]}")
           end
@@ -1180,6 +1184,11 @@ module Tawb
               answers.push(Actions.real_click(frame.session, frame.context_id, held))
             when "hover"
               answers.push(Actions.hover(frame.session, frame.context_id, held))
+            when "adjust_control"
+              keyboard = FirefoxDriver::Keyboard.new(browser.protocol, page.context_id)
+              answers.push(Actions.adjust_control(
+                keyboard, frame.context_id, target["role"]?.try(&.as_s?), held,
+                target["key"].as_s))
             else
               raise ArgumentError.new("unknown action #{target["action"].as_s}")
             end

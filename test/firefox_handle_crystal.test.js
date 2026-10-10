@@ -74,6 +74,7 @@ const SCRIPT = [
   { op: 'key_press', key: 'ArrowRight' },
   { op: 'key_type', text: '\uD83D\uDE00' },
   { op: 'key_error', key: 'F12' },
+  { op: 'click_slider', ratio: 0.51 },
 ];
 
 const runs = {};
@@ -107,7 +108,7 @@ for (const implementation of firefoxHandleImplementations({
             value = handleCalls === 1
               ? { type: 'node', handle: 'h-1', sharedId: 's-1' }
               : { type: 'object', handle: 'h-2', sharedId: 's-2' };
-          } else if (declaration.includes('querySelectorAll')) {
+          } else if (declaration === '(sel) => document.querySelectorAll(sel).length') {
             value = { type: 'number', value: 2 };
           } else if (declaration === '(x) => x') {
             value = { type: 'boolean', value: true };
@@ -134,6 +135,18 @@ for (const implementation of firefoxHandleImplementations({
             value = { type: 'boolean', value: false };
           } else if (declaration.includes('el.focus()')) {
             value = { type: 'boolean', value: true };
+          } else if (declaration.includes('getBoundingClientRect')) {
+            // sliderGeometry's answer for a 200x24 horizontal track; checked
+            // last of the page functions, because clickThrough and
+            // prepareRealClick name getBoundingClientRect too and are
+            // identified by their own markers above.
+            value = { type: 'object', value: [
+              ['width', { type: 'number', value: 200 }],
+              ['height', { type: 'number', value: 24 }],
+              ['vertical', { type: 'boolean', value: false }],
+              ['start', { type: 'number', value: 2 }],
+              ['end', { type: 'number', value: 198 }],
+            ] };
           } else {
             value = { type: 'string', value: 'DIV' };
           }
@@ -232,6 +245,7 @@ for (const implementation of firefoxHandleImplementations({
       null,
       null,
       'the Firefox driver has no key named "F12"',
+      null,
     ]);
 
     // The acting half on the wire. The click is named by shared reference —
@@ -239,7 +253,8 @@ for (const implementation of firefoxHandleImplementations({
     // it pressed is released before anything else inherits it.
     const performed = received.filter((message) => message.method === 'input.performActions'
       && message.params.actions[0].type === 'pointer');
-    assert.equal(performed.length, 2, 'one performActions for the click, one for the hover');
+    assert.equal(performed.length, 4,
+      'the click and the hover send one each; the slider sends two — the move that discloses the track, then the press');
     assert.deepEqual(performed[0].params, {
       context: 'ctx-top',
       actions: [{
@@ -270,8 +285,32 @@ for (const implementation of firefoxHandleImplementations({
         ],
       }],
     });
-    assert.equal(received.filter((message) => message.method === 'input.releaseActions').length, 1,
-      'a hover releases nothing: the pointer stays on the element');
+    assert.equal(received.filter((message) => message.method === 'input.releaseActions').length, 2,
+      'the click and the slider press each release their pointer; a hover releases nothing');
+
+    // The slider: a first move to disclose the hover-only chrome, the track
+    // measured in the page, then the press at the point the requested ratio
+    // maps onto — two pixels in from the ends of this 200-wide track.
+    const sliderPerforms = performed.filter(
+      (message) => message.params.actions[0].id === 'tweb-slider');
+    assert.equal(sliderPerforms.length, 2);
+    assert.deepEqual(sliderPerforms[0].params.actions[0].actions, [
+      { type: 'pointerMove', x: 0, y: 0,
+        origin: { type: 'element', element: { sharedId: 's-2' } } },
+    ]);
+    assert.deepEqual(sliderPerforms[1].params.actions[0].actions, [
+      { type: 'pointerMove', x: 2, y: 0,
+        origin: { type: 'element', element: { sharedId: 's-2' } } },
+      { type: 'pointerDown', button: 0 },
+      { type: 'pointerUp', button: 0 },
+    ]);
+    const geometryCall = received.find(
+      (message) => message.method === 'script.callFunction'
+        && message.params.functionDeclaration.includes('sliderGeometry'));
+    assert.ok(geometryCall, 'the track is measured in the page');
+    assert.deepEqual(geometryCall.params.arguments,
+      [{ handle: 'h-2' }, { type: 'null' }],
+      'the element rides by its handle, the requested orientation by its value');
 
     // The keyboard: real key events, one keystroke per code point, the
     // modifier held down across the key it qualifies and released in

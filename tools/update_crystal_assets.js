@@ -5,6 +5,8 @@ const path = require('node:path');
 const { extractAxItems } = require('../src/ax_own');
 const { readFieldStateInPage } = require('../src/core');
 const { clickThrough, prepareRealClick, submitsAutofilled } = require('../src/click');
+const { sliderStateOf } = require('../src/core');
+const { sliderGeometry } = require('../src/driver_firefox');
 const { CLEAR_SCRIPT, PIERCE_PARENT_SCRIPT, libraryParentScript } = require('../src/firefox');
 
 const assets = {
@@ -22,6 +24,10 @@ const assets = {
   },
   'submits_autofilled.js': {
     source: 'src/click.js submitsAutofilled', value: submitsAutofilled.toString(),
+  },
+  'slider_state.js': { source: 'src/core.js sliderStateOf', value: sliderStateOf.toString() },
+  'slider_geometry.js': {
+    source: 'src/driver_firefox.js sliderGeometry', value: sliderGeometry.toString(),
   },
 };
 

@@ -37,6 +37,9 @@ module Tawb
       def initialize(@session : Bidi::Session, @context_id : String)
       end
 
+      # The slider fallback presses through the same pipeline's pointer half.
+      getter session : Bidi::Session
+
       # Spread rather than split: a character outside the basic plane is two
       # code units and one keystroke.
       def type(text : String) : Nil

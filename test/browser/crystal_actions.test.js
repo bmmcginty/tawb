@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { tempDir, removeTempDir } = require('../tmpdir');
 const { openDriver } = require('../../src/driver');
+const { Core } = require('../../src/core');
 const { clickThrough, prepareRealClick, submitsAutofilled } = require('../../src/click');
 const { callAsync } = require('../crystal_impl');
 
@@ -154,6 +155,106 @@ check('the page hears the same things however the runtime acts on it', async () 
       page: url,
       targets: TARGETS,
       probe: PROBE,
+    });
+    assert.deepEqual(native.actions, answers);
+    assert.deepEqual(native.reactions, reactions);
+  } finally {
+    await driver.close().catch(() => {});
+    removeTempDir(root);
+  }
+});
+
+// Adjusting a control with the keyboard it is required to support. A native
+// range input honors ArrowRight and needs nothing else. A custom ARIA slider
+// that advertises a range and then ignores every standard key gets its value
+// mapped onto the range and pressed onto the track with trusted pointer
+// input — the fallback. A control that is not a slider at all keeps the
+// keyboard's own answer and never falls back, whatever its role.
+const SLIDER_FIXTURE = `<!doctype html><html><body>
+<input id="native" type="range" min="0" max="100" step="1" value="50">
+<div id="custom" role="slider" tabindex="0" aria-valuemin="0" aria-valuemax="100"
+  aria-valuenow="50" aria-valuestep="1"
+  style="width:200px;height:24px;background:#ccc"></div>
+<div id="spin" role="spinbutton" tabindex="0" aria-valuemin="0" aria-valuemax="100"
+  aria-valuenow="50">50</div>
+<script>
+  const custom = document.getElementById('custom');
+  custom.addEventListener('mousedown', (event) => {
+    const rect = custom.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    custom.setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
+  });
+  const spin = document.getElementById('spin');
+  spin.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowRight') {
+      const next = String(Number(spin.getAttribute('aria-valuenow')) + 1);
+      spin.setAttribute('aria-valuenow', next);
+      spin.textContent = next;
+    }
+  });
+</script>
+</body></html>`;
+
+const SLIDER_TARGETS = [
+  { action: 'adjust_control', selector: '#native', index: 0, role: 'slider', key: 'ArrowRight' },
+  { action: 'adjust_control', selector: '#custom', index: 0, role: 'slider', key: 'ArrowRight' },
+  { action: 'adjust_control', selector: '#spin', index: 0, role: 'spinbutton', key: 'ArrowRight' },
+];
+
+const SLIDER_PROBE = `() => ({
+  native: document.getElementById('native').value,
+  custom: document.getElementById('custom').getAttribute('aria-valuenow'),
+  spin: document.getElementById('spin').getAttribute('aria-valuenow'),
+})`;
+
+check('a slider adjusts the same way however the runtime asks it', async () => {
+  const root = tempDir('tawb-crystal-slider-');
+  const profile = path.join(root, 'profile');
+  const pagePath = path.join(root, 'slider.html');
+  fs.writeFileSync(pagePath, SLIDER_FIXTURE);
+  const url = `file://${pagePath}`;
+
+  const driver = await openDriver({ engine: 'firefox', profile, log: () => {} });
+  try {
+    const page = await driver.context.newPage();
+    await page.goto(url);
+    const frame = page.mainFrame();
+    const core = new Core({ driver, page, source: 'ax' });
+    const answers = [];
+    for (const target of SLIDER_TARGETS) {
+      const handle = await frame.evaluateHandle(
+        `document.querySelectorAll('${target.selector}')[${target.index}]`);
+      try {
+        answers.push(await core.adjustControlHandle(
+          page.keyboard, frame, target.role, handle, target.key));
+      } finally {
+        await handle.dispose().catch(() => {});
+      }
+    }
+    const reactions = await frame.evaluate((0, eval)(SLIDER_PROBE));
+
+    // The keyboard's own answer on the controls that honor it — no fallback,
+    // no target, just the change — and the pointer fallback on the slider
+    // that ignored the key, landing on the value the range asked for.
+    assert.deepEqual(answers[0], { changed: true, fallback: false, before: '50', after: '51' });
+    assert.deepEqual(answers[2], { changed: true, fallback: false, before: '50', after: '51' });
+    assert.equal(answers[1].changed, true);
+    assert.equal(answers[1].fallback, true);
+    assert.equal(answers[1].target, 51);
+    assert.equal(answers[1].before, '50');
+    assert.equal(answers[1].after, '51');
+
+    // The page ended in the same state the answers describe.
+    assert.deepEqual(reactions, { native: '51', custom: '51', spin: '51' });
+
+    // The native runtime, joining the same browser as a second reader.
+    const broker = JSON.parse(
+      fs.readFileSync(path.join(profile, 'tawb-broker.json'), 'utf8'));
+    const native = await callAsync('firefox.actions_scenario', {
+      url: `ws://127.0.0.1:${broker.port}/session`,
+      page: url,
+      targets: SLIDER_TARGETS,
+      probe: SLIDER_PROBE,
     });
     assert.deepEqual(native.actions, answers);
     assert.deepEqual(native.reactions, reactions);

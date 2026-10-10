@@ -978,6 +978,10 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, Firefox
               observations.push(error.message);
             }
             break;
+          case 'click_slider':
+            await acting.clickSlider(current, handle, step.ratio, step.orientation);
+            observations.push(null);
+            break;
           default:
             throw new Error(`unknown handle scenario op ${step.op}`);
         }
