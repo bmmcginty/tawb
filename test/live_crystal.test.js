@@ -201,8 +201,8 @@ if (implementations.length > 1) {
         { boundNow: true, armed: 1, frames: 2 },
         1,
         [
-          { announcements: [], mutations: 1, patches: [], pureText: false },
-          { announcements: [{ politeness: 'polite', text: 'ready' }], mutations: 1 },
+          { announcements: [], patches: null, mutations: 1 },
+          { announcements: [{ politeness: 'polite', text: 'ready' }], patches: null, mutations: 1 },
         ],
         { changed: false, navigated: false, rearmed: true },
         null,

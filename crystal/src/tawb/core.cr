@@ -400,6 +400,7 @@ module Tawb
       @change_index = -1
       @tickers = {} of Int32 => Ticker
       @live = Live.create_state
+      @live_watcher = Live::Watcher.new
       @chooser = nil
       @attached_files = {} of String => Hash(String, AttachedFile)
       # The popup the reader has open, if any, named by the id its control
@@ -417,6 +418,32 @@ module Tawb
 
     def reading?(now : Int64 = Time.utc.to_unix_ms) : Bool
       now - @live.last_input_ms < Live::INPUT_GRACE_MS
+    end
+
+    # Install the page-side observer for this tab. The same watcher owns the
+    # preload registration, armed-frame set, queue drains, and pulse baseline.
+    def attach_live(page : FirefoxDriver::Page? = @page) : Live::InstallResult
+      target = page || raise IO::Error.new("this core has no page")
+      @live_watcher.install(target)
+    end
+
+    # Drain every armed rendered document and immediately apply the core's
+    # classification policy. A front end receives only decisions, never raw
+    # browser payloads, so disabled updates and refresh-in-flight protection
+    # cannot be accidentally bypassed.
+    def collect_live(page : FirefoxDriver::Page? = @page) : Array(JSON::Any)
+      target = page || raise IO::Error.new("this core has no page")
+      @live_watcher.collect(target).map { |payload| classify(payload) }
+    end
+
+    def arm_live_frames(frames : Array(FirefoxDriver::Frame), limit = 8) : Int32
+      @live_watcher.arm_rendered_frames(frames, limit)
+    end
+
+    def pulse_live(page : FirefoxDriver::Page? = @page,
+                   now : Int64 = Time.utc.to_unix_ms) : Live::PulseResult?
+      target = page || raise IO::Error.new("this core has no page")
+      @live_watcher.pulse(target, @live, now)
     end
 
     # What a mutation batch means, without acting on it. Announcements remain

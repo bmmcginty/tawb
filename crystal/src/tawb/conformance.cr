@@ -678,15 +678,14 @@ module Tawb
       object = payload.as_h
       session = Bidi::Session.new(object["url"].as_s)
       page = FirefoxDriver::Page.new(session, "main", "https://example.test/")
-      watcher = Live::Watcher.new
-      state = Live.create_state
+      core = Core.new(page: page)
       observations = [] of JSON::Any
       begin
         object["script"].as_a.each do |step_value|
           step = step_value.as_h
           case step["op"].as_s
           when "install"
-            result = watcher.install(page)
+            result = core.attach_live(page)
             observations << JSON::Any.new({
               "boundNow" => JSON::Any.new(result.bound_now),
               "armed"    => JSON::Any.new(result.armed.to_i64),
@@ -696,11 +695,11 @@ module Tawb
             frames = step["contexts"].as_a.map do |context|
               FirefoxDriver::Frame.new(session, context.as_s, page)
             end
-            observations << JSON::Any.new(watcher.arm_rendered_frames(frames).to_i64)
+            observations << JSON::Any.new(core.arm_live_frames(frames).to_i64)
           when "collect"
-            observations << JSON::Any.new(watcher.collect(page))
+            observations << JSON::Any.new(core.collect_live(page))
           when "pulse"
-            result = watcher.pulse(page, state, step["now"].as_i64)
+            result = core.pulse_live(page, step["now"].as_i64)
             observations << if result
               JSON::Any.new({
                 "changed"   => JSON::Any.new(result.changed),
@@ -711,7 +710,7 @@ module Tawb
               JSON::Any.new(nil)
             end
           when "state"
-            observations << live_state_json(state)
+            observations << live_state_json(core.live)
           else
             raise ArgumentError.new("unknown live watcher op #{step["op"]}")
           end
