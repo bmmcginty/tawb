@@ -67,6 +67,7 @@ const SCRIPT = [
   { op: 'activate' },
   { op: 'focus_control' },
   { op: 'submits_autofilled' },
+  { op: 'set_files', paths: ['/tmp/report.txt', '/tmp/photo.jpg'] },
   { op: 'real_click' },
   { op: 'hover' },
   { op: 'key_type', text: 'hi' },
@@ -238,6 +239,7 @@ for (const implementation of firefoxHandleImplementations({
       true,
       true,
       false,
+      true,
       { ok: true },
       { ok: true },
       null,
@@ -247,6 +249,12 @@ for (const implementation of firefoxHandleImplementations({
       'the Firefox driver has no key named "F12"',
       null,
     ]);
+
+    const files = received.find((message) => message.method === 'input.setFiles');
+    assert.deepEqual(files.params, {
+      context: 'ctx-top', element: { sharedId: 's-2' },
+      files: ['/tmp/report.txt', '/tmp/photo.jpg'],
+    }, 'a held file input is named by its shared reference');
 
     // The acting half on the wire. The click is named by shared reference —
     // the browser computes the element's own centre point — and the pointer

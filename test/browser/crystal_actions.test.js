@@ -164,6 +164,80 @@ check('the page hears the same things however the runtime acts on it', async () 
   }
 });
 
+check('file inputs and intercepted choosers receive the same files', async () => {
+  const root = tempDir('tawb-crystal-files-');
+  const profile = path.join(root, 'profile');
+  const pagePath = path.join(root, 'files.html');
+  const uploadPath = path.join(root, 'report.txt');
+  fs.writeFileSync(uploadPath, 'a report from the terminal\n');
+  fs.writeFileSync(pagePath, `<!doctype html><html><body>
+<input type="file" id="plain">
+<input type="file" id="hidden" style="display:none">
+<button id="choose">Choose</button>
+<script>
+  window.picked = {};
+  for (const id of ['plain', 'hidden']) {
+    document.getElementById(id).addEventListener('change', (event) => {
+      window.picked[id] = [...event.target.files].map((file) => file.name + ':' + file.size);
+    });
+  }
+  document.getElementById('choose').onclick = () => document.getElementById('hidden').click();
+</script></body></html>`);
+  const url = `file://${pagePath}`;
+  const probe = `() => ({ plain: window.picked.plain, hidden: window.picked.hidden })`;
+
+  const driver = await openDriver({ engine: 'firefox', profile, log: () => {} });
+  try {
+    const page = await driver.context.newPage();
+    await page.goto(url);
+    const frame = page.mainFrame();
+    const direct = await frame.evaluateHandle((sel) => document.querySelector(sel), '#plain');
+    assert.equal(await driver.setFiles(direct, [uploadPath]), true);
+    await direct.dispose();
+
+    let chooserMeta = null;
+    const chooserDone = new Promise((resolve, reject) => {
+      driver.attachFileChooser(async (request) => {
+        try {
+          chooserMeta = { multiple: request.multiple, directory: request.directory };
+          await request.setFiles([uploadPath]);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      }).catch(reject);
+    });
+    assert.equal(await driver.armFileChooser(page), true);
+    const button = await frame.evaluateHandle((sel) => document.querySelector(sel), '#choose');
+    await driver.realClick(frame, button);
+    await button.dispose();
+    await chooserDone;
+    const reactions = await frame.evaluate((0, eval)(probe));
+    const expected = {
+      direct: true,
+      clicked: { ok: true },
+      chooser: chooserMeta,
+      reactions,
+    };
+    assert.deepEqual(reactions, {
+      plain: ['report.txt:27'], hidden: ['report.txt:27'],
+    });
+
+    const broker = JSON.parse(
+      fs.readFileSync(path.join(profile, 'tawb-broker.json'), 'utf8'));
+    const native = await callAsync('firefox.files_scenario', {
+      url: `ws://127.0.0.1:${broker.port}/session`, page: url,
+      input: '#plain', button: '#choose', paths: [uploadPath], probe,
+    });
+    assert.deepEqual(native, expected);
+    await page.close().catch(() => {});
+  } finally {
+    await driver.attachFileChooser(null).catch(() => {});
+    await driver.close().catch(() => {});
+    removeTempDir(root);
+  }
+});
+
 // Adjusting a control with the keyboard it is required to support. A native
 // range input honors ArrowRight and needs nothing else. A custom ARIA slider
 // that advertises a range and then ignores every standard key gets its value

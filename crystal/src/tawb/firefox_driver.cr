@@ -301,6 +301,32 @@ module Tawb
       end
     end
 
+    # A file dialog Firefox handed to WebDriver instead of drawing. It must
+    # always be answered: an empty list is cancellation, while leaving the
+    # event unanswered wedges later uploads in that tab.
+    class FileChooser
+      getter multiple : Bool
+      getter directory : Bool
+
+      def initialize(@protocol : Bidi::Session, @context_id : String,
+                     @element : JSON::Any, @multiple = false)
+        @directory = false
+      end
+
+      def set_files(paths : Array(String)) : Bool
+        @protocol.command("input.setFiles", {
+          "context" => JSON::Any.new(@context_id),
+          "element" => @element,
+          "files"   => JSON::Any.new(paths.map { |path| JSON::Any.new(path) }),
+        })
+        true
+      end
+
+      def cancel : Bool
+        set_files([] of String)
+      end
+    end
+
     class Page
       getter context_id : String
       getter url : String
@@ -353,6 +379,47 @@ module Tawb
         @protocol.command("browsingContext.close", {
           "context" => JSON::Any.new(@context_id),
         })
+      end
+
+      # Give a file input its files directly, for the ordinary case where the
+      # reader has already resolved the control to an element.
+      def set_files(handle : Handle, paths : Array(String)) : Bool
+        shared = handle.shared_id
+        unless shared
+          raise IO::Error.new(
+            "that control cannot be given files: the browser gave no reference to it")
+        end
+        @protocol.command("input.setFiles", {
+          "context" => JSON::Any.new(handle.context_id),
+          "element" => JSON::Any.new({"sharedId" => JSON::Any.new(shared)}),
+          "files"   => JSON::Any.new(paths.map { |path| JSON::Any.new(path) }),
+        })
+        true
+      end
+
+      # Subscribe only for this tab. Taking a chooser from another reader's
+      # tab would suppress the browser's dialog and leave them unable to
+      # answer it.
+      def arm_file_chooser : Bool
+        @protocol.command("session.subscribe", {
+          "events"   => JSON::Any.new([JSON::Any.new("input.fileDialogOpened")]),
+          "contexts" => JSON::Any.new([JSON::Any.new(@context_id)]),
+        })
+        true
+      rescue
+        false
+      end
+
+      # Wait for the chooser Firefox raises after a trusted press. The event
+      # names the input itself, so answering does not need a page-side handle.
+      def next_file_chooser : FileChooser
+        loop do
+          event = @protocol.next_event("input.fileDialogOpened").as_h
+          next unless event["context"]?.try(&.as_s?) == @context_id
+          element = event["element"]? || raise IO::Error.new("file chooser named no input")
+          return FileChooser.new(@protocol, @context_id, element,
+            event["multiple"]?.try(&.as_bool?) || false)
+        end
       end
 
       # Typing and key presses through the browser's own input pipeline.

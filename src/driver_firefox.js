@@ -486,6 +486,19 @@ class FirefoxPage {
     }
   }
 
+  // Give a file input its files directly. Kept on the page beside the other
+  // input commands so a native implementation can be held against this exact
+  // protocol call without constructing the whole driver.
+  async setFiles(handle, paths) {
+    if (!handle || !handle.sharedId) {
+      throw new Error('that control cannot be given files: the browser gave no reference to it');
+    }
+    await this.session.send('input.setFiles', {
+      context: handle.contextId, element: { sharedId: handle.sharedId }, files: paths,
+    });
+    return true;
+  }
+
   // A click the browser treats as a person's.
   //
   // Everything else here activates through the DOM's own default action,
@@ -1245,13 +1258,7 @@ async function openFirefox({
     // Give a file input its files directly, for the ordinary case where the
     // reader pressed Enter on the input and the element is already in hand.
     async setFiles(handle, paths) {
-      if (!handle || !handle.sharedId) {
-        throw new Error('that control cannot be given files: the browser gave no reference to it');
-      }
-      await session.send('input.setFiles', {
-        context: handle.contextId, element: { sharedId: handle.sharedId }, files: paths,
-      });
-      return true;
+      return page.setFiles(handle, paths);
     },
 
     // Firefox's own dialogs, answered on the terminal.

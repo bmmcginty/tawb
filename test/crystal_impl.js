@@ -940,6 +940,9 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, Firefox
           case 'submits_autofilled':
             observations.push(await handle.evaluate(submitsAutofilled));
             break;
+          case 'set_files':
+            observations.push(await acting.setFiles(handle, step.paths));
+            break;
           case 'real_click': {
             // As core.realClickHandle, without the reader's navigation wait:
             // the check first, then the browser's own click.

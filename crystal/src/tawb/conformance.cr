@@ -361,6 +361,8 @@ module Tawb
         firefox_fields_scenario(payload)
       when "firefox.actions_scenario"
         firefox_actions_scenario(payload)
+      when "firefox.files_scenario"
+        firefox_files_scenario(payload)
       when "firefox.verified_session"
         firefox_verified_session(payload)
       when "firefox.dump_scenario"
@@ -1002,6 +1004,7 @@ module Tawb
       current = nil.as(FirefoxDriver::Frame?)
       handle = nil.as(FirefoxDriver::Handle?)
       keyboard = nil.as(FirefoxDriver::Keyboard?)
+      acting = nil.as(FirefoxDriver::Page?)
       refs = [] of FirefoxDriver::FrameRef
       begin
         session.command("session.new", {
@@ -1016,6 +1019,7 @@ module Tawb
             frame = FirefoxDriver::Frame.new(session, step["context"].as_s, nil, step["url"].as_s)
             current = frame
             keyboard = FirefoxDriver::Keyboard.new(session, step["context"].as_s)
+            acting = FirefoxDriver::Page.new(session, step["context"].as_s)
             observations.push JSON::Any.new(nil)
           when "url"
             observations.push JSON::Any.new(current.not_nil!.url)
@@ -1071,6 +1075,9 @@ module Tawb
             observations.push(Actions.focus_control(handle.not_nil!))
           when "submits_autofilled"
             observations.push(Actions.submits_autofilled(handle.not_nil!))
+          when "set_files"
+            paths = step["paths"].as_a.map(&.as_s)
+            observations.push(JSON::Any.new(acting.not_nil!.set_files(handle.not_nil!, paths)))
           when "real_click"
             observations.push(Actions.real_click(
               session, current.not_nil!.context_id, handle.not_nil!))
@@ -1199,6 +1206,52 @@ module Tawb
         reactions = frame.evaluate(object["probe"].as_s)
         JSON::Any.new({
           "actions"   => JSON::Any.new(answers),
+          "reactions" => reactions,
+        })
+      ensure
+        browser.close
+      end
+    end
+
+    # Both upload roads against a real page: an input already in hand receives
+    # its files directly, while a hidden input reached through a button arrives
+    # as Firefox's intercepted file-dialog event and is answered there.
+    private def self.firefox_files_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      browser = FirefoxDriver::BrowserSession.new(object["url"].as_s)
+      begin
+        browser.start
+        page = browser.create_page
+        page.navigate(object["page"].as_s, "complete")
+        frame = FirefoxDriver::Frame.new(browser.protocol, page.context_id, page)
+        paths = object["paths"].as_a.map(&.as_s)
+
+        direct = frame.evaluate_handle(
+          "(sel) => document.querySelector(sel)", object["input"])
+        begin
+          direct_answer = page.set_files(direct, paths)
+        ensure
+          direct.dispose
+        end
+
+        raise IO::Error.new("the file chooser could not be armed") unless page.arm_file_chooser
+        button = frame.evaluate_handle(
+          "(sel) => document.querySelector(sel)", object["button"])
+        begin
+          clicked = Actions.real_click(frame.session, frame.context_id, button)
+        ensure
+          button.dispose
+        end
+        chooser = page.next_file_chooser
+        chooser.set_files(paths)
+        reactions = frame.evaluate(object["probe"].as_s)
+        JSON::Any.new({
+          "direct"  => JSON::Any.new(direct_answer),
+          "clicked" => clicked,
+          "chooser" => JSON::Any.new({
+            "multiple"  => JSON::Any.new(chooser.multiple),
+            "directory" => JSON::Any.new(chooser.directory),
+          }),
           "reactions" => reactions,
         })
       ensure
