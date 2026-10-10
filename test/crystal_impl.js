@@ -826,6 +826,65 @@ function lynxActionsImplementations() {
   return implementations;
 }
 
+// TAWB's Lynx state — the import-once keymap and preference policy —
+// differenced between the JavaScript original and the Crystal port: the same
+// injected imports, saved settings, key files, and reimport requests must
+// produce the same map, the same preferences, and the same writes.
+function lynxStateImplementations(lynxState) {
+  const describe = (options, map, tallies) => {
+    const actions = {};
+    for (const chunk of options.probe) actions[chunk] = map.actionFor(chunk);
+    return {
+      actions,
+      preferences: map.preferences,
+      unsupported: map.unsupported,
+      keysFileExists: fs.existsSync(options.keysFile),
+      written: tallies.written,
+      reads: tallies.reads,
+      imported: tallies.imported,
+    };
+  };
+  const implementations = [{
+    name: 'JavaScript',
+    keymap(options) {
+      const written = [];
+      const tallies = { reads: 0, imported: 0 };
+      const map = lynxState.lynxKeymapFor({
+        lynxReimport: options.lynxReimport,
+        lynxExecutable: options.lynxExecutable,
+        lynxConfig: options.lynxConfig,
+      }, {
+        importLynx: options.import
+          ? () => { tallies.imported += 1; return options.import; } : undefined,
+        readLynx: options.readLynx
+          ? () => { tallies.reads += 1; return options.readLynx; } : undefined,
+        writeLynx: (settings) => { written.push(settings); },
+        keysFile: options.keysFile,
+        hasKeys: options.hasKeys === undefined ? undefined : () => options.hasKeys,
+      });
+      return describe(options, map, { ...tallies, written });
+    },
+    preferences(options) {
+      return {
+        preferences: lynxState.lynxPreferences({
+          readLynx: options.readLynx ? () => options.readLynx : undefined,
+        }),
+      };
+    },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    keymap(options) {
+      return call('lynx_state.keymap', { ...options, probe: options.probe });
+    },
+    preferences(options) {
+      return call('lynx_state.preferences', options);
+    },
+  });
+  return implementations;
+}
+
 function lynxConfigImplementations(lynxConfig) {
   const implementations = [{
     name: 'JavaScript',
@@ -1563,6 +1622,6 @@ module.exports = {
   firefoxPageImplementations,
   inputImplementations, interfaceImplementations, keymapImplementations, layoutImplementations,
   liveImplementations, lynxActionsImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
-  lynxNumberImplementations, marionetteImplementations, optionImplementations,
+  lynxNumberImplementations, lynxStateImplementations, marionetteImplementations, optionImplementations,
   placeImplementations, readerCommands, sessionImplementations, unicodeImplementations,
 };

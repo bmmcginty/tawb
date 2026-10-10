@@ -25,6 +25,7 @@ require "./lynx_config"
 require "./lynx_display"
 require "./lynx_keymap"
 require "./lynx_number"
+require "./lynx_state"
 require "./marionette"
 require "./options"
 require "./place"
@@ -593,6 +594,10 @@ module Tawb
       when "keys.save"
         build_keymap(payload).save
         JSON::Any.new(true)
+      when "lynx_state.keymap"
+        lynx_state_keymap(payload)
+      when "lynx_state.preferences"
+        lynx_state_preferences(payload)
       when "lynx_actions.call"
         lynx_actions_call(payload)
       when "lynx_config.key_spec"
@@ -955,6 +960,84 @@ module Tawb
       JSON::Any.new({
         "start" => JSON::Any.new(region.start.to_i64),
         "end"   => JSON::Any.new(region.stop.to_i64),
+      })
+    end
+
+    private def self.lynx_state_keymap(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      written = [] of Hash(String, JSON::Any)
+      reads = 0
+      imported_count = 0
+      import_lynx = object["import"]?.try do |raw|
+        source = raw.as_h
+        imported = LynxConfig::Imported.new(
+          source["available"].as_bool,
+          source["bindings"]?.try(&.as_h?).try do |map|
+            map.reduce({} of String => Array(String)) do |memo, pair|
+              memo[pair[0]] = pair[1].as_a.map(&.as_s)
+              memo
+            end
+          end || {} of String => Array(String),
+          (source["unsupported"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s),
+          source["preferences"]?.try(&.as_h?) || {} of String => JSON::Any,
+        )
+        ->(_executable : String?, _config : String?) do
+          imported_count += 1
+          imported
+        end
+      end
+      read_lynx = object["readLynx"]?.try do |raw|
+        saved = raw.as_h
+        -> do
+          reads += 1
+          saved
+        end
+      end
+      write_lynx = ->(settings : Hash(String, JSON::Any)) : Nil {
+        written << settings
+        nil
+      }
+      has_keys = object["hasKeys"]?.try do |raw|
+        next nil if raw.raw.nil?
+        answer = raw.as_bool? == true
+        ->(_path : String) { answer }
+      end
+      env = Hash(String, String).new
+      if (home = object["home"]?.try(&.as_s?))
+        env["HOME"] = home
+      end
+      if (xdg = object["xdgConfigHome"]?.try(&.as_s?))
+        env["XDG_CONFIG_HOME"] = xdg
+      end
+      keymap = LynxState.lynx_keymap_for(
+        object["lynxReimport"]?.try(&.as_bool?) == true,
+        object["lynxExecutable"]?.try(&.as_s?),
+        object["lynxConfig"]?.try(&.as_s?),
+        import_lynx, read_lynx, write_lynx,
+        object["keysFile"]?.try(&.as_s?),
+        has_keys, env,
+      )
+      probes = (object["probe"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s)
+      actions = probes.to_h do |chunk|
+        {chunk, JSON::Any.new(keymap.action_for(chunk))}
+      end
+      JSON::Any.new({
+        "actions"        => JSON::Any.new(actions),
+        "preferences"    => JSON::Any.new(keymap.preferences),
+        "unsupported"    => JSON::Any.new(keymap.unsupported.map { |name| JSON::Any.new(name) }),
+        "keysFileExists" => JSON::Any.new(File.exists?(keymap.file)),
+        "written"        => JSON::Any.new(written.map { |settings| JSON::Any.new(settings) }),
+        "reads"          => JSON::Any.new(reads),
+        "imported"       => JSON::Any.new(imported_count),
+      })
+    end
+
+    private def self.lynx_state_preferences(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      saved = object["readLynx"]?.try(&.as_h?)
+      read = saved ? -> { saved.not_nil! } : nil
+      JSON::Any.new({
+        "preferences" => JSON::Any.new(LynxState.lynx_preferences(read)),
       })
     end
 
