@@ -34,6 +34,22 @@ module Tawb
       end
     end
 
+    # Scrolls the reading list one row without repainting it: IND leaves a
+    # blank line at the bottom of the region, RI one at the top. Answers the
+    # row the blank line landed on, which the caller paints. The region is
+    # set and reset by the repaint, so this is safe between them only.
+    def self.scroll_region(output : Output, direction : Int32,
+                           top : Int32, bottom : Int32) : Int32
+      if direction > 0
+        move_cursor(output, bottom, 1)
+        output.write("\eD")
+        return bottom
+      end
+      move_cursor(output, top, 1)
+      output.write("\eM")
+      top
+    end
+
     # Changes an actively edited row like nano: one terminal write moves from
     # the old caret, overwrites through the unchanged suffix, clears any
     # stale tail, and returns to the new caret. Keeping the whole transaction

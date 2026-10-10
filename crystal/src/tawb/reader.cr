@@ -324,6 +324,136 @@ module Tawb
       render(output, state, page_url, force: true)
     end
 
+    # The text a line shows, as search and movement see it. Past the end of
+    # the list there is no line and no text.
+    def self.line_text(state : State, line_index : Int32) : String
+      line = state.lines[line_index]?
+      line ? line.text : ""
+    end
+
+    # Where a block starts on screen: the line it begins on and the column
+    # its text starts at, which for a reflowed paragraph or table row is the
+    # column of its own span rather than the row's first column. A block that
+    # is not in this buffer at all answers nil.
+    def self.position_for_block(state : State,
+                                block_index : Int32) : NamedTuple(line: Int32, col: Int32)?
+      return nil if block_index < 0
+      state.lines.each_with_index do |line, i|
+        if spans = line.spans
+          spans.each do |span|
+            return {line: i, col: span.start} if span.block_index == block_index
+          end
+          next
+        end
+        next if line.continuation
+        return {line: i, col: 0} if line.block_index == block_index
+      end
+      nil
+    end
+
+    # The first or last line/column an interactive item occupies, for the
+    # jump-to-first/last-control commands. Wrapped rows are walked by span so
+    # an item that starts on a continuation row is still found.
+    def self.focusable_edge(state : State,
+                            direction : Int32) : NamedTuple(line: Int32, col: Int32)?
+      indexes = (0...state.lines.size).to_a
+      indexes.reverse! if direction < 0
+      indexes.each do |line_index|
+        line = state.lines[line_index]
+        if spans = line.spans
+          ordered = direction > 0 ? spans : spans.reverse
+          ordered.each do |span|
+            item = state.core.blocks[span.block_index]?.try(&.as_h?).try(&.["item"]?)
+            next unless item && focusable_item?(item)
+            return {line: line_index, col: span.start}
+          end
+          next
+        end
+        next if line.continuation
+        item = state.core.blocks[line.block_index]?.try(&.as_h?).try(&.["item"]?)
+        next unless item && focusable_item?(item)
+        return {line: line_index, col: 0}
+      end
+      nil
+    end
+
+    private def self.focusable_item?(item : JSON::Any) : Bool
+      role = item.as_h["role"]?.try(&.as_s?)
+      role ? Aria::FOCUSABLE_ROLES.includes?(role) : false
+    end
+
+    # Move the selection to a line and column, repainting only what changed.
+    # This is the one movement everything goes through: a screen at a time
+    # lands here too, and a one-line scroll is repaired with the terminal's
+    # own scroll rather than a repaint, because one new line is cheaper than
+    # a viewport and quieter than a screen reader re-reading all of it.
+    def self.move_selection(output : Screen::Output, state : State, page_url : String,
+                            new_cursor : Int32, new_col : Int32 = 0) : Nil
+      target = Math.min(Math.max(new_cursor, 0), Math.max(state.lines.size - 1, 0))
+      return if target == state.cursor && new_col == state.col
+
+      old_cursor = state.cursor
+      old_col = state.col
+      old_scroll = state.scroll
+      state.cursor = target
+      state.col = new_col
+      clamp_col(state)
+      clamp_scroll(state)
+
+      scrolled_by = state.scroll - old_scroll
+
+      # Where the new line goes, if it goes anywhere. This is the one thing
+      # outside the list area a move touches — the banner is left alone — and
+      # it costs nothing on the keystrokes that do not change it. Drawn before
+      # the cursor is placed, since reaching the status row means moving the
+      # cursor there and back.
+      draw_status(output, state, page_url)
+
+      if scrolled_by == 0
+        repaint_lynx_selection(output, state, old_cursor, old_col)
+        Screen.move_cursor(output, line_row(state, target), cursor_col(state))
+      elsif lynx_active?(state)
+        # Scrolling moves the old highlight to another terminal row. Redrawing
+        # is cheaper and less error-prone than trying to repair a multi-line
+        # link on both sides of the scroll boundary.
+        draw_list(output, state)
+        park_cursor(output, state, page_url)
+      elsif scrolled_by.abs == 1
+        new_row = Screen.scroll_region(output, scrolled_by,
+          HEADER_ROWS + 1, HEADER_ROWS + viewport_height(state))
+        Screen.write_line(output, new_row, render_row(state, target))
+        Screen.move_cursor(output, new_row, cursor_col(state))
+      else
+        draw_list(output, state)
+        park_cursor(output, state, page_url)
+      end
+    end
+
+    # Left and right move the caret within the line, and only then between
+    # lines — the last column of one row joins the first of the next, the way
+    # a text editor walks wrapped text.
+    def self.move_caret_left(output : Screen::Output, state : State,
+                             page_url : String) : Nil
+      if state.col > 0
+        return move_selection(output, state, page_url, state.cursor, state.col - 1)
+      end
+      return if state.cursor == 0
+      previous = state.cursor - 1
+      move_selection(output, state, page_url, previous,
+        Math.max(line_text(state, previous).size - 1, 0))
+    end
+
+    def self.move_caret_right(output : Screen::Output, state : State,
+                              page_url : String) : Nil
+      line = current_line(state)
+      last_col = line ? Math.max(line.text.size - 1, 0) : 0
+      if state.col < last_col
+        return move_selection(output, state, page_url, state.cursor, state.col + 1)
+      end
+      return if state.cursor >= state.lines.size - 1
+      move_selection(output, state, page_url, state.cursor + 1, 0)
+    end
+
     # The JavaScript original reads process.stdout; the state carries the
     # answer instead, so the conformance runner can be any size of window.
     def self.viewport_height(state : State) : Int32
@@ -435,9 +565,10 @@ module Tawb
       # twelfth block would let a text patch land where they are not.
       return if state.options || state.library || state.dialog
       line = state.lines[state.cursor]?
-      block = block_under(state, line, state.col)
-      index = block ? active_blocks(state).index(block) || -1 : -1
-      state.core.at(index)
+      # The index itself, not a block handed back to Array#index: JavaScript
+      # compares blocks by identity, and JSON::Any compares by value, so two
+      # blocks that read the same would answer the first one's position.
+      state.core.at(block_under_index(state, line, state.col))
     end
 
     def self.clamp_scroll(state : State) : Nil

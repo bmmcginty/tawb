@@ -1510,6 +1510,26 @@ module Tawb
             (action["height"]?.try(&.as_i64?) || Reader.viewport_height(state)) - 1).to_i32)
       when "redrawAfterResize"
         Reader.redraw_after_resize(output, state, page_url)
+      when "moveSelection"
+        Reader.move_selection(output, state, page_url,
+          (action["cursor"]?.try(&.as_i64?) || 0).to_i32,
+          (action["col"]?.try(&.as_i64?) || 0).to_i32)
+      when "moveCaretLeft"
+        Reader.move_caret_left(output, state, page_url)
+      when "moveCaretRight"
+        Reader.move_caret_right(output, state, page_url)
+      when "positionForBlock"
+        found = Reader.position_for_block(state,
+          (action["blockIndex"]?.try(&.as_i64?) || 0).to_i32)
+        return JSON::Any.new(nil) unless found
+        return JSON::Any.new({"line" => JSON::Any.new(found[:line].to_i64),
+                              "col" => JSON::Any.new(found[:col].to_i64)})
+      when "focusableEdge"
+        edge = Reader.focusable_edge(state,
+          (action["direction"]?.try(&.as_i64?) || 1).to_i32)
+        return JSON::Any.new(nil) unless edge
+        return JSON::Any.new({"line" => JSON::Any.new(edge[:line].to_i64),
+                              "col" => JSON::Any.new(edge[:col].to_i64)})
       end
       nil
     end
@@ -1568,6 +1588,7 @@ module Tawb
         address_caret = JSON::Any.new(caret.to_i64)
       end
       JSON::Any.new({
+        "mode"      => JSON::Any.new(state.mode),
         "drawn" => JSON::Any.new({
           "title"           => JSON::Any.new(state.drawn.title),
           "address"         => JSON::Any.new(state.drawn.address),

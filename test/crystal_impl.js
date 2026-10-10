@@ -1304,6 +1304,25 @@ function readerImplementations(index, keysModule) {
             case 'redrawAfterResize':
               index.redrawAfterResize(state, page);
               break;
+            case 'moveSelection':
+              index.moveSelection(state, action.cursor ?? 0, page, action.col ?? 0);
+              break;
+            case 'moveCaretLeft':
+              index.moveCaretLeft(state, page);
+              break;
+            case 'moveCaretRight':
+              index.moveCaretRight(state, page);
+              break;
+            case 'positionForBlock': {
+              const position = index.positionForBlock(state, action.blockIndex ?? 0);
+              value = position ? { line: position.line, col: position.col } : null;
+              break;
+            }
+            case 'focusableEdge': {
+              const edge = index.focusableEdge(state, action.direction ?? 1);
+              value = edge ? { line: edge.line, col: edge.col } : null;
+              break;
+            }
             default:
               throw new Error(`unknown reader action ${action.op}`);
           }
@@ -1323,6 +1342,7 @@ function readerImplementations(index, keysModule) {
       return {
         results,
         state: {
+          mode: state.mode,
           drawn: { ...state.drawn },
           scroll: state.scroll, col: state.col, cursor: state.cursor,
           statusMsg: state.statusMsg,
