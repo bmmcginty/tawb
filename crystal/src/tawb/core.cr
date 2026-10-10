@@ -1066,6 +1066,23 @@ module Tawb
       -1
     end
 
+    # The Core-side policy of src/index.js onExternalNavigation: classify a
+    # URL the browser reports against the one the buffer was built from.
+    # Nothing to do when it is the address we already described; a fragment
+    # is the same document, so the buffer stands and only the baseline
+    # advances (activation moves the reader to the target itself, and the
+    # observer catches any real change); anything else replaced the document
+    # and the front end owes a rebuild with the cursor reset.
+    def external_navigation(url : String) : Symbol
+      return :same if url == @rendered_url
+      if Core.same_document_fragment(@rendered_url, url)
+        @rendered_url = url
+        return :fragment
+      end
+      @rendered_url = url
+      :navigated
+    end
+
     # A fragment href names a place in this document; anything else is not
     # ours to follow. Malformed escapes are refused rather than raised, since
     # the page, not the reader, wrote the href.

@@ -100,6 +100,48 @@ module Tawb
         end
       end
 
+      # The same match, but without waiting: what the browser has already
+      # pushed is answered for any of the named methods, anything else is
+      # kept for its reader, and an idle socket is simply reported as having
+      # nothing. A load-state wait polls this rather than blocking on an
+      # event the protocol never promised to send.
+      def poll_any(methods : Array(String)) : Tuple(String, JSON::Any)?
+        if index = @events.index { |event| methods.includes?(event.as_h["method"]?.try(&.as_s?) || "") }
+          event = @events.delete_at(index).as_h
+          return {event["method"].as_s, event["params"]? || JSON::Any.new(nil)}
+        end
+        previous = @socket.read_timeout
+        @socket.read_timeout = 20.milliseconds
+        message = begin
+          JSON.parse(@socket.receive)
+        rescue ex : IO::TimeoutError
+          return nil
+        ensure
+          @socket.read_timeout = previous
+        end
+        object = message.as_h
+        method = object["method"]?.try(&.as_s?)
+        if object["id"]?.nil? && method && methods.includes?(method)
+          return {method, object["params"]? || JSON::Any.new(nil)}
+        end
+        @events << message if object["id"]?.nil?
+        nil
+      end
+
+      # BiDi delivers no event you have not asked for, channel callbacks
+      # included. Failure to subscribe is tolerated exactly as the JavaScript
+      # driver tolerates it: the page goes quiet rather than the reader.
+      def subscribe(events : Array(String)) : Nil
+        names = events.map { |event| JSON::Any.new(event) }
+        @socket.send({
+          "id"     => JSON::Any.new(@next_id += 1),
+          "method" => JSON::Any.new("session.subscribe"),
+          "params" => JSON::Any.new({"events" => JSON::Any.new(names)}),
+        }.to_json)
+      rescue
+        nil
+      end
+
       def close : Nil
         @socket.close
       end

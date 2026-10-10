@@ -4,6 +4,16 @@ require "./firefox_agent"
 
 module Tawb
   module FirefoxDriver
+    # The navigation events a reader follows (src/driver_firefox.js
+    # NAVIGATION_EVENTS), and how long an action is given to start a
+    # navigation before concluding it was not going to.
+    NAVIGATION_EVENTS = [
+      "browsingContext.load",
+      "browsingContext.domContentLoaded",
+      "browsingContext.fragmentNavigated",
+      "browsingContext.navigationStarted",
+    ]
+    NAVIGATION_GRACE_MS = 150
     EXTRACT_AX = {{ read_file("#{__DIR__}/../../assets/extract_ax_items.js") }}
 
     class BrowserSession
@@ -357,9 +367,11 @@ module Tawb
       getter protocol : Bidi::Session
       getter context_id : String
       getter url : String
+      property loading : Bool
 
       def initialize(@protocol : Bidi::Session, @context_id : String, @url = "about:blank")
         @closed = false
+        @loading = false
       end
 
       def set_url(url : String) : Nil
@@ -405,6 +417,137 @@ module Tawb
           "wait"    => JSON::Any.new(wait),
         }).as_h
         @url = result["url"]?.try(&.as_s?) || url
+      end
+
+      # Visit an address the way the reader does (src/driver_firefox.js
+      # goto): the protocol waits for the document itself, so nothing is
+      # outstanding whether the navigation succeeded or threw.
+      def goto(url : String, wait_until = "complete") : Nil
+        begin
+          navigate(url, wait_until == "domcontentloaded" ? "interactive" : "complete")
+        ensure
+          @loading = false
+        end
+      end
+
+      # Ask the browser for this document again, cache or no.
+      def reload(wait_until = "complete", ignore_cache = false) : Nil
+        begin
+          result = @protocol.command("browsingContext.reload", {
+            "context"     => JSON::Any.new(@context_id),
+            "wait"        => JSON::Any.new(wait_until == "domcontentloaded" ? "interactive" : "complete"),
+            "ignoreCache" => JSON::Any.new(ignore_cache),
+          }).as_h
+          @url = result["url"]?.try(&.as_s?) || @url
+        ensure
+          @loading = false
+        end
+      end
+
+      # Give up on a document that is taking its time.
+      def stop_loading : Nil
+        begin
+          @protocol.command("browsingContext.stopLoading", {
+            "context" => JSON::Any.new(@context_id),
+          })
+        ensure
+          @loading = false
+        end
+      end
+
+      # Events the browser pushed while we were between commands, routed to
+      # this page the way the JavaScript driver's session handlers route
+      # them: every navigation event carries the address, a start marks the
+      # document as loading, a completion unmarks it, and a fragment move is
+      # an address change with no new document. Answers whether the document
+      # finished loading, since that is the thing a caller waits for.
+      def drain_navigation : Bool
+        saw_load = false
+        while found = @protocol.poll_any(NAVIGATION_EVENTS)
+          method, params = found
+          case method
+          when "browsingContext.navigationStarted"
+            @loading = true
+          when "browsingContext.load", "browsingContext.domContentLoaded"
+            @loading = false
+            saw_load = true
+          end
+          url = params.as_h?.try(&.["url"]?.try(&.as_s?))
+          set_url(url) if url
+        end
+        saw_load
+      end
+
+      # Waits for a navigation an action may have started (the Firefox
+      # driver's waitForLoadState). Returning at once when nothing is loading
+      # was a real bug: the click has not necessarily started the navigation
+      # yet, and the snapshot that followed then described the page being
+      # left, with its URL recorded as the one on screen, so nothing ever
+      # caught up. So a navigation gets a short window to begin, and only
+      # then is its completion awaited. A click that navigates nowhere costs
+      # that window and no more.
+      def wait_for_load_state(state = "load", timeout_ms = 15000) : Bool
+        started_by = Time.monotonic + NAVIGATION_GRACE_MS.milliseconds
+        saw_load = drain_navigation
+        while !saw_load && !@loading && Time.monotonic < started_by
+          sleep 20.milliseconds
+          saw_load = drain_navigation
+        end
+        return saw_load unless @loading
+        deadline = Time.monotonic + timeout_ms.milliseconds
+        while @loading && Time.monotonic < deadline
+          saw_load = drain_navigation || saw_load
+          sleep 20.milliseconds unless saw_load
+        end
+        saw_load
+      end
+
+      # Step through this tab's own history (src/index.js
+      # traversePageHistory). The address the driver cached lags the document
+      # history actually lands on, so both the navigation entry and
+      # location.href are read from the page itself, and readiness is asked
+      # of the document rather than awaited from the protocol — a document
+      # that reports itself and then stalls must not hold the reader for the
+      # full navigation timeout.
+      def traverse_history(direction : Int32, watch_ms = 1500, load_ms = 15000) : Bool
+        entry_of = "() => (globalThis.navigation?.currentEntry ? " \
+                   "globalThis.navigation.currentEntry.key : null)"
+        before_entry = begin
+          evaluate(entry_of).as_s?
+        rescue
+          nil
+        end
+        before_url = @url
+        evaluate("(delta) => window.history.go(delta)", JSON::Any.new(direction.to_i64))
+        deadline = Time.monotonic + watch_ms.milliseconds
+        while Time.monotonic < deadline
+          sleep 50.milliseconds
+          drain_navigation
+          entry = begin
+            evaluate(entry_of).as_s?
+          rescue
+            before_entry
+          end
+          next unless @url != before_url || (entry && entry != before_entry)
+          load_deadline = Time.monotonic + load_ms.milliseconds
+          while Time.monotonic < load_deadline
+            ready = begin
+              evaluate("() => document.readyState").as_s?
+            rescue
+              ""
+            end
+            break if ready == "interactive" || ready == "complete"
+            sleep 50.milliseconds
+          end
+          address = begin
+            evaluate("() => location.href").as_s?
+          rescue
+            nil
+          end
+          set_url(address) if address
+          return true
+        end
+        false
       end
 
       # Every document below this tab, including the top one. Live updates use

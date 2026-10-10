@@ -88,6 +88,16 @@ module Tawb
         write_frame(0x01_u8, text.to_slice)
       end
 
+      # How long a single receive waits before giving up. The session borrows
+      # this to poll for pushed events without committing to a blocking read.
+      def read_timeout=(span : Time::Span?) : Nil
+        @socket.read_timeout = span
+      end
+
+      def read_timeout : Time::Span?
+        @socket.read_timeout
+      end
+
       def receive : String
         fragments = IO::Memory.new
         loop do

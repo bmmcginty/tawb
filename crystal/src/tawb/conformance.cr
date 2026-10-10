@@ -268,6 +268,8 @@ module Tawb
         core_more_scenario(payload)
       when "core.fragment_scenario"
         core_fragment_scenario(payload)
+      when "core.navigation_scenario"
+        core_navigation_scenario(payload)
       when "core.diff_blocks"
         object = payload.as_h
         previous = object["previous_texts"].as_a.map(&.as_s)
@@ -700,6 +702,39 @@ module Tawb
           "block"    => JSON::Any.new(core.block_at_fragment(fragment || "").to_i64),
           "missing"  => JSON::Any.new(core.block_at_fragment("nowhere").to_i64),
           "wire"     => page.evaluate("() => window.__tweb_wire || null"),
+        })
+      ensure
+        session.close
+      end
+    end
+
+    private def self.core_navigation_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      session = Bidi::Session.new(object["url"].as_s)
+      page = FirefoxDriver::Page.new(session, "main", "https://start.test/")
+      core = Core.new(page: page)
+      core.rendered_url = page.url
+      begin
+        session.subscribe(FirefoxDriver::NAVIGATION_EVENTS)
+        page.goto("https://next.test/deep", wait_until: "domcontentloaded")
+        after_goto = page.url
+        waited = page.wait_for_load_state("load")
+        moved = page.traverse_history(1)
+        # A front end that rebuilds after each navigation re-baselines the
+        # core on the document it now describes; a fragment event on that
+        # document is then the same document the buffer already holds.
+        core.rendered_url = page.url
+        fragment = core.external_navigation("https://next.test/deeper#section")
+        navigated = core.external_navigation("https://other.test/elsewhere")
+        same = core.external_navigation("https://other.test/elsewhere")
+        JSON::Any.new({
+          "goto"      => JSON::Any.new(after_goto),
+          "waited"    => JSON::Any.new(waited),
+          "moved"     => JSON::Any.new(moved),
+          "history"   => JSON::Any.new(page.url),
+          "fragment"  => JSON::Any.new(fragment == :fragment),
+          "navigated" => JSON::Any.new(navigated == :navigated),
+          "same"      => JSON::Any.new(same == :same),
         })
       ensure
         session.close

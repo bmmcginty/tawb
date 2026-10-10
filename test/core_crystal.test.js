@@ -700,4 +700,67 @@ if (implementations.length > 1) {
       await new Promise((resolve) => server.close(resolve));
     }
   });
+
+  test('Crystal follows navigation and load state across a scripted page', async () => {
+    const server = http.createServer();
+    const sockets = new Set();
+    let entries = 0;
+    const remote = (value) => {
+      if (value === undefined) return { type: 'undefined' };
+      if (value === null) return { type: 'null' };
+      if (typeof value === 'boolean') return { type: 'boolean', value };
+      if (typeof value === 'number') return { type: 'number', value };
+      if (typeof value === 'string') return { type: 'string', value };
+      if (Array.isArray(value)) return { type: 'array', value: value.map(remote) };
+      return { type: 'object', value: Object.entries(value).map(([key, item]) => [key, remote(item)]) };
+    };
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    server.on('upgrade', (request, socket, head) => {
+      let peer;
+      const event = (method, params) => peer.send(JSON.stringify({ type: 'event', method, params }));
+      peer = acceptWebSocket(request, socket, (text) => {
+        const message = JSON.parse(text);
+        let result = {};
+        if (message.method === 'browsingContext.navigate') {
+          result = { navigation: 'nav-1', url: 'https://next.test/deep' };
+          event('browsingContext.navigationStarted', { context: 'main', url: 'https://next.test/deep' });
+          event('browsingContext.load', { context: 'main', url: 'https://next.test/deep' });
+        } else if (message.method === 'script.callFunction') {
+          const declaration = message.params.functionDeclaration;
+          if (declaration.includes('currentEntry')) {
+            entries += 1;
+            result = { result: remote(entries === 1 ? 'entry-1' : 'entry-2') };
+          } else if (declaration.includes('history.go')) {
+            result = { result: { type: 'undefined' } };
+          } else if (declaration.includes('readyState')) {
+            result = { result: remote('complete') };
+          } else if (declaration.includes('location.href')) {
+            result = { result: remote('https://next.test/deeper') };
+          }
+        }
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+      }, () => {});
+      if (head.length) peer.consume(head);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    try {
+      const observed = await crystal.navigationScenario(`ws://127.0.0.1:${port}/session`);
+      assert.deepEqual(observed, {
+        goto: 'https://next.test/deep',
+        waited: true,
+        moved: true,
+        history: 'https://next.test/deeper',
+        fragment: true,
+        navigated: true,
+        same: true,
+      });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
 }
