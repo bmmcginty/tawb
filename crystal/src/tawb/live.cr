@@ -3,9 +3,14 @@
 # core, because they decide when a displayed buffer may move under its reader.
 
 require "json"
+require "set"
+require "./firefox_driver"
 
 module Tawb
   module Live
+    OBSERVER_SCRIPT = {{ read_file("#{__DIR__}/../../assets/live_observer.js") }}
+    DRAIN_SCRIPT    = {{ read_file("#{__DIR__}/../../assets/live_drain.js") }}
+    PULSE_SCRIPT    = {{ read_file("#{__DIR__}/../../assets/live_pulse.js") }}
     MIN_INTERVAL_MS = 400_i64
     DUTY_CYCLE      = 0.2
     TICK_MS         = 250_i64
@@ -45,6 +50,98 @@ module Tawb
         @snapshot_cost_ms = 0_i64
         @pulse_errors = 0
         @queue = [] of JSON::Any
+      end
+    end
+
+    record InstallResult, bound_now : Bool, armed : Int32, frames : Int32
+    record PulseResult, changed : Bool, navigated : Bool, rearmed : Bool, ms : Int64
+
+    # The browser-facing half of live updates. Observers leave batches in each
+    # document and this object drains only documents the reader deliberately
+    # armed: the top document and rendered child frames.
+    class Watcher
+      def initialize
+        @preloaded = Set(Bidi::Session).new
+        @armed = Set(String).new
+      end
+
+      def install(page : FirefoxDriver::Page) : InstallResult
+        bound_now = @preloaded.add?(page.protocol) != nil
+        if bound_now
+          page.protocol.command("script.addPreloadScript", {
+            "functionDeclaration" => JSON::Any.new(OBSERVER_SCRIPT),
+          })
+        end
+        armed = arm_frame(page) ? 1 : 0
+        InstallResult.new(bound_now, armed, frame_count(page))
+      end
+
+      def arm_frame(frame : FirefoxDriver::Frame | FirefoxDriver::Page,
+                    force = false, again = false) : Bool
+        return false if @armed.includes?(frame.context_id) && !again
+        frame.evaluate(OBSERVER_SCRIPT, JSON::Any.new(force))
+        @armed.add(frame.context_id)
+        true
+      rescue
+        false
+      end
+
+      # Cross-origin frames are armed only after they contributed rendered
+      # content. Context ids are stable over a document replacement; `again`
+      # is reserved for pulse detecting that replacement.
+      def arm_rendered_frames(frames : Array(FirefoxDriver::Frame), limit = 8) : Int32
+        armed = 0
+        frames.first(limit).each { |frame| armed += 1 if arm_frame(frame, force: true) }
+        armed
+      end
+
+      def collect(page : FirefoxDriver::Page) : Array(JSON::Any)
+        contexts = [page.context_id]
+        page.all_frames.each do |frame|
+          contexts << frame.context_id if @armed.includes?(frame.context_id)
+        end
+        out = [] of JSON::Any
+        contexts.uniq.each do |context_id|
+          begin
+            frame = FirefoxDriver::Frame.new(page.protocol, context_id, page)
+            payloads = frame.evaluate(DRAIN_SCRIPT).as_a?
+            out.concat(payloads) if payloads
+          rescue
+            # A detached or navigating document took its queue with it.
+          end
+        end
+        out
+      end
+
+      def pulse(page : FirefoxDriver::Page, live : State,
+                now : Int64 = Time.utc.to_unix_ms) : PulseResult?
+        return nil unless live.enabled
+        return nil if now - live.last_pulse_ms < PULSE_MS
+        live.last_pulse_ms = now
+
+        started = Time.monotonic
+        reading = page.evaluate(PULSE_SCRIPT).as_h
+        elapsed = (Time.monotonic - started).total_milliseconds.to_i64
+        observing = reading["observing"]?.try(&.as_bool?) || false
+        rearmed = !observing && arm_frame(page, force: true, again: true)
+        print = reading["print"]?.try(&.as_s?) || ""
+        href = reading["href"]?.try(&.as_s?) || ""
+        changed = !live.print.nil? && print != live.print
+        navigated = !live.href.nil? && href != live.href
+        live.print = print
+        live.href = href
+        live.dirty = true if changed
+        live.navigated = true if navigated
+        PulseResult.new(changed, navigated, rearmed, elapsed)
+      rescue
+        live.pulse_errors += 1
+        nil
+      end
+
+      private def frame_count(page : FirefoxDriver::Page) : Int32
+        page.all_frames.size
+      rescue
+        1
       end
     end
 

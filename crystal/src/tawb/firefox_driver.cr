@@ -407,6 +407,29 @@ module Tawb
         @url = result["url"]?.try(&.as_s?) || url
       end
 
+      # Every document below this tab, including the top one. Live updates use
+      # this to drain only the contexts they have armed, without walking page
+      # elements or touching unrelated tabs.
+      def all_frames : Array(Frame)
+        result = @protocol.command("browsingContext.getTree", {
+          "root" => JSON::Any.new(@context_id),
+        }).as_h
+        root = result["contexts"].as_a.first?
+        return [Frame.new(@protocol, @context_id, self, @url)] unless root
+        frames = [] of Frame
+        append_frames(root, frames)
+        frames
+      end
+
+      private def append_frames(context : JSON::Any, frames : Array(Frame)) : Nil
+        object = context.as_h
+        frames << Frame.new(@protocol, object["context"].as_s, self,
+          object["url"]?.try(&.as_s?) || "about:blank")
+        (object["children"]?.try(&.as_a?) || [] of JSON::Any).each do |child|
+          append_frames(child, frames)
+        end
+      end
+
       # Whether a document embedded in the top one is still a placeholder.
       # BiDi lists the browsing contexts below this one with their addresses,
       # and one that has not committed yet is on about:blank, which the frame

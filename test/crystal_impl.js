@@ -1215,6 +1215,9 @@ function liveImplementations(javascript) {
     createLiveState() { return call('live.create_state', {}); },
     refreshDue(state, now) { return call('live.refresh_due', { state, now }); },
     scenario(script) { return call('live.classify_scenario', { script }); },
+    watcherScenario(url, script) {
+      return callAsync('live.watcher_scenario', { url, script });
+    },
   });
   return implementations;
 }

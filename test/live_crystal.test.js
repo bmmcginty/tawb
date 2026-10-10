@@ -6,7 +6,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const http = require('node:http');
 const live = require('../src/live');
+const { acceptWebSocket } = require('../src/broker');
 const { liveImplementations } = require('./crystal_impl');
 
 const implementations = liveImplementations(live);
@@ -129,6 +131,94 @@ if (implementations.length > 1) {
       const base = { ...implementations[0].createLiveState(), ...partial };
       assert.equal(implementations[1].refreshDue(base, 10000),
         implementations[0].refreshDue(base, 10000));
+    }
+  });
+
+  test('Crystal installs, drains, pulses, and re-arms live page observers', async () => {
+    const crystal = implementations.find((implementation) => implementation.watcherScenario);
+    const server = http.createServer();
+    const sockets = new Set();
+    const traffic = [];
+    let pulse = 0;
+    const remote = (value) => {
+      if (value === undefined) return { type: 'undefined' };
+      if (value === null) return { type: 'null' };
+      if (typeof value === 'boolean') return { type: 'boolean', value };
+      if (typeof value === 'number') return { type: 'number', value };
+      if (typeof value === 'string') return { type: 'string', value };
+      if (Array.isArray(value)) return { type: 'array', value: value.map(remote) };
+      return { type: 'object', value: Object.entries(value).map(([key, item]) => [key, remote(item)]) };
+    };
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    server.on('upgrade', (request, socket, head) => {
+      let peer;
+      peer = acceptWebSocket(request, socket, (text) => {
+        const message = JSON.parse(text);
+        const { method, params = {} } = message;
+        traffic.push({ method, context: params.target?.context || null });
+        let result = {};
+        if (method === 'browsingContext.getTree') {
+          result = { contexts: [{ context: 'main', url: 'https://example.test/', children: [
+            { context: 'child', url: 'https://frame.test/', children: [] },
+          ] }] };
+        } else if (method === 'script.callFunction') {
+          const declaration = params.functionDeclaration;
+          if (declaration.includes("Symbol.for('tweb.queue')")) {
+            result = { result: remote(params.target.context === 'main'
+              ? [{ announcements: [], mutations: 1, patches: [], pureText: false }]
+              : [{ announcements: [{ politeness: 'polite', text: 'ready' }], mutations: 1 }]) };
+          } else if (declaration.includes('observing:')) {
+            pulse += 1;
+            result = { result: remote({
+              observing: pulse > 1,
+              href: pulse > 1 ? 'https://example.test/next' : 'https://example.test/',
+              print: `${pulse}|page`,
+            }) };
+          } else {
+            result = { result: remote(undefined) };
+          }
+        }
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+      }, () => {});
+      if (head.length) peer.consume(head);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    try {
+      const observed = await crystal.watcherScenario(`ws://127.0.0.1:${port}/session`, [
+        { op: 'install' },
+        { op: 'arm_rendered', contexts: ['child'] },
+        { op: 'collect' },
+        { op: 'pulse', now: 1000 },
+        { op: 'pulse', now: 1500 },
+        { op: 'pulse', now: 2000 },
+        { op: 'state' },
+      ]);
+      assert.deepEqual(observed.slice(0, 6), [
+        { boundNow: true, armed: 1, frames: 2 },
+        1,
+        [
+          { announcements: [], mutations: 1, patches: [], pureText: false },
+          { announcements: [{ politeness: 'polite', text: 'ready' }], mutations: 1 },
+        ],
+        { changed: false, navigated: false, rearmed: true },
+        null,
+        { changed: true, navigated: true, rearmed: false },
+      ]);
+      assert.equal(observed[6].dirty, true);
+      assert.equal(observed[6].navigated, true);
+      assert.deepEqual(traffic.map(({ method }) => method), [
+        'script.addPreloadScript', 'script.callFunction', 'browsingContext.getTree',
+        'script.callFunction', 'browsingContext.getTree', 'script.callFunction',
+        'script.callFunction', 'script.callFunction', 'script.callFunction',
+        'script.callFunction',
+      ]);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
     }
   });
 }

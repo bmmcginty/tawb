@@ -426,6 +426,8 @@ module Tawb
         object = payload.as_h
         JSON::Any.new(Live.refresh_due?(
           live_state_from_json(object["state"]), object["now"].as_i64))
+      when "live.watcher_scenario"
+        live_watcher_scenario(payload)
       when "lynx_display.blocks"
         object = payload.as_h
         JSON::Any.new(LynxDisplay.blocks(
@@ -668,6 +670,54 @@ module Tawb
         else
           raise ArgumentError.new("unknown live scenario op #{step["op"]}")
         end
+      end
+      JSON::Any.new(observations)
+    end
+
+    private def self.live_watcher_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      session = Bidi::Session.new(object["url"].as_s)
+      page = FirefoxDriver::Page.new(session, "main", "https://example.test/")
+      watcher = Live::Watcher.new
+      state = Live.create_state
+      observations = [] of JSON::Any
+      begin
+        object["script"].as_a.each do |step_value|
+          step = step_value.as_h
+          case step["op"].as_s
+          when "install"
+            result = watcher.install(page)
+            observations << JSON::Any.new({
+              "boundNow" => JSON::Any.new(result.bound_now),
+              "armed"    => JSON::Any.new(result.armed.to_i64),
+              "frames"   => JSON::Any.new(result.frames.to_i64),
+            })
+          when "arm_rendered"
+            frames = step["contexts"].as_a.map do |context|
+              FirefoxDriver::Frame.new(session, context.as_s, page)
+            end
+            observations << JSON::Any.new(watcher.arm_rendered_frames(frames).to_i64)
+          when "collect"
+            observations << JSON::Any.new(watcher.collect(page))
+          when "pulse"
+            result = watcher.pulse(page, state, step["now"].as_i64)
+            observations << if result
+              JSON::Any.new({
+                "changed"   => JSON::Any.new(result.changed),
+                "navigated" => JSON::Any.new(result.navigated),
+                "rearmed"   => JSON::Any.new(result.rearmed),
+              })
+            else
+              JSON::Any.new(nil)
+            end
+          when "state"
+            observations << live_state_json(state)
+          else
+            raise ArgumentError.new("unknown live watcher op #{step["op"]}")
+          end
+        end
+      ensure
+        session.close
       end
       JSON::Any.new(observations)
     end
