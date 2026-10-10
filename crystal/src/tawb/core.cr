@@ -41,15 +41,17 @@
 #
 # ## What is not here yet
 #
-# The half of src/core.js that acts on the page — activate, click, hover,
-# typing, sliders and tabs — and the live-update policy (src/live.js) still
-# live in the JavaScript originals and move here as the front end work
-# proceeds. File attachment bookkeeping is here: paths remain outside the
-# page and survive snapshots only while the browser reports matching names.
+# Item activation and tabs are here, on top of the Firefox handle and action
+# layers; typing's front-end orchestration and the live-update policy
+# (src/live.js) still live in the JavaScript originals and move here as the
+# front end work proceeds. File attachment bookkeeping is here: paths remain
+# outside the page and survive snapshots only while the browser reports
+# matching names.
 
 require "json"
 require "set"
 require "uri"
+require "./actions"
 require "./aria"
 require "./firefox_driver"
 require "./remap"
@@ -758,6 +760,53 @@ module Tawb
       end
 
       PatchResult.new(touched, @generation, undo)
+    end
+
+    # -----------------------------------------------------------------------
+    # Acting on an item
+    # -----------------------------------------------------------------------
+
+    # Resolve the element retained by whichever view produced this item. The
+    # page-side extractors keep arrays under stable symbols; an item carries
+    # its position in the corresponding array and the frame that owns it.
+    def handle_for(item : JSON::Any, page : FirefoxDriver::Page? = @page) : FirefoxDriver::Handle
+      acting = page || raise IO::Error.new("this core has no page")
+      object = item.as_h
+      scope = item_scope(object["frame"]?, acting)
+      index_name, symbol = if DOM_SOURCES.includes?(@source)
+                             {"domIndex", "tweb.dom"}
+                           elsif @source == "render"
+                             {"renderIndex", "tweb.render"}
+                           else
+                             {"axIndex", "tweb.ax"}
+                           end
+      index = object[index_name]?.try(&.as_i?)
+      raise IO::Error.new("this line carries no element reference to activate") unless index
+      scope.evaluate_handle(
+        "(i) => (window[Symbol.for('#{symbol}')] || [])[i]",
+        JSON::Any.new(index.to_i64))
+    end
+
+    # The item's policy chooses trusted input only where default activation is
+    # insufficient: a pierced challenge and a button submitting credentials
+    # the browser filled itself. Everything else keeps the DOM's own action.
+    def activate(item : JSON::Any, page : FirefoxDriver::Page? = @page) : JSON::Any
+      acting = page || raise IO::Error.new("this core has no page")
+      object = item.as_h
+      held = object["pressFrame"]? ? nil : handle_for(item, acting)
+      Actions.activate_item(acting.protocol, acting.context_id, item, held)
+    end
+
+    private def item_scope(frame : JSON::Any?, page : FirefoxDriver::Page) : FirefoxDriver::Frame | FirefoxDriver::Page
+      return page unless frame
+      context_id = if value = frame.as_s?
+                     value
+                   else
+                     object = frame.as_h? || return page
+                     object["id"]?.try(&.as_s?) || object["contextId"]?.try(&.as_s?) ||
+                       object["context"]?.try(&.as_s?)
+                   end
+      context_id ? FirefoxDriver::Frame.new(page.protocol, context_id, page) : page
     end
 
     # -----------------------------------------------------------------------

@@ -354,6 +354,7 @@ module Tawb
     end
 
     class Page
+      getter protocol : Bidi::Session
       getter context_id : String
       getter url : String
 
@@ -391,6 +392,10 @@ module Tawb
 
       def evaluate(fn : String, arg : JSON::Any? = nil, expression = false) : JSON::Any
         Frame.new(@protocol, @context_id, self, @url).evaluate(fn, arg, expression)
+      end
+
+      def evaluate_handle(fn : String, arg : JSON::Any? = nil, expression = false) : Handle
+        Frame.new(@protocol, @context_id, self, @url).evaluate_handle(fn, arg, expression)
       end
 
       def navigate(url : String, wait = "interactive") : Nil

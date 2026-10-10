@@ -969,6 +969,24 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, Firefox
     let keyboard = null;
     let refs = [];
     const reference = (held) => ({ id: held.contextId, url: held.url() });
+    const clickInFrame = async (target, x, y) => {
+      const context = target?.contextId || acting.contextId;
+      try {
+        await session.send('input.performActions', {
+          context,
+          actions: [{
+            type: 'pointer', id: 'tweb-mouse', parameters: { pointerType: 'mouse' },
+            actions: [
+              { type: 'pointerMove', x: Math.round(x), y: Math.round(y), origin: 'viewport' },
+              { type: 'pointerDown', button: 0 },
+              { type: 'pointerUp', button: 0 },
+            ],
+          }],
+        });
+      } finally {
+        await session.send('input.releaseActions', { context }).catch(() => {});
+      }
+    };
     try {
       await session.send('session.new', { capabilities: { alwaysMatch: {} } });
       for (const step of script) {
@@ -1036,6 +1054,27 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, Firefox
           case 'activate':
             observations.push(await handle.evaluate(clickThrough));
             break;
+          case 'activate_item': {
+            const { Core } = require('../src/core');
+            const driver = {
+              realClick: (scope, held) => acting.realClick(scope, held),
+              clickInFrame,
+              axElementHandle: (scope, item) => scope.evaluateHandle(
+                (i) => (window[Symbol.for('tweb.ax')] || [])[i], item.axIndex),
+            };
+            const core = new Core({
+              driver, page: acting, source: step.source || 'ax', sources: ['ax'],
+            });
+            const item = { ...step.item };
+            if (item.frame && item.frame.id) {
+              item.frame = new FirefoxFrame(session, item.frame.id, acting);
+            }
+            if (item.pressFrame && item.pressFrame.id) {
+              item.pressFrame = new FirefoxFrame(session, item.pressFrame.id, acting);
+            }
+            observations.push(await core.activate(item, acting));
+            break;
+          }
           case 'focus_control':
             observations.push(await handle.evaluate((el) => { el.focus(); return true; }));
             break;

@@ -76,6 +76,16 @@ const SCRIPT = [
   { op: 'key_type', text: '\uD83D\uDE00' },
   { op: 'key_error', key: 'F12' },
   { op: 'click_slider', ratio: 0.51 },
+  { op: 'activate_item', item: { role: 'link', name: 'Open', axIndex: 3 } },
+  { op: 'activate_item', item: { role: 'button', name: 'Sign in', axIndex: 4 } },
+  { op: 'activate_item', item: { role: 'button', name: 'Covered sign in', axIndex: 5 } },
+  { op: 'activate_item', item: {
+    role: 'link', name: 'Challenge', pierced: true, axIndex: 6,
+    frame: { id: 'child-a' },
+  } },
+  { op: 'activate_item', item: {
+    role: 'button', name: 'hidden challenge', pressFrame: { id: 'child-a' },
+  } },
 ];
 
 const runs = {};
@@ -106,9 +116,11 @@ for (const implementation of firefoxHandleImplementations({
           let value;
           if (message.params.resultOwnership === 'root') {
             handleCalls += 1;
-            value = handleCalls === 1
-              ? { type: 'node', handle: 'h-1', sharedId: 's-1' }
-              : { type: 'object', handle: 'h-2', sharedId: 's-2' };
+            value = {
+              type: handleCalls === 1 ? 'node' : 'object',
+              handle: `h-${handleCalls}`,
+              sharedId: `s-${handleCalls}`,
+            };
           } else if (declaration === '(sel) => document.querySelectorAll(sel).length') {
             value = { type: 'number', value: 2 };
           } else if (declaration === '(x) => x') {
@@ -121,19 +133,33 @@ for (const implementation of firefoxHandleImplementations({
             value = { type: 'boolean', value: true };
           } else if (declaration.includes('scrollIntoView')) {
             // prepareRealClick's answer: the point it vetted, and the
-            // approach point three pixels above the element's holder.
-            value = { type: 'object', value: [
-              ['ok', { type: 'boolean', value: true }],
-              ['x', { type: 'number', value: 321 }],
-              ['y', { type: 'number', value: 117 }],
-              ['fromX', { type: 'number', value: 321 }],
-              ['fromY', { type: 'number', value: 47 }],
-              ['placed', { type: 'string', value: 'center' }],
-            ] };
+            // approach point three pixels above the element's holder. The
+            // fifth held element is covered, exercising activation's warning
+            // and default-action fallback.
+            const held = message.params.arguments[0]?.handle;
+            value = held === 'h-6'
+              ? { type: 'object', value: [
+                  ['ok', { type: 'boolean', value: false }],
+                  ['reason', { type: 'string', value: 'is covered' }],
+                ] }
+              : { type: 'object', value: [
+                  ['ok', { type: 'boolean', value: true }],
+                  ['x', { type: 'number', value: 321 }],
+                  ['y', { type: 'number', value: 117 }],
+                  ['fromX', { type: 'number', value: 321 }],
+                  ['fromY', { type: 'number', value: 47 }],
+                  ['placed', { type: 'string', value: 'center' }],
+                ] };
           } else if (declaration.includes('node.click()')) {
             value = { type: 'boolean', value: true };
           } else if (declaration.includes('autofill')) {
-            value = { type: 'boolean', value: false };
+            const held = message.params.arguments[0]?.handle;
+            value = { type: 'boolean', value: held === 'h-5' || held === 'h-6' };
+          } else if (declaration.includes('window.innerWidth')) {
+            value = { type: 'object', value: [
+              ['w', { type: 'number', value: 640 }],
+              ['h', { type: 'number', value: 360 }],
+            ] };
           } else if (declaration.includes('el.focus()')) {
             value = { type: 'boolean', value: true };
           } else if (declaration.includes('getBoundingClientRect')) {
@@ -235,7 +261,7 @@ for (const implementation of firefoxHandleImplementations({
       'DIV',
       null,
       'https://a.test/page',
-      { handle: 'h-2', sharedId: 's-2' },
+      { handle: 'h-3', sharedId: 's-3' },
       true,
       true,
       false,
@@ -248,11 +274,34 @@ for (const implementation of firefoxHandleImplementations({
       null,
       'the Firefox driver has no key named "F12"',
       null,
+      { how: 'default-action', status: null },
+      { how: 'real-click', status: null },
+      {
+        how: 'default-action',
+        status: 'Pressed "Covered sign in", but the browser only sends a remembered password '
+          + 'when a person presses the button, and this one is covered. '
+          + 'If the sign-in is refused, type the password in.',
+      },
+      { how: 'real-click', status: null },
+      { how: 'frame', status: 'Pressed the middle of hidden challenge.' },
     ]);
+
+    const itemResolutions = calls.filter((message) =>
+      message.params.resultOwnership === 'root'
+        && message.params.functionDeclaration.includes("Symbol.for('tweb.ax')"));
+    assert.deepEqual(itemResolutions.map((message) => ({
+      target: message.params.target.context,
+      index: message.params.arguments[0].value,
+    })), [
+      { target: 'ctx-top', index: 3 },
+      { target: 'ctx-top', index: 4 },
+      { target: 'ctx-top', index: 5 },
+      { target: 'child-a', index: 6 },
+    ], 'each item resolves through the retained AX node in its own frame');
 
     const files = received.find((message) => message.method === 'input.setFiles');
     assert.deepEqual(files.params, {
-      context: 'ctx-top', element: { sharedId: 's-2' },
+      context: 'ctx-top', element: { sharedId: 's-3' },
       files: ['/tmp/report.txt', '/tmp/photo.jpg'],
     }, 'a held file input is named by its shared reference');
 
@@ -261,15 +310,15 @@ for (const implementation of firefoxHandleImplementations({
     // it pressed is released before anything else inherits it.
     const performed = received.filter((message) => message.method === 'input.performActions'
       && message.params.actions[0].type === 'pointer');
-    assert.equal(performed.length, 4,
-      'the click and the hover send one each; the slider sends two — the move that discloses the track, then the press');
+    assert.equal(performed.length, 7,
+      'direct, item-level, frame, hover, and slider actions all reach the wire');
     assert.deepEqual(performed[0].params, {
       context: 'ctx-top',
       actions: [{
         type: 'pointer', id: 'tweb-mouse', parameters: { pointerType: 'mouse' },
         actions: [
           { type: 'pointerMove', x: 0, y: 0,
-            origin: { type: 'element', element: { sharedId: 's-2' } } },
+            origin: { type: 'element', element: { sharedId: 's-3' } } },
           { type: 'pointerDown', button: 0 },
           { type: 'pointerUp', button: 0 },
         ],
@@ -293,8 +342,19 @@ for (const implementation of firefoxHandleImplementations({
         ],
       }],
     });
-    assert.equal(received.filter((message) => message.method === 'input.releaseActions').length, 2,
-      'the click and the slider press each release their pointer; a hover releases nothing');
+    assert.equal(received.filter((message) => message.method === 'input.releaseActions').length, 5,
+      'every click releases its pointer; a hover deliberately does not');
+    assert.deepEqual(performed[6].params, {
+      context: 'child-a',
+      actions: [{
+        type: 'pointer', id: 'tweb-mouse', parameters: { pointerType: 'mouse' },
+        actions: [
+          { type: 'pointerMove', x: 320, y: 180, origin: 'viewport' },
+          { type: 'pointerDown', button: 0 },
+          { type: 'pointerUp', button: 0 },
+        ],
+      }],
+    }, 'an unreadable frame is pressed in the middle of its own viewport');
 
     // The slider: a first move to disclose the hover-only chrome, the track
     // measured in the page, then the press at the point the requested ratio
@@ -304,11 +364,11 @@ for (const implementation of firefoxHandleImplementations({
     assert.equal(sliderPerforms.length, 2);
     assert.deepEqual(sliderPerforms[0].params.actions[0].actions, [
       { type: 'pointerMove', x: 0, y: 0,
-        origin: { type: 'element', element: { sharedId: 's-2' } } },
+        origin: { type: 'element', element: { sharedId: 's-3' } } },
     ]);
     assert.deepEqual(sliderPerforms[1].params.actions[0].actions, [
       { type: 'pointerMove', x: 2, y: 0,
-        origin: { type: 'element', element: { sharedId: 's-2' } } },
+        origin: { type: 'element', element: { sharedId: 's-3' } } },
       { type: 'pointerDown', button: 0 },
       { type: 'pointerUp', button: 0 },
     ]);
@@ -317,7 +377,7 @@ for (const implementation of firefoxHandleImplementations({
         && message.params.functionDeclaration.includes('sliderGeometry'));
     assert.ok(geometryCall, 'the track is measured in the page');
     assert.deepEqual(geometryCall.params.arguments,
-      [{ handle: 'h-2' }, { type: 'null' }],
+      [{ handle: 'h-3' }, { type: 'null' }],
       'the element rides by its handle, the requested orientation by its value');
 
     // The keyboard: real key events, one keystroke per code point, the

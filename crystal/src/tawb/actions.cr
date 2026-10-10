@@ -1,4 +1,5 @@
 require "json"
+require "./aria"
 require "./bidi"
 require "./firefox_driver"
 
@@ -37,6 +38,66 @@ module Tawb
     # the labelled control hears it, exactly as it would hear a mouse.
     def self.activate(handle : FirefoxDriver::Handle) : JSON::Any
       handle.evaluate(CLICK_THROUGH)
+    end
+
+    # The item-level activation policy from Core#activate. The handle-level
+    # actions above and below are deliberately smaller: this is the caller
+    # that decides when a closed-shadow target or an autofilled sign-in needs
+    # trusted input, and when the DOM's own default action is the right one.
+    def self.activate_item(session : Bidi::Session, page_context_id : String,
+                           item : JSON::Any, handle : FirefoxDriver::Handle? = nil) : JSON::Any
+      object = item.as_h
+      return press_frame(session, page_context_id, object) if object["pressFrame"]?
+      held = handle || raise IO::Error.new("this line carries no element reference to activate")
+      context_id = scope_context_id(object["frame"]?, held.context_id)
+
+      if object["pierced"]?.try(&.as_bool?) == true
+        clicked = real_click(session, context_id, held) rescue nil
+        return activation_result("real-click") if clicked && ready?(clicked)
+      end
+
+      role = object["role"]?.try(&.as_s?)
+      if role && Aria::BUTTON_ROLES.includes?(role)
+        remembered = submits_autofilled(held).as_bool? || false rescue false
+        if remembered
+          clicked = real_click(session, context_id, held) rescue nil
+          return activation_result("real-click") if clicked && ready?(clicked)
+
+          activate(held)
+          why = clicked.try(&.as_h?).try(&.["reason"]?.try(&.as_s?)) ||
+            "could not be pressed that way"
+          name = object["name"]?.try(&.as_s?) || ""
+          return activation_result("default-action",
+            "Pressed \"#{name}\", but the browser only sends a remembered password " +
+            "when a person presses the button, and this one #{why}. " +
+            "If the sign-in is refused, type the password in.")
+        end
+      end
+
+      activate(held)
+      activation_result("default-action")
+    end
+
+    # Press into a document hidden behind a closed shadow root. Page script
+    # cannot inspect it, but trusted hit testing can still reach its viewport.
+    def self.press_frame(session : Bidi::Session, page_context_id : String,
+                         item : Hash(String, JSON::Any)) : JSON::Any
+      name = item["name"]?.try(&.as_s?) || ""
+      frame_value = item["pressFrame"]?
+      context_id = scope_context_id(frame_value, "")
+      if context_id.empty?
+        return activation_result("frame", "Cannot reach into #{name} with this browser.")
+      end
+
+      frame = FirefoxDriver::Frame.new(session, context_id)
+      size = frame.evaluate("() => ({ w: window.innerWidth, h: window.innerHeight })").as_h? rescue nil
+      width = size.try(&.["w"]?).try { |value| Core.js_number(value) } || 0.0
+      height = size.try(&.["h"]?).try { |value| Core.js_number(value) } || 0.0
+      unless width > 0 && height > 0
+        return activation_result("frame", "#{name} has nothing on screen to press.")
+      end
+      click_in_frame(session, context_id, width / 2, height / 2)
+      activation_result("frame", "Pressed the middle of #{name}.")
     end
 
     # Put a control under the browser's keyboard.
@@ -78,6 +139,40 @@ module Tawb
 
     private def self.ready?(ready : JSON::Any) : Bool
       ready.as_h?.try(&.["ok"]?.try(&.as_bool?)) || false
+    end
+
+    private def self.activation_result(how : String, status : String? = nil) : JSON::Any
+      JSON::Any.new({
+        "how"    => JSON::Any.new(how),
+        "status" => JSON::Any.new(status),
+      })
+    end
+
+    private def self.scope_context_id(value : JSON::Any?, fallback : String) : String
+      return fallback unless value
+      if string = value.as_s?
+        return string
+      end
+      object = value.as_h? || return fallback
+      object["id"]?.try(&.as_s?) || object["contextId"]?.try(&.as_s?) ||
+        object["context"]?.try(&.as_s?) || fallback
+    end
+
+    private def self.click_in_frame(session : Bidi::Session, context_id : String,
+                                    x : Float64, y : Float64) : Nil
+      begin
+        session.command("input.performActions", pointer_params(
+          context_id, "tweb-mouse",
+          [
+            pointer_move(JSON::Any.new(Core.js_round(x).to_i64),
+              JSON::Any.new(Core.js_round(y).to_i64), JSON::Any.new("viewport")),
+            JSON::Any.new({"type" => JSON::Any.new("pointerDown"), "button" => JSON::Any.new(0)}),
+            JSON::Any.new({"type" => JSON::Any.new("pointerUp"), "button" => JSON::Any.new(0)}),
+          ]))
+      ensure
+        session.command("input.releaseActions",
+          {"context" => JSON::Any.new(context_id)}) rescue nil
+      end
     end
 
     # The track of a slider, and a trusted press at the point a requested

@@ -1146,6 +1146,9 @@ module Tawb
             observations.push JSON::Any.new(nil)
           when "activate"
             observations.push(Actions.activate(handle.not_nil!))
+          when "activate_item"
+            core = Core.new(source: step["source"]?.try(&.as_s?) || "ax", page: acting)
+            observations.push(core.activate(step["item"], acting))
           when "focus_control"
             observations.push(Actions.focus_control(handle.not_nil!))
           when "submits_autofilled"
