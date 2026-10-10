@@ -4,6 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
 const { PassThrough } = require('node:stream');
+const { EOF } = require('../src/input');
 
 const binary = process.env.TAWB_CRYSTAL_BIN
   || path.join(__dirname, '..', 'dist', 'tawb-crystal');
@@ -1190,6 +1191,193 @@ function readerImplementations(index, keysModule) {
     return state;
   };
 
+  // One synchronous reader action: the drawing and state transitions that
+  // need no awaiting. Async ops are handled by drawAsync on top of this.
+  const runReaderAction = (action, state, page) => {
+    switch (action.op) {
+      case 'drawTitle':
+        index.drawTitle(state, { force: !!action.force }); return undefined;
+      case 'drawAddress':
+        index.drawAddress(state, page, { force: !!action.force, edit: !!action.edit }); return undefined;
+      case 'drawHint':
+        index.drawHint(state, { force: !!action.force }); return undefined;
+      case 'setStatus':
+        index.setStatus(state, action.msg); return undefined;
+      case 'drawStatus':
+        index.drawStatus(state, page); return undefined;
+      case 'render':
+        index.render(state, page, { force: !!action.force }); return undefined;
+      case 'drawList':
+        index.drawList(state); return undefined;
+      case 'parkCursor':
+        index.parkCursor(state); return undefined;
+      case 'drawAuthPrompt':
+        index.drawAuthPrompt(state); return undefined;
+      case 'drawFind':
+        index.drawFind(state); return undefined;
+      case 'drawLinePrompt':
+        index.drawLinePrompt(state); return undefined;
+      case 'renderRow':
+        return index.renderRow(state, action.lineIndex ?? 0);
+      case 'typingText': {
+        const typing = index.typingText(state);
+        return { text: typing.text, caretCol: typing.caretCol };
+      }
+      case 'hintText':
+        return index.hintText(state);
+      case 'authPromptText': {
+        const prompt = index.authPromptText(state);
+        return { text: prompt.text, caretCol: prompt.caretCol };
+      }
+      case 'linkTarget':
+        return index.linkTarget(state, page);
+      case 'shortTarget':
+        return index.shortTarget(action.href, action.here);
+      case 'viewportHeight':
+        return index.viewportHeight();
+      case 'lineRow':
+        return index.lineRow(state, action.lineIndex ?? 0);
+      case 'cursorCol':
+        return index.cursorCol(state);
+      case 'clampScroll':
+        index.clampScroll(state); return undefined;
+      case 'lynxHidesCursor':
+        return index.lynxHidesCursor(state);
+      case 'screenBefore':
+        return index.screenBefore(state);
+      case 'visibleRowsNow':
+        return index.visibleRowsNow(state);
+      case 'patchVisibleRows':
+        return index.patchVisibleRows(state, action.before ?? []);
+      case 'repaintList':
+        return index.repaintList(state, page, action.before ?? null);
+      case 'repaintLynxSelection':
+        index.repaintLynxSelection(state, action.oldCursor ?? 0, action.oldCol ?? 0); return undefined;
+      case 'relayout':
+        index.relayout(state);
+        return state.lines.map((line) => ({
+          text: line.text, blockIndex: line.blockIndex,
+          continuation: !!line.continuation,
+          displayNumber: line.displayNumber ?? null,
+          displayIndent: line.displayIndent ?? 0,
+          displayPrefix: line.displayPrefix ?? '',
+          displaySuffix: line.displaySuffix ?? '',
+          ...(line.spans ? {
+            spans: line.spans.map((span) => ({
+              start: span.start, end: span.end, blockIndex: span.blockIndex,
+              displayNumber: span.displayNumber ?? null,
+            })),
+          } : {}),
+        }));
+      case 'preserveViewportRow':
+        index.preserveViewportRow(state, action.row ?? 0,
+          action.height === undefined ? index.viewportHeight() : action.height);
+        return undefined;
+      case 'moveScreen': {
+        const height = action.height === undefined ? index.viewportHeight() : action.height;
+        index.moveScreen(state, action.direction ?? 1, page, height,
+          action.lines === undefined ? height - 1 : action.lines);
+        return undefined;
+      }
+      case 'redrawAfterResize':
+        index.redrawAfterResize(state, page); return undefined;
+      case 'moveSelection':
+        index.moveSelection(state, action.cursor ?? 0, page, action.col ?? 0); return undefined;
+      case 'moveCaretLeft':
+        index.moveCaretLeft(state, page); return undefined;
+      case 'moveCaretRight':
+        index.moveCaretRight(state, page); return undefined;
+      case 'positionForBlock': {
+        const position = index.positionForBlock(state, action.blockIndex ?? 0);
+        return position ? { line: position.line, col: position.col } : null;
+      }
+      case 'focusableEdge': {
+        const edge = index.focusableEdge(state, action.direction ?? 1);
+        return edge ? { line: edge.line, col: edge.col } : null;
+      }
+      case 'findQuickNav': {
+        const spec = index.QUICK_ACTIONS[action.action];
+        if (!spec) throw new Error(`unknown quick action ${action.action}`);
+        const found = index.findQuickNav(state, spec.match, spec.direction,
+          { sameLine: spec.sameLine });
+        return found ? { line: found.line, col: found.col } : null;
+      }
+      case 'quickWalk': {
+        const spec = index.QUICK_ACTIONS[action.action];
+        if (!spec) throw new Error(`unknown quick action ${action.action}`);
+        const hits = [];
+        for (let i = 0; i < (action.limit ?? 100); i += 1) {
+          const found = index.findQuickNav(state, spec.match, spec.direction,
+            { sameLine: spec.sameLine });
+          if (!found) break;
+          hits.push({ line: found.line, col: found.col });
+          index.moveSelection(state, found.line, page, found.col);
+        }
+        return hits;
+      }
+      case 'findParagraph': {
+        const found = index.findParagraph(state, action.direction ?? 1);
+        return found ? { line: found.line, col: found.col } : null;
+      }
+      case 'jumpTo': {
+        const found = action.found ? { line: action.found.line, col: action.found.col } : null;
+        index.jumpTo(state, page, found, action.label, action.direction ?? 1);
+        return undefined;
+      }
+      case 'authKey': {
+        const answer = index.handleAuthKey(action.chunk, state);
+        return answer === undefined ? 'continue' : answer;
+      }
+      case 'findKey':
+        index.handleFindKey(action.chunk, state, page); return undefined;
+      case 'findText': {
+        const found = index.findText(state, action.needle, action.direction ?? 1);
+        return found ? { line: found.line, col: found.col, wrapped: found.wrapped } : null;
+      }
+      case 'runSearch':
+        index.runSearch(state, page, action.needle, action.direction ?? 1); return undefined;
+      default:
+        throw new Error(`unknown reader action ${action.op}`);
+    }
+  };
+
+  const stateSnapshot = (state, atCalls) => ({
+    mode: state.mode,
+    drawn: { ...state.drawn },
+    scroll: state.scroll, col: state.col, cursor: state.cursor,
+    statusMsg: state.statusMsg,
+    lines: state.lines.map((line) => ({
+      text: line.text, blockIndex: line.blockIndex,
+      continuation: !!line.continuation,
+      displayNumber: line.displayNumber ?? null,
+      displayIndent: line.displayIndent ?? 0,
+      displayPrefix: line.displayPrefix ?? '',
+      displaySuffix: line.displaySuffix ?? '',
+      ...(line.spans ? {
+        spans: line.spans.map((span) => ({
+          start: span.start, end: span.end, blockIndex: span.blockIndex,
+          displayNumber: span.displayNumber ?? null,
+        })),
+      } : {}),
+    })),
+    address: state.address
+      ? { text: state.address.text, caret: state.address.caret, scroll: state.address.scroll }
+      : null,
+    typing: state.typing ? { text: state.typing.text, caret: state.typing.caret } : null,
+    auth: state.auth ? {
+      stage: state.auth.stage,
+      user: { ...state.auth.user }, password: { ...state.auth.password },
+    } : null,
+    find: state.find
+      ? { direction: state.find.direction, text: state.find.text, caret: state.find.caret }
+      : null,
+    lastFind: state.lastFind
+      ? { direction: state.lastFind.direction, text: state.lastFind.text }
+      : null,
+    atCalls,
+    inputMarks: state.core.inputMarks ?? 0,
+  });
+
   const implementations = [{
     name: 'JavaScript',
     draw(args) {
@@ -1216,162 +1404,7 @@ function readerImplementations(index, keysModule) {
         for (const action of args.actions ?? []) {
           current = [];
           const entry = {};
-          let value;
-          switch (action.op) {
-            case 'drawTitle':
-              index.drawTitle(state, { force: !!action.force }); break;
-            case 'drawAddress':
-              index.drawAddress(state, page, { force: !!action.force, edit: !!action.edit }); break;
-            case 'drawHint':
-              index.drawHint(state, { force: !!action.force }); break;
-            case 'setStatus':
-              index.setStatus(state, action.msg); break;
-            case 'drawStatus':
-              index.drawStatus(state, page); break;
-            case 'render':
-              index.render(state, page, { force: !!action.force }); break;
-            case 'drawList':
-              index.drawList(state); break;
-            case 'parkCursor':
-              index.parkCursor(state); break;
-            case 'drawAuthPrompt':
-              index.drawAuthPrompt(state); break;
-            case 'drawFind':
-              index.drawFind(state); break;
-            case 'drawLinePrompt':
-              index.drawLinePrompt(state); break;
-            case 'renderRow':
-              value = index.renderRow(state, action.lineIndex ?? 0); break;
-            case 'typingText': {
-              const typing = index.typingText(state);
-              value = { text: typing.text, caretCol: typing.caretCol };
-              break;
-            }
-            case 'hintText':
-              value = index.hintText(state); break;
-            case 'authPromptText': {
-              const prompt = index.authPromptText(state);
-              value = { text: prompt.text, caretCol: prompt.caretCol };
-              break;
-            }
-            case 'linkTarget':
-              value = index.linkTarget(state, page); break;
-            case 'shortTarget':
-              value = index.shortTarget(action.href, action.here); break;
-            case 'viewportHeight':
-              value = index.viewportHeight(); break;
-            case 'lineRow':
-              value = index.lineRow(state, action.lineIndex ?? 0); break;
-            case 'cursorCol':
-              value = index.cursorCol(state); break;
-            case 'clampScroll':
-              index.clampScroll(state); break;
-            case 'lynxHidesCursor':
-              value = index.lynxHidesCursor(state); break;
-            case 'screenBefore':
-              value = index.screenBefore(state); break;
-            case 'visibleRowsNow':
-              value = index.visibleRowsNow(state); break;
-            case 'patchVisibleRows':
-              value = index.patchVisibleRows(state, action.before ?? []); break;
-            case 'repaintList':
-              value = index.repaintList(state, page, action.before ?? null); break;
-            case 'repaintLynxSelection':
-              index.repaintLynxSelection(state, action.oldCursor ?? 0, action.oldCol ?? 0); break;
-            case 'relayout':
-              index.relayout(state);
-              value = state.lines.map((line) => ({
-                text: line.text, blockIndex: line.blockIndex,
-                continuation: !!line.continuation,
-                displayNumber: line.displayNumber ?? null,
-                displayIndent: line.displayIndent ?? 0,
-                displayPrefix: line.displayPrefix ?? '',
-                displaySuffix: line.displaySuffix ?? '',
-                ...(line.spans ? {
-                  spans: line.spans.map((span) => ({
-                    start: span.start, end: span.end, blockIndex: span.blockIndex,
-                    displayNumber: span.displayNumber ?? null,
-                  })),
-                } : {}),
-              }));
-              break;
-            case 'preserveViewportRow':
-              index.preserveViewportRow(state, action.row ?? 0,
-                action.height === undefined ? index.viewportHeight() : action.height);
-              break;
-            case 'moveScreen': {
-              const height = action.height === undefined ? index.viewportHeight() : action.height;
-              index.moveScreen(state, action.direction ?? 1, page, height,
-                action.lines === undefined ? height - 1 : action.lines);
-              break;
-            }
-            case 'redrawAfterResize':
-              index.redrawAfterResize(state, page);
-              break;
-            case 'moveSelection':
-              index.moveSelection(state, action.cursor ?? 0, page, action.col ?? 0);
-              break;
-            case 'moveCaretLeft':
-              index.moveCaretLeft(state, page);
-              break;
-            case 'moveCaretRight':
-              index.moveCaretRight(state, page);
-              break;
-            case 'positionForBlock': {
-              const position = index.positionForBlock(state, action.blockIndex ?? 0);
-              value = position ? { line: position.line, col: position.col } : null;
-              break;
-            }
-            case 'focusableEdge': {
-              const edge = index.focusableEdge(state, action.direction ?? 1);
-              value = edge ? { line: edge.line, col: edge.col } : null;
-              break;
-            }
-            case 'findQuickNav': {
-              const spec = index.QUICK_ACTIONS[action.action];
-              if (!spec) throw new Error(`unknown quick action ${action.action}`);
-              const found = index.findQuickNav(state, spec.match, spec.direction,
-                { sameLine: spec.sameLine });
-              value = found ? { line: found.line, col: found.col } : null;
-              break;
-            }
-            case 'quickWalk': {
-              const spec = index.QUICK_ACTIONS[action.action];
-              if (!spec) throw new Error(`unknown quick action ${action.action}`);
-              const hits = [];
-              for (let i = 0; i < (action.limit ?? 100); i += 1) {
-                const found = index.findQuickNav(state, spec.match, spec.direction,
-                  { sameLine: spec.sameLine });
-                if (!found) break;
-                hits.push({ line: found.line, col: found.col });
-                index.moveSelection(state, found.line, page, found.col);
-              }
-              value = hits;
-              break;
-            }
-            case 'findParagraph': {
-              const found = index.findParagraph(state, action.direction ?? 1);
-              value = found ? { line: found.line, col: found.col } : null;
-              break;
-            }
-            case 'findKey':
-              index.handleFindKey(action.chunk, state, page); break;
-            case 'findText': {
-              const found = index.findText(state, action.needle, action.direction ?? 1);
-              value = found ? { line: found.line, col: found.col, wrapped: found.wrapped } : null;
-              break;
-            }
-            case 'runSearch':
-              index.runSearch(state, page, action.needle, action.direction ?? 1);
-              break;
-            case 'jumpTo': {
-              const found = action.found ? { line: action.found.line, col: action.found.col } : null;
-              index.jumpTo(state, page, found, action.label, action.direction ?? 1);
-              break;
-            }
-            default:
-              throw new Error(`unknown reader action ${action.op}`);
-          }
+          const value = runReaderAction(action, state, page);
           if (value !== undefined) {
             // Sparse arrays come back with nulls where the JavaScript
             // original has holes, which is the same answer over the wire.
@@ -1387,42 +1420,61 @@ function readerImplementations(index, keysModule) {
       }
       return {
         results,
-        state: {
-          mode: state.mode,
-          drawn: { ...state.drawn },
-          scroll: state.scroll, col: state.col, cursor: state.cursor,
-          statusMsg: state.statusMsg,
-          lines: state.lines.map((line) => ({
-            text: line.text, blockIndex: line.blockIndex,
-            continuation: !!line.continuation,
-            displayNumber: line.displayNumber ?? null,
-            displayIndent: line.displayIndent ?? 0,
-            displayPrefix: line.displayPrefix ?? '',
-            displaySuffix: line.displaySuffix ?? '',
-            ...(line.spans ? {
-              spans: line.spans.map((span) => ({
-                start: span.start, end: span.end, blockIndex: span.blockIndex,
-                displayNumber: span.displayNumber ?? null,
-              })),
-            } : {}),
-          })),
-          address: state.address
-            ? { text: state.address.text, caret: state.address.caret, scroll: state.address.scroll }
-            : null,
-          typing: state.typing ? { text: state.typing.text, caret: state.typing.caret } : null,
-          auth: state.auth ? {
-            stage: state.auth.stage,
-            user: { ...state.auth.user }, password: { ...state.auth.password },
-          } : null,
-          find: state.find
-            ? { direction: state.find.direction, text: state.find.text, caret: state.find.caret }
-            : null,
-          lastFind: state.lastFind
-            ? { direction: state.lastFind.direction, text: state.lastFind.text }
-            : null,
-          atCalls,
-          inputMarks: state.core.inputMarks ?? 0,
-        },
+        state: stateSnapshot(state, atCalls),
+      };
+    },
+    async drawAsync(args) {
+      const atCalls = [];
+      const state = buildJsState(args.state, atCalls);
+      const pageUrl = args.page?.url ?? '';
+      const page = { url: () => pageUrl };
+      state.core.page = page;
+      const saved = {
+        rows: process.stdout.rows, cols: process.stdout.columns,
+        write: process.stdout.write,
+      };
+      process.stdout.rows = args.state.rows ?? 24;
+      process.stdout.columns = args.state.cols ?? 80;
+      const results = [];
+      let current = null;
+      process.stdout.write = (chunk) => {
+        if (current) current.push(String(chunk));
+        return true;
+      };
+      try {
+        for (const action of args.actions ?? []) {
+          current = [];
+          const entry = {};
+          let value;
+          if (action.op === 'askPassword') {
+            const queue = (action.keys ?? []).map((k) => (k === '<eof>' ? EOF : k));
+            state.keyReader = {
+              claim() { return 'token'; },
+              release() {},
+              async next() {
+                if (!queue.length) throw new Error('the prompt asked for a key nobody pressed');
+                return queue.shift();
+              },
+            };
+            value = (await index.askForPassword(state, action.challenge,
+              { refused: !!action.refused })) ?? null;
+          } else {
+            value = runReaderAction(action, state, page);
+          }
+          if (value !== undefined) {
+            entry.value = JSON.parse(JSON.stringify(value));
+          }
+          entry.writes = current;
+          results.push(entry);
+        }
+      } finally {
+        process.stdout.rows = saved.rows;
+        process.stdout.columns = saved.cols;
+        process.stdout.write = saved.write;
+      }
+      return {
+        results,
+        state: stateSnapshot(state, atCalls),
       };
     },
   }];

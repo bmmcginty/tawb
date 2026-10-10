@@ -1289,6 +1289,28 @@ module Tawb
       end
     end
 
+    # A prompt's keyboard, fed from the scenario: one queued keystroke per
+    # entry, exhausted the way a real reader would have stopped typing.
+    private class ScriptedKeyboard
+      include ReaderKeys::Keyboard
+
+      @queue : Array(Input::Key)
+
+      def initialize(@queue)
+      end
+
+      def claim : Input::Token
+        Input::Token.new
+      end
+
+      def next_key(token : Input::Token) : Input::Key
+        @queue.shift? || raise IO::Error.new("the prompt asked for a key nobody pressed")
+      end
+
+      def release(token : Input::Token) : Nil
+      end
+    end
+
     # One drawing pass over the reader's terminal: a state, a page address,
     # and the actions to run in order against the same live state. What each
     # action wrote, and the state as it stands afterwards, come back — the
@@ -1561,6 +1583,24 @@ module Tawb
         return JSON::Any.new(nil) unless paragraph
         return JSON::Any.new({"line" => JSON::Any.new(paragraph[:line].to_i64),
                               "col" => JSON::Any.new(paragraph[:col].to_i64)})
+      when "authKey"
+        step = ReaderKeys.handle_auth_key(state, action["chunk"].as_s)
+        return JSON::Any.new("continue") if step.is_a?(ReaderKeys::AuthStep)
+        # A declined prompt answers null, which is a value and not the
+        # absence of one.
+        declined = step.as?(JSON::Any)
+        return JSON::Any.new(declined ? declined.raw : nil)
+      when "askPassword"
+        keys = (action["keys"]?.try(&.as_a?) || [] of JSON::Any).map do |key|
+          text = key.as_s
+          text == "<eof>" ? Input::EOF.as(Input::Key) : text.as(Input::Key)
+        end
+        challenge = action["challenge"]?.not_nil!
+        answer = ReaderKeys.ask_for_password(output, state,
+          ScriptedKeyboard.new(keys), challenge,
+          action["refused"]?.try(&.as_bool?) || false)
+        answered = answer.as?(JSON::Any)
+        return JSON::Any.new(answered ? answered.raw : nil)
       when "findKey"
         ReaderKeys.handle_find_key(output, state, page_url, action["chunk"].as_s)
       when "findText"

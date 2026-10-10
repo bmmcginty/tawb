@@ -4,6 +4,7 @@ require "./edit"
 require "./quicknav"
 require "./lynx_actions"
 require "./keys"
+require "./input"
 require "./unicode_escape"
 
 module Tawb
@@ -132,6 +133,115 @@ module Tawb
       Reader.set_status(output, state, page_url,
         "\"#{needle}\" — line #{found[:line] + 1} of #{state.lines.size}" +
         (found[:wrapped] ? ", wrapped" : "") + ".")
+    end
+
+    # The keyboard a prompt borrows while the reading loop is stopped. The
+    # claim/release protocol is the input reader's; a prompt that forgot to
+    # release would take the reading loop's keys with it.
+    module Keyboard
+      abstract def claim : Input::Token
+      abstract def next_key(token : Input::Token) : Input::Key
+      abstract def release(token : Input::Token) : Nil
+    end
+
+    # What one key did to the auth prompt: nothing yet, or an answer.
+    enum AuthStep
+      Continue
+    end
+
+    # ------------------------------------------------------------------
+    # Signing in
+    # ------------------------------------------------------------------
+
+    # One key against the password prompt. Answers AuthStep::Continue while
+    # the reader is still typing, nil when the prompt was declined, and the
+    # credentials when both fields are done.
+    def self.handle_auth_key(state : Reader::State, chunk : String) : AuthStep | JSON::Any?
+      prompted = state.auth
+      return nil unless prompted
+      return nil if key_is(chunk, "Escape", state)
+
+      if chunk == "\r" || chunk == "\n"
+        if prompted.stage == "password"
+          return JSON::Any.new({
+            "username" => JSON::Any.new(prompted.user.text),
+            "password" => JSON::Any.new(prompted.password.text),
+          })
+        end
+        # An empty username is the other way out, for a reader who has
+        # pressed Enter at a prompt they did not want.
+        return nil if prompted.user.text.empty?
+        prompted.stage = "password"
+        return AuthStep::Continue
+      end
+
+      buffer = prompted.stage == "user" ? prompted.user : prompted.password
+      editing = Edit.edit_action(chunk, keymap_for(state))
+      if editing
+        edit_buffer = Edit::Buffer.new(buffer.text, buffer.caret)
+        Edit.apply_buffer_edit(edit_buffer, editing)
+        buffer.text = edit_buffer.text
+        buffer.caret = edit_buffer.caret
+      elsif key_is(chunk, "Ctrl+L", state)
+        buffer.text = ""
+        buffer.caret = 0
+      elsif !chunk.starts_with?(ESC) && chunk >= " "
+        buffer.text = buffer.text[0, buffer.caret] + chunk + buffer.text[buffer.caret..]
+        buffer.caret += chunk.size
+      end
+      AuthStep::Continue
+    end
+
+    # Asks, and does not return until it has an answer.
+    #
+    # This runs while the reading loop is stopped: the challenge was raised
+    # inside a navigation the loop is awaiting, and that navigation cannot
+    # finish until the browser is told what to do about the password. So the
+    # prompt takes the keyboard for itself and hands it back afterwards.
+    def self.ask_for_password(output : Screen::Output, state : Reader::State,
+                              keyboard : Keyboard?, challenge : JSON::Any,
+                              refused : Bool = false) : JSON::Any?
+      return nil unless keyboard
+      previous_mode = state.mode
+      previous_status = state.status_msg
+      state.mode = "auth"
+      state.auth = Reader::Auth.new(challenge, refused)
+
+      token = keyboard.claim
+      Reader.draw_hint(output, state, force: true)
+      Reader.draw_auth_prompt(output, state)
+      answer = nil
+      begin
+        loop do
+          chunk = keyboard.next_key(token)
+          # The keyboard has gone while the prompt was up. Declining is the
+          # only honest answer, and it is the safe one: the challenge is
+          # cancelled rather than left holding a request the browser has
+          # paused, so the 401's own body loads and the navigation the
+          # reading loop is awaiting finishes. The loop is given the same
+          # news a moment later.
+          break if chunk.is_a?(Input::Eof)
+          state.core.mark_input
+          step = handle_auth_key(state, chunk.as(String))
+          unless step.is_a?(AuthStep)
+            answer = step.as?(JSON::Any)
+            break
+          end
+          Reader.draw_auth_prompt(output, state)
+        end
+      ensure
+        asked = state.auth.try(&.challenge)
+        keyboard.release(token)
+        state.mode = previous_mode
+        state.auth = nil
+        state.status_msg = previous_status
+        Reader.draw_hint(output, state, force: true)
+        if asked
+          Reader.write_status_row(output, state,
+            "Signing in to #{Reader.describe_challenge(asked)}…")
+        end
+      end
+      answer
     end
 
     # ------------------------------------------------------------------
