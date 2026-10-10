@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { extractAxItems } = require('../src/ax_own');
-const { readFieldStateInPage, SCROLL_TO_BOTTOM, RESTORE_SCROLL } = require('../src/core');
+const { readFieldStateInPage, SCROLL_TO_BOTTOM, RESTORE_SCROLL, TEXT_AT_FRAGMENT } = require('../src/core');
 const { clickThrough, prepareRealClick, submitsAutofilled } = require('../src/click');
 const { sliderStateOf } = require('../src/core');
 const { sliderGeometry } = require('../src/driver_firefox');
@@ -37,6 +37,9 @@ const assets = {
     source: 'src/core.js SCROLL_TO_BOTTOM', value: SCROLL_TO_BOTTOM.toString(),
   },
   'restore_scroll.js': { source: 'src/core.js RESTORE_SCROLL', value: RESTORE_SCROLL.toString() },
+  'text_at_fragment.js': {
+    source: 'src/core.js TEXT_AT_FRAGMENT', value: TEXT_AT_FRAGMENT.toString(),
+  },
 };
 
 for (const [name, { source, value }] of Object.entries(assets)) {

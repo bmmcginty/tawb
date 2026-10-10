@@ -357,6 +357,7 @@ function coreImplementations(javascript) {
       return callAsync('core.snapshot_scenario', { url, cursor });
     },
     moreScenario(url) { return callAsync('core.more_scenario', { url }); },
+    fragmentScenario(url) { return callAsync('core.fragment_scenario', { url }); },
   });
   return implementations;
 }

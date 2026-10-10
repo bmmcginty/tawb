@@ -266,6 +266,8 @@ module Tawb
         core_snapshot_scenario(payload)
       when "core.more_scenario"
         core_more_scenario(payload)
+      when "core.fragment_scenario"
+        core_fragment_scenario(payload)
       when "core.diff_blocks"
         object = payload.as_h
         previous = object["previous_texts"].as_a.map(&.as_s)
@@ -661,6 +663,44 @@ module Tawb
         result = core.ask_for_more(page).as_h
         result["exhausted"] = JSON::Any.new(core.no_more_to_load?)
         JSON::Any.new(result)
+      ensure
+        session.close
+      end
+    end
+
+    private def self.core_fragment_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      session = Bidi::Session.new(object["url"].as_s)
+      page = FirefoxDriver::Page.new(session, "main", "https://example.test/")
+      core = Core.new(page: page)
+      core.blocks = [Core::Block.new("intro"), Core::Block.new("Annual report"),
+                     Core::Block.new("tail")]
+      link = JSON::Any.new({
+        "role"    => JSON::Any.new("link"),
+        "name"    => JSON::Any.new("Report"),
+        "axIndex" => JSON::Any.new(0),
+      })
+      other = JSON::Any.new({
+        "role"    => JSON::Any.new("heading"),
+        "name"    => JSON::Any.new("Report"),
+        "axIndex" => JSON::Any.new(2),
+      })
+      begin
+        refused = core.download_link(other).as_h
+        downloaded = core.download_link(link).as_h
+        fragment = core.fragment_of(link)
+        not_link = {
+          "ok"     => refused["ok"],
+          "reason" => refused["reason"]? || JSON::Any.new(nil),
+        } of String => JSON::Any
+        JSON::Any.new({
+          "notLink" => JSON::Any.new(not_link),
+          "download" => JSON::Any.new({"ok" => downloaded["ok"]}),
+          "fragment" => JSON::Any.new(fragment),
+          "block"    => JSON::Any.new(core.block_at_fragment(fragment || "").to_i64),
+          "missing"  => JSON::Any.new(core.block_at_fragment("nowhere").to_i64),
+          "wire"     => page.evaluate("() => window.__tweb_wire || null"),
+        })
       ensure
         session.close
       end

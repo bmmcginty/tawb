@@ -109,6 +109,8 @@ module Tawb
       {{ read_file("#{__DIR__}/../../assets/scroll_to_bottom.js") }})
     RESTORE_SCROLL = Actions.asset_source(
       {{ read_file("#{__DIR__}/../../assets/restore_scroll.js") }})
+    TEXT_AT_FRAGMENT = Actions.asset_source(
+      {{ read_file("#{__DIR__}/../../assets/text_at_fragment.js") }})
 
     # How far past a text match the context has to agree before a re-anchor
     # believes it: the normal case for a block whose own content is what
@@ -944,10 +946,13 @@ module Tawb
                              {"axIndex", "tweb.ax"}
                            end
       index = object[index_name]?.try(&.as_i?)
+      # An index of zero is a real position — the first thing on the page —
+      # so only its absence refuses; JS's `axIndex == null` semantics.
+      raise IO::Error.new("this line carries no element reference to activate") if index.nil? && object[index_name]?.nil?
       raise IO::Error.new("this line carries no element reference to activate") unless index
       scope.evaluate_handle(
         "(i) => (window[Symbol.for('#{symbol}')] || [])[i]",
-        JSON::Any.new(index.to_i64))
+        JSON::Any.new(index.not_nil!.to_i64))
     end
 
     # The item's policy chooses trusted input only where default activation is
@@ -996,6 +1001,81 @@ module Tawb
       Actions.hover(acting.protocol, handle.context_id, handle)
     ensure
       handle.try(&.dispose)
+    end
+
+    # Give a link to the browser's own download manager without navigating
+    # the tab away from the page (src/core.js Core.prototype.downloadLink).
+    # Both engines implement this as their native Alt-click gesture, so
+    # cookies, proxy settings, filename selection and the downloads list
+    # remain the browser's rather than being reimplemented here.
+    def download_link(item : JSON::Any, page : FirefoxDriver::Page? = @page) : JSON::Any
+      role = item.as_h["role"]?.try(&.as_s?)
+      unless role && Aria::LINK_ROLES.includes?(role)
+        return JSON::Any.new({
+          "ok"     => JSON::Any.new(false),
+          "reason" => JSON::Any.new("this line is not a link"),
+        })
+      end
+      acting = page || raise IO::Error.new("this core has no page")
+      handle = handle_for(item, acting)
+      ready = handle.evaluate(Actions::PREPARE_REAL_CLICK)
+      ok = ready.as_h?.try(&.["ok"]?.try(&.as_bool?)) || false
+      unless ok
+        reason = ready.as_h?.try(&.["reason"]?.try(&.as_s?)) ||
+                 "could not be found on the page"
+        return JSON::Any.new({
+          "ok"     => JSON::Any.new(false),
+          "reason" => JSON::Any.new(reason),
+        })
+      end
+      Actions.download_link(acting.protocol, handle.context_id, handle)
+      JSON::Any.new({"ok" => JSON::Any.new(true)})
+    ensure
+      handle.try(&.dispose)
+    end
+
+    # The href of the element we are about to activate, so a fragment link can
+    # be followed even when the page cancels the click and handles it in
+    # script — in which case the URL never changes and there is nothing else
+    # to go on (src/core.js Core.prototype.fragmentOf).
+    def fragment_of(item : JSON::Any, page : FirefoxDriver::Page? = @page) : String?
+      if DOM_SOURCES.includes?(@source)
+        href = item.as_h["attrs"]?.try(&.as_h?).try(&.["href"]?).try(&.as_s?)
+        return fragment_hash(href)
+      end
+      handle : FirefoxDriver::Handle? = nil
+      begin
+        handle = handle_for(item, page)
+        fragment_hash(handle.not_nil!.evaluate("(el) => el.getAttribute('href')").as_s?)
+      rescue
+        nil
+      ensure
+        handle.try(&.dispose)
+      end
+    end
+
+    # Which block a fragment points at, found through the text at the target:
+    # the buffer has no ids in it, and the anchor itself is usually an empty
+    # element with nothing to match on (src/core.js Core.prototype.blockAtFragment).
+    def block_at_fragment(hash : String, page : FirefoxDriver::Page? = @page) : Int32
+      acting = page || raise IO::Error.new("this core has no page")
+      snippet = acting.evaluate(TEXT_AT_FRAGMENT, JSON::Any.new(hash)).as_s?
+      return -1 unless snippet && !snippet.empty?
+      Core.find_block_with_text(@blocks, snippet)
+    rescue
+      -1
+    end
+
+    # A fragment href names a place in this document; anything else is not
+    # ours to follow. Malformed escapes are refused rather than raised, since
+    # the page, not the reader, wrote the href.
+    private def fragment_hash(href : String?) : String?
+      return nil unless href && href.starts_with?('#') && href.size >= 2
+      # URI.decode leaves '+' alone, exactly like decodeURIComponent; the
+      # www-form variant would turn it into a space.
+      URI.decode(href[1..])
+    rescue
+      nil
     end
 
     def real_click(item : JSON::Any, page : FirefoxDriver::Page? = @page) : JSON::Any

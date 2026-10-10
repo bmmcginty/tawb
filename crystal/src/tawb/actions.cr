@@ -175,6 +175,50 @@ module Tawb
       end
     end
 
+    # Firefox's native Alt-click save gesture (src/driver_firefox.js
+    # downloadLink). Keyboard and pointer sources advance together in BiDi
+    # ticks, so Alt is down before the pointer moves and remains down until
+    # after its release produces the click.
+    def self.download_link(session : Bidi::Session, context_id : String, handle : FirefoxDriver::Handle) : Nil
+      shared = handle.shared_id
+      raise IO::Error.new("this line carries no element reference to download") unless shared
+      target = element_reference(shared)
+      alt = "\u{E00A}"
+      begin
+        session.command("input.performActions", {
+          "context" => JSON::Any.new(context_id),
+          "actions" => JSON::Any.new([
+            JSON::Any.new({
+              "type"    => JSON::Any.new("key"),
+              "id"      => JSON::Any.new("tweb-download-key"),
+              "actions" => JSON::Any.new([
+                JSON::Any.new({"type" => JSON::Any.new("keyDown"), "value" => JSON::Any.new(alt)}),
+                JSON::Any.new({"type" => JSON::Any.new("pause")}),
+                JSON::Any.new({"type" => JSON::Any.new("pause")}),
+                JSON::Any.new({"type" => JSON::Any.new("pause")}),
+                JSON::Any.new({"type" => JSON::Any.new("keyUp"), "value" => JSON::Any.new(alt)}),
+              ]),
+            }),
+            JSON::Any.new({
+              "type"       => JSON::Any.new("pointer"),
+              "id"         => JSON::Any.new("tweb-download-mouse"),
+              "parameters" => JSON::Any.new({"pointerType" => JSON::Any.new("mouse")}),
+              "actions"    => JSON::Any.new([
+                JSON::Any.new({"type" => JSON::Any.new("pause")}),
+                pointer_move(JSON::Any.new(0), JSON::Any.new(0), target),
+                JSON::Any.new({"type" => JSON::Any.new("pointerDown"), "button" => JSON::Any.new(0)}),
+                JSON::Any.new({"type" => JSON::Any.new("pointerUp"), "button" => JSON::Any.new(0)}),
+                JSON::Any.new({"type" => JSON::Any.new("pause")}),
+              ]),
+            }),
+          ]),
+        })
+      ensure
+        session.command("input.releaseActions",
+          {"context" => JSON::Any.new(context_id)}) rescue nil
+      end
+    end
+
     # The track of a slider, and a trusted press at the point a requested
     # position maps onto. Used when a custom ARIA slider advertises a range
     # and then ignores every standard key: Core.slider_target maps the value

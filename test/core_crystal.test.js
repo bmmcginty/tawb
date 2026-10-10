@@ -629,4 +629,75 @@ if (implementations.length > 1) {
       await new Promise((resolve) => server.close(resolve));
     }
   });
+
+  test('Crystal downloads a link and follows a fragment to its block', async () => {
+    const server = http.createServer();
+    const sockets = new Set();
+    const wire = { performActions: 0, releaseActions: 0, altKey: false };
+    const remote = (value) => {
+      if (value === undefined) return { type: 'undefined' };
+      if (value === null) return { type: 'null' };
+      if (typeof value === 'boolean') return { type: 'boolean', value };
+      if (typeof value === 'number') return { type: 'number', value };
+      if (typeof value === 'string') return { type: 'string', value };
+      if (Array.isArray(value)) return { type: 'array', value: value.map(remote) };
+      return { type: 'object', value: Object.entries(value).map(([key, item]) => [key, remote(item)]) };
+    };
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    server.on('upgrade', (request, socket, head) => {
+      let peer;
+      peer = acceptWebSocket(request, socket, (text) => {
+        const message = JSON.parse(text);
+        let result = {};
+        if (message.method === 'browsingContext.getTree') {
+          result = { contexts: [{ context: 'main', url: 'https://example.test/', children: [] }] };
+        } else if (message.method === 'script.callFunction') {
+          const declaration = message.params.functionDeclaration;
+          if (declaration.includes("Symbol.for('tweb.ax')")) {
+            result = { result: { type: 'node', handle: 'h-1', sharedId: 's-1' } };
+          } else if (declaration.includes('scrollIntoView')) {
+            result = { result: remote({ ok: true, x: 10, y: 20, fromX: 10, fromY: 10 }) };
+          } else if (declaration.includes("getAttribute('href')")) {
+            result = { result: remote('#main-content') };
+          } else if (declaration.includes('getElementById')) {
+            const hash = message.params.arguments[0]?.value;
+            result = { result: hash === 'main-content' ? remote('Annual report') : { type: 'null' } };
+          } else if (declaration.includes('__tweb_wire')) {
+            result = { result: remote(wire) };
+          }
+        } else if (message.method === 'input.performActions') {
+          wire.performActions += 1;
+          for (const source of message.params.actions) {
+            if (source.type !== 'key') continue;
+            for (const action of source.actions) {
+              if (action.type === 'keyDown' && action.value === '\uE00A') wire.altKey = true;
+            }
+          }
+        } else if (message.method === 'input.releaseActions') {
+          wire.releaseActions += 1;
+        }
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+      }, () => {});
+      if (head.length) peer.consume(head);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    try {
+      const observed = await crystal.fragmentScenario(`ws://127.0.0.1:${port}/session`);
+      assert.deepEqual(observed.notLink, {
+        ok: false, reason: 'this line is not a link',
+      });
+      assert.deepEqual(observed.download, { ok: true });
+      assert.equal(observed.fragment, 'main-content');
+      assert.equal(observed.block, 1);
+      assert.equal(observed.missing, -1);
+      assert.deepEqual(observed.wire, { performActions: 1, releaseActions: 1, altKey: true });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
 }
