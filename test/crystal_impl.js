@@ -1274,6 +1274,36 @@ function readerImplementations(index, keysModule) {
               value = index.repaintList(state, page, action.before ?? null); break;
             case 'repaintLynxSelection':
               index.repaintLynxSelection(state, action.oldCursor ?? 0, action.oldCol ?? 0); break;
+            case 'relayout':
+              index.relayout(state);
+              value = state.lines.map((line) => ({
+                text: line.text, blockIndex: line.blockIndex,
+                continuation: !!line.continuation,
+                displayNumber: line.displayNumber ?? null,
+                displayIndent: line.displayIndent ?? 0,
+                displayPrefix: line.displayPrefix ?? '',
+                displaySuffix: line.displaySuffix ?? '',
+                ...(line.spans ? {
+                  spans: line.spans.map((span) => ({
+                    start: span.start, end: span.end, blockIndex: span.blockIndex,
+                    displayNumber: span.displayNumber ?? null,
+                  })),
+                } : {}),
+              }));
+              break;
+            case 'preserveViewportRow':
+              index.preserveViewportRow(state, action.row ?? 0,
+                action.height === undefined ? index.viewportHeight() : action.height);
+              break;
+            case 'moveScreen': {
+              const height = action.height === undefined ? index.viewportHeight() : action.height;
+              index.moveScreen(state, action.direction ?? 1, page, height,
+                action.lines === undefined ? height - 1 : action.lines);
+              break;
+            }
+            case 'redrawAfterResize':
+              index.redrawAfterResize(state, page);
+              break;
             default:
               throw new Error(`unknown reader action ${action.op}`);
           }
@@ -1296,6 +1326,20 @@ function readerImplementations(index, keysModule) {
           drawn: { ...state.drawn },
           scroll: state.scroll, col: state.col, cursor: state.cursor,
           statusMsg: state.statusMsg,
+          lines: state.lines.map((line) => ({
+            text: line.text, blockIndex: line.blockIndex,
+            continuation: !!line.continuation,
+            displayNumber: line.displayNumber ?? null,
+            displayIndent: line.displayIndent ?? 0,
+            displayPrefix: line.displayPrefix ?? '',
+            displaySuffix: line.displaySuffix ?? '',
+            ...(line.spans ? {
+              spans: line.spans.map((span) => ({
+                start: span.start, end: span.end, blockIndex: span.blockIndex,
+                displayNumber: span.displayNumber ?? null,
+              })),
+            } : {}),
+          })),
           address: state.address
             ? { text: state.address.text, caret: state.address.caret, scroll: state.address.scroll }
             : null,

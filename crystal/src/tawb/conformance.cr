@@ -1335,7 +1335,7 @@ module Tawb
               (span["start"]?.try(&.as_i64?) || 0).to_i32,
               (span["end"]?.try(&.as_i64?) || 0).to_i32,
               (span["blockIndex"]?.try(&.as_i64?) || 0).to_i32,
-              span["displayNumber"]?.try(&.as_s?))
+              span["displayNumber"]?)
           end
         end
         state.lines << Reader::Line.new(
@@ -1495,8 +1495,48 @@ module Tawb
         Reader.repaint_lynx_selection(output, state,
           (action["oldCursor"]?.try(&.as_i64?) || 0).to_i32,
           (action["oldCol"]?.try(&.as_i64?) || 0).to_i32)
+      when "relayout"
+        Reader.relayout(state)
+        return reader_lines_json(state.lines)
+      when "preserveViewportRow"
+        Reader.preserve_viewport_row(state,
+          (action["row"]?.try(&.as_i64?) || 0).to_i32,
+          (action["height"]?.try(&.as_i64?) || Reader.viewport_height(state)).to_i32)
+      when "moveScreen"
+        Reader.move_screen(output, state,
+          (action["direction"]?.try(&.as_i64?) || 1).to_i32, page_url,
+          (action["height"]?.try(&.as_i64?) || Reader.viewport_height(state)).to_i32,
+          (action["lines"]?.try(&.as_i64?) ||
+            (action["height"]?.try(&.as_i64?) || Reader.viewport_height(state)) - 1).to_i32)
+      when "redrawAfterResize"
+        Reader.redraw_after_resize(output, state, page_url)
       end
       nil
+    end
+
+    private def self.reader_lines_json(lines : Array(Reader::Line)) : JSON::Any
+      JSON::Any.new(lines.map do |line|
+        entry = {
+          "text"          => JSON::Any.new(line.text),
+          "blockIndex"    => JSON::Any.new(line.block_index.to_i64),
+          "continuation"  => JSON::Any.new(line.continuation),
+          "displayNumber" => line.display_number || JSON::Any.new(nil),
+          "displayIndent" => JSON::Any.new(line.display_indent.to_i64),
+          "displayPrefix" => JSON::Any.new(line.display_prefix),
+          "displaySuffix" => JSON::Any.new(line.display_suffix),
+        } of String => JSON::Any
+        if spans = line.spans
+          entry["spans"] = JSON::Any.new(spans.map do |span|
+            JSON::Any.new({
+              "start"         => JSON::Any.new(span.start.to_i64),
+              "end"           => JSON::Any.new(span.finish.to_i64),
+              "blockIndex"    => JSON::Any.new(span.block_index.to_i64),
+              "displayNumber" => span.display_number || JSON::Any.new(nil),
+            })
+          end)
+        end
+        JSON::Any.new(entry)
+      end)
     end
 
     private def self.reader_state_json(state : Reader::State) : JSON::Any
@@ -1535,6 +1575,7 @@ module Tawb
           "hint"   => JSON::Any.new(state.drawn.hint),
           "status" => JSON::Any.new(state.drawn.status),
         }),
+        "lines"     => reader_lines_json(state.lines),
         "scroll"    => JSON::Any.new(state.scroll.to_i64),
         "col"       => JSON::Any.new(state.col.to_i64),
         "cursor"    => JSON::Any.new(state.cursor.to_i64),

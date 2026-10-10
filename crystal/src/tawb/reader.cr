@@ -2,6 +2,7 @@ require "json"
 require "./screen"
 require "./unicode_escape"
 require "./lynx_display"
+require "./layout"
 
 module Tawb
   # The terminal drawing of src/index.js: the three banner rows, the reading
@@ -37,7 +38,9 @@ module Tawb
       property start : Int32
       property finish : Int32
       property block_index : Int32
-      property display_number : String?
+      # The number a numbered field or link keeps, as the layout produced it —
+      # a number for Lynx's own markers, a string where the page said so.
+      property display_number : JSON::Any?
 
       def initialize(@start, @finish, @block_index, @display_number = nil)
       end
@@ -48,12 +51,14 @@ module Tawb
       property block_index : Int32
       property spans : Array(Span)?
       property continuation : Bool
+      property display_number : JSON::Any?
       property display_indent : Int32
       property display_prefix : String
       property display_suffix : String
 
       def initialize(@text, @block_index = 0, @spans = nil, @continuation = false,
-                     @display_indent = 0, @display_prefix = "", @display_suffix = "")
+                     @display_indent = 0, @display_prefix = "", @display_suffix = "",
+                     @display_number = nil)
       end
     end
 
@@ -208,6 +213,115 @@ module Tawb
 
     def self.lynx_active?(state : State) : Bool
       state.interface == "lynx"
+    end
+
+    # A display number is whatever the layout put there: usually a number,
+    # sometimes a page-provided string. Both are said the same way.
+    private def self.json_display(value : JSON::Any?) : String
+      return "" unless value
+      raw = value.raw
+      raw.is_a?(String) ? raw : raw.to_s
+    end
+
+    # What the screen shows, as display blocks: the core blocks passed through
+    # the Lynx vocabulary when the Lynx profile is reading the page, escaped
+    # when the terminal cannot show the page's own characters. Core's original
+    # text is kept intact either way — it is what live patches, place
+    # matching and activation resolve against — so the transform lands on
+    # copies, and on the whole list at once while one of the browser's own
+    # lists is open the answer is that list, untransformed.
+    def self.display_blocks(state : State) : Array(JSON::Any)
+      blocks = active_blocks(state)
+      page_blocks = blocks.same?(state.core.blocks)
+      if lynx_active?(state) && page_blocks
+        preferences = state.keys.try(&.preferences) || {} of String => JSON::Any
+        return LynxDisplay.blocks(blocks, preferences, state.escape_unicode)
+      end
+      return blocks unless state.escape_unicode && page_blocks
+      blocks.map do |block|
+        object = block.as_h
+        copy = object.dup
+        copy["text"] = JSON::Any.new(UnicodeEscape.escape(object["text"]?.try(&.as_s?)))
+        JSON::Any.new(copy)
+      end
+    end
+
+    private def self.line_from_layout(json : JSON::Any) : Line
+      object = json.as_h
+      spans = object["spans"]?.try(&.as_a?).try do |list|
+        list.map do |span_json|
+          span = span_json.as_h
+          Reader::Span.new(
+            (span["start"]?.try(&.as_i64?) || 0).to_i32,
+            (span["end"]?.try(&.as_i64?) || 0).to_i32,
+            (span["blockIndex"]?.try(&.as_i64?) || 0).to_i32,
+            span["displayNumber"]?)
+        end
+      end
+      Line.new(
+        object["text"]?.try(&.as_s?) || "",
+        (object["blockIndex"]?.try(&.as_i64?) || 0).to_i32,
+        spans,
+        object["continuation"]?.try(&.as_bool?) || false,
+        (object["displayIndent"]?.try(&.as_i64?) || 0).to_i32,
+        object["displayPrefix"]?.try(&.as_s?) || "",
+        object["displaySuffix"]?.try(&.as_s?) || "",
+        object["displayNumber"]?)
+    end
+
+    # Wrap the display blocks to the terminal's width and settle the cursor.
+    def self.relayout(state : State) : Nil
+      state.lines = Layout.lines(display_blocks(state), content_width(state)).map do |json|
+        line_from_layout(json)
+      end
+      state.cursor = Math.max(state.lines.size - 1, 0) if state.cursor >= state.lines.size
+      clamp_col(state)
+      clamp_scroll(state)
+    end
+
+    # A view switch can turn one item near the top of a short semantic view
+    # into an element hundreds of markup lines down in SOURCE. Merely clamping
+    # the old scroll position puts that item on the terminal's last row. Keep
+    # its screen row instead, just as screen-wise movement does, so changing
+    # representation does not also make the reader's cursor jump around the
+    # window.
+    def self.preserve_viewport_row(state : State, row : Int32,
+                                   height : Int32 = viewport_height(state)) : Nil
+      wanted = Math.min(Math.max(row, 0), Math.max(height - 1, 0))
+      max_scroll = Math.max(0, state.lines.size - height)
+      state.scroll = Math.min(Math.max(0, state.cursor - wanted), max_scroll)
+      sync_cursor(state)
+    end
+
+    # Page scrolling: a screen at a time, and the status row still names the
+    # link the cursor lands on.
+    def self.move_screen(output : Screen::Output, state : State, direction : Int32,
+                         page_url : String, height : Int32 = viewport_height(state),
+                         lines : Int32 = height - 1) : Nil
+      step = Math.max(1, lines)
+      last_line = Math.max(state.lines.size - 1, 0)
+      max_scroll = Math.max(0, state.lines.size - height)
+      target_cursor = Math.min(Math.max(state.cursor + direction * step, 0), last_line)
+      target_scroll = Math.min(Math.max(state.scroll + direction * step, 0), max_scroll)
+      return if target_cursor == state.cursor && target_scroll == state.scroll
+
+      state.cursor = target_cursor
+      state.scroll = target_scroll
+      state.col = 0
+      clamp_col(state)
+      sync_cursor(state)
+      draw_status(output, state, page_url)
+      draw_list(output, state)
+      park_cursor(output, state, page_url)
+    end
+
+    # A resize during reading: relayout to the new width, clear, and paint
+    # everything again — the caches cannot say what a different width showed.
+    def self.redraw_after_resize(output : Screen::Output, state : State,
+                                 page_url : String) : Nil
+      relayout(state)
+      output.write("\e[2J")
+      render(output, state, page_url, force: true)
     end
 
     # The JavaScript original reads process.stdout; the state carries the
@@ -626,7 +740,7 @@ module Tawb
             block && block.as_h["item"]? == typing.item
           end
         end
-        marker = span && span.display_number ? "[#{span.display_number}]" : ""
+        marker = span && span.display_number ? "[#{json_display(span.display_number)}]" : ""
         number = line ? " " * line.display_indent + marker + line.display_prefix : ""
         suffix = line ? line.display_suffix : ""
         name = typing.item.as_h["name"]?.try(&.as_s?) || ""

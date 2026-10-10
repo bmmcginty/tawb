@@ -546,6 +546,16 @@ function relayout(state) {
   clampScroll(state);
 }
 
+// A resize during reading: relayout to the new width, clear, and paint
+// everything again — the caches cannot say what a different width showed.
+// The keyboard and options screens redraw themselves instead; the resize
+// handler dispatches on the mode before coming here.
+function redrawAfterResize(state, page) {
+  relayout(state);
+  writeTerminal('\x1b[2J');
+  render(state, page, { force: true });
+}
+
 function lineText(state, lineIndex) {
   const line = state.lines[lineIndex];
   return line ? line.text : '';
@@ -5112,9 +5122,7 @@ async function main() {
       placeOptionsCursor(state);
       return;
     }
-    relayout(state);
-    writeTerminal('\x1b[2J');
-    render(state, state.core.page, { force: true });
+    redrawAfterResize(state, state.core.page);
   });
 
   const counterTimer = setInterval(() => {
@@ -5299,7 +5307,7 @@ module.exports = {
   render, drawList, drawAddress, drawHint, hintText, drawStatus, setStatus,
   patchEditedLine, moveSelection, repaintLynxSelection, moveScreen, preserveViewportRow, parkCursor,
   drawFind, drawAuthPrompt, drawLinePrompt, clampScroll, viewportHeight,
-  moveCaretLeft, moveCaretRight, lineRow, relayout,
+  moveCaretLeft, moveCaretRight, lineRow, relayout, redrawAfterResize,
   spanForColumn, blockUnder, positionForBlock,
   itemUnderCursor, linkTarget, shortTarget,
   findQuickNav, focusableEdge, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,

@@ -594,3 +594,97 @@ test('a composite row repaints every fragment of the blocks it touches', { skip:
     ...row(6, 'Second \x1b[7mtwo\x1b[0m'),
   ]);
 });
+
+// ---------------------------------------------------------------------------
+// Wrapping, page scrolling, and the redraw a resize owes the reader.
+// ---------------------------------------------------------------------------
+
+function blockOf(text, extra = {}) {
+  return { item: { role: 'text', name: text }, text, ...extra };
+}
+
+test('long prose wraps, and the wrap remembers which block it came from', { skip: needsCrystal }, () => {
+  const words = 'word '.repeat(30).trim();
+  const { results, state } = both('wrap', stateFor({
+    lines: [],
+    core: { source: 'ax', blocks: [blockOf(words), blockOf('Second')] },
+    cursor: 0,
+  }), [{ op: 'relayout' }]);
+  const lines = results[0].value;
+  assert.ok(lines.length >= 3, 'the prose did not wrap');
+  assert.equal(lines.slice(0, -1).every((line) => line.blockIndex === 0), true,
+    'every wrapped row names the block it came from');
+  assert.equal(lines.at(-1).blockIndex, 1, 'the second block keeps its own index');
+  assert.deepEqual(lines.map((line) => line.continuation), [false, true, false],
+    'only the first row of a block leads it');
+  assert.equal(state.atCalls.at(-1), 0, 'the core was told where the reader is');
+});
+
+test('an escaped page wraps its escaped text while Core keeps the original', { skip: needsCrystal }, () => {
+  const { results } = both('escaped wrap', stateFor({
+    escapeUnicode: true,
+    lines: [],
+    core: { source: 'ax', blocks: [blockOf('中文 😀')] },
+  }), [{ op: 'relayout' }]);
+  assert.deepEqual(results[0].value.map((line) => line.text), ['\\u4E2D\\u6587 \\U0001F600']);
+});
+
+test('the Lynx display wraps with its numbering outside the span', { skip: needsCrystal }, () => {
+  const { results } = both('lynx wrap', stateFor({
+    interface: 'lynx',
+    keys: { profile: 'lynx', preferences: { numberLinks: true } },
+    lines: [],
+    core: { source: 'ax', blocks: [
+      { item: { role: 'link', name: 'one', href: 'https://example.test/' }, text: 'one' },
+      { item: { role: 'link', name: 'two', href: 'https://example.test/2' }, text: 'two' },
+    ] },
+  }), [{ op: 'relayout' }]);
+  const lines = results[0].value;
+  assert.deepEqual(lines.map((line) => line.displayPrefix), ['[1]', '[2]'],
+    'each link is numbered in its own margin');
+  // A whole-line link is its own span; the number is the block's own, not
+  // the margin text.
+  assert.deepEqual(lines.map((line) => line.displayNumber), [1, 2]);
+});
+
+test('a screen at a time moves the reader and repaints what moved', { skip: needsCrystal }, () => {
+  const lines = pageRows(40);
+  const blocks = lines.map((_, i) => ({ item: { role: 'text', name: `line ${i}` } }));
+  const { results, state } = both('page down', stateFor({
+    lines, cursor: 5, scroll: 5, core: { source: 'ax', blocks },
+  }), [{ op: 'moveScreen', direction: 1 }]);
+  assert.equal(state.cursor, 22, 'a screen is the viewport less the overlap row');
+  assert.equal(state.scroll, 22);
+  assert.deepEqual(state.atCalls, [22]);
+  assert.equal(results[0].writes[0], '\x1b[24;1H', 'the status row was drawn first');
+  assert.equal(results[0].writes.filter((write) => write.startsWith('\x1b[')).length > 20,
+    true, 'the moved rows were written');
+  assert.match(results[0].writes.at(-1), /^\x1b\[\d+;\d+H$/);
+
+  const top = both('page up at top', stateFor({ lines, cursor: 0, scroll: 0 }), [
+    { op: 'moveScreen', direction: -1 },
+  ]);
+  assert.deepEqual(top.results[0].writes, [], 'at the top there is nothing to move');
+});
+
+test('a view switch keeps the reader on the same screen row', { skip: needsCrystal }, () => {
+  const lines = pageRows(40);
+  const { state } = both('preserve row', stateFor({
+    lines, cursor: 15, scroll: 15,
+  }), [{ op: 'preserveViewportRow', row: 0 }]);
+  assert.equal(state.scroll, 15, 'the item the reader is on stays where it was on screen');
+});
+
+test('a resize relayouts, clears, and paints everything again', { skip: needsCrystal }, () => {
+  const long = 'word '.repeat(30).trim();
+  const { results, state } = both('resize', stateFor({
+    lines: [], title: 'Example Domain',
+    core: { source: 'ax', blocks: [blockOf(long), blockOf('Second')] },
+  }), [{ op: 'redrawAfterResize' }]);
+  assert.equal(results[0].writes[0], '\x1b[2J', 'the screen was cleared before repainting');
+  const joined = results[0].writes.join('');
+  assert.ok(joined.includes('\x1b[1;1H'), 'the title row was written again');
+  assert.ok(joined.includes('Example Domain'), 'the title survived the resize');
+  assert.ok(joined.includes('\x1b[2;1H'), 'the address row was written again');
+  assert.ok(state.lines.length >= 3, 'the buffer was relaid out to the width');
+});
