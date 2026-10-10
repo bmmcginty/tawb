@@ -763,4 +763,63 @@ if (implementations.length > 1) {
       await new Promise((resolve) => server.close(resolve));
     }
   });
+
+  test('Crystal runs a live cycle: patch, guard, and re-anchored refresh', async () => {
+    const server = http.createServer();
+    const sockets = new Set();
+    let snapshots = 0;
+    const remote = (value) => {
+      if (value === undefined) return { type: 'undefined' };
+      if (value === null) return { type: 'null' };
+      if (typeof value === 'boolean') return { type: 'boolean', value };
+      if (typeof value === 'number') return { type: 'number', value };
+      if (typeof value === 'string') return { type: 'string', value };
+      if (Array.isArray(value)) return { type: 'array', value: value.map(remote) };
+      return { type: 'object', value: Object.entries(value).map(([key, item]) => [key, remote(item)]) };
+    };
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    server.on('upgrade', (request, socket, head) => {
+      let peer;
+      peer = acceptWebSocket(request, socket, (text) => {
+        const message = JSON.parse(text);
+        let result = {};
+        if (message.method === 'browsingContext.getTree') {
+          result = { contexts: [{ context: 'main', url: 'https://example.test/', children: [] }] };
+        } else if (message.method === 'script.callFunction') {
+          if (message.params.functionDeclaration.includes("Symbol.for('tweb.ax')")) {
+            snapshots += 1;
+            const names = snapshots === 1
+              ? ['alpha', 'clock old', 'omega']
+              : snapshots === 2 ? ['alpha', 'clock new', 'omega'] : ['alpha', 'clock final', 'omega'];
+            result = { result: remote(names.map((name, axIndex) => ({
+              role: 'heading', level: 1, name, axIndex,
+            }))) };
+          } else {
+            result = { result: remote(undefined) };
+          }
+        }
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+      }, () => {});
+      if (head.length) peer.consume(head);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    try {
+      const observed = await crystal.liveCycleScenario(`ws://127.0.0.1:${port}/session`);
+      assert.deepEqual(observed.patched, [1]);
+      assert.deepEqual(observed.settled, { block: 1, exact: true });
+      assert.deepEqual(observed.regions.map(({ start, end }) => ({ start, end })), [{ start: 1, end: 1 }]);
+      assert.equal(observed.announced, 1);
+      assert.equal(observed.dirtyAfter, false);
+      assert.equal(observed.undone, true);
+      assert.equal(observed.kept, -1);
+      assert.equal(observed.refreshes, 2);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
 }

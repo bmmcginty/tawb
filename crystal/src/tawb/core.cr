@@ -1083,6 +1083,76 @@ module Tawb
       :navigated
     end
 
+    # One live-update cycle, start to finish: the core half of
+    # src/index.js's onLiveEvent and its refresh tick. A collected batch is
+    # classified; a batch that was nothing but text replacements is spliced
+    # into the buffer — with the caller's line-count guard, because a patch
+    # that reflows the buffer would move the reader, and moving the reader is
+    # the one thing a live update may not do — and when the accounting says a
+    # refresh is due the buffer is rebuilt and re-anchored. The accounting is
+    # the policy: a patch that lands ends the event, a patch that misses and
+    # every other change mark the buffer dirty, and dirty state is cleared
+    # only once a refresh has actually replaced it.
+    def live_cycle(payload : JSON::Any?, page : FirefoxDriver::Page? = @page,
+                   wraps : Proc(Array(Int32), Bool)? = nil,
+                   keep_place : Bool? = nil) : JSON::Any
+      classified = classify(payload).as_h
+      announcements = classified["announcements"].as_a
+      mutations = classified["mutations"]?.try(&.as_i64?) || 0_i64
+      patched : Array(Int32)? = nil
+      if (raw = classified["patches"]?) && !raw.raw.nil? && !@live.refreshing
+        if applied = patch_text(raw.as_a? || [] of JSON::Any, protect: reading?)
+          if wraps && !wraps.call(applied.touched)
+            applied.undo.call
+          else
+            patched = applied.touched
+            record_changes(applied.touched.map { |index| Region.new(index, index) })
+          end
+        end
+      end
+
+      if patched.nil?
+        @live.mutations += mutations
+        @live.dirty = true
+      end
+
+      rebuilt : RebuildResult? = nil
+      if Live.refresh_due?(@live)
+        was_navigation = @live.navigated
+        keep = keep_place.nil? ? (!was_navigation && reading?) : keep_place.not_nil!
+        @live.refreshing = true
+        @live.refreshes += 1
+        @live.navigated = false
+        begin
+          rebuilt = rebuild(anchor, page, keep_place: keep)
+          @live.dirty = false
+          @live.mutations = 0
+          @live.last_refresh_ms = Time.utc.to_unix_ms
+        rescue
+          # Navigating again already; the next batch will catch up.
+          nil
+        ensure
+          @live.refreshing = false
+        end
+      end
+
+      JSON::Any.new({
+        "announcements" => JSON::Any.new(announcements),
+        "patched"       => JSON::Any.new(patched ?
+          patched.not_nil!.map { |index| JSON::Any.new(index.to_i64) } : nil),
+        "dirty"         => JSON::Any.new(@live.dirty),
+        "refreshed"     => JSON::Any.new(!rebuilt.nil?),
+        "settled"       => JSON::Any.new(rebuilt ? {
+          "block" => JSON::Any.new(rebuilt.not_nil!.settled.block.to_i64),
+          "exact" => JSON::Any.new(rebuilt.not_nil!.settled.exact),
+        } : nil),
+        "regions"       => JSON::Any.new(rebuilt ? rebuilt.not_nil!.regions.map { |change| JSON::Any.new({
+          "start" => JSON::Any.new(change.start.to_i64),
+          "end"   => JSON::Any.new(change.stop.to_i64),
+        } of String => JSON::Any) } : nil),
+      })
+    end
+
     # A fragment href names a place in this document; anything else is not
     # ours to follow. Malformed escapes are refused rather than raised, since
     # the page, not the reader, wrote the href.

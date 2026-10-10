@@ -270,6 +270,8 @@ module Tawb
         core_fragment_scenario(payload)
       when "core.navigation_scenario"
         core_navigation_scenario(payload)
+      when "core.live_cycle_scenario"
+        core_live_cycle_scenario(payload)
       when "core.diff_blocks"
         object = payload.as_h
         previous = object["previous_texts"].as_a.map(&.as_s)
@@ -736,6 +738,58 @@ module Tawb
           "navigated" => JSON::Any.new(navigated == :navigated),
           "same"      => JSON::Any.new(same == :same),
         })
+      ensure
+        session.close
+      end
+    end
+
+    private def self.core_live_cycle_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      session = Bidi::Session.new(object["url"].as_s)
+      page = FirefoxDriver::Page.new(session, "main", "https://example.test/")
+      core = Core.new(page: page)
+      reflowing = false
+      wraps = ->(touched : Array(Int32)) { !reflowing }
+      begin
+        core.rescan
+        core.at(1)
+        first = JSON::Any.new({
+          "pureText"      => JSON::Any.new(true),
+          "mutations"     => JSON::Any.new(2),
+          "announcements" => JSON::Any.new([JSON::Any.new({"text" => JSON::Any.new("clock moved")})]),
+          "patches"       => JSON::Any.new([JSON::Any.new({
+            "from" => JSON::Any.new("clock old"),
+            "to"   => JSON::Any.new("clock mid"),
+          })]),
+        })
+        core.live.last_refresh_ms = 0
+        core.live.dirty = true
+        applied = core.live_cycle(first, page, wraps: wraps, keep_place: true).as_h
+
+        second = JSON::Any.new({
+          "pureText"      => JSON::Any.new(true),
+          "mutations"     => JSON::Any.new(1),
+          "announcements" => JSON::Any.new([] of JSON::Any),
+          "patches"       => JSON::Any.new([JSON::Any.new({
+            "from" => JSON::Any.new("clock new"),
+            "to"   => JSON::Any.new("clock reflowed very long indeed"),
+          })]),
+        })
+        core.live.last_refresh_ms = 0
+        reflowing = true
+        refused = core.live_cycle(second, page, wraps: wraps, keep_place: false).as_h
+        announced = applied["announcements"].as_a.size
+        kept = refused["settled"].as_h["block"]
+        JSON::Any.new({
+          "patched"    => applied["patched"],
+          "settled"    => applied["settled"],
+          "regions"    => applied["regions"],
+          "announced"  => JSON::Any.new(announced.to_i64),
+          "dirtyAfter" => applied["dirty"],
+          "undone"     => JSON::Any.new(refused["patched"].raw.nil?),
+          "kept"       => kept,
+          "refreshes"  => JSON::Any.new(core.live.refreshes.to_i64),
+        } of String => JSON::Any)
       ensure
         session.close
       end
