@@ -82,16 +82,16 @@ module Tawb
         text = sensitive ? text : text.downcase
 
         at = if step == 0
-          # Start from just past the cursor, so repeating a search advances
-          # within a long line instead of finding the same match again.
-          if direction > 0
-            index_of(text, want, state.col + 1)
-          else
-            state.col > 0 ? last_index_of(text, want, state.col - 1) : -1
-          end
-        else
-          direction > 0 ? index_of(text, want, 0) : last_index_of(text, want, text.size - 1)
-        end
+               # Start from just past the cursor, so repeating a search advances
+               # within a long line instead of finding the same match again.
+               if direction > 0
+                 index_of(text, want, state.col + 1)
+               else
+                 state.col > 0 ? last_index_of(text, want, state.col - 1) : -1
+               end
+             else
+               direction > 0 ? index_of(text, want, 0) : last_index_of(text, want, text.size - 1)
+             end
 
         if at >= 0
           wrapped = step > 0 && (direction > 0 ? index <= state.cursor : index >= state.cursor)
@@ -199,8 +199,7 @@ module Tawb
         Reader.draw_hint(output, state)
         enabled = state.core.live.try(&.as_h?).try(&.["enabled"]?.try(&.as_bool?)) || false
         Reader.set_status(output, state, page.url,
-          enabled ? "Webpage keyboard off — the page will rescan when you pause."
-                  : "Webpage keyboard off — press r to rescan.")
+          enabled ? "Webpage keyboard off — the page will rescan when you pause." : "Webpage keyboard off — press r to rescan.")
         return
       end
 

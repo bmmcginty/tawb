@@ -742,7 +742,7 @@ module Tawb
           "reason" => refused["reason"]? || JSON::Any.new(nil),
         } of String => JSON::Any
         JSON::Any.new({
-          "notLink" => JSON::Any.new(not_link),
+          "notLink"  => JSON::Any.new(not_link),
           "download" => JSON::Any.new({"ok" => downloaded["ok"]}),
           "fragment" => JSON::Any.new(fragment),
           "block"    => JSON::Any.new(core.block_at_fragment(fragment || "").to_i64),
@@ -1052,13 +1052,13 @@ module Tawb
         LynxOptionsScreen.handle_options_key(recorder, chunk.as_s, state, nil)
       end
       JSON::Any.new({
-        "events"            => JSON::Any.new(recorder.events),
-        "written"           => JSON::Any.new(recorder.saved.map { |settings| JSON::Any.new(settings) }),
-        "mode"              => JSON::Any.new(state.mode),
-        "refreshing"        => JSON::Any.new(state.refreshing),
-        "preferences"       => JSON::Any.new(state.keys.not_nil!.preferences),
-        "choosing"          => JSON::Any.new(state.options.try(&.choosing).try(&.letter)),
-        "cursor"            => JSON::Any.new(state.cursor.to_i64),
+        "events"             => JSON::Any.new(recorder.events),
+        "written"            => JSON::Any.new(recorder.saved.map { |settings| JSON::Any.new(settings) }),
+        "mode"               => JSON::Any.new(state.mode),
+        "refreshing"         => JSON::Any.new(state.refreshing),
+        "preferences"        => JSON::Any.new(state.keys.not_nil!.preferences),
+        "choosing"           => JSON::Any.new(state.options.try(&.choosing).try(&.letter)),
+        "cursor"             => JSON::Any.new(state.cursor.to_i64),
         "settingsFileExists" => file ? JSON::Any.new(File.exists?(file)) : JSON::Any.new(false),
       })
     end
@@ -1576,7 +1576,7 @@ module Tawb
           (action["direction"]?.try(&.as_i64?) || 1).to_i32, page_url,
           (action["height"]?.try(&.as_i64?) || Reader.viewport_height(state)).to_i32,
           (action["lines"]?.try(&.as_i64?) ||
-            (action["height"]?.try(&.as_i64?) || Reader.viewport_height(state)) - 1).to_i32)
+           (action["height"]?.try(&.as_i64?) || Reader.viewport_height(state)) - 1).to_i32)
       when "redrawAfterResize"
         Reader.redraw_after_resize(output, state, page_url)
       when "moveSelection"
@@ -1592,18 +1592,18 @@ module Tawb
           (action["blockIndex"]?.try(&.as_i64?) || 0).to_i32)
         return JSON::Any.new(nil) unless found
         return JSON::Any.new({"line" => JSON::Any.new(found[:line].to_i64),
-                              "col" => JSON::Any.new(found[:col].to_i64)})
+                              "col"  => JSON::Any.new(found[:col].to_i64)})
       when "focusableEdge"
         edge = Reader.focusable_edge(state,
           (action["direction"]?.try(&.as_i64?) || 1).to_i32)
         return JSON::Any.new(nil) unless edge
         return JSON::Any.new({"line" => JSON::Any.new(edge[:line].to_i64),
-                              "col" => JSON::Any.new(edge[:col].to_i64)})
+                              "col"  => JSON::Any.new(edge[:col].to_i64)})
       when "findQuickNav"
         found = QuickNav.find(state, action["action"].as_s)
         return JSON::Any.new(nil) unless found
         return JSON::Any.new({"line" => JSON::Any.new(found[:line].to_i64),
-                              "col" => JSON::Any.new(found[:col].to_i64)})
+                              "col"  => JSON::Any.new(found[:col].to_i64)})
       when "quickWalk"
         spec = QuickNav.specification(action["action"].as_s)
         limit = (action["limit"]?.try(&.as_i64?) || 100).to_i32
@@ -1612,7 +1612,7 @@ module Tawb
           hit = QuickNav.find(state, spec.not_nil!)
           break unless hit
           hits << JSON::Any.new({"line" => JSON::Any.new(hit[:line].to_i64),
-                                 "col" => JSON::Any.new(hit[:col].to_i64)})
+                                 "col"  => JSON::Any.new(hit[:col].to_i64)})
           Reader.move_selection(output, state, page_url, hit[:line], hit[:col])
         end
         return JSON::Any.new(hits)
@@ -1621,7 +1621,7 @@ module Tawb
           (action["direction"]?.try(&.as_i64?) || 1).to_i32)
         return JSON::Any.new(nil) unless paragraph
         return JSON::Any.new({"line" => JSON::Any.new(paragraph[:line].to_i64),
-                              "col" => JSON::Any.new(paragraph[:col].to_i64)})
+                              "col"  => JSON::Any.new(paragraph[:col].to_i64)})
       when "pageKey"
         return JSON::Any.new(nil) unless page
         script = page.not_nil!
@@ -1673,8 +1673,8 @@ module Tawb
         found = ReaderKeys.find_text(state, action["needle"].as_s,
           (action["direction"]?.try(&.as_i64?) || 1).to_i32)
         return JSON::Any.new(nil) unless found
-        return JSON::Any.new({"line" => JSON::Any.new(found[:line].to_i64),
-                              "col" => JSON::Any.new(found[:col].to_i64),
+        return JSON::Any.new({"line"    => JSON::Any.new(found[:line].to_i64),
+                              "col"     => JSON::Any.new(found[:col].to_i64),
                               "wrapped" => JSON::Any.new(found[:wrapped])})
       when "runSearch"
         ReaderKeys.run_search(output, state, page_url, action["needle"].as_s,
@@ -1684,7 +1684,7 @@ module Tawb
         if found_json = action["found"]?
           if hash = found_json.as_h?
             jump_found = {line: (hash["line"]?.try(&.as_i64?) || 0).to_i32,
-                          col: (hash["col"]?.try(&.as_i64?) || 0).to_i32}
+                          col:  (hash["col"]?.try(&.as_i64?) || 0).to_i32}
           end
         end
         QuickNav.jump_to(output, state, page_url, jump_found,
@@ -1730,57 +1730,57 @@ module Tawb
         "caret" => JSON::Any.new(state.typing.not_nil!.caret.to_i64),
       }) : JSON::Any.new(nil)
       auth = if state.auth
-        JSON::Any.new({
-          "stage"    => JSON::Any.new(state.auth.not_nil!.stage),
-          "user"     => reader_buffer_json(state.auth.not_nil!.user),
-          "password" => reader_buffer_json(state.auth.not_nil!.password),
-        })
-      else
-        JSON::Any.new(nil)
-      end
+               JSON::Any.new({
+                 "stage"    => JSON::Any.new(state.auth.not_nil!.stage),
+                 "user"     => reader_buffer_json(state.auth.not_nil!.user),
+                 "password" => reader_buffer_json(state.auth.not_nil!.password),
+               })
+             else
+               JSON::Any.new(nil)
+             end
       find = state.find ? JSON::Any.new({
         "direction" => JSON::Any.new(state.find.not_nil!.direction.to_i64),
         "text"      => JSON::Any.new(state.find.not_nil!.text),
         "caret"     => JSON::Any.new(state.find.not_nil!.caret.to_i64),
       }) : JSON::Any.new(nil)
       last_find_json = if state.last_find
-        JSON::Any.new({
-          "direction" => JSON::Any.new(state.last_find.not_nil!.direction.to_i64),
-          "text"      => JSON::Any.new(state.last_find.not_nil!.text),
-        })
-      else
-        JSON::Any.new(nil)
-      end
+                         JSON::Any.new({
+                           "direction" => JSON::Any.new(state.last_find.not_nil!.direction.to_i64),
+                           "text"      => JSON::Any.new(state.last_find.not_nil!.text),
+                         })
+                       else
+                         JSON::Any.new(nil)
+                       end
       address_caret = JSON::Any.new(nil)
       if caret = state.drawn.address_caret_col
         address_caret = JSON::Any.new(caret.to_i64)
       end
       JSON::Any.new({
-        "mode"      => JSON::Any.new(state.mode),
-        "title"     => JSON::Any.new(state.title),
-        "popup"     => state.core.popup || JSON::Any.new(nil),
-        "live"      => state.core.live || JSON::Any.new(nil),
+        "mode"         => JSON::Any.new(state.mode),
+        "title"        => JSON::Any.new(state.title),
+        "popup"        => state.core.popup || JSON::Any.new(nil),
+        "live"         => state.core.live || JSON::Any.new(nil),
         "visitedLinks" => JSON::Any.new(state.visited_links),
-        "pageLog"   => JSON::Any.new(state.page_log),
-        "drawn" => JSON::Any.new({
+        "pageLog"      => JSON::Any.new(state.page_log),
+        "drawn"        => JSON::Any.new({
           "title"           => JSON::Any.new(state.drawn.title),
           "address"         => JSON::Any.new(state.drawn.address),
           "addressCaretCol" => address_caret,
-          "hint"   => JSON::Any.new(state.drawn.hint),
-          "status" => JSON::Any.new(state.drawn.status),
+          "hint"            => JSON::Any.new(state.drawn.hint),
+          "status"          => JSON::Any.new(state.drawn.status),
         }),
-        "lines"     => reader_lines_json(state.lines),
-        "scroll"    => JSON::Any.new(state.scroll.to_i64),
-        "col"       => JSON::Any.new(state.col.to_i64),
-        "cursor"    => JSON::Any.new(state.cursor.to_i64),
-        "statusMsg" => JSON::Any.new(state.status_msg),
-        "address"   => address,
-        "typing"    => typing,
-        "auth"      => auth,
-        "find"      => find,
-        "lastFind"  => last_find_json,
+        "lines"      => reader_lines_json(state.lines),
+        "scroll"     => JSON::Any.new(state.scroll.to_i64),
+        "col"        => JSON::Any.new(state.col.to_i64),
+        "cursor"     => JSON::Any.new(state.cursor.to_i64),
+        "statusMsg"  => JSON::Any.new(state.status_msg),
+        "address"    => address,
+        "typing"     => typing,
+        "auth"       => auth,
+        "find"       => find,
+        "lastFind"   => last_find_json,
         "inputMarks" => JSON::Any.new(state.core.input_marks.to_i64),
-        "atCalls"   => JSON::Any.new(state.core.at_calls.map { |call| JSON::Any.new(call) }),
+        "atCalls"    => JSON::Any.new(state.core.at_calls.map { |call| JSON::Any.new(call) }),
       })
     end
 
@@ -1840,8 +1840,8 @@ module Tawb
         JSON::Any.new({
           "install" => JSON::Any.new({
             "boundNow" => JSON::Any.new(install.bound_now),
-            "armed"     => JSON::Any.new(install.armed.to_i64),
-            "frames"    => JSON::Any.new(install.frames.to_i64),
+            "armed"    => JSON::Any.new(install.armed.to_i64),
+            "frames"   => JSON::Any.new(install.frames.to_i64),
           }),
           "parseBatches"    => JSON::Any.new(parse_batches),
           "mutationBatches" => JSON::Any.new(mutation_batches),
@@ -1889,17 +1889,17 @@ module Tawb
       editing = (object["editingProbe"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s)
       file = object["file"]?.try(&.as_s?)
       JSON::Any.new({
-        "writes"         => JSON::Any.new(output.writes),
-        "saved"          => JSON::Any.new(saved),
-        "actions"        => JSON::Any.new(keymap.actions.map do |action|
+        "writes"  => JSON::Any.new(output.writes),
+        "saved"   => JSON::Any.new(saved),
+        "actions" => JSON::Any.new(keymap.actions.map do |action|
           JSON::Any.new({
             "id"       => JSON::Any.new(action.id),
             "bindings" => JSON::Any.new(action.bindings.map { |b| JSON::Any.new(b) }),
           })
         end),
-        "probes"         => JSON::Any.new(probes.to_h { |chunk| {chunk, JSON::Any.new(keymap.action_for(chunk))} }),
-        "editingProbes"  => JSON::Any.new(editing.to_h { |chunk| {chunk, JSON::Any.new(keymap.editing_action_for(chunk))} }),
-        "fileExists"     => file ? JSON::Any.new(File.exists?(file)) : JSON::Any.new(false),
+        "probes"        => JSON::Any.new(probes.to_h { |chunk| {chunk, JSON::Any.new(keymap.action_for(chunk))} }),
+        "editingProbes" => JSON::Any.new(editing.to_h { |chunk| {chunk, JSON::Any.new(keymap.editing_action_for(chunk))} }),
+        "fileExists"    => file ? JSON::Any.new(File.exists?(file)) : JSON::Any.new(false),
       })
     end
 
@@ -2168,8 +2168,8 @@ module Tawb
         end
       )
       JSON::Any.new({
-        "available"   => JSON::Any.new(imported.available),
-        "bindings"    => JSON::Any.new(imported.bindings.reduce({} of String => JSON::Any) do |map, pair|
+        "available" => JSON::Any.new(imported.available),
+        "bindings"  => JSON::Any.new(imported.bindings.reduce({} of String => JSON::Any) do |map, pair|
           map[pair[0]] = JSON::Any.new(pair[1].map { |key| JSON::Any.new(key) })
           map
         end),
@@ -2638,10 +2638,10 @@ module Tawb
           when "evaluate"
             expression = step["expression"]?.try(&.as_s?)
             value = if expression
-              current.not_nil!.evaluate(expression, nil, true)
-            else
-              current.not_nil!.evaluate(step["fn"].as_s, step["arg"]?, false)
-            end
+                      current.not_nil!.evaluate(expression, nil, true)
+                    else
+                      current.not_nil!.evaluate(step["fn"].as_s, step["arg"]?, false)
+                    end
             observations.push(value)
           when "evaluate_handle"
             held = nil.as(FirefoxDriver::Handle?)

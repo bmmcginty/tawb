@@ -880,7 +880,7 @@ module Tawb
         return "Control — arrows adjust  Home/End  Esc: stop"
       elsif mode == "page"
         return "Webpage keyboard — every other key goes to the page  " +
-               action_key_label(state, "page-keyboard", "Alt+K") + ": stop"
+          action_key_label(state, "page-keyboard", "Alt+K") + ": stop"
       elsif mode == "find"
         return "Find — Enter: search  Esc: cancel"
       elsif mode == "number"

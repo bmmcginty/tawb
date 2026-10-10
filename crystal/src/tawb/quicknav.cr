@@ -46,22 +46,22 @@ module Tawb
     # use; the current row holds several items only where a paragraph or a
     # table row was reflowed, which is Lynx's own presentation.
     SPECIFICATIONS = {
-      "next-heading"        => Spec.new("heading", 1, false, ->(item : JSON::Any) { role_is(item, "heading") }),
-      "previous-heading"    => Spec.new("heading", -1, false, ->(item : JSON::Any) { role_is(item, "heading") }),
-      "next-link"           => Spec.new("link", 1, false, ->(item : JSON::Any) { role_in(item, Aria::LINK_ROLES) }),
-      "previous-link"       => Spec.new("link", -1, false, ->(item : JSON::Any) { role_in(item, Aria::LINK_ROLES) }),
-      "next-field"          => Spec.new("form field", 1, false, ->(item : JSON::Any) { role_in(item, Aria::FIELD_ROLES) }),
-      "previous-field"      => Spec.new("form field", -1, false, ->(item : JSON::Any) { role_in(item, Aria::FIELD_ROLES) }),
-      "next-button"         => Spec.new("button", 1, false, ->(item : JSON::Any) { role_in(item, Aria::BUTTON_ROLES) }),
-      "previous-button"     => Spec.new("button", -1, false, ->(item : JSON::Any) { role_in(item, Aria::BUTTON_ROLES) }),
-      "next-text"           => Spec.new("non-link text", 1, false, ->(item : JSON::Any) { role_is(item, "text") }),
-      "previous-text"       => Spec.new("non-link text", -1, false, ->(item : JSON::Any) { role_is(item, "text") }),
-      "next-focusable"      => Spec.new("control", 1, true, ->(item : JSON::Any) { role_in(item, Aria::FOCUSABLE_ROLES) }),
-      "previous-focusable"  => Spec.new("control", -1, true, ->(item : JSON::Any) { role_in(item, Aria::FOCUSABLE_ROLES) }),
-      "fast-forward-link"   => Spec.new("link", 1, true, ->(item : JSON::Any) { matches_activatable(item) }),
-      "fast-backward-link"  => Spec.new("link", -1, true, ->(item : JSON::Any) { matches_activatable(item) }),
-      "down-link"           => Spec.new("link below", 1, false, ->(item : JSON::Any) { role_in(item, Aria::FOCUSABLE_ROLES) }),
-      "up-link"             => Spec.new("link above", -1, false, ->(item : JSON::Any) { role_in(item, Aria::FOCUSABLE_ROLES) }),
+      "next-heading"       => Spec.new("heading", 1, false, ->(item : JSON::Any) { role_is(item, "heading") }),
+      "previous-heading"   => Spec.new("heading", -1, false, ->(item : JSON::Any) { role_is(item, "heading") }),
+      "next-link"          => Spec.new("link", 1, false, ->(item : JSON::Any) { role_in(item, Aria::LINK_ROLES) }),
+      "previous-link"      => Spec.new("link", -1, false, ->(item : JSON::Any) { role_in(item, Aria::LINK_ROLES) }),
+      "next-field"         => Spec.new("form field", 1, false, ->(item : JSON::Any) { role_in(item, Aria::FIELD_ROLES) }),
+      "previous-field"     => Spec.new("form field", -1, false, ->(item : JSON::Any) { role_in(item, Aria::FIELD_ROLES) }),
+      "next-button"        => Spec.new("button", 1, false, ->(item : JSON::Any) { role_in(item, Aria::BUTTON_ROLES) }),
+      "previous-button"    => Spec.new("button", -1, false, ->(item : JSON::Any) { role_in(item, Aria::BUTTON_ROLES) }),
+      "next-text"          => Spec.new("non-link text", 1, false, ->(item : JSON::Any) { role_is(item, "text") }),
+      "previous-text"      => Spec.new("non-link text", -1, false, ->(item : JSON::Any) { role_is(item, "text") }),
+      "next-focusable"     => Spec.new("control", 1, true, ->(item : JSON::Any) { role_in(item, Aria::FOCUSABLE_ROLES) }),
+      "previous-focusable" => Spec.new("control", -1, true, ->(item : JSON::Any) { role_in(item, Aria::FOCUSABLE_ROLES) }),
+      "fast-forward-link"  => Spec.new("link", 1, true, ->(item : JSON::Any) { matches_activatable(item) }),
+      "fast-backward-link" => Spec.new("link", -1, true, ->(item : JSON::Any) { matches_activatable(item) }),
+      "down-link"          => Spec.new("link below", 1, false, ->(item : JSON::Any) { role_in(item, Aria::FOCUSABLE_ROLES) }),
+      "up-link"            => Spec.new("link above", -1, false, ->(item : JSON::Any) { role_in(item, Aria::FOCUSABLE_ROLES) }),
     }
 
     def self.specification(action : String) : Spec?
