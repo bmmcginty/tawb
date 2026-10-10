@@ -22,6 +22,8 @@ require "./layout"
 require "./live"
 require "./lynx_actions"
 require "./lynx_config"
+require "./lynx_options"
+require "./lynx_options_screen"
 require "./lynx_pages"
 require "./lynx_display"
 require "./lynx_keymap"
@@ -595,6 +597,10 @@ module Tawb
       when "keys.save"
         build_keymap(payload).save
         JSON::Any.new(true)
+      when "lynx_options.model"
+        lynx_options_model(payload)
+      when "lynx_options.screen"
+        lynx_options_screen(payload)
       when "lynx_pages.call"
         lynx_pages_call(payload)
       when "lynx_state.keymap"
@@ -964,6 +970,148 @@ module Tawb
         "start" => JSON::Any.new(region.start.to_i64),
         "end"   => JSON::Any.new(region.stop.to_i64),
       })
+    end
+
+    private def self.lynx_options_model(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      preferences = object["preferences"]?.try(&.as_h?) || {} of String => JSON::Any
+      case object["method"].as_s
+      when "screen_lines"
+        JSON::Any.new(LynxOptions.screen_lines(preferences).map do |line|
+          JSON::Any.new({
+            "text"   => JSON::Any.new(line.text),
+            "fields" => JSON::Any.new(line.fields.map do |field|
+              JSON::Any.new({
+                "letter" => JSON::Any.new(field.letter),
+                "column" => JSON::Any.new(field.column.to_i64),
+                "start"  => JSON::Any.new(field.start.to_i64),
+                "end"    => JSON::Any.new(field.stop.to_i64),
+              })
+            end),
+          })
+        end)
+      when "option_value"
+        JSON::Any.new(LynxOptions.option_value(
+          LynxOptions.option_for_letter(object["letter"].as_s).not_nil!, preferences))
+      when "choice_index"
+        JSON::Any.new(LynxOptions.choice_index(
+          LynxOptions.option_for_letter(object["letter"].as_s).not_nil!, preferences).to_i64)
+      when "apply_choice"
+        option = LynxOptions.option_for_letter(object["letter"].as_s).not_nil!
+        working = preferences.dup
+        index = object["index"]?.try(&.as_i64?) || 0
+        LynxOptions.apply_choice(option, working, index.to_i32)
+        JSON::Any.new(working)
+      when "persistable"
+        JSON::Any.new(LynxOptions.persistable_options(preferences))
+      when "constants"
+        JSON::Any.new({
+          "commandRow"    => JSON::Any.new(LynxOptions::COMMAND_ROW.to_i64),
+          "anyKeyChange"  => JSON::Any.new(LynxOptions::ANY_KEY_CHANGE),
+          "valueAccepted" => JSON::Any.new(LynxOptions::VALUE_ACCEPTED),
+          "cancelled"     => JSON::Any.new(LynxOptions::CANCELLED),
+          "choiceList"    => JSON::Any.new(LynxOptions::CHOICE_LIST),
+          "selectLine"    => JSON::Any.new(LynxOptions::SELECT_LINE),
+          "commandPrompt" => JSON::Any.new(LynxOptions::COMMAND_PROMPT),
+          "notChangeable" => JSON::Any.new(LynxOptions::NOT_CHANGEABLE),
+        })
+      else
+        raise ArgumentError.new("unknown lynx options model method #{object["method"].as_s}")
+      end
+    end
+
+    private def self.lynx_options_screen(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      file = object["settingsFile"]?.try(&.as_s?)
+      recorder = LynxOptionsRecorder.new(file)
+      state = LynxOptionsScreen::State.new
+      state.keys = Keys::Keymap.new(
+        terminfo: {} of String => String, profile: "lynx", read_file: false,
+        preferences: object["preferences"]?.try(&.as_h?) || {} of String => JSON::Any,
+      )
+      state.title = object["title"]?.try(&.as_s?) || "The page"
+      state.lines = [JSON::Any.new(object["title"]?.try(&.as_s?) || "The page")]
+      state.settings_file = file
+      LynxOptionsScreen.open_options(recorder, state, nil)
+      (object["keys"]?.try(&.as_a?) || [] of JSON::Any).each do |chunk|
+        LynxOptionsScreen.handle_options_key(recorder, chunk.as_s, state, nil)
+      end
+      JSON::Any.new({
+        "events"            => JSON::Any.new(recorder.events),
+        "written"           => JSON::Any.new(recorder.saved.map { |settings| JSON::Any.new(settings) }),
+        "mode"              => JSON::Any.new(state.mode),
+        "refreshing"        => JSON::Any.new(state.refreshing),
+        "preferences"       => JSON::Any.new(state.keys.not_nil!.preferences),
+        "choosing"          => JSON::Any.new(state.options.try(&.choosing).try(&.letter)),
+        "cursor"            => JSON::Any.new(state.cursor.to_i64),
+        "settingsFileExists" => file ? JSON::Any.new(File.exists?(file)) : JSON::Any.new(false),
+      })
+    end
+
+    # The fake terminal the Options screen runs against over the wire: it
+    # records the byte-level calls in order, answers keys by name exactly as
+    # the JavaScript tests' fake host does, and saves settings through the
+    # same validator the reader uses.
+    private class LynxOptionsRecorder
+      include LynxOptionsScreen::Host
+
+      getter events : Array(JSON::Any)
+      getter saved : Array(Hash(String, JSON::Any))
+
+      def initialize(@file : String?)
+        @events = [] of JSON::Any
+        @saved = [] of Hash(String, JSON::Any)
+      end
+
+      def reset_scroll_region : Nil
+        note("reset")
+      end
+
+      def write_line(row : Int32, text : String) : Nil
+        note("line", row, text)
+      end
+
+      def move_cursor(row : Int32, col : Int32) : Nil
+        note("cursor", row, col)
+      end
+
+      def clear_screen : Nil
+        note("clear")
+      end
+
+      def set_status(state : LynxOptionsScreen::State, message : String) : Nil
+        note("status", message)
+      end
+
+      def relayout(state : LynxOptionsScreen::State) : Nil
+        note("relayout")
+      end
+
+      def render(state : LynxOptionsScreen::State, page, force : Bool) : Nil
+        note("render", force ? 1 : 0)
+      end
+
+      def clamp_col(state : LynxOptionsScreen::State) : Nil
+        note("clampCol")
+      end
+
+      def clamp_scroll(state : LynxOptionsScreen::State) : Nil
+        note("clampScroll")
+      end
+
+      def save_settings(state : LynxOptionsScreen::State, settings : Hash(String, JSON::Any)) : Nil
+        note("save")
+        @saved << settings
+        LynxSettings.write_lynx_settings(settings, file: @file) if @file
+      end
+
+      def key_is(chunk : String, name : String, state : LynxOptionsScreen::State) : Bool
+        chunk == "[#{name}]"
+      end
+
+      private def note(*parts : String | Int32 | Int64 | Bool) : Nil
+        @events << JSON::Any.new(parts.to_a.map { |part| JSON::Any.new(part) })
+      end
     end
 
     private def self.rows_json(rows : Array(LynxPages::Row)) : JSON::Any

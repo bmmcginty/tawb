@@ -834,6 +834,108 @@ function lynxActionsImplementations() {
 // original and the Crystal port: the same help text, document information,
 // visited and session lists, reference lists that keep the block Enter must
 // activate, and control descriptions.
+// The Lynx Options menu, differenced between the JavaScript original and the
+// Crystal port: the same rows and columns, the same provisional choosing,
+// and the same byte-level calls to the terminal through a fake host.
+function lynxOptionsImplementations(lynxOptions, lynxOptionsScreen, lynxSettings, lynxDisplay) {
+  // The full preference set a reader carries; the screen draws all of it.
+  const PREFERENCES = {
+    keypadMode: 'NUMBERS_AS_ARROWS', numberLinks: false, numberFields: false,
+    numberLinksOnLeft: true, numberFieldsOnLeft: true,
+    textfieldsNeedActivation: false, searchCase: 'CASE_INSENSITIVE', showCursor: false,
+  };
+  const implementations = [{
+    name: 'JavaScript',
+    model(method, args = {}) {
+      const preferences = args.preferences || {};
+      switch (method) {
+        case 'screen_lines': return lynxOptions.screenLines(preferences);
+        case 'option_value':
+          return lynxOptions.optionValue(lynxOptions.optionForLetter(args.letter), preferences);
+        case 'choice_index':
+          return lynxOptions.choiceIndex(lynxOptions.optionForLetter(args.letter), preferences);
+        case 'apply_choice': {
+          const working = { ...preferences };
+          lynxOptions.applyChoice(lynxOptions.optionForLetter(args.letter), working, args.index || 0);
+          return working;
+        }
+        case 'persistable': return lynxOptions.persistableOptions(preferences);
+        case 'constants': return {
+          commandRow: lynxOptions.COMMAND_ROW,
+          anyKeyChange: lynxOptions.ANY_KEY_CHANGE,
+          valueAccepted: lynxOptions.VALUE_ACCEPTED,
+          cancelled: lynxOptions.CANCELLED,
+          choiceList: lynxOptions.CHOICE_LIST,
+          selectLine: lynxOptions.SELECT_LINE,
+          commandPrompt: lynxOptions.COMMAND_PROMPT,
+          notChangeable: lynxOptions.NOT_CHANGEABLE,
+        };
+        default: throw new Error(`unknown lynx options model method ${method}`);
+      }
+    },
+    screen(options) {
+      const events = [];
+      const written = [];
+      const host = {
+        resetScrollRegion() { events.push(['reset']); },
+        writeLine(row, text) { events.push(['line', row, text]); },
+        moveCursor(row, col) { events.push(['cursor', row, col]); },
+        clearScreen() { events.push(['clear']); },
+        setStatus(state, msg) { events.push(['status', msg]); },
+        relayout() { events.push(['relayout']); },
+        render(state, page, opts) { events.push(['render', !!(opts && opts.force) ? 1 : 0]); },
+        clampCol() { events.push(['clampCol']); },
+        clampScroll() { events.push(['clampScroll']); },
+        saveSettings(state, settings) {
+          events.push(['save']);
+          written.push(settings);
+          if (options.settingsFile) {
+            lynxSettings.writeLynxSettings(settings, { file: options.settingsFile });
+          }
+        },
+        keyIs: (chunk, name) => chunk === `[${name}]`,
+      };
+      const state = {
+        interface: 'lynx', mode: 'browse', options: null,
+        keys: { preferences: { ...PREFERENCES, ...(options.preferences || {}) } },
+        lines: [{ blockIndex: 0, text: 'The page' }],
+        cursor: 0, col: 0, scroll: 0,
+        title: options.title || 'The page',
+        core: { live: { refreshing: false } },
+        lynxSettingsFile: options.settingsFile || null,
+      };
+      lynxOptionsScreen.openOptions(host, state, { url: () => 'https://example.test/page' });
+      for (const chunk of options.keys || []) {
+        // The screen's handlers are synchronous at this boundary.
+        lynxOptionsScreen.handleOptionsKey(host, chunk, state, { url: () => 'https://example.test/page' });
+      }
+      return {
+        events, written,
+        mode: state.mode,
+        refreshing: state.core.live.refreshing,
+        preferences: state.keys.preferences,
+        choosing: state.options && state.options.choosing ? state.options.choosing.letter : null,
+        cursor: state.cursor,
+        settingsFileExists: options.settingsFile ? fs.existsSync(options.settingsFile) : false,
+      };
+    },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    model(method, args = {}) {
+      return call('lynx_options.model', { method, ...args });
+    },
+    screen(options) {
+      return call('lynx_options.screen', {
+        ...options,
+        preferences: { ...PREFERENCES, ...(options.preferences || {}) },
+      });
+    },
+  });
+  return implementations;
+}
+
 function lynxPagesImplementations(lynxPages) {
   const implementations = [{
     name: 'JavaScript',
@@ -1652,6 +1754,6 @@ module.exports = {
   firefoxPageImplementations,
   inputImplementations, interfaceImplementations, keymapImplementations, layoutImplementations,
   liveImplementations, lynxActionsImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
-  lynxNumberImplementations, lynxPagesImplementations, lynxStateImplementations, marionetteImplementations, optionImplementations,
+  lynxNumberImplementations, lynxOptionsImplementations, lynxPagesImplementations, lynxStateImplementations, marionetteImplementations, optionImplementations,
   placeImplementations, readerCommands, sessionImplementations, unicodeImplementations,
 };

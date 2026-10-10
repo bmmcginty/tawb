@@ -1,5 +1,6 @@
 require "./keys"
 require "./lynx_config"
+require "./lynx_options"
 require "./lynx_settings"
 
 module Tawb
@@ -17,9 +18,9 @@ module Tawb
   # for: a change to .lynxrc or lynx.cfg is not seen until they ask for it.
   module LynxState
     # What of the preferences can be persisted: only the settings the options
-    # screen knows. The rest of lynx_options.js arrives with the screens.
+    # screen knows. The screen's model owns the filter.
     def self.persistable_options(preferences : Hash(String, JSON::Any)) : Hash(String, JSON::Any)
-      preferences.select { |name, _| LynxSettings::KNOWN_SETTINGS.includes?(name) }
+      LynxOptions.persistable_options(preferences)
     end
 
     # The preferences a run needs without running Lynx or writing anything:

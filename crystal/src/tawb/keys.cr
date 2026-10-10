@@ -286,7 +286,7 @@ module Tawb
       getter actions : Array(Action)
       getter function_names : Hash(String, String)
       getter unsupported : Array(String)
-      getter preferences : Hash(String, JSON::Any)
+      property preferences : Hash(String, JSON::Any)
       getter labels : Hash(String, String)
       @default_bindings : Hash(String, Array(String))
       @by_id : Hash(String, Action)
