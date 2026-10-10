@@ -42,8 +42,8 @@
 # ## What is not here yet
 #
 # Item activation and tabs are here, on top of the Firefox handle and action
-# layers; typing's front-end orchestration and the live-update policy
-# (src/live.js) still live in the JavaScript originals and move here as the
+# layers; typing's front-end orchestration and live updates' page observer and
+# refresh loop still live in the JavaScript originals and move here as the
 # front end work proceeds. File attachment bookkeeping is here: paths remain
 # outside the page and survive snapshots only while the browser reports
 # matching names.
@@ -54,6 +54,7 @@ require "uri"
 require "./actions"
 require "./aria"
 require "./firefox_driver"
+require "./live"
 require "./remap"
 require "./session"
 
@@ -376,6 +377,7 @@ module Tawb
     property exhausted : Exhausted?
     getter chooser : Chooser?
     getter change_index : Int32
+    getter live : Live::State
     getter page : FirefoxDriver::Page?
 
     def initialize(source : String = "ax", layout : Bool = false,
@@ -397,12 +399,57 @@ module Tawb
       @changes = [] of Change
       @change_index = -1
       @tickers = {} of Int32 => Ticker
+      @live = Live.create_state
       @chooser = nil
       @attached_files = {} of String => Hash(String, AttachedFile)
       # The popup the reader has open, if any, named by the id its control
       # points at. See relocate_popup().
       @popup = nil
       @exhausted = nil
+    end
+
+    # The reader did something. Live refreshes hold off while this is recent,
+    # so the buffer is never swapped mid-keystroke. A socket front end treats
+    # request arrival as this same one-way signal.
+    def mark_input(now : Int64 = Time.utc.to_unix_ms) : Nil
+      @live.last_input_ms = now
+    end
+
+    def reading?(now : Int64 = Time.utc.to_unix_ms) : Bool
+      now - @live.last_input_ms < Live::INPUT_GRACE_MS
+    end
+
+    # What a mutation batch means, without acting on it. Announcements remain
+    # immediate while enabled; pure text replacements can be patched only when
+    # no whole-buffer refresh is already replacing the same blocks.
+    def classify(payload : JSON::Any?) : JSON::Any
+      unless payload && !payload.raw.nil?
+        return JSON::Any.new({
+          "announcements" => JSON::Any.new([] of JSON::Any),
+          "patches"       => JSON::Any.new(nil),
+        })
+      end
+
+      @live.notifies += 1
+      object = payload.as_h? || {} of String => JSON::Any
+      announcements = @live.enabled ? (object["announcements"]?.try(&.as_a?) || [] of JSON::Any) : [] of JSON::Any
+      unless @live.enabled
+        return JSON::Any.new({
+          "announcements" => JSON::Any.new(announcements),
+          "patches"       => JSON::Any.new(nil),
+        })
+      end
+
+      patches = if object["pureText"]?.try(&.as_bool?) == true && !@live.refreshing
+                  object["patches"]? || JSON::Any.new(nil)
+                else
+                  JSON::Any.new(nil)
+                end
+      JSON::Any.new({
+        "announcements" => JSON::Any.new(announcements),
+        "patches"       => patches,
+        "mutations"     => JSON::Any.new(object["mutations"]?.try(&.as_i64?) || 0_i64),
+      })
     end
 
     # The front end reporting a move. One way, no reply, cheap enough to send

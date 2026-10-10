@@ -19,6 +19,7 @@ require "./interfaces"
 require "./keyboard"
 require "./keys"
 require "./layout"
+require "./live"
 require "./lynx_config"
 require "./lynx_display"
 require "./lynx_keymap"
@@ -417,6 +418,14 @@ module Tawb
       when "layout.lines"
         object = payload.as_h
         JSON::Any.new(Layout.lines(object["blocks"].as_a, object["width"].as_i))
+      when "live.create_state"
+        live_state_json(Live.create_state)
+      when "live.classify_scenario"
+        live_classify_scenario(payload)
+      when "live.refresh_due"
+        object = payload.as_h
+        JSON::Any.new(Live.refresh_due?(
+          live_state_from_json(object["state"]), object["now"].as_i64))
       when "lynx_display.blocks"
         object = payload.as_h
         JSON::Any.new(LynxDisplay.blocks(
@@ -633,6 +642,74 @@ module Tawb
       else
         raise ArgumentError.new("unknown conformance operation #{operation}")
       end
+    end
+
+    private def self.live_classify_scenario(payload : JSON::Any) : JSON::Any
+      core = Core.new
+      observations = [] of JSON::Any
+      payload.as_h["script"].as_a.each do |step_value|
+        step = step_value.as_h
+        case step["op"].as_s
+        when "enabled"
+          core.live.enabled = step["value"].as_bool
+          observations.push(JSON::Any.new(nil))
+        when "refreshing"
+          core.live.refreshing = step["value"].as_bool
+          observations.push(JSON::Any.new(nil))
+        when "classify"
+          observations.push(core.classify(step["payload"]?))
+        when "notifies"
+          observations.push(JSON::Any.new(core.live.notifies.to_i64))
+        when "mark_input"
+          core.mark_input(step["now"].as_i64)
+          observations.push(JSON::Any.new(nil))
+        when "reading"
+          observations.push(JSON::Any.new(core.reading?(step["now"].as_i64)))
+        else
+          raise ArgumentError.new("unknown live scenario op #{step["op"]}")
+        end
+      end
+      JSON::Any.new(observations)
+    end
+
+    private def self.live_state_from_json(value : JSON::Any) : Live::State
+      object = value.as_h
+      state = Live.create_state
+      state.enabled = object["enabled"]?.try(&.as_bool?) != false
+      state.dirty = object["dirty"]?.try(&.as_bool?) || false
+      state.refreshing = object["refreshing"]?.try(&.as_bool?) || false
+      state.mutations = object["mutations"]?.try(&.as_i?) || 0
+      state.notifies = object["notifies"]?.try(&.as_i?) || 0
+      state.refreshes = object["refreshes"]?.try(&.as_i?) || 0
+      state.last_refresh_ms = object["lastRefreshMs"]?.try(&.as_i64?) || 0_i64
+      state.last_input_ms = object["lastInputMs"]?.try(&.as_i64?) || 0_i64
+      state.last_pulse_ms = object["lastPulseMs"]?.try(&.as_i64?) || 0_i64
+      state.print = object["print"]?.try(&.as_s?)
+      state.href = object["href"]?.try(&.as_s?)
+      state.navigated = object["navigated"]?.try(&.as_bool?) || false
+      state.snapshot_cost_ms = object["snapshotCostMs"]?.try(&.as_i64?) || 0_i64
+      state.queue = object["queue"]?.try(&.as_a?) || [] of JSON::Any
+      state
+    end
+
+    private def self.live_state_json(state : Live::State) : JSON::Any
+      JSON::Any.new({
+        "enabled"        => JSON::Any.new(state.enabled),
+        "dirty"          => JSON::Any.new(state.dirty),
+        "refreshing"     => JSON::Any.new(state.refreshing),
+        "mutations"      => JSON::Any.new(state.mutations.to_i64),
+        "notifies"       => JSON::Any.new(state.notifies.to_i64),
+        "refreshes"      => JSON::Any.new(state.refreshes.to_i64),
+        "lastRefreshMs"  => JSON::Any.new(state.last_refresh_ms),
+        "lastInputMs"    => JSON::Any.new(state.last_input_ms),
+        "lastPulseMs"    => JSON::Any.new(state.last_pulse_ms),
+        "print"          => JSON::Any.new(state.print),
+        "href"           => JSON::Any.new(state.href),
+        "navigated"      => JSON::Any.new(state.navigated),
+        "snapshotCostMs" => JSON::Any.new(state.snapshot_cost_ms),
+        "ticker"         => JSON::Any.new(nil),
+        "queue"          => JSON::Any.new(state.queue),
+      })
     end
 
     private def self.region_json(region : Core::Region) : JSON::Any

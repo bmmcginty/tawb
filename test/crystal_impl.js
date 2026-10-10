@@ -1185,6 +1185,40 @@ function layoutImplementations(javascript) {
   return implementations;
 }
 
+function liveImplementations(javascript) {
+  const scenario = (script) => {
+    const { Core } = require('../src/core');
+    const core = new Core({ driver: {}, page: {}, source: 'ax', sources: ['ax'] });
+    const observations = [];
+    const at = (now, fn) => {
+      const before = Date.now;
+      Date.now = () => now;
+      try { return fn(); } finally { Date.now = before; }
+    };
+    for (const step of script) {
+      switch (step.op) {
+        case 'enabled': core.live.enabled = step.value; observations.push(null); break;
+        case 'refreshing': core.live.refreshing = step.value; observations.push(null); break;
+        case 'classify': observations.push(core.classify(step.payload)); break;
+        case 'notifies': observations.push(core.live.notifies); break;
+        case 'mark_input': at(step.now, () => core.markInput()); observations.push(null); break;
+        case 'reading': observations.push(at(step.now, () => core.reading())); break;
+        default: throw new Error(`unknown live scenario op ${step.op}`);
+      }
+    }
+    return observations;
+  };
+  const implementations = [{ name: 'JavaScript', ...javascript, scenario }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    createLiveState() { return call('live.create_state', {}); },
+    refreshDue(state, now) { return call('live.refresh_due', { state, now }); },
+    scenario(script) { return call('live.classify_scenario', { script }); },
+  });
+  return implementations;
+}
+
 function lynxDisplayImplementations(javascript) {
   const implementations = [{ name: 'JavaScript', ...javascript }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
@@ -1362,7 +1396,7 @@ module.exports = {
   firefoxAutomationImplementations, firefoxHandleImplementations, firefoxLaunchImplementations,
   firefoxPageImplementations,
   inputImplementations, interfaceImplementations, keymapImplementations, layoutImplementations,
-  lynxDisplayImplementations, lynxKeymapImplementations,
+  liveImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, marionetteImplementations, optionImplementations,
   placeImplementations, readerCommands, sessionImplementations, unicodeImplementations,
 };
