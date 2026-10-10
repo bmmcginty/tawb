@@ -713,6 +713,52 @@ function keymapImplementations(javascript) {
   return implementations;
 }
 
+// The Lynx effective-configuration importer, differenced between the
+// JavaScript original and the Crystal port: the same key descriptions, map
+// dumps, preference files, and injected lynx runs answer both.
+function lynxConfigImplementations(lynxConfig) {
+  const implementations = [{
+    name: 'JavaScript',
+    keySpec: lynxConfig.lynxKeySpec,
+    parseBrowseMap: lynxConfig.parseBrowseMap,
+    parseEditMap: lynxConfig.parseEditMap,
+    parsePreferences: lynxConfig.parsePreferences,
+    read({ env, config, dumps, home }) {
+      const seen = [];
+      const imported = lynxConfig.readLynxConfig({
+        env, config,
+        run: (_command, args, options) => {
+          seen.push(options.env);
+          const key = args[0] === '-show_cfg' ? '-show_cfg' : args[1];
+          return dumps[key] || { status: 0, stdout: '' };
+        },
+        readFile: (path) => {
+          if (!home || path !== home.path) throw new Error('missing');
+          return home.rc || '';
+        },
+      });
+      return { imported, seen };
+    },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    keySpec: (text) => call('lynx_config.key_spec', { text }),
+    parseBrowseMap: (text) => call('lynx_config.parse_browse_map', { text }),
+    parseEditMap: (text) => call('lynx_config.parse_edit_map', { text }),
+    parsePreferences: (showConfig, lynxrc) =>
+      call('lynx_config.parse_preferences', { showConfig, lynxrc: lynxrc || '' }),
+    read({ env, config, dumps, home }) {
+      const result = call('lynx_config.read', {
+        env, config: config || null, dumps,
+        home: home ? { path: home.path, rc: home.rc || '' } : null,
+      });
+      return { imported: result, seen: result.envs };
+    },
+  });
+  return implementations;
+}
+
 function lynxKeymapImplementations(javascript) {
   const implementations = [{
     name: 'JavaScript',
@@ -1406,7 +1452,7 @@ module.exports = {
   firefoxAutomationImplementations, firefoxHandleImplementations, firefoxLaunchImplementations,
   firefoxPageImplementations,
   inputImplementations, interfaceImplementations, keymapImplementations, layoutImplementations,
-  liveImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
+  liveImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, marionetteImplementations, optionImplementations,
   placeImplementations, readerCommands, sessionImplementations, unicodeImplementations,
 };

@@ -592,6 +592,18 @@ module Tawb
       when "keys.save"
         build_keymap(payload).save
         JSON::Any.new(true)
+      when "lynx_config.key_spec"
+        JSON::Any.new(LynxConfig.key_spec(payload.as_h["text"].as_s))
+      when "lynx_config.parse_browse_map"
+        lynx_bindings_json(LynxConfig.parse_browse_map(payload.as_h["text"].as_s))
+      when "lynx_config.parse_edit_map"
+        lynx_bindings_json(LynxConfig.parse_edit_map(payload.as_h["text"].as_s))
+      when "lynx_config.parse_preferences"
+        object = payload.as_h
+        JSON::Any.new(LynxConfig.parse_preferences(
+          object["showConfig"].as_s, object["lynxrc"]?.try(&.as_s?) || ""))
+      when "lynx_config.read"
+        lynx_config_read(payload)
       when "lynx_keymap.table"
         string_table(LynxKeymap::FUNCTION_ACTIONS)
       when "lynx_keymap.action_names"
@@ -940,6 +952,72 @@ module Tawb
       JSON::Any.new({
         "start" => JSON::Any.new(region.start.to_i64),
         "end"   => JSON::Any.new(region.stop.to_i64),
+      })
+    end
+
+    private def self.lynx_bindings_json(parsed : LynxConfig::Bindings) : JSON::Any
+      JSON::Any.new({
+        "bindings" => JSON::Any.new(parsed.bindings.reduce({} of String => JSON::Any) do |map, pair|
+          map[pair[0]] = JSON::Any.new(pair[1].map { |key| JSON::Any.new(key) })
+          map
+        end),
+        "unsupported" => JSON::Any.new(parsed.unsupported.map { |name| JSON::Any.new(name) }),
+      })
+    end
+
+    private def self.lynx_config_read(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      dumps = object["dumps"]?.try(&.as_h?) || {} of JSON::Any => JSON::Any
+      envs = [] of JSON::Any
+      runner = LynxConfig::LynxRunner.new do |_command, args, options|
+        envs << JSON::Any.new(options.reduce({} of String => JSON::Any) do |map, pair|
+          map[pair[0]] = JSON::Any.new(pair[1])
+          map
+        end)
+        key = args[1]? || args[0]?
+        answer = key ? dumps[JSON::Any.new(key)]? : nil
+        if answer.nil? || answer.raw.nil?
+          LynxConfig::RunResult.new(0, "")
+        else
+          entry = answer.as_h
+          if entry["status"]?.nil?
+            nil
+          else
+            LynxConfig::RunResult.new(entry["status"].as_i64.to_i32, entry["stdout"]?.try(&.as_s?) || "")
+          end
+        end
+      end
+      env = object["env"]?.try(&.as_h?).try do |raw|
+        raw.reduce(Hash(String, String).new) do |map, pair|
+          map[pair[0]] = pair[1].as_s
+          map
+        end
+      end || Hash(String, String).new
+      home = object["home"]?.try(&.as_h?)
+      home_path = home.try(&.["path"]?.try(&.as_s?))
+      home_rc = home.try(&.["rc"]?.try(&.as_s?)) || ""
+      imported = LynxConfig.read_lynx_config(
+        object["executable"]?.try(&.as_s?) || "lynx",
+        object["config"]?.try(&.as_s?),
+        env, runner,
+        ->(path : String) do
+          if home_path && path == home_path
+            home_rc
+          else
+            raise IO::Error.new("missing #{path}") unless File.exists?(path)
+            File.read(path)
+          end
+        end
+      )
+      JSON::Any.new({
+        "available"   => JSON::Any.new(imported.available),
+        "bindings"    => JSON::Any.new(imported.bindings.reduce({} of String => JSON::Any) do |map, pair|
+          map[pair[0]] = JSON::Any.new(pair[1].map { |key| JSON::Any.new(key) })
+          map
+        end),
+        "unsupported" => JSON::Any.new(imported.unsupported.map { |name| JSON::Any.new(name) }),
+        "preferences" => JSON::Any.new(imported.preferences),
+        "envs"        => JSON::Any.new(envs),
       })
     end
 
