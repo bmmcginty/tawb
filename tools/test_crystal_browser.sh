@@ -6,4 +6,4 @@ cd "$ROOT"
 
 tools/build_crystal.sh
 export TAWB_TEST_CRYSTAL_BROWSER=1
-exec node --test --test-concurrency=1 test/browser/crystal_dump.test.js
+exec node --test --test-concurrency=1 test/browser/crystal_dump.test.js test/browser/crystal_fields.test.js

@@ -236,80 +236,85 @@ function sliderTarget({ value, min = 0, max = 100, step = null }, key) {
   return Math.min(high, Math.max(low, target));
 }
 
-// Reads the field's live text + caret straight from the DOM. Real
-// <input>/<textarea> elements expose selectionStart, which is the source of
-// truth (handles autoformatting, IME, etc.). An HTML editing host instead has
-// a DOM Selection whose endpoint can be inside any nested text node, so its
-// rendered tree is flattened while recording where that endpoint falls.
+// The page side of the read, embedded as an asset for the native runtime
+// (crystal/assets/read_field_state.js) so both runtimes send the same bytes
+// to the page. Real <input>/<textarea> elements expose selectionStart, which
+// is the source of truth (handles autoformatting, IME, etc.). An HTML editing
+// host instead has a DOM Selection whose endpoint can be inside any nested
+// text node, so its rendered tree is flattened while recording where that
+// endpoint falls.
+function readFieldStateInPage(el) {
+  if ('value' in el && typeof el.value === 'string') {
+    return {
+      text: el.value,
+      caret: el.selectionStart != null ? el.selectionStart : el.value.length,
+      native: true,
+    };
+  }
+
+  if (el && el.isContentEditable) {
+    const selection = el.ownerDocument.getSelection();
+    const pointNode = selection && selection.focusNode && el.contains(selection.focusNode)
+      ? selection.focusNode : null;
+    const pointOffset = pointNode ? selection.focusOffset : 0;
+    let text = '';
+    let caret = null;
+
+    const appendBreak = () => {
+      if (text && !text.endsWith('\n')) text += '\n';
+    };
+    const walk = (node, root = false) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (node === pointNode) {
+          caret = text.length + Math.min(Math.max(pointOffset, 0), node.data.length);
+        }
+        text += node.data;
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (node.tagName === 'BR') {
+        if (node === pointNode) caret = text.length;
+        text += '\n';
+        return;
+      }
+
+      const display = root ? '' : getComputedStyle(node).display;
+      const block = !root && (display === 'block' || display === 'flex'
+        || display === 'grid' || display === 'list-item' || display.startsWith('table'));
+      if (block) appendBreak();
+      const children = Array.from(node.childNodes);
+      for (let i = 0; i <= children.length; i += 1) {
+        if (node === pointNode && pointOffset === i) caret = text.length;
+        if (i < children.length) walk(children[i]);
+      }
+      if (block && text && !text.endsWith('\n')) text += '\n';
+    };
+
+    walk(el, true);
+    // A block's closing boundary separates it from a following block; it is
+    // not part of the editor's value when that block is the final child.
+    if (text.endsWith('\n') && (!el.lastChild || el.lastChild.tagName !== 'BR')) {
+      text = text.slice(0, -1);
+    }
+    return {
+      text,
+      caret: caret == null ? text.length : Math.min(caret, text.length),
+      native: true,
+    };
+  }
+
+  const text = el.textContent || '';
+  return { text, caret: text.length, native: false };
+}
+
+// Reads the field's live text + caret straight from the DOM.
 //
 // Takes an ElementHandle, not a Locator: a locator re-resolves by role+name
 // on every call, and a field's accessible name can change while you type
 // (Wikipedia's search box renames itself once suggestions open), which makes
 // the locator stop matching mid-edit.
 async function readFieldState(handle) {
-  return handle.evaluate((el) => {
-    if ('value' in el && typeof el.value === 'string') {
-      return {
-        text: el.value,
-        caret: el.selectionStart != null ? el.selectionStart : el.value.length,
-        native: true,
-      };
-    }
-
-    if (el && el.isContentEditable) {
-      const selection = el.ownerDocument.getSelection();
-      const pointNode = selection && selection.focusNode && el.contains(selection.focusNode)
-        ? selection.focusNode : null;
-      const pointOffset = pointNode ? selection.focusOffset : 0;
-      let text = '';
-      let caret = null;
-
-      const appendBreak = () => {
-        if (text && !text.endsWith('\n')) text += '\n';
-      };
-      const walk = (node, root = false) => {
-        if (node.nodeType === Node.TEXT_NODE) {
-          if (node === pointNode) {
-            caret = text.length + Math.min(Math.max(pointOffset, 0), node.data.length);
-          }
-          text += node.data;
-          return;
-        }
-        if (node.nodeType !== Node.ELEMENT_NODE) return;
-        if (node.tagName === 'BR') {
-          if (node === pointNode) caret = text.length;
-          text += '\n';
-          return;
-        }
-
-        const display = root ? '' : getComputedStyle(node).display;
-        const block = !root && (display === 'block' || display === 'flex'
-          || display === 'grid' || display === 'list-item' || display.startsWith('table'));
-        if (block) appendBreak();
-        const children = Array.from(node.childNodes);
-        for (let i = 0; i <= children.length; i += 1) {
-          if (node === pointNode && pointOffset === i) caret = text.length;
-          if (i < children.length) walk(children[i]);
-        }
-        if (block && text && !text.endsWith('\n')) text += '\n';
-      };
-
-      walk(el, true);
-      // A block's closing boundary separates it from a following block; it is
-      // not part of the editor's value when that block is the final child.
-      if (text.endsWith('\n') && (!el.lastChild || el.lastChild.tagName !== 'BR')) {
-        text = text.slice(0, -1);
-      }
-      return {
-        text,
-        caret: caret == null ? text.length : Math.min(caret, text.length),
-        native: true,
-      };
-    }
-
-    const text = el.textContent || '';
-    return { text, caret: text.length, native: false };
-  });
+  return handle.evaluate(readFieldStateInPage);
 }
 
 const TEXT_AT_FRAGMENT = (hash) => {
@@ -1594,7 +1599,7 @@ class Core {
 }
 
 module.exports = {
-  Core, ActionTimeout, withTimeout, sliderTarget, readFieldState,
+  Core, ActionTimeout, withTimeout, sliderTarget, readFieldState, readFieldStateInPage,
   ACTION_TIMEOUT_MS, OPERATION_TIMEOUT_MS, NAVIGATION_TIMEOUT_MS,
   REANCHOR_WINDOW, CONTEXT_RADIUS,
   ALL_SOURCES, SOURCE_LABELS, DOM_SOURCES,

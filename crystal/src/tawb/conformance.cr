@@ -9,6 +9,7 @@ require "./remap"
 require "./broker"
 require "./dump"
 require "./endpoint"
+require "./fields"
 require "./firefox_agent"
 require "./firefox_driver"
 require "./firefox_launch"
@@ -354,6 +355,8 @@ module Tawb
         firefox_page_scenario(payload)
       when "firefox.handle_scenario"
         firefox_handle_scenario(payload)
+      when "firefox.fields_scenario"
+        firefox_fields_scenario(payload)
       when "firefox.verified_session"
         firefox_verified_session(payload)
       when "firefox.dump_scenario"
@@ -1072,6 +1075,41 @@ module Tawb
         "id"  => JSON::Any.new(frame.context_id),
         "url" => JSON::Any.new(frame.url),
       })
+    end
+
+    # Reading a field's live text and caret from a real page: the native
+    # runtime joins a kept browser, opens its own copy of the fixture, holds
+    # each requested element, and answers with what the embedded walker says.
+    # The JavaScript original reads the same fixture through the same walker
+    # in-process, so a field must not read differently depending on which
+    # runtime is asking.
+    private def self.firefox_fields_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      browser = FirefoxDriver::BrowserSession.new(object["url"].as_s)
+      observations = [] of JSON::Any
+      begin
+        browser.start
+        page = browser.create_page
+        page.navigate(object["page"].as_s, "complete")
+        frame = FirefoxDriver::Frame.new(browser.protocol, page.context_id, page)
+        object["fields"].as_a.each do |field_value|
+          field = field_value.as_h
+          held = frame.evaluate_handle(
+            "(a) => document.querySelectorAll(a.selector)[a.index]",
+            JSON::Any.new({
+              "selector" => JSON::Any.new(field["selector"].as_s),
+              "index"    => JSON::Any.new(field["index"].as_i.to_i64),
+            }))
+          begin
+            observations.push(Fields.read_field_state(held))
+          ensure
+            held.dispose
+          end
+        end
+      ensure
+        browser.close
+      end
+      JSON::Any.new(observations)
     end
 
     private def self.bidi_session_scenario(payload : JSON::Any) : JSON::Any
