@@ -933,6 +933,87 @@ function lynxNumberImplementations(javascript) {
   return implementations;
 }
 
+// A scripted pass over the reader's line-space place-keeping: a view set,
+// positions asked for, text located, the cursor landed. The JavaScript
+// original runs the script in-process over src/place.js, so the same
+// assertions can be made about both.
+function placeImplementations(place) {
+  const scenario = (script) => {
+    let state = null;
+    const observations = [];
+    const positionOf = (found) => found && {
+      line: found.line, col: found.col, end: found.end, blockIndex: found.blockIndex,
+    };
+    for (const step of script) {
+      switch (step.op) {
+        case 'state':
+          state = {
+            source: step.source,
+            cursor: step.cursor === undefined ? 0 : step.cursor,
+            col: step.col === undefined ? 0 : step.col,
+            blocks: step.blocks.map((block) => ({ text: block.text, item: block.item })),
+            lines: step.lines,
+          };
+          observations.push(null);
+          break;
+        case 'positions_at_line':
+          observations.push(place.positionsAtLine(state, step.line).map(positionOf));
+          break;
+        case 'position_of_block':
+          observations.push(positionOf(place.positionOfBlock(state, step.block)));
+          break;
+        case 'block_index_at_line':
+          observations.push(place.blockIndexAtLine(state, step.line, step.col === undefined ? 0 : step.col));
+          break;
+        case 'has_element':
+          observations.push(place.hasElement(
+            step.source === undefined ? state.source : step.source, step.item));
+          break;
+        case 'index_of_item':
+          observations.push(place.indexOfItem(
+            step.source === undefined ? state.source : step.source, step.item));
+          break;
+        case 'anchor': {
+          // The LOOKBACK walk capturePlace runs before it resolves an
+          // element, inlined here exactly as src/place.js has it.
+          let found = null;
+          for (let i = step.block; i >= 0 && step.block - i <= place.LOOKBACK_BLOCKS; i -= 1) {
+            const block = state.blocks[i];
+            if (block && place.hasElement(state.source, block.item)) { found = i; break; }
+          }
+          observations.push(found);
+          break;
+        }
+        case 'locate_by_text':
+          observations.push(place.locateByText(state, step.place));
+          break;
+        case 'cursor':
+          observations.push({ cursor: state.cursor, col: state.col });
+          break;
+        case 'land_on':
+          observations.push(place.landOn(state, step.block, step.place, !!step.exact));
+          break;
+        case 'refine_to_text': {
+          const refined = place.refineToText(state, step.from, step.place);
+          observations.push({ line: refined.line, col: refined.col, exact: refined.exact });
+          break;
+        }
+        default:
+          throw new Error(`unknown place scenario op ${step.op}`);
+      }
+    }
+    return observations;
+  };
+
+  const implementations = [{ name: 'JavaScript', scenario }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    scenario(script) { return call('place.scenario', { script }); },
+  });
+  return implementations;
+}
+
 function readerCommands(root) {
   const commands = [{
     name: 'JavaScript', command: process.execPath, args: ['src/index.js'],
@@ -984,5 +1065,5 @@ module.exports = {
   inputImplementations, interfaceImplementations, keymapImplementations, layoutImplementations,
   lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, marionetteImplementations, optionImplementations,
-  readerCommands, sessionImplementations, unicodeImplementations,
+  placeImplementations, readerCommands, sessionImplementations, unicodeImplementations,
 };

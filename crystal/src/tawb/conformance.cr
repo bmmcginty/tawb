@@ -22,6 +22,7 @@ require "./lynx_keymap"
 require "./lynx_number"
 require "./marionette"
 require "./options"
+require "./place"
 require "./session"
 require "./transport"
 require "./unicode_escape"
@@ -589,6 +590,8 @@ module Tawb
         Marionette.clear_automation(payload.as_h["port"].as_i.to_i32)
       when "marionette.release_stranded"
         JSON::Any.new(Marionette.release_stranded_session(payload.as_h["port"].as_i.to_i32))
+      when "place.scenario"
+        place_scenario(payload)
       when "session.scenario"
         session_scenario(payload)
       when "transport.websocket_round_trip"
@@ -785,6 +788,116 @@ module Tawb
           observations.push JSON::Any.new(core.no_more_to_load?)
         else
           raise ArgumentError.new("unknown core scenario op #{step["op"]}")
+        end
+      end
+      JSON::Any.new(observations)
+    end
+
+    private def self.place_kept(raw : JSON::Any) : Place::Kept
+      object = raw.as_h? || {} of String => JSON::Any
+      Place::Kept.new(
+        text: object["text"]?.try(&.as_s?) || "",
+        col: object["col"]?.try(&.as_i?) || 0,
+        on_element: object["onElement"]?.try(&.as_bool?) || false,
+        label: object["label"]?.try(&.as_s?) || "",
+        ordinal: object["ordinal"]?.try(&.as_i64?),
+        total: object["total"]?.try(&.as_i64?),
+        ratio: object["ratio"]?.try(&.as_f?) || 0.0,
+      )
+    end
+
+    private def self.place_position_json(position : Place::Position) : JSON::Any
+      JSON::Any.new({
+        "line"       => JSON::Any.new(position.line.to_i64),
+        "col"        => JSON::Any.new(position.col.to_i64),
+        "end"        => JSON::Any.new(position.stop.to_i64),
+        "blockIndex" => JSON::Any.new(position.block_index.to_i64),
+      })
+    end
+
+    # A scripted pass over the reader's line-space place-keeping: a view set,
+    # positions asked for, text located, the cursor landed. The JavaScript
+    # original runs the same script in-process over src/place.js, so the two
+    # runtimes must answer with the same observations.
+    private def self.place_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      view = nil.as(Place::View?)
+      observations = [] of JSON::Any
+      object["script"].as_a.each do |step_value|
+        step = step_value.as_h
+        case step["op"].as_s
+        when "state"
+          blocks = step["blocks"].as_a.map do |entry|
+            entry_object = entry.as_h
+            Core::Block.new(entry_object["text"].as_s,
+              entry_object["item"]? || JSON::Any.new(nil))
+          end
+          view = Place::View.new(
+            step["lines"].as_a,
+            blocks,
+            step["cursor"]?.try(&.as_i?) || 0,
+            step["col"]?.try(&.as_i?) || 0,
+            step["source"].as_s,
+          )
+          observations.push JSON::Any.new(nil)
+        when "positions_at_line"
+          positions = Place.positions_at_line(view.not_nil!, step["line"].as_i)
+          observations.push JSON::Any.new(positions.map { |position| place_position_json(position) })
+        when "position_of_block"
+          found = Place.position_of_block(view.not_nil!, step["block"].as_i)
+          observations.push(found ? place_position_json(found.not_nil!) : JSON::Any.new(nil))
+        when "block_index_at_line"
+          index = Place.block_index_at_line(
+            view.not_nil!, step["line"].as_i, step["col"]?.try(&.as_i?) || 0
+          )
+          observations.push JSON::Any.new(index.to_i64)
+        when "has_element"
+          item = step["item"]? || JSON::Any.new(nil)
+          source = step["source"]?.try(&.as_s?) || view.not_nil!.source
+          observations.push JSON::Any.new(Place.has_element?(source, item))
+        when "index_of_item"
+          item = step["item"]? || JSON::Any.new(nil)
+          source = step["source"]?.try(&.as_s?) || view.not_nil!.source
+          found = Place.index_of_item(source, item)
+          observations.push(found ? JSON::Any.new(found.to_i64) : JSON::Any.new(nil))
+        when "anchor"
+          # The LOOKBACK walk capturePlace runs before it resolves an
+          # element: the nearest block at or above the cursor that can be
+          # turned back into one.
+          current = view.not_nil!
+          found = nil.as(Int32?)
+          i = step["block"].as_i
+          while i >= 0 && step["block"].as_i - i <= Place::LOOKBACK_BLOCKS
+            block = current.blocks[i]?
+            if block && Place.has_element?(current.source, block.item)
+              found = i
+              break
+            end
+            i -= 1
+          end
+          observations.push(found ? JSON::Any.new(found.to_i64) : JSON::Any.new(nil))
+        when "locate_by_text"
+          observations.push JSON::Any.new(Place.locate_by_text(view.not_nil!, place_kept(step["place"])))
+        when "cursor"
+          observations.push JSON::Any.new({
+            "cursor" => JSON::Any.new(view.not_nil!.cursor.to_i64),
+            "col"    => JSON::Any.new(view.not_nil!.col.to_i64),
+          })
+        when "land_on"
+          quality = Place.land_on(
+            view.not_nil!, step["block"].as_i, place_kept(step["place"]),
+            step["exact"]?.try(&.as_bool?) || false
+          )
+          observations.push(quality ? JSON::Any.new(quality.not_nil!) : JSON::Any.new(nil))
+        when "refine_to_text"
+          refined = Place.refine_to_text(view.not_nil!, step["from"].as_i, place_kept(step["place"]))
+          observations.push JSON::Any.new({
+            "line"  => JSON::Any.new(refined.line.to_i64),
+            "col"   => JSON::Any.new(refined.col.to_i64),
+            "exact" => JSON::Any.new(refined.exact),
+          })
+        else
+          raise ArgumentError.new("unknown place scenario op #{step["op"]}")
         end
       end
       JSON::Any.new(observations)
