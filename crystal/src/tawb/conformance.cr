@@ -33,6 +33,7 @@ require "./lynx_state"
 require "./marionette"
 require "./options"
 require "./reader"
+require "./quicknav"
 require "./place"
 require "./session"
 require "./screen"
@@ -1530,6 +1531,40 @@ module Tawb
         return JSON::Any.new(nil) unless edge
         return JSON::Any.new({"line" => JSON::Any.new(edge[:line].to_i64),
                               "col" => JSON::Any.new(edge[:col].to_i64)})
+      when "findQuickNav"
+        found = QuickNav.find(state, action["action"].as_s)
+        return JSON::Any.new(nil) unless found
+        return JSON::Any.new({"line" => JSON::Any.new(found[:line].to_i64),
+                              "col" => JSON::Any.new(found[:col].to_i64)})
+      when "quickWalk"
+        spec = QuickNav.specification(action["action"].as_s)
+        limit = (action["limit"]?.try(&.as_i64?) || 100).to_i32
+        hits = [] of JSON::Any
+        while hits.size < limit && spec
+          hit = QuickNav.find(state, spec.not_nil!)
+          break unless hit
+          hits << JSON::Any.new({"line" => JSON::Any.new(hit[:line].to_i64),
+                                 "col" => JSON::Any.new(hit[:col].to_i64)})
+          Reader.move_selection(output, state, page_url, hit[:line], hit[:col])
+        end
+        return JSON::Any.new(hits)
+      when "findParagraph"
+        paragraph = QuickNav.find_paragraph(state,
+          (action["direction"]?.try(&.as_i64?) || 1).to_i32)
+        return JSON::Any.new(nil) unless paragraph
+        return JSON::Any.new({"line" => JSON::Any.new(paragraph[:line].to_i64),
+                              "col" => JSON::Any.new(paragraph[:col].to_i64)})
+      when "jumpTo"
+        jump_found = nil
+        if found_json = action["found"]?
+          if hash = found_json.as_h?
+            jump_found = {line: (hash["line"]?.try(&.as_i64?) || 0).to_i32,
+                          col: (hash["col"]?.try(&.as_i64?) || 0).to_i32}
+          end
+        end
+        QuickNav.jump_to(output, state, page_url, jump_found,
+          action["label"]?.try(&.as_s?) || "",
+          (action["direction"]?.try(&.as_i64?) || 1).to_i32)
       end
       nil
     end

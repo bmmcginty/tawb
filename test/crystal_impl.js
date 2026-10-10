@@ -1323,6 +1323,38 @@ function readerImplementations(index, keysModule) {
               value = edge ? { line: edge.line, col: edge.col } : null;
               break;
             }
+            case 'findQuickNav': {
+              const spec = index.QUICK_ACTIONS[action.action];
+              if (!spec) throw new Error(`unknown quick action ${action.action}`);
+              const found = index.findQuickNav(state, spec.match, spec.direction,
+                { sameLine: spec.sameLine });
+              value = found ? { line: found.line, col: found.col } : null;
+              break;
+            }
+            case 'quickWalk': {
+              const spec = index.QUICK_ACTIONS[action.action];
+              if (!spec) throw new Error(`unknown quick action ${action.action}`);
+              const hits = [];
+              for (let i = 0; i < (action.limit ?? 100); i += 1) {
+                const found = index.findQuickNav(state, spec.match, spec.direction,
+                  { sameLine: spec.sameLine });
+                if (!found) break;
+                hits.push({ line: found.line, col: found.col });
+                index.moveSelection(state, found.line, page, found.col);
+              }
+              value = hits;
+              break;
+            }
+            case 'findParagraph': {
+              const found = index.findParagraph(state, action.direction ?? 1);
+              value = found ? { line: found.line, col: found.col } : null;
+              break;
+            }
+            case 'jumpTo': {
+              const found = action.found ? { line: action.found.line, col: action.found.col } : null;
+              index.jumpTo(state, page, found, action.label, action.direction ?? 1);
+              break;
+            }
             default:
               throw new Error(`unknown reader action ${action.op}`);
           }

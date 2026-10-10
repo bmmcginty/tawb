@@ -5310,7 +5310,7 @@ module.exports = {
   moveCaretLeft, moveCaretRight, lineRow, relayout, redrawAfterResize,
   spanForColumn, blockUnder, positionForBlock,
   itemUnderCursor, linkTarget, shortTarget,
-  findQuickNav, focusableEdge, findParagraph, currentLine, currentBlock, QUICK_ACTIONS,
+  findQuickNav, focusableEdge, findParagraph, jumpTo, currentLine, currentBlock, QUICK_ACTIONS,
   clickAsHuman, reportAfterAction,
   expandPath, completePath, fileToAttach, fileSize, attachedNote,
   anchorFor, restoreAnchor, capturePlace, restorePlace, jumpToChange, activateCurrent, ALL_SOURCES,
