@@ -141,6 +141,9 @@ module Tawb
     module PageEnv
       abstract def url : String
       abstract def title : String
+      # One key into the page's own keyboard. Raises when the page or the
+      # driver refuses; the caller says so on the status row.
+      abstract def keyboard_press(key : String) : Nil
     end
 
     # The core, as the key handlers see it: the buffer, the popup the page

@@ -1311,12 +1311,16 @@ module Tawb
       end
     end
 
-    # The page the scenario describes: an address and a title, and nothing
-    # else the reader's key handlers may touch.
+    # The page the scenario describes: an address, a title, and a keyboard
+    # that records what was sent to it — and can refuse.
     private class ScriptedPage
       include Reader::PageEnv
 
-      def initialize(@url : String, @title : String)
+      getter presses : Array(String)
+      property fail_press : Bool
+
+      def initialize(@url : String, @title : String, @fail_press = false)
+        @presses = [] of String
       end
 
       def url : String
@@ -1325,6 +1329,11 @@ module Tawb
 
       def title : String
         @title
+      end
+
+      def keyboard_press(key : String) : Nil
+        raise IO::Error.new("the page refused") if @fail_press
+        @presses << key
       end
     end
 
@@ -1338,7 +1347,8 @@ module Tawb
       state = reader_state(object["state"])
       page_url = object["page"]?.try(&.as_h?).try(&.["url"]?.try(&.as_s?)) || ""
       page_title = object["page"]?.try(&.as_h?).try(&.["title"]?.try(&.as_s?)) || ""
-      page = ScriptedPage.new(page_url, page_title)
+      page = ScriptedPage.new(page_url, page_title,
+        object["page"]?.try(&.as_h?).try(&.["failPress"]?.try(&.as_bool?)) || false)
       results = [] of JSON::Any
       (object["actions"]?.try(&.as_a?) || [] of JSON::Any).each do |step_value|
         action = step_value.as_h
@@ -1612,6 +1622,14 @@ module Tawb
         return JSON::Any.new(nil) unless paragraph
         return JSON::Any.new({"line" => JSON::Any.new(paragraph[:line].to_i64),
                               "col" => JSON::Any.new(paragraph[:col].to_i64)})
+      when "pageKey"
+        return JSON::Any.new(nil) unless page
+        script = page.not_nil!
+        before = script.presses.size
+        ReaderKeys.handle_page_key(output, state, script,
+          action["chunk"]?.try(&.as_s?) || "",
+          action["now"]?.try(&.as_i64?) || 0_i64)
+        return JSON::Any.new(script.presses[before..].map { |key| JSON::Any.new(key) })
       when "popupIsOpen"
         return JSON::Any.new(Reader.popup_is_open(state))
       when "popupKey"

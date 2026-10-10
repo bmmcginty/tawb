@@ -150,6 +150,77 @@ module Tawb
     end
 
     # ------------------------------------------------------------------
+    # The webpage keyboard
+    #
+    # Every other key goes to the page. This is how a reader reaches the
+    # controls a page listens for on its own — Space to play or pause, m to
+    # mute, the arrow keys a map listens for — without the reader's own map
+    # standing in the way. One configurable chord comes back, and with it a
+    # rescan when the reader pauses, because the page may have moved under
+    # all those keys.
+    # ------------------------------------------------------------------
+
+    # Turn one complete terminal keystroke back into the name understood by
+    # both browser drivers. Printable characters already are their own
+    # names; terminfo sequences become ArrowUp, PageDown, and so on. The
+    # only spelling difference is Ctrl (terminal convention) versus Control
+    # (browser protocol convention).
+    def self.browser_key_for_terminal_sequence(chunk : String,
+                                               keys : Keys::Keymap) : String?
+      name = keys.name_for_sequence(chunk)
+      return nil if name.empty? || name.starts_with?("raw:")
+      return " " if name == "Space"
+      name.starts_with?("Ctrl+") ? "Control+#{name[5..]}" : name
+    end
+
+    def self.handle_page_key(output : Screen::Output, state : Reader::State,
+                             page : Reader::PageEnv, chunk : String, now : Int64) : Nil
+      state.core.mark_input
+      keys = keymap_for(state)
+
+      # The same configurable key enters and leaves this mode. Everything
+      # else, including Escape, Ctrl+L, arrows and ordinary browse-mode
+      # commands, is deliberately the webpage's rather than ours.
+      if keys.action_for(chunk) == "page-keyboard"
+        state.mode = "browse"
+        state.page_keyboard_exit_until = now + 1500
+        # Do not hold the keyboard while taking a potentially multi-second
+        # snapshot. Besides making the exit feel broken, key repeat queued a
+        # second toggle behind that wait and re-entered page mode as soon as
+        # the snapshot ended. The ordinary live-refresh path already knows
+        # how to rebuild without racing subsequent input, so ask it to do so
+        # when the reader becomes idle.
+        if live_object = state.core.live
+          if hash = live_object.as_h?
+            hash["dirty"] = JSON::Any.new(true)
+            hash["lastPulseMs"] = JSON::Any.new(0_i64)
+          end
+        end
+        Reader.draw_hint(output, state)
+        enabled = state.core.live.try(&.as_h?).try(&.["enabled"]?.try(&.as_bool?)) || false
+        Reader.set_status(output, state, page.url,
+          enabled ? "Webpage keyboard off — the page will rescan when you pause."
+                  : "Webpage keyboard off — press r to rescan.")
+        return
+      end
+
+      name = browser_key_for_terminal_sequence(chunk, keys)
+      if name.nil?
+        Reader.set_status(output, state, page.url,
+          "That terminal key cannot be sent to the webpage.")
+        return
+      end
+
+      begin
+        page.keyboard_press(name)
+      rescue err
+        reason = err.message.try(&.lines.first?) || err.message || err.to_s
+        Reader.set_status(output, state, page.url,
+          "Could not send #{keys.name_for_sequence(chunk)} to the webpage: #{reason}")
+      end
+    end
+
+    # ------------------------------------------------------------------
     # An open popup is a mode of its own
     #
     # A menu the page drew lives in the buffer like any other text, so the

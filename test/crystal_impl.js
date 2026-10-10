@@ -1457,7 +1457,11 @@ function readerImplementations(index, keysModule) {
       const atCalls = [];
       const state = buildJsState(args.state, atCalls);
       const pageUrl = args.page?.url ?? '';
-      const page = { url: () => pageUrl, title: async () => (args.page?.title ?? '') };
+      const page = { url: () => pageUrl, title: async () => (args.page?.title ?? ''),
+        keyboard: { presses: [], async press(key) {
+          if (args.page?.failPress) throw new Error('the page refused');
+          this.presses.push(key);
+        } } };
       state.core.page = page;
       const saved = {
         rows: process.stdout.rows, cols: process.stdout.columns,
@@ -1483,6 +1487,10 @@ function readerImplementations(index, keysModule) {
           } else if (action.op === 'closePopup') {
             await index.closePopup(state, page);
             value = undefined;
+          } else if (action.op === 'pageKey') {
+            const before = page.keyboard.presses.length;
+            await index.handlePageKey(action.chunk, state, page);
+            value = page.keyboard.presses.slice(before);
           } else if (action.op === 'askPassword') {
             const queue = (action.keys ?? []).map((k) => (k === '<eof>' ? EOF : k));
             state.keyReader = {
