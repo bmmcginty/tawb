@@ -262,6 +262,8 @@ module Tawb
         core_scenario(payload)
       when "core.tab_scenario"
         core_tab_scenario(payload)
+      when "core.snapshot_scenario"
+        core_snapshot_scenario(payload)
       when "core.diff_blocks"
         object = payload.as_h
         previous = object["previous_texts"].as_a.map(&.as_s)
@@ -643,6 +645,32 @@ module Tawb
         JSON::Any.new(UnicodeEscape.escaped_offset(value, offset).to_i64)
       else
         raise ArgumentError.new("unknown conformance operation #{operation}")
+      end
+    end
+
+    private def self.core_snapshot_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      session = Bidi::Session.new(object["url"].as_s)
+      page = FirefoxDriver::Page.new(session, "main", "https://example.test/")
+      core = Core.new(page: page)
+      begin
+        first = core.rescan.map(&.text)
+        core.at(object["cursor"].as_i)
+        anchor = core.anchor
+        rebuilt = core.rebuild(anchor)
+        JSON::Any.new({
+          "first"      => JSON::Any.new(first.map { |text| JSON::Any.new(text) }),
+          "second"     => JSON::Any.new(core.texts.map { |text| JSON::Any.new(text) }),
+          "generation" => JSON::Any.new(core.generation.to_i64),
+          "settled"    => JSON::Any.new({
+            "block" => JSON::Any.new(rebuilt.settled.block.to_i64),
+            "exact" => JSON::Any.new(rebuilt.settled.exact),
+          }),
+          "regions" => core_news_json(rebuilt.regions),
+          "cost"    => JSON::Any.new(core.snapshot_cost_ms),
+        })
+      ensure
+        session.close
       end
     end
 

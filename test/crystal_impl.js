@@ -353,6 +353,9 @@ function coreImplementations(javascript) {
     remapIndex(oldTexts, newTexts, index) {
       return call('core.remap_index', { old: oldTexts, new: newTexts, index });
     },
+    snapshotScenario(url, cursor) {
+      return callAsync('core.snapshot_scenario', { url, cursor });
+    },
   });
   return implementations;
 }

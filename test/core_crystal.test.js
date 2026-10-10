@@ -12,8 +12,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const http = require('node:http');
 
 const coreModule = require('../src/core');
+const { acceptWebSocket } = require('../src/broker');
 const { coreImplementations } = require('./crystal_impl');
 
 const PAGE = ['head', 'a', 'b', 'CLOCK 10:00:00', 'c', 'd', 'tail'];
@@ -497,4 +499,63 @@ if (implementations.length > 1) {
       assert.deepEqual(crystal.scenario(script), javascript.scenario(script));
     });
   }
+
+  test('Crystal rescans and rebuilds a native page as one core operation', async () => {
+    const server = http.createServer();
+    const sockets = new Set();
+    let snapshots = 0;
+    const remote = (value) => {
+      if (value === undefined) return { type: 'undefined' };
+      if (value === null) return { type: 'null' };
+      if (typeof value === 'boolean') return { type: 'boolean', value };
+      if (typeof value === 'number') return { type: 'number', value };
+      if (typeof value === 'string') return { type: 'string', value };
+      if (Array.isArray(value)) return { type: 'array', value: value.map(remote) };
+      return { type: 'object', value: Object.entries(value).map(([key, item]) => [key, remote(item)]) };
+    };
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    server.on('upgrade', (request, socket, head) => {
+      let peer;
+      peer = acceptWebSocket(request, socket, (text) => {
+        const message = JSON.parse(text);
+        let result = {};
+        if (message.method === 'browsingContext.getTree') {
+          result = { contexts: [{ context: 'main', url: 'https://example.test/', children: [] }] };
+        } else if (message.method === 'script.callFunction') {
+          if (message.params.functionDeclaration.includes("Symbol.for('tweb.ax')")) {
+            snapshots += 1;
+            const names = snapshots === 1
+              ? ['alpha', 'clock old', 'omega']
+              : ['inserted', 'alpha', 'clock new', 'omega'];
+            result = { result: remote(names.map((name, axIndex) => ({
+              role: 'heading', level: 1, name, axIndex,
+            }))) };
+          } else {
+            result = { result: remote(undefined) };
+          }
+        }
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+      }, () => {});
+      if (head.length) peer.consume(head);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    try {
+      const observed = await crystal.snapshotScenario(`ws://127.0.0.1:${port}/session`, 1);
+      assert.deepEqual(observed.first, ['# alpha', '# clock old', '# omega']);
+      assert.deepEqual(observed.second, ['# inserted', '# alpha', '# clock new', '# omega']);
+      assert.equal(observed.generation, 2);
+      assert.equal(observed.settled.block, -1);
+      assert.deepEqual(observed.regions.map(({ start, end }) => ({ start, end })), [
+        { start: 0, end: 0 }, { start: 2, end: 2 },
+      ]);
+      assert.ok(observed.cost >= 0);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
 }

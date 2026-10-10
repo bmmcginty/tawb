@@ -54,6 +54,7 @@ require "uri"
 require "./actions"
 require "./aria"
 require "./firefox_driver"
+require "./frames"
 require "./live"
 require "./remap"
 require "./session"
@@ -153,6 +154,10 @@ module Tawb
     record AttachedFile, paths : Array(String), names : Array(String)
     # A tab's one-based position in the browser and the number of tabs there.
     record TabPosition, position : Int32, of : Int32
+    # A completed whole-buffer rebuild and the information the front end needs
+    # to put its cursor back and report changed regions.
+    record RebuildResult, settled : Settled, regions : Array(Change),
+      previous_texts : Array(String)
 
     # An open dropdown, whose entries are spliced into the block list under
     # the control they belong to. See open_chooser().
@@ -379,6 +384,7 @@ module Tawb
     getter change_index : Int32
     getter live : Live::State
     getter page : FirefoxDriver::Page?
+    getter snapshot_cost_ms : Int64
 
     def initialize(source : String = "ax", layout : Bool = false,
                    driver : FirefoxDriver::BrowserSession? = nil,
@@ -400,6 +406,7 @@ module Tawb
       @change_index = -1
       @tickers = {} of Int32 => Ticker
       @live = Live.create_state
+      @snapshot_cost_ms = 0_i64
       @live_watcher = Live::Watcher.new
       @chooser = nil
       @attached_files = {} of String => Hash(String, AttachedFile)
@@ -477,6 +484,47 @@ module Tawb
         "patches"       => patches,
         "mutations"     => JSON::Any.new(object["mutations"]?.try(&.as_i64?) || 0_i64),
       })
+    end
+
+    # Read the current native Firefox document into a fresh block buffer. AX
+    # is the extraction currently available to the interactive native core;
+    # other view extractors remain separate release work rather than silently
+    # returning AX under the wrong label.
+    def rescan(page : FirefoxDriver::Page? = @page) : Array(Block)
+      target = page || raise IO::Error.new("this core has no page")
+      unless @source == "ax"
+        raise IO::Error.new("native interactive extraction for #{@source} is not ported")
+      end
+      started = Time.monotonic
+      tree, documents = target.accessibility_documents(@layout)
+      built = Frames.build(tree, documents)
+      @blocks = built.map do |entry|
+        object = entry.as_h
+        Block.new(object["text"]?.try(&.as_s?) || "",
+          object["item"]? || JSON::Any.new(nil))
+      end
+      restore_attached_files(target.context_id)
+      @generation += 1
+      @rendered_url = target.url
+      relocate_popup
+      # The extraction visited these contexts. Arming is best effort: a frame
+      # may detach between its snapshot and this call.
+      frames = target.all_frames
+      arm_live_frames(frames)
+      @snapshot_cost_ms = (Time.monotonic - started).total_milliseconds.to_i64
+      @live.snapshot_cost_ms = @snapshot_cost_ms
+      @blocks
+    end
+
+    # Re-read, re-anchor without proportional guesses, and remember all new
+    # regions as one operation so callers cannot compare mismatched generations.
+    def rebuild(anchor : Anchor, page : FirefoxDriver::Page? = @page,
+                keep_place = true) : RebuildResult
+      previous = texts
+      rescan(page)
+      settled = keep_place ? reanchor(anchor, previous) : Settled.new(-1, false)
+      regions = record_changes(Core.diff_blocks(previous, @blocks))
+      RebuildResult.new(settled, regions, previous)
     end
 
     # The front end reporting a move. One way, no reply, cheap enough to send
