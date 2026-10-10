@@ -5,6 +5,7 @@ require "./aria"
 require "./blocks"
 require "./bidi"
 require "./core"
+require "./key_wizard"
 require "./edit"
 require "./remap"
 require "./broker"
@@ -607,6 +608,10 @@ module Tawb
         lynx_state_keymap(payload)
       when "lynx_state.preferences"
         lynx_state_preferences(payload)
+      when "key_wizard.rows"
+        key_wizard_rows(payload)
+      when "key_wizard.run"
+        key_wizard_run(payload)
       when "lynx_actions.call"
         lynx_actions_call(payload)
       when "lynx_config.key_spec"
@@ -1237,6 +1242,120 @@ module Tawb
       JSON::Any.new({
         "preferences" => JSON::Any.new(LynxState.lynx_preferences(read)),
       })
+    end
+
+    private def self.wizard_keymap(payload : JSON::Any) : Keys::Keymap
+      object = payload.as_h
+      bindings = {} of String => Array(String)
+      object["bindings"]?.try(&.as_h?).try do |given|
+        given.each { |id, list| bindings[id] = list.as_a.map(&.as_s) }
+      end
+      keymap = Keys::Keymap.new(
+        terminfo: {} of String => String,
+        profile: object["profile"]?.try(&.as_s?) || "default",
+        file: object["file"]?.try(&.as_s?),
+        read_file: false,
+        bindings: bindings,
+        unsupported: (object["unsupported"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s),
+      )
+      if object["unbindAll"]?.try(&.as_bool?) == true
+        keymap.actions.each { |action| keymap.unbind(action.id) }
+      end
+      keymap
+    end
+
+    private def self.key_wizard_rows(payload : JSON::Any) : JSON::Any
+      keymap = wizard_keymap(payload)
+      JSON::Any.new(KeyWizard.wizard_rows(keymap).map do |row|
+        JSON::Any.new({
+          "type"     => JSON::Any.new(row.type),
+          "label"    => JSON::Any.new(row.label),
+          "actionId" => JSON::Any.new(row.action.try(&.id)),
+          "text"     => JSON::Any.new(KeyWizard.row_text(row, keymap)),
+        })
+      end)
+    end
+
+    private def self.key_wizard_run(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      keymap = wizard_keymap(payload)
+      output = LynxWizardOutput.new(
+        (object["rows"]?.try(&.as_i64?) || 24).to_i32,
+        (object["cols"]?.try(&.as_i64?) || 80).to_i32,
+      )
+      keys = (object["keys"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s)
+      reader = LynxWizardKeys.new(keys, output)
+      saved = KeyWizard.run(output, keymap, reader, object["altScreen"]?.try(&.as_bool?) != false)
+      probes = (object["probe"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s)
+      editing = (object["editingProbe"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s)
+      file = object["file"]?.try(&.as_s?)
+      JSON::Any.new({
+        "writes"         => JSON::Any.new(output.writes),
+        "saved"          => JSON::Any.new(saved),
+        "actions"        => JSON::Any.new(keymap.actions.map do |action|
+          JSON::Any.new({
+            "id"       => JSON::Any.new(action.id),
+            "bindings" => JSON::Any.new(action.bindings.map { |b| JSON::Any.new(b) }),
+          })
+        end),
+        "probes"         => JSON::Any.new(probes.to_h { |chunk| {chunk, JSON::Any.new(keymap.action_for(chunk))} }),
+        "editingProbes"  => JSON::Any.new(editing.to_h { |chunk| {chunk, JSON::Any.new(keymap.editing_action_for(chunk))} }),
+        "fileExists"     => file ? JSON::Any.new(File.exists?(file)) : JSON::Any.new(false),
+      })
+    end
+
+    # The fake terminal the wizard draws on over the wire: it records every
+    # write tagged with which key of the script was being processed, so both
+    # runtimes can be compared write for write and prompt for prompt.
+    private class LynxWizardOutput
+      include KeyWizard::Output
+
+      getter writes : Array(JSON::Any)
+      property current_key : Int32
+
+      def initialize(@rows : Int32, @columns : Int32)
+        @writes = [] of JSON::Any
+        @current_key = 0
+      end
+
+      def write(text : String) : Nil
+        @writes << JSON::Any.new({
+          "key"  => JSON::Any.new(@current_key.to_i64),
+          "text" => JSON::Any.new(text),
+        })
+      end
+
+      def rows : Int32
+        @rows
+      end
+
+      def columns : Int32
+        @columns
+      end
+
+      def on_resize(handler : Proc(Nil)) : Nil
+      end
+
+      def off_resize(handler : Proc(Nil)) : Nil
+      end
+
+      def advance : Nil
+        @current_key += 1
+      end
+    end
+
+    private class LynxWizardKeys
+      include KeyWizard::KeySource
+
+      def initialize(@keys : Array(String), @output : LynxWizardOutput); end
+
+      def next_key : String?
+        @output.advance
+        @keys.shift?
+      end
+
+      def close : Nil
+      end
     end
 
     private def self.lynx_actions_call(payload : JSON::Any) : JSON::Any

@@ -1017,6 +1017,70 @@ function lynxStateImplementations(lynxState) {
   return implementations;
 }
 
+// The keyboard wizard, differenced between the JavaScript original and the
+// Crystal port: the same rows, the same prompts, and the same byte-level
+// writes to a recorded terminal, driven by the same scripted keys.
+function keyWizardImplementations(keysModule, keyWizard, inputModule) {
+  const implementations = [{
+    name: 'JavaScript',
+    rows(options) {
+      const keymap = new keysModule.Keymap({
+        terminfo: {}, profile: options.profile || 'default', file: options.file,
+        load: false, bindings: options.bindings || {}, unsupported: options.unsupported || [],
+      });
+      if (options.unbindAll) for (const action of keymap.actions) keymap.unbind(action.id);
+      return keyWizard.wizardRows(keymap).map((row) => ({
+        type: row.type,
+        label: row.label === undefined ? null : row.label,
+        actionId: row.action ? row.action.id : null,
+        text: keyWizard.rowText(row, keymap),
+      }));
+    },
+    async run(options) {
+      const keymap = new keysModule.Keymap({
+        terminfo: {}, profile: options.profile || 'default', file: options.file,
+        load: false, bindings: options.bindings || {}, unsupported: options.unsupported || [],
+      });
+      if (options.unbindAll) for (const action of keymap.actions) keymap.unbind(action.id);
+      const writes = [];
+      let current = 0;
+      const output = new PassThrough();
+      output.rows = options.rows || 24;
+      output.columns = options.cols || 80;
+      output.write = (chunk) => { writes.push({ key: current, text: String(chunk) }); return true; };
+      const keys = (options.keys || []).slice();
+      const reader = {
+        next: async () => { current += 1; return keys.length ? keys.shift() : inputModule.EOF; },
+        close: () => {},
+      };
+      const saved = await keyWizard.runKeyWizard({
+        input: new PassThrough(), output, keymap, reader,
+        altScreen: options.altScreen !== false,
+      });
+      return {
+        writes,
+        saved,
+        actions: keymap.actions.map((action) => ({ id: action.id, bindings: action.bindings })),
+        probes: Object.fromEntries((options.probe || []).map((chunk) => [chunk, keymap.actionFor(chunk)])),
+        editingProbes: Object.fromEntries(
+          (options.editingProbe || []).map((chunk) => [chunk, keymap.editingActionFor(chunk)])),
+        fileExists: options.file ? fs.existsSync(options.file) : false,
+      };
+    },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    rows(options) {
+      return call('key_wizard.rows', options);
+    },
+    run(options) {
+      return call('key_wizard.run', options);
+    },
+  });
+  return implementations;
+}
+
 function lynxConfigImplementations(lynxConfig) {
   const implementations = [{
     name: 'JavaScript',
@@ -1752,7 +1816,7 @@ module.exports = {
   firefoxAgentImplementations,
   firefoxAutomationImplementations, firefoxHandleImplementations, firefoxLaunchImplementations,
   firefoxPageImplementations,
-  inputImplementations, interfaceImplementations, keymapImplementations, layoutImplementations,
+  inputImplementations, interfaceImplementations, keyWizardImplementations, keymapImplementations, layoutImplementations,
   liveImplementations, lynxActionsImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, lynxOptionsImplementations, lynxPagesImplementations, lynxStateImplementations, marionetteImplementations, optionImplementations,
   placeImplementations, readerCommands, sessionImplementations, unicodeImplementations,
