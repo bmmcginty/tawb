@@ -102,6 +102,205 @@ module Tawb
       end
     end
 
+    # Passing values into the page. BiDi wants every argument described
+    # structurally — `{type: "string", value: ...}` and so on — and a node the
+    # realm already knows is passed by its handle alone. Handles come back
+    # from decoded results as {handle, sharedId} references and go in as
+    # {handle}: the shared id is only for the browser's own pointer actions,
+    # never for script arguments.
+    def self.to_remote_argument(value : JSON::Any) : JSON::Any
+      if reference = handle_reference(value)
+        return reference
+      end
+      raw = value.raw
+      case raw
+      when Nil
+        JSON::Any.new({"type" => JSON::Any.new("null")})
+      when Bool
+        JSON::Any.new({"type" => JSON::Any.new("boolean"), "value" => value})
+      when String
+        JSON::Any.new({"type" => JSON::Any.new("string"), "value" => value})
+      when Number
+        JSON::Any.new({"type" => JSON::Any.new("number"), "value" => value})
+      when Array
+        JSON::Any.new({
+          "type"  => JSON::Any.new("array"),
+          "value" => JSON::Any.new(raw.map { |item| to_remote_argument(item) }),
+        })
+      when Hash
+        JSON::Any.new({
+          "type"  => JSON::Any.new("object"),
+          "value" => JSON::Any.new(raw.map do |key, item|
+            JSON::Any.new([JSON::Any.new(key), to_remote_argument(item)])
+          end),
+        })
+      else
+        raise ArgumentError.new("cannot pass #{value.class} to the page")
+      end
+    end
+
+    def self.handle_reference(value : JSON::Any) : JSON::Any?
+      object = value.as_h?
+      return nil unless object
+      handle = object["handle"]?.try(&.as_s?)
+      return nil unless handle
+      JSON::Any.new({"handle" => JSON::Any.new(handle)})
+    end
+
+    # BiDi takes a function declaration; the reader writes bare expressions.
+    # A source already shaped like a function goes through untouched.
+    def self.as_function_declaration(fn : String, expression = false) : String
+      expression ? "() => { return (#{fn}); }" : fn
+    end
+
+    # The answer to a script call: the page's exception re-raised, or the
+    # remote value decoded back into ordinary JSON.
+    def self.raise_page_exception(result : Hash(String, JSON::Any)) : Nil
+      return unless result["type"]?.try(&.as_s?) == "exception"
+      detail = result["exceptionDetails"]?.try(&.as_h?).try(&.["text"]?.try(&.as_s?))
+      raise IO::Error.new(detail || "the page threw while evaluating")
+    end
+
+    # One document, and the handful of things a reader asks of it: run a
+    # script, hold an element, walk into the frames it embeds. This is the
+    # page/frame/handle shape the reader was built on (src/driver.js), kept
+    # faithful wire-for-wire so both engines answer identically.
+    class Frame
+      getter session : Bidi::Session
+      getter context_id : String
+      getter page : Page?
+
+      def initialize(@session : Bidi::Session, @context_id : String, @page : Page? = nil, url = "about:blank")
+        @url = url
+      end
+
+      def url : String
+        @url
+      end
+
+      def set_url(url : String) : Nil
+        @url = url
+      end
+
+      def evaluate(fn : String, arg : JSON::Any? = nil, expression = false) : JSON::Any
+        arguments = arg ? [FirefoxDriver.to_remote_argument(arg)] : [] of JSON::Any
+        result = @session.command("script.callFunction", {
+          "functionDeclaration" => JSON::Any.new(FirefoxDriver.as_function_declaration(fn, expression)),
+          "arguments"           => JSON::Any.new(arguments),
+          "target"              => JSON::Any.new({"context" => JSON::Any.new(@context_id)}),
+          "awaitPromise"        => JSON::Any.new(true),
+          "resultOwnership"     => JSON::Any.new("none"),
+        }).as_h
+        FirefoxDriver.raise_page_exception(result)
+        Bidi.from_remote(result["result"]?)
+      end
+
+      # An element, held across calls: resultOwnership root is what makes the
+      # protocol keep it alive for the next round trip.
+      def evaluate_handle(fn : String, arg : JSON::Any? = nil, expression = false) : Handle
+        arguments = arg ? [FirefoxDriver.to_remote_argument(arg)] : [] of JSON::Any
+        result = @session.command("script.callFunction", {
+          "functionDeclaration" => JSON::Any.new(FirefoxDriver.as_function_declaration(fn, expression)),
+          "arguments"           => JSON::Any.new(arguments),
+          "target"              => JSON::Any.new({"context" => JSON::Any.new(@context_id)}),
+          "awaitPromise"        => JSON::Any.new(true),
+          "resultOwnership"     => JSON::Any.new("root"),
+        }).as_h
+        FirefoxDriver.raise_page_exception(result)
+        value = result["result"]?.try(&.as_h?)
+        Handle.new(@session, @context_id,
+          value.try(&.["handle"]?).try(&.as_s?) || "",
+          value.try(&.["sharedId"]?).try(&.as_s?))
+      end
+
+      # Elements embedded in this one, by selector: BiDi will not hand back a
+      # live list, so what comes back is one reference per position — the Nth
+      # frame element resolves to the Nth child context.
+      def query_all(selector : String) : Array(FrameRef)
+        count = evaluate(
+          "(sel) => document.querySelectorAll(sel).length", JSON::Any.new(selector)
+        ).as_i
+        (0...count).map { |index| FrameRef.new(self, index) }
+      end
+
+      # The child documents of this one, in the order the browser reports
+      # them, which is document order.
+      def child_frames : Array(Frame)
+        tree = begin
+          @session.command("browsingContext.getTree", {
+            "root"     => JSON::Any.new(@context_id),
+            "maxDepth" => JSON::Any.new(1),
+          }).as_h?
+        rescue
+          nil
+        end
+        contexts = tree.try(&.["contexts"]?).try(&.as_a?) || [] of JSON::Any
+        children = contexts[0]?.try(&.as_h?).try(&.["children"]?).try(&.as_a?) || [] of JSON::Any
+        children.map do |child|
+          object = child.as_h
+          Frame.new(@session, object["context"].as_s, @page,
+            object["url"]?.try(&.as_s?) || "about:blank")
+        end
+      end
+    end
+
+    # An element held across calls. The handle is the realm-local name the
+    # protocol minted; the shared id names the same node browser-wide and is
+    # what pointer actions take. Disowning releases it — best effort, since a
+    # context that is already gone has nothing left to disown.
+    class Handle
+      getter session : Bidi::Session
+      getter context_id : String
+      getter handle : String
+      getter shared_id : String?
+
+      def initialize(@session : Bidi::Session, @context_id : String, @handle : String, @shared_id : String? = nil)
+      end
+
+      def evaluate(fn : String, arg : JSON::Any? = nil, expression = false) : JSON::Any
+        arguments = [JSON::Any.new({"handle" => JSON::Any.new(@handle)})] of JSON::Any
+        arguments.push(FirefoxDriver.to_remote_argument(arg)) if arg
+        result = @session.command("script.callFunction", {
+          "functionDeclaration" => JSON::Any.new(FirefoxDriver.as_function_declaration(fn, expression)),
+          "arguments"           => JSON::Any.new(arguments),
+          "target"              => JSON::Any.new({"context" => JSON::Any.new(@context_id)}),
+          "awaitPromise"        => JSON::Any.new(true),
+          "resultOwnership"     => JSON::Any.new("none"),
+        }).as_h
+        FirefoxDriver.raise_page_exception(result)
+        Bidi.from_remote(result["result"]?)
+      end
+
+      def content_frame : Nil
+        nil # frames are reached by position; see Frame#query_all
+      end
+
+      def dispose : Nil
+        @session.command("script.disown", {
+          "handles" => JSON::Any.new([JSON::Any.new(@handle)]),
+          "target"  => JSON::Any.new({"context" => JSON::Any.new(@context_id)}),
+        })
+      rescue
+        nil
+      end
+    end
+
+    # A frame element named by where it sits, since that is all BiDi offers:
+    # it answers content_frame and nothing else, which is all the frame
+    # walker asks of it.
+    class FrameRef
+      def initialize(@parent : Frame, @index : Int32)
+      end
+
+      def content_frame : Frame?
+        @parent.child_frames[@index]?
+      end
+
+      def dispose : Nil
+        # Nothing was held: the reference is a number.
+      end
+    end
+
     class Page
       getter context_id : String
       getter url : String

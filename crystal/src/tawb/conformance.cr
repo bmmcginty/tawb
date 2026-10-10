@@ -352,6 +352,8 @@ module Tawb
         FirefoxAgent.ask(port, object["request"])
       when "firefox.page_scenario"
         firefox_page_scenario(payload)
+      when "firefox.handle_scenario"
+        firefox_handle_scenario(payload)
       when "firefox.verified_session"
         firefox_verified_session(payload)
       when "firefox.dump_scenario"
@@ -977,6 +979,99 @@ module Tawb
       ensure
         browser.close
       end
+    end
+
+    # A scripted pass over the handle layer: values passed into the page and
+    # elements held across calls, the wire contract the reader's actions
+    # stand on. The JavaScript original runs the same script in-process over
+    # src/driver_firefox.js against the same scripted endpoint, so both the
+    # answers and the messages the two runtimes put on the wire must be
+    # identical.
+    private def self.firefox_handle_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      session = Bidi::Session.new(object["url"].as_s)
+      observations = [] of JSON::Any
+      frame = nil.as(FirefoxDriver::Frame?)
+      current = nil.as(FirefoxDriver::Frame?)
+      handle = nil.as(FirefoxDriver::Handle?)
+      refs = [] of FirefoxDriver::FrameRef
+      begin
+        session.command("session.new", {
+          "capabilities" => JSON::Any.new({
+            "alwaysMatch" => JSON::Any.new({} of String => JSON::Any),
+          }),
+        })
+        object["script"].as_a.each do |step_value|
+          step = step_value.as_h
+          case step["op"].as_s
+          when "frame"
+            frame = FirefoxDriver::Frame.new(session, step["context"].as_s, nil, step["url"].as_s)
+            current = frame
+            observations.push JSON::Any.new(nil)
+          when "url"
+            observations.push JSON::Any.new(current.not_nil!.url)
+          when "evaluate"
+            expression = step["expression"]?.try(&.as_s?)
+            value = if expression
+              current.not_nil!.evaluate(expression, nil, true)
+            else
+              current.not_nil!.evaluate(step["fn"].as_s, step["arg"]?, false)
+            end
+            observations.push(value)
+          when "evaluate_handle"
+            held = nil.as(FirefoxDriver::Handle?)
+            source = step["expression"]?.try(&.as_s?)
+            if source
+              held = current.not_nil!.evaluate_handle(source, nil, true)
+            else
+              held = current.not_nil!.evaluate_handle(step["fn"].as_s, step["arg"]?)
+            end
+            handle = held
+            observations.push JSON::Any.new({
+              "handle"   => JSON::Any.new(held.handle),
+              "sharedId" => held.shared_id ? JSON::Any.new(held.shared_id) : JSON::Any.new(nil),
+            })
+          when "handle_evaluate"
+            observations.push(handle.not_nil!.evaluate(step["fn"].as_s, step["arg"]?))
+          when "handle_dispose"
+            handle.not_nil!.dispose
+            observations.push JSON::Any.new(nil)
+          when "query_all"
+            refs = current.not_nil!.query_all(step["selector"].as_s)
+            observations.push JSON::Any.new(refs.size.to_i64)
+          when "content_frame"
+            found = refs[step["index"].as_i]?.try(&.content_frame)
+            observations.push(found ? frame_reference(found.not_nil!) : JSON::Any.new(nil))
+          when "child_frames"
+            observations.push JSON::Any.new(
+              current.not_nil!.child_frames.map { |child| frame_reference(child) })
+          when "use_child"
+            found = refs[step["index"].as_i]?.try(&.content_frame)
+            if found
+              current = found
+              observations.push(frame_reference(found))
+            else
+              observations.push JSON::Any.new(nil)
+            end
+          when "use_main"
+            current = frame
+            observations.push JSON::Any.new(nil)
+          else
+            raise ArgumentError.new("unknown handle scenario op #{step["op"]}")
+          end
+        end
+      ensure
+        session.command("session.end") rescue nil
+        session.close
+      end
+      JSON::Any.new(observations)
+    end
+
+    private def self.frame_reference(frame : FirefoxDriver::Frame) : JSON::Any
+      JSON::Any.new({
+        "id"  => JSON::Any.new(frame.context_id),
+        "url" => JSON::Any.new(frame.url),
+      })
     end
 
     private def self.bidi_session_scenario(payload : JSON::Any) : JSON::Any

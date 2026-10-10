@@ -851,6 +851,103 @@ function firefoxPageImplementations({ bidi, FirefoxPage, FirefoxFrame, extractAx
   return implementations;
 }
 
+// A scripted pass over the handle layer: values passed into the page and
+// elements held across calls. The scripted endpoint records every message,
+// so the assertions cover both the answers and the exact wire traffic —
+// which is the contract, since a real Firefox parses the same bytes.
+function firefoxHandleImplementations({ bidi, FirefoxFrame }) {
+  const handleScenario = async (url, script) => {
+    const session = await bidi.connect(url);
+    const observations = [];
+    let frame = null;
+    let current = null;
+    let handle = null;
+    let refs = [];
+    const reference = (held) => ({ id: held.contextId, url: held.url() });
+    try {
+      await session.send('session.new', { capabilities: { alwaysMatch: {} } });
+      for (const step of script) {
+        switch (step.op) {
+          case 'frame':
+            frame = new FirefoxFrame(session, step.context, {});
+            frame._url = step.url;
+            current = frame;
+            observations.push(null);
+            break;
+          case 'url':
+            observations.push(current.url());
+            break;
+          case 'evaluate': {
+            // A source shaped like an expression goes in as the string (the
+            // driver wraps it); anything else is eval'd back into a real
+            // function, whose text is the declaration the wire carries.
+            const fn = step.expression !== undefined ? step.expression : (0, eval)(step.fn);
+            const value = await current.evaluate(fn, 'arg' in step ? step.arg : undefined);
+            observations.push(value === undefined ? null : value);
+            break;
+          }
+          case 'evaluate_handle': {
+            const fn = (0, eval)(step.fn);
+            handle = await current.evaluateHandle(fn, 'arg' in step ? step.arg : undefined);
+            observations.push({ handle: handle.handle, sharedId: handle.sharedId || null });
+            break;
+          }
+          case 'handle_evaluate':
+            observations.push(
+              await handle.evaluate((0, eval)(step.fn), 'arg' in step ? step.arg : undefined));
+            break;
+          case 'handle_dispose':
+            await handle.dispose();
+            observations.push(null);
+            break;
+          case 'query_all':
+            refs = await current.$$(step.selector);
+            observations.push(refs.length);
+            break;
+          case 'content_frame': {
+            const found = refs[step.index] ? await refs[step.index].contentFrame() : null;
+            observations.push(found ? reference(found) : null);
+            break;
+          }
+          case 'child_frames':
+            observations.push((await current.childFrames()).map(reference));
+            break;
+          case 'use_child': {
+            const found = refs[step.index] ? await refs[step.index].contentFrame() : null;
+            if (found) {
+              current = found;
+              observations.push(reference(found));
+            } else {
+              observations.push(null);
+            }
+            break;
+          }
+          case 'use_main':
+            current = frame;
+            observations.push(null);
+            break;
+          default:
+            throw new Error(`unknown handle scenario op ${step.op}`);
+        }
+      }
+    } finally {
+      await session.send('session.end', {}).catch(() => {});
+      session.close();
+    }
+    return observations;
+  };
+
+  const implementations = [{ name: 'JavaScript', handleScenario }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    handleScenario(url, script) {
+      return callAsync('firefox.handle_scenario', { url, script });
+    },
+  });
+  return implementations;
+}
+
 function marionetteImplementations(javascript) {
   const implementations = [{
     name: 'JavaScript',
@@ -1061,7 +1158,8 @@ module.exports = {
   blockImplementations, coreImplementations, dumpImplementations, editImplementations,
   endpointImplementations,
   firefoxAgentImplementations,
-  firefoxAutomationImplementations, firefoxLaunchImplementations, firefoxPageImplementations,
+  firefoxAutomationImplementations, firefoxHandleImplementations, firefoxLaunchImplementations,
+  firefoxPageImplementations,
   inputImplementations, interfaceImplementations, keymapImplementations, layoutImplementations,
   lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, marionetteImplementations, optionImplementations,
