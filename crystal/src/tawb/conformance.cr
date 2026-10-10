@@ -717,6 +717,22 @@ module Tawb
           observations.push JSON::Any.new(current.map { |text| JSON::Any.new(text) })
         when "block_text"
           observations.push JSON::Any.new(core.block_text(step["index"].as_i))
+        when "item_value"
+          value = core.block(step["index"].as_i).try(&.item.as_h?).try(&.["value"]?)
+          observations.push(value || JSON::Any.new(nil))
+        when "remember_files"
+          item = {
+            "file" => JSON::Any.new({"key" => step["key"]}),
+          }
+          if frame = step["frame"]?
+            item["frame"] = frame
+          end
+          core.remember_attached_files(JSON::Any.new(item),
+            step["paths"].as_a.map(&.as_s), "main")
+          observations.push JSON::Any.new(nil)
+        when "restore_files"
+          core.restore_attached_files("main")
+          observations.push JSON::Any.new(nil)
         when "anchor"
           anchor = core.anchor
           if id = step["id"]?.try(&.as_s?)

@@ -42,13 +42,15 @@
 # ## What is not here yet
 #
 # The half of src/core.js that acts on the page — activate, click, hover,
-# typing, sliders, file attachments, tabs — and the live-update policy
-# (src/live.js) still live in the JavaScript originals and move here as the
-# front end work proceeds.
+# typing, sliders and tabs — and the live-update policy (src/live.js) still
+# live in the JavaScript originals and move here as the front end work
+# proceeds. File attachment bookkeeping is here: paths remain outside the
+# page and survive snapshots only while the browser reports matching names.
 
 require "json"
 require "set"
 require "uri"
+require "./aria"
 require "./remap"
 
 module Tawb
@@ -141,6 +143,9 @@ module Tawb
     # What a successful patch reports: the blocks it touched, the buffer
     # generation it belongs to, and the undo that puts it back.
     record PatchResult, touched : Array(Int32), generation : Int32, undo : Proc(Nil)
+    # Paths supplied to one file control, and the only part the browser lets
+    # a page read back to prove those paths are still selected.
+    record AttachedFile, paths : Array(String), names : Array(String)
 
     # An open dropdown, whose entries are spliced into the block list under
     # the control they belong to. See open_chooser().
@@ -380,6 +385,7 @@ module Tawb
       @change_index = -1
       @tickers = {} of Int32 => Ticker
       @chooser = nil
+      @attached_files = {} of String => Hash(String, AttachedFile)
       # The popup the reader has open, if any, named by the id its control
       # points at. See relocate_popup().
       @popup = nil
@@ -741,6 +747,60 @@ module Tawb
       end
 
       PatchResult.new(touched, @generation, undo)
+    end
+
+    # -----------------------------------------------------------------------
+    # File attachments
+    #
+    # A page can read the names of selected files but never their full shell
+    # paths. Keep those paths outside the page, by frame and stable control
+    # identity, and put them back into fresh blocks only while the browser's
+    # names prove that the same selection remains.
+    # -----------------------------------------------------------------------
+
+    def remember_attached_files(item : JSON::Any, paths : Array(String), page_key : String) : Nil
+      object = item.as_h
+      file = object["file"].as_h
+      frame = attachment_frame_key(object["frame"]?, page_key)
+      controls = @attached_files[frame]? || begin
+        made = {} of String => AttachedFile
+        @attached_files[frame] = made
+        made
+      end
+      controls[file["key"].as_s] = AttachedFile.new(
+        paths.dup, paths.map { |path| File.basename(path) })
+    end
+
+    # Reconcile after a snapshot. A mismatching name means the page cleared or
+    # replaced the selection, so forget the private paths rather than showing
+    # something the input no longer contains.
+    def restore_attached_files(page_key : String, blocks : Array(Block) = @blocks) : Array(Block)
+      blocks.each do |block|
+        item = block.item.as_h? || next
+        file = item["file"]?.try(&.as_h?) || next
+        key = file["key"]?.try(&.as_s?) || next
+        frame = attachment_frame_key(item["frame"]?, page_key)
+        controls = @attached_files[frame]? || next
+        remembered = controls[key]? || next
+        names = file["names"]?.try(&.as_a?).try(&.map(&.as_s)) || [] of String
+        if names != remembered.names
+          controls.delete(key)
+          next
+        end
+        item["value"] = JSON::Any.new(remembered.paths.join(", "))
+        block.text = Aria.render_line(block.item)
+      end
+      blocks
+    end
+
+    private def attachment_frame_key(frame : JSON::Any?, page_key : String) : String
+      return page_key unless frame
+      if value = frame.as_s?
+        return value
+      end
+      object = frame.as_h? || return page_key
+      object["id"]?.try(&.as_s?) || object["contextId"]?.try(&.as_s?) ||
+        object["context"]?.try(&.as_s?) || page_key
     end
 
     # -----------------------------------------------------------------------

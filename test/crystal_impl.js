@@ -173,7 +173,18 @@ function blockImplementations(blocks, aria) {
 function coreImplementations(javascript) {
   const blocksOf = (texts) => texts.map((text, i) => ({ text, item: { name: text, domIndex: i } }));
   const scenario = (script) => {
-    const core = new javascript.Core({ driver: {}, page: {}, source: 'source', sources: ['source'] });
+    const page = {};
+    const frames = new Map();
+    const frameFor = (name) => {
+      if (name === undefined || name === null || name === 'main') return page;
+      if (!frames.has(name)) frames.set(name, {});
+      return frames.get(name);
+    };
+    const itemFor = (item) => {
+      if (!item || item.frame === undefined) return item;
+      return { ...item, frame: frameFor(item.frame) };
+    };
+    const core = new javascript.Core({ driver: {}, page, source: 'source', sources: ['source'] });
     const anchors = new Map();
     const texts = new Map();
     const undos = new Map();
@@ -189,7 +200,7 @@ function coreImplementations(javascript) {
           core.blocks = step.blocks
             ? step.blocks.map((block, i) => ({
                 text: block.text,
-                item: block.item === undefined ? { name: block.text, domIndex: i } : block.item,
+                item: itemFor(block.item === undefined ? { name: block.text, domIndex: i } : block.item),
               }))
             : blocksOf(step.texts);
           if (step.cursor !== undefined) core.at(step.cursor);
@@ -207,6 +218,20 @@ function coreImplementations(javascript) {
         }
         case 'block_text':
           observations.push(core.blockText(step.index));
+          break;
+        case 'item_value':
+          observations.push(core.block(step.index)?.item?.value ?? null);
+          break;
+        case 'remember_files':
+          core.rememberAttachedFiles({
+            file: { key: step.key },
+            frame: frameFor(step.frame),
+          }, step.paths, page);
+          observations.push(null);
+          break;
+        case 'restore_files':
+          core.restoreAttachedFiles(core.blocks, page);
+          observations.push(null);
           break;
         case 'anchor': {
           const anchor = core.anchor();

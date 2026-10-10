@@ -176,6 +176,44 @@ const scripts = {
     { op: 'in_chooser', index: 5 },
   ],
 
+  'attached paths survive only while the browser reports their names': [
+    { op: 'remember_files', key: 'id:plain', paths: ['/home/reader/private/report.txt'] },
+    { op: 'blocks', blocks: [{
+      text: '[*Upload]',
+      item: { role: 'button', name: 'Upload', file: { key: 'id:plain', names: ['report.txt'] } },
+    }] },
+    { op: 'restore_files' },
+    { op: 'item_value', index: 0 },
+    { op: 'block_text', index: 0 },
+    { op: 'blocks', blocks: [{
+      text: '[*Upload]',
+      item: { role: 'button', name: 'Upload', file: { key: 'id:plain', names: [] } },
+    }] },
+    { op: 'restore_files' },
+    { op: 'blocks', blocks: [{
+      text: '[*Upload]',
+      item: { role: 'button', name: 'Upload', file: { key: 'id:plain', names: ['report.txt'] } },
+    }] },
+    { op: 'restore_files' },
+    { op: 'item_value', index: 0 },
+  ],
+
+  'attached paths are isolated by frame and control': [
+    { op: 'remember_files', frame: 'main', key: 'same', paths: ['/private/main.txt'] },
+    { op: 'remember_files', frame: 'child', key: 'same', paths: ['/secret/child.txt'] },
+    { op: 'blocks', blocks: [
+      { text: '[*Main]', item: {
+        role: 'button', name: 'Main', file: { key: 'same', names: ['main.txt'] },
+      } },
+      { text: '[*Child]', item: {
+        role: 'button', name: 'Child', frame: 'child',
+        file: { key: 'same', names: ['child.txt'] },
+      } },
+    ] },
+    { op: 'restore_files' },
+    { op: 'texts' },
+  ],
+
   'closing puts the buffer back': [
     { op: 'blocks', texts: ['before', '[Country: United States]', 'after'], cursor: 1 },
     { op: 'open_chooser', block_index: 1, listing: LISTING },
@@ -340,6 +378,21 @@ for (const implementation of implementations) {
 
     const closed = run('closing puts the buffer back');
     assert.deepEqual(closed[3], ['before', '[Country: United States]', 'after']);
+  });
+
+  check('file paths survive only while the browser reports their names', () => {
+    const restored = run('attached paths survive only while the browser reports their names');
+    assert.equal(restored[3], '/home/reader/private/report.txt');
+    assert.equal(restored[4], '[*Upload: /home/reader/private/report.txt]');
+    assert.equal(restored.at(-1), null, 'a cleared selection also cleared the private path');
+  });
+
+  check('file paths are isolated by frame and control', () => {
+    const restored = run('attached paths are isolated by frame and control');
+    assert.deepEqual(restored.at(-1), [
+      '[*Main: /private/main.txt]',
+      '[*Child: /secret/child.txt]',
+    ]);
   });
 
   check('a popup is brought to its control', () => {

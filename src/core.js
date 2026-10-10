@@ -625,21 +625,7 @@ class Core {
     this.blocks = await snapshotBlocks(page, this.source, {
       visited, driver: this.driver, layout: this.layout,
     });
-    for (const block of this.blocks) {
-      const item = block.item;
-      if (!item || !item.file || !item.file.key) continue;
-      const frame = item.frame || page;
-      const remembered = this.attachedFiles.get(frame)?.get(item.file.key);
-      if (!remembered) continue;
-      const names = item.file.names || [];
-      if (names.length !== remembered.names.length
-        || names.some((name, index) => name !== remembered.names[index])) {
-        this.attachedFiles.get(frame).delete(item.file.key);
-        continue;
-      }
-      item.value = remembered.paths.join(', ');
-      block.text = renderLine(item);
-    }
+    this.restoreAttachedFiles(this.blocks, page);
     this.generation += 1;
     this.renderedUrl = page.url();
     // Observe what we display: a frame that contributed lines may keep
@@ -1351,19 +1337,50 @@ class Core {
     try {
       await withTimeout(
         this.driver.setFiles(handle, paths), ACTION_TIMEOUT_MS, 'Attaching the file');
-      const frame = item.frame || page;
-      let controls = this.attachedFiles.get(frame);
-      if (!controls) {
-        controls = new Map();
-        this.attachedFiles.set(frame, controls);
-      }
-      controls.set(item.file.key, {
-        paths: paths.slice(),
-        names: paths.map((file) => path.basename(file)),
-      });
+      this.rememberAttachedFiles(item, paths, page);
     } finally {
       await handle.dispose().catch(() => {});
     }
+  }
+
+  // Full shell paths cannot be read back from a file input: the page is only
+  // allowed to learn filenames. Remember what the reader supplied outside
+  // the page, under the frame and the extractor's stable control key.
+  rememberAttachedFiles(item, paths, page = this.page) {
+    const frame = item.frame || page;
+    let controls = this.attachedFiles.get(frame);
+    if (!controls) {
+      controls = new Map();
+      this.attachedFiles.set(frame, controls);
+    }
+    controls.set(item.file.key, {
+      paths: paths.slice(),
+      names: paths.map((file) => path.basename(file)),
+    });
+  }
+
+  // Put remembered shell paths back into a fresh snapshot only while the
+  // browser still reports exactly the filenames that were attached. Clearing
+  // or replacing the input must clear our private record too, or the buffer
+  // would claim a path the page no longer holds.
+  restoreAttachedFiles(blocks = this.blocks, page = this.page) {
+    for (const block of blocks) {
+      const item = block.item;
+      if (!item || !item.file || !item.file.key) continue;
+      const frame = item.frame || page;
+      const controls = this.attachedFiles.get(frame);
+      const remembered = controls?.get(item.file.key);
+      if (!remembered) continue;
+      const names = item.file.names || [];
+      if (names.length !== remembered.names.length
+        || names.some((name, index) => name !== remembered.names[index])) {
+        controls.delete(item.file.key);
+        continue;
+      }
+      item.value = remembered.paths.join(', ');
+      block.text = renderLine(item);
+    }
+    return blocks;
   }
 
   async activate(item, page = this.page) {
