@@ -919,6 +919,52 @@ module Tawb
       Actions.activate_item(acting.protocol, acting.context_id, item, held)
     end
 
+    def focus_control(item : JSON::Any, page : FirefoxDriver::Page? = @page) : Bool
+      handle = handle_for(item, page)
+      Actions.focus_control(handle)
+      true
+    ensure
+      handle.try(&.dispose)
+    end
+
+    def adjust_control(item : JSON::Any, key : String,
+                       page : FirefoxDriver::Page? = @page) : JSON::Any
+      acting = page || raise IO::Error.new("this core has no page")
+      handle = handle_for(item, acting)
+      role = item.as_h["role"]?.try(&.as_s?)
+      keyboard = FirefoxDriver::Keyboard.new(acting.protocol, handle.context_id)
+      Actions.adjust_control(keyboard, handle.context_id, role, handle, key)
+    ensure
+      handle.try(&.dispose)
+    end
+
+    def attach_files(item : JSON::Any, paths : Array(String),
+                     page : FirefoxDriver::Page? = @page) : Bool
+      acting = page || raise IO::Error.new("this core has no page")
+      handle = handle_for(item, acting)
+      attached = acting.set_files(handle, paths)
+      remember_attached_files(item, paths, acting.context_id)
+      attached
+    ensure
+      handle.try(&.dispose)
+    end
+
+    def hover(item : JSON::Any, page : FirefoxDriver::Page? = @page) : JSON::Any
+      acting = page || raise IO::Error.new("this core has no page")
+      handle = handle_for(item, acting)
+      Actions.hover(acting.protocol, handle.context_id, handle)
+    ensure
+      handle.try(&.dispose)
+    end
+
+    def real_click(item : JSON::Any, page : FirefoxDriver::Page? = @page) : JSON::Any
+      acting = page || raise IO::Error.new("this core has no page")
+      handle = handle_for(item, acting)
+      Actions.real_click(acting.protocol, handle.context_id, handle)
+    ensure
+      handle.try(&.dispose)
+    end
+
     private def item_scope(frame : JSON::Any?, page : FirefoxDriver::Page) : FirefoxDriver::Frame | FirefoxDriver::Page
       return page unless frame
       context_id = if value = frame.as_s?
