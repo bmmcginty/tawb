@@ -34,6 +34,7 @@ require "./marionette"
 require "./options"
 require "./place"
 require "./session"
+require "./screen"
 require "./transport"
 require "./unicode_escape"
 
@@ -608,6 +609,8 @@ module Tawb
         lynx_state_keymap(payload)
       when "lynx_state.preferences"
         lynx_state_preferences(payload)
+      when "screen.patch_edited_line"
+        screen_patch_edited_line(payload)
       when "key_wizard.rows"
         key_wizard_rows(payload)
       when "key_wizard.run"
@@ -1262,6 +1265,38 @@ module Tawb
         keymap.actions.each { |action| keymap.unbind(action.id) }
       end
       keymap
+    end
+
+    # The recorded terminal the screen primitives run against over the wire.
+    private class RecordingScreen
+      include Screen::Output
+
+      getter writes : Array(JSON::Any)
+
+      def initialize
+        @writes = [] of JSON::Any
+      end
+
+      def write(text : String) : Nil
+        @writes << JSON::Any.new(text)
+      end
+    end
+
+    private def self.screen_patch_edited_line(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      output = RecordingScreen.new
+      changed = Screen.patch_edited_line(
+        output,
+        (object["row"]?.try(&.as_i64?) || 1).to_i32,
+        object["before"]?.try(&.as_s?),
+        object["after"]?.try(&.as_s?),
+        object["currentCol"]?.try(&.as_i64?).try(&.to_i32),
+        object["finalCol"]?.try(&.as_i64?).try(&.to_i32),
+      )
+      JSON::Any.new({
+        "changed" => JSON::Any.new(changed),
+        "writes"  => JSON::Any.new(output.writes),
+      })
     end
 
     private def self.key_wizard_rows(payload : JSON::Any) : JSON::Any

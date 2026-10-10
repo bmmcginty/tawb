@@ -1020,6 +1020,38 @@ function lynxStateImplementations(lynxState) {
 // The keyboard wizard, differenced between the JavaScript original and the
 // Crystal port: the same rows, the same prompts, and the same byte-level
 // writes to a recorded terminal, driven by the same scripted keys.
+// The byte-level screen primitives, differenced between the JavaScript
+// original and the Crystal port: row rewriting and the nano-style edited-row
+// transaction that keeps its intermediate screen states from the terminal.
+function screenImplementations() {
+  const { patchEditedLine } = require('../src/index');
+  const implementations = [{
+    name: 'JavaScript',
+    patchEditedLine(args) {
+      const written = [];
+      const real = process.stdout.write;
+      process.stdout.write = (chunk) => { written.push(String(chunk)); return true; };
+      try {
+        const changed = patchEditedLine(args.row, args.before, args.after, {
+          currentCol: args.currentCol === undefined ? null : args.currentCol,
+          finalCol: args.finalCol === undefined ? null : args.finalCol,
+        });
+        return { changed, writes: written };
+      } finally {
+        process.stdout.write = real;
+      }
+    },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    patchEditedLine(args) {
+      return call('screen.patch_edited_line', args);
+    },
+  });
+  return implementations;
+}
+
 function keyWizardImplementations(keysModule, keyWizard, inputModule) {
   const implementations = [{
     name: 'JavaScript',
@@ -1819,5 +1851,5 @@ module.exports = {
   inputImplementations, interfaceImplementations, keyWizardImplementations, keymapImplementations, layoutImplementations,
   liveImplementations, lynxActionsImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, lynxOptionsImplementations, lynxPagesImplementations, lynxStateImplementations, marionetteImplementations, optionImplementations,
-  placeImplementations, readerCommands, sessionImplementations, unicodeImplementations,
+  placeImplementations, readerCommands, screenImplementations, sessionImplementations, unicodeImplementations,
 };
