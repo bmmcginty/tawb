@@ -2,6 +2,7 @@ require "json"
 require "./screen"
 require "./unicode_escape"
 require "./lynx_display"
+require "./lynx_session"
 require "./layout"
 
 module Tawb
@@ -134,22 +135,75 @@ module Tawb
       end
     end
 
+    # The page, as the key handlers see it. The browser is outside the
+    # reader; the loop hands in whatever answers these, and the handlers
+    # neither know nor care which driver is behind it.
+    module PageEnv
+      abstract def url : String
+      abstract def title : String
+    end
+
+    # The core, as the key handlers see it: the buffer, the popup the page
+    # has open, the live-update switches, and the operations a keystroke can
+    # set in motion. The terminal loop binds this to the real core; the
+    # conformance harness binds it to a scripted one, and the handlers
+    # cannot tell the difference — which is the point.
+    module CoreEnv
+      abstract def source : String
+      abstract def blocks : Array(JSON::Any)
+      abstract def at(index : Int32) : Nil
+      abstract def mark_input : Nil
+      abstract def popup : JSON::Any?
+      abstract def popup_at : Int64
+      abstract def forget_popup : Nil
+      abstract def activate(item : JSON::Any) : JSON::Any
+      abstract def rescan : Nil
+      abstract def anchor : JSON::Any
+      abstract def restore(saved : JSON::Any) : Int32
+      abstract def reanchor(saved : JSON::Any) : JSON::Any
+      abstract def snapshot_cost_ms : Int64
+      abstract def live : JSON::Any?
+      abstract def set_live_snapshot_cost(ms : Int64) : Nil
+    end
+
     # The pieces of the core the drawing needs: which view the blocks came
     # from, the blocks themselves, and where the reader is told to be. The
     # `at` calls are recorded, not delivered: across the conformance boundary
-    # they are the answer to "where did the reader's cursor land".
+    # they are the answer to "where did the reader's cursor land". The
+    # scripted answers — what a rescan finds, what an anchor restores — are
+    # fields the harness fills, so the same class plays the core in tests.
     class CoreState
+      include CoreEnv
+
       property source : String
       property blocks : Array(JSON::Any)
       property popup : JSON::Any?
       property popup_at : Int64
       property at_calls : Array(Int64)
       property input_marks : Int32
+      property activated : Array(JSON::Any)
+      # Scripted answers, for the conformance harness.
+      property rescan_blocks : Array(JSON::Any)?
+      property rescan_cost : Int64
+      property anchor_json : JSON::Any?
+      property restore_block : Int32
+      property activated_status : JSON::Any?
+      property live : JSON::Any?
+      property snapshot_cost : Int64
+      property reanchored : JSON::Any?
 
       def initialize(@source = "ax", @blocks = [] of JSON::Any,
                      @popup = nil, @popup_at = -1_i64)
         @at_calls = [] of Int64
         @input_marks = 0
+        @activated = [] of JSON::Any
+        @rescan_blocks = nil
+        @rescan_cost = 0
+        @anchor_json = nil
+        @restore_block = -1
+        @activated_status = nil
+        @live = nil
+        @snapshot_cost = 0
       end
 
       def at(index : Int32) : Nil
@@ -161,6 +215,46 @@ module Tawb
       # counts, and the real loop owns the clock.
       def mark_input : Nil
         @input_marks += 1
+      end
+
+      def forget_popup : Nil
+        @popup = nil
+      end
+
+      def activate(item : JSON::Any) : JSON::Any
+        @activated << item
+        @activated_status || JSON::Any.new(nil)
+      end
+
+      def rescan : Nil
+        if incoming = @rescan_blocks
+          @blocks = incoming
+        end
+        @snapshot_cost = @rescan_cost
+      end
+
+      def anchor : JSON::Any
+        @anchor_json || JSON::Any.new(nil)
+      end
+
+      def restore(saved : JSON::Any) : Int32
+        @restore_block
+      end
+
+      def reanchor(saved : JSON::Any) : JSON::Any
+        @reanchored || JSON::Any.new({"block" => JSON::Any.new(-1_i64),
+                                      "exact" => JSON::Any.new(false)})
+      end
+
+      def snapshot_cost_ms : Int64
+        @snapshot_cost
+      end
+
+      def set_live_snapshot_cost(ms : Int64) : Nil
+        @snapshot_cost = ms
+        return unless live_object = @live
+        return unless hash = live_object.as_h?
+        hash["snapshotCostMs"] = JSON::Any.new(ms)
       end
     end
 
@@ -179,7 +273,7 @@ module Tawb
       property scroll : Int32
       property lines : Array(Line)
       property drawn : Drawn
-      property core : CoreState
+      property core : CoreEnv
       property keys : Keys::Keymap?
       property typing : Typing?
       property address : AddressBar?
@@ -192,6 +286,8 @@ module Tawb
       property options : JSON::Any?
       property last_find : Find?
       property page_keyboard_exit_until : Int64
+      property visited_links : Array(JSON::Any)
+      property page_log : Array(JSON::Any)
 
       def initialize
         @rows = 24
@@ -221,6 +317,8 @@ module Tawb
         @options = nil
         @last_find = nil
         @page_keyboard_exit_until = 0
+        @visited_links = [] of JSON::Any
+        @page_log = [] of JSON::Any
       end
     end
 
@@ -342,6 +440,74 @@ module Tawb
     def self.line_text(state : State, line_index : Int32) : String
       line = state.lines[line_index]?
       line ? line.text : ""
+    end
+
+    # The line a block starts on. Every block has one; a block index that is
+    # not in this buffer at all answers -1.
+    def self.line_for_block(state : State, block_index : Int32) : Int32
+      return -1 if block_index < 0
+      position = position_for_block(state, block_index)
+      position ? position[:line] : -1
+    end
+
+    # Whether an optional value the wire may carry as JSON null is really
+    # here. JSON::Any wrapping nil is not nil, and every "absent" check has
+    # to see through the wrapper.
+    def self.present?(value : JSON::Any?) : Bool
+      value ? !value.raw.is_a?(Nil) : false
+    end
+
+    def self.restore_anchor(state : State, saved : JSON::Any?) : Nil
+      return unless present?(saved)
+      line = line_for_block(state, state.core.restore(saved.not_nil!))
+      state.cursor = line if line >= 0
+      state.col = 0
+      clamp_scroll(state)
+    end
+
+    # The page's own words for itself, flattened the way a title row wants
+    # them: any run of whitespace becomes one space, and the edges are gone.
+    def self.read_title(page : PageEnv) : String
+      page.title.gsub(/\s+/, " ").strip
+    rescue
+      "" # closed, navigating, or an engine that will not say
+    end
+
+    # A snapshot, a title, and the reader back on their place. This is what
+    # every page-touching keystroke ends in; the anchor argument is the
+    # place to keep, and asking for a reset throws the cursor to the top
+    # when the document itself has changed.
+    def self.refresh(state : State, page : PageEnv, reset_cursor : Bool = false,
+                     anchor : JSON::Any? = nil) : Nil
+      state.core.rescan
+      state.title = read_title(page)
+      LynxSession.note_page_visit(state, page.url, state.title)
+      state.core.set_live_snapshot_cost(state.core.snapshot_cost_ms) if state.core.live
+      if reset_cursor
+        state.cursor = 0
+        state.scroll = 0
+        state.col = 0
+      end
+      relayout(state)
+      restore_anchor(state, anchor) if present?(anchor)
+    end
+
+    # Re-anchoring for an update the reader did not ask for. Unlike
+    # restore_anchor, it never falls back to a proportional guess: if the
+    # line the reader was on has gone, staying put is far less disorienting
+    # than being silently teleported somewhere proportional. Identity
+    # first, then the nearest text match searched outward from the previous
+    # position, then stay put — a live update must never relocate the
+    # reader across the page.
+    def self.reanchor_quietly(state : State, saved : JSON::Any?) : Nil
+      return unless present?(saved)
+      settled = state.core.reanchor(saved.not_nil!)
+      line = line_for_block(state,
+        (settled.as_h["block"]?.try(&.as_i64?) || -1).to_i32)
+      state.cursor = line if line >= 0
+      state.cursor = Math.min(Math.max(state.cursor, 0), Math.max(state.lines.size - 1, 0))
+      clamp_col(state)
+      clamp_scroll(state)
     end
 
     # Where a block starts on screen: the line it begins on and the column

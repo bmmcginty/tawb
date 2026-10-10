@@ -1126,6 +1126,29 @@ function readerImplementations(index, keysModule) {
   });
 
   const buildJsState = (spec, atCalls) => {
+    const core = {
+      source: spec.core?.source ?? 'ax',
+      blocks: spec.core?.blocks ?? [],
+      popup: spec.core?.popup ?? null,
+      popupAt: () => (spec.core?.popupAt ?? -1),
+      at: (index) => { atCalls.push(index); },
+      markInput() { this.inputMarks = (this.inputMarks ?? 0) + 1; },
+      forgetPopup() { this.popup = null; },
+      async activate(item) {
+        this.activated = (this.activated ?? []).concat([item]);
+        return spec.core?.activatedStatus ?? null;
+      },
+      async rescan() {
+        if (spec.core?.rescanBlocks) this.blocks = spec.core.rescanBlocks;
+        this.snapshotCostMs = spec.core?.rescanCost ?? 0;
+      },
+      anchor: () => (spec.core?.anchor ?? null),
+      restore: () => (spec.core?.restoreBlock ?? -1),
+      reanchor: () => ({ block: spec.core?.reanchorBlock ?? -1,
+        exact: spec.core?.reanchorExact ?? false }),
+      live: spec.core?.live ?? null,
+      snapshotCostMs: spec.core?.snapshotCostMs ?? 0,
+    };
     const state = {
       rows: spec.rows ?? 24, cols: spec.cols ?? 80,
       interface: spec.interface ?? 'tawb', mode: spec.mode ?? 'browse',
@@ -1151,14 +1174,7 @@ function readerImplementations(index, keysModule) {
         hint: spec.drawn?.hint ?? null,
         status: spec.drawn?.status ?? null,
       },
-      core: {
-        source: spec.core?.source ?? 'ax',
-        blocks: spec.core?.blocks ?? [],
-        popup: spec.core?.popup ?? null,
-        popupAt: () => (spec.core?.popupAt ?? -1),
-        at: (index) => { atCalls.push(index); },
-        markInput() { this.inputMarks = (this.inputMarks ?? 0) + 1; },
-      },
+      core,
       keys: spec.keys ? buildKeys(spec.keys) : null,
       typing: spec.typing ? {
         item: spec.typing.item, text: spec.typing.text ?? '', caret: spec.typing.caret ?? 0,
@@ -1328,6 +1344,15 @@ function readerImplementations(index, keysModule) {
         const answer = index.handleAuthKey(action.chunk, state);
         return answer === undefined ? 'continue' : answer;
       }
+      case 'popupIsOpen':
+        return index.popupIsOpen(state);
+      case 'popupKey':
+        return index.popupKey({
+          action: action.action ?? null, chunk: action.chunk ?? '',
+          contextAction: action.contextAction ?? null, escape: !!action.escape,
+        }) ?? null;
+      case 'moveToPopup':
+        index.moveToPopup(state, page, action.item ?? null); return undefined;
       case 'findKey':
         index.handleFindKey(action.chunk, state, page); return undefined;
       case 'findText': {
@@ -1343,6 +1368,11 @@ function readerImplementations(index, keysModule) {
 
   const stateSnapshot = (state, atCalls) => ({
     mode: state.mode,
+    title: state.title,
+    popup: state.core.popup ?? null,
+    live: state.core.live ?? null,
+    visitedLinks: state.visitedLinks ?? [],
+    pageLog: state.pageLog ?? [],
     drawn: { ...state.drawn },
     scroll: state.scroll, col: state.col, cursor: state.cursor,
     statusMsg: state.statusMsg,
@@ -1384,7 +1414,7 @@ function readerImplementations(index, keysModule) {
       const atCalls = [];
       const state = buildJsState(args.state, atCalls);
       const pageUrl = args.page?.url ?? '';
-      const page = { url: () => pageUrl };
+      const page = { url: () => pageUrl, title: async () => (args.page?.title ?? '') };
       // parkCursor and set_status draw the address row from state.core.page,
       // exactly as the reading loop's own state does.
       state.core.page = page;
@@ -1427,7 +1457,7 @@ function readerImplementations(index, keysModule) {
       const atCalls = [];
       const state = buildJsState(args.state, atCalls);
       const pageUrl = args.page?.url ?? '';
-      const page = { url: () => pageUrl };
+      const page = { url: () => pageUrl, title: async () => (args.page?.title ?? '') };
       state.core.page = page;
       const saved = {
         rows: process.stdout.rows, cols: process.stdout.columns,
@@ -1446,7 +1476,14 @@ function readerImplementations(index, keysModule) {
           current = [];
           const entry = {};
           let value;
-          if (action.op === 'askPassword') {
+          if (action.op === 'refresh') {
+            await index.refresh(state, page, { resetCursor: !!action.resetCursor,
+              anchor: action.anchor ?? null });
+            value = undefined;
+          } else if (action.op === 'closePopup') {
+            await index.closePopup(state, page);
+            value = undefined;
+          } else if (action.op === 'askPassword') {
             const queue = (action.keys ?? []).map((k) => (k === '<eof>' ? EOF : k));
             state.keyReader = {
               claim() { return 'token'; },

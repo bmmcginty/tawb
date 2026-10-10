@@ -5315,7 +5315,7 @@ module.exports = {
   expandPath, completePath, fileToAttach, fileSize, attachedNote,
   anchorFor, restoreAnchor, capturePlace, restorePlace, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
-  markInput, keepLivePlace, popupIsOpen, popupKey,
+  markInput, keepLivePlace, popupIsOpen, popupKey, closePopup, moveToPopup, refresh,
   screenBefore, repaintList, visibleRowsNow,
   applyTextPatches, loadMore, atEnd,
   historyEntryIdentity, rememberHistoryPlace, rememberCurrentHistoryPlace,

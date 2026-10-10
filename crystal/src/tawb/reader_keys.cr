@@ -150,6 +150,138 @@ module Tawb
     end
 
     # ------------------------------------------------------------------
+    # An open popup is a mode of its own
+    #
+    # A menu the page drew lives in the buffer like any other text, so the
+    # browse map would read q as quit and leave the program while the reader
+    # meant to shut the menu they are standing in. The mode takes the closing
+    # keys before the browse map, and only those: movement and activation
+    # still fall through, and Ctrl+C can never be swallowed.
+    # ------------------------------------------------------------------
+
+    # The interrupt that always leaves the program, popup or not.
+    ALWAYS_QUIT = "\x03"
+
+    # What a key means while that popup is open: close it, quit for real, or
+    # fall through to the browse map. Lynx's popup cancels on its quit and
+    # abort functions, so all three readings of "leave" close the menu; only
+    # the terminal's own interrupt leaves the program. Escape closes it
+    # whatever it is bound to, because a menu that could not be shut would
+    # be a trap.
+    def self.popup_key(action : String?, chunk : String, context_action : String?,
+                       escape : Bool) : String?
+      return "close" if escape || action == "close-popup"
+      return "close" if context_action == "cancel"
+      if action == "quit" || action == "confirm-quit" || action == "abort"
+        return chunk == ALWAYS_QUIT ? "quit" : "close"
+      end
+      nil
+    end
+
+    # Put the reader on the control the popup belongs to, so the line they
+    # leave is the line that opened it.
+    def self.move_to_popup(output : Screen::Output, state : Reader::State,
+                           page_url : String, item : JSON::Any?) : Nil
+      item = nil unless Reader.present?(item)
+      return unless item
+      return unless (item.as_h?.try(&.["controls"]?)) && state.core.popup
+      line = Reader.line_for_block(state, state.core.popup_at.to_i32)
+      return if line < 0
+      Reader.move_selection(output, state, page_url, line, 0)
+      hint = LynxActions.new(NullHost.new).popup_close_hint(lynx_view(state))
+      Reader.set_status(output, state, page_url,
+        "\"#{item.as_h["name"]?.try(&.as_s?)}\" opened — #{hint} closes it.")
+    end
+
+    # Close an open popup the way a person would: by pressing the control
+    # that opened it. Leaving it open and merely walking away would leave
+    # the page in a state the reader cannot see and did not choose.
+    def self.close_popup(output : Screen::Output, state : Reader::State,
+                         page : Reader::PageEnv) : Nil
+      popup = state.core.popup
+      return unless popup
+      controls = popup.as_h["controls"]?.try(&.as_s?)
+      index = state.core.blocks.index do |block|
+        item = block.as_h.try(&.["item"]?)
+        item && item.as_h["controls"]?.try(&.as_s?) == controls
+      end
+      control = index ? state.core.blocks[index].as_h["item"]? : nil
+      state.core.forget_popup
+      if control.nil?
+        Reader.refresh(state, page, false, state.core.anchor)
+        Reader.render(output, state, page.url, force: true)
+        return
+      end
+      begin
+        state.core.activate(control)
+      rescue
+        # It may already be gone; the rebuild below is the truth either way.
+      end
+      Reader.refresh(state, page)
+      after = state.core.blocks.index do |block|
+        item = block.as_h.try(&.["item"]?)
+        item && item.as_h["controls"]?.try(&.as_s?) == controls
+      end
+      line = after ? Reader.line_for_block(state, after.to_i32) : -1
+      state.cursor = line if line >= 0
+      Reader.clamp_col(state)
+      Reader.clamp_scroll(state)
+      Reader.render(output, state, page.url, force: true)
+      Reader.set_status(output, state, page.url,
+        "Closed \"#{control.as_h["name"]?.try(&.as_s?)}\".")
+    end
+
+    # A host that answers nothing, for the pure Lynx predicates the popup
+    # status needs. The decisions it would deliver are the loop's own.
+    private class NullHost
+      include LynxActions::Host
+
+      def fallback_keymap : Keys::Keymap
+        FALLBACK_KEYMAP
+      end
+
+      def key_is(chunk : String, name : String, state : LynxActions::State) : Bool
+        false
+      end
+
+      def set_status(state : LynxActions::State, message : String) : Nil
+      end
+
+      def current_item(state : LynxActions::State) : LynxActions::Item?
+        nil
+      end
+
+      def is_field(role : String) : Bool
+        false
+      end
+
+      def begin_typing(state : LynxActions::State, page, item : LynxActions::Item) : Bool
+        false
+      end
+
+      def open_link_number_prompt(state : LynxActions::State, digits : String?) : Nil
+      end
+
+      def open_help(state : LynxActions::State, page) : Nil
+      end
+
+      def describe_current(state : LynxActions::State, page) : Nil
+      end
+
+      def open_main_menu(state : LynxActions::State, page) : Nil
+      end
+
+      def open_options(state : LynxActions::State, page) : Nil
+      end
+
+      def open_trace_log(state : LynxActions::State, page) : Nil
+      end
+
+      def toggle_trace(state : LynxActions::State) : Nil
+      end
+    end
+
+    # ------------------------------------------------------------------
     # Signing in
     # ------------------------------------------------------------------
 

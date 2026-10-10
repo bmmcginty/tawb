@@ -1311,6 +1311,23 @@ module Tawb
       end
     end
 
+    # The page the scenario describes: an address and a title, and nothing
+    # else the reader's key handlers may touch.
+    private class ScriptedPage
+      include Reader::PageEnv
+
+      def initialize(@url : String, @title : String)
+      end
+
+      def url : String
+        @url
+      end
+
+      def title : String
+        @title
+      end
+    end
+
     # One drawing pass over the reader's terminal: a state, a page address,
     # and the actions to run in order against the same live state. What each
     # action wrote, and the state as it stands afterwards, come back — the
@@ -1320,11 +1337,13 @@ module Tawb
       object = payload.as_h
       state = reader_state(object["state"])
       page_url = object["page"]?.try(&.as_h?).try(&.["url"]?.try(&.as_s?)) || ""
+      page_title = object["page"]?.try(&.as_h?).try(&.["title"]?.try(&.as_s?)) || ""
+      page = ScriptedPage.new(page_url, page_title)
       results = [] of JSON::Any
       (object["actions"]?.try(&.as_a?) || [] of JSON::Any).each do |step_value|
         action = step_value.as_h
         output = RecordingScreen.new
-        value = reader_action(output, state, action, page_url)
+        value = reader_action(output, state, action, page_url, page)
         entry = {"writes" => JSON::Any.new(output.writes)} of String => JSON::Any
         entry["value"] = value unless value.nil?
         results << JSON::Any.new(entry)
@@ -1384,6 +1403,15 @@ module Tawb
           core["blocks"]?.try(&.as_a?) || [] of JSON::Any,
           core["popup"]?,
           core["popupAt"]?.try(&.as_i64?) || -1_i64)
+        scripted = state.core.as(Reader::CoreState)
+        scripted.rescan_blocks = core["rescanBlocks"]?.try(&.as_a?)
+        scripted.rescan_cost = (core["rescanCost"]?.try(&.as_i64?) || 0_i64)
+        scripted.anchor_json = core["anchor"]?
+        scripted.restore_block = (core["restoreBlock"]?.try(&.as_i64?) || -1).to_i32
+        scripted.reanchored = core["reanchored"]?
+        scripted.activated_status = core["activatedStatus"]?
+        scripted.live = core["live"]?
+        scripted.snapshot_cost = core["snapshotCostMs"]?.try(&.as_i64?) || 0_i64
       end
       if keys = object["keys"]?
         state.keys = build_keymap(keys)
@@ -1451,7 +1479,8 @@ module Tawb
 
     private def self.reader_action(output : RecordingScreen, state : Reader::State,
                                    action : Hash(String, JSON::Any),
-                                   page_url : String) : JSON::Any?
+                                   page_url : String,
+                                   page : ScriptedPage? = nil) : JSON::Any?
       op = action["op"]?.try(&.as_s?) || ""
       force = action["force"]?.try(&.as_bool?) || false
       case op
@@ -1583,6 +1612,25 @@ module Tawb
         return JSON::Any.new(nil) unless paragraph
         return JSON::Any.new({"line" => JSON::Any.new(paragraph[:line].to_i64),
                               "col" => JSON::Any.new(paragraph[:col].to_i64)})
+      when "popupIsOpen"
+        return JSON::Any.new(Reader.popup_is_open(state))
+      when "popupKey"
+        verdict = ReaderKeys.popup_key(
+          action["action"]?.try(&.as_s?),
+          action["chunk"]?.try(&.as_s?) || "",
+          action["contextAction"]?.try(&.as_s?),
+          action["escape"]?.try(&.as_bool?) || false)
+        return JSON::Any.new(verdict) if verdict
+        return JSON::Any.new(nil)
+      when "moveToPopup"
+        ReaderKeys.move_to_popup(output, state, page_url, action["item"]?)
+      when "refresh"
+        return JSON::Any.new(nil) unless page
+        Reader.refresh(state, page.not_nil!,
+          action["resetCursor"]?.try(&.as_bool?) || false, action["anchor"]?)
+      when "closePopup"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.close_popup(output, state, page.not_nil!)
       when "authKey"
         step = ReaderKeys.handle_auth_key(state, action["chunk"].as_s)
         return JSON::Any.new("continue") if step.is_a?(ReaderKeys::AuthStep)
@@ -1691,6 +1739,11 @@ module Tawb
       end
       JSON::Any.new({
         "mode"      => JSON::Any.new(state.mode),
+        "title"     => JSON::Any.new(state.title),
+        "popup"     => state.core.popup || JSON::Any.new(nil),
+        "live"      => state.core.live || JSON::Any.new(nil),
+        "visitedLinks" => JSON::Any.new(state.visited_links),
+        "pageLog"   => JSON::Any.new(state.page_log),
         "drawn" => JSON::Any.new({
           "title"           => JSON::Any.new(state.drawn.title),
           "address"         => JSON::Any.new(state.drawn.address),
