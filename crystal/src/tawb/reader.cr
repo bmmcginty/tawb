@@ -263,13 +263,21 @@ module Tawb
     # The block under a caret on one line, whether that line is one block or
     # a reflowed paragraph/table row holding several.
     def self.block_under(state : State, line : Line?, col : Int32) : JSON::Any?
-      return nil unless line
-      blocks = active_blocks(state)
+      index = block_under_index(state, line, col)
+      index >= 0 ? active_blocks(state)[index]? : nil
+    end
+
+    # The same answer, as the position in the blocks the screen is showing.
+    # Identity is what the JavaScript original compares; across the
+    # conformance boundary an index is the same identity.
+    def self.block_under_index(state : State, line : Line?, col : Int32) : Int32
+      return -1 unless line
       span = span_for_column(line, col)
       if span
-        return blocks[span.block_index]? || nil
+        return span.block_index < active_blocks(state).size ? span.block_index : -1
       end
-      blocks[line.block_index]? || nil
+      blocks = active_blocks(state)
+      line.block_index < blocks.size ? line.block_index : -1
     end
 
     # The interactive item on a line. With one item per line there is no span
@@ -831,6 +839,126 @@ module Tawb
       draw_list(output, state)
       write_status_row(output, state, state.status_msg) unless state.status_msg.empty?
       park_cursor(output, state, page_url)
+    end
+
+    # ------------------------------------------------------------------
+    # Repainting after something the reader did
+    # ------------------------------------------------------------------
+
+    # The rows currently on screen, which is all a splice can have changed:
+    # it kept the line count, so nothing scrolled. Rendering the whole buffer
+    # for the comparison would cost more than the patch it is there to make
+    # cheap. Sparse and indexed by line number, and only as wide as the
+    # viewport — the buffer behind it can be 17,000 lines.
+    def self.visible_rows_now(state : State) : Array(JSON::Any)
+      height = viewport_height(state)
+      rows = Array(JSON::Any).new(state.scroll + height, JSON::Any.new(nil))
+      (0...height).each do |i|
+        line_index = state.scroll + i
+        rows[line_index] = JSON::Any.new(
+          line_index < state.lines.size ? render_row(state, line_index) : "")
+      end
+      rows
+    end
+
+    # What is on screen now, so it can be compared with what is on screen
+    # after.
+    def self.screen_before(state : State) : JSON::Any
+      JSON::Any.new({
+        "rows"   => JSON::Any.new(visible_rows_now(state)),
+        "scroll" => JSON::Any.new(state.scroll.to_i64),
+        "height" => JSON::Any.new(viewport_height(state).to_i64),
+      })
+    end
+
+    # The list area is redrawn the way a live update redraws it: only the
+    # rows whose text actually changed. A repainted row is re-read by a
+    # screen reader and re-flashed by a braille display whether or not it
+    # says anything new, which is why live updates have always been careful
+    # about it — and pressing Enter was not.
+    def self.patch_visible_rows(output : Screen::Output, state : State,
+                                page_url : String, previous : Array(JSON::Any)) : Int32
+      height = viewport_height(state)
+      repainted = 0
+      (0...height).each do |i|
+        line_index = state.scroll + i
+        now = line_index < state.lines.size ? render_row(state, line_index) : ""
+        # Past the end of the list both sides are empty; comparing against
+        # nil here would repaint every blank row on every tick.
+        before_value = previous[line_index]?
+        before = before_value && !before_value.nil? ? before_value.as_s? || "" : ""
+        next if now == before
+        Screen.write_line(output, HEADER_ROWS + 1 + i, now)
+        repainted += 1
+      end
+      park_cursor(output, state, page_url)
+      repainted
+    end
+
+    # Repainting after something the reader did. It falls back to a full
+    # repaint whenever a row-by-row comparison cannot mean anything: the view
+    # scrolled, so every row moved; the terminal was resized under us; or
+    # there is no record of what was on screen before. The answer is how many
+    # rows were patched, or nil for a full repaint.
+    def self.repaint_list(output : Screen::Output, state : State, page_url : String,
+                          before : JSON::Any?) : Int32?
+      draw_title(output, state)
+      draw_address(output, state, page_url)
+      draw_hint(output, state)
+
+      if object = before.try(&.as_h?)
+        scroll = object["scroll"]?.try(&.as_i64?).try(&.to_i32)
+        height = object["height"]?.try(&.as_i64?).try(&.to_i32)
+        if scroll == state.scroll && height == viewport_height(state)
+          previous = object["rows"]?.try(&.as_a?) || [] of JSON::Any
+          return patch_visible_rows(output, state, page_url, previous)
+        end
+      end
+
+      draw_list(output, state)
+      park_cursor(output, state, page_url)
+      nil
+    end
+
+    # The Lynx selection is reverse video, and a move takes it off one row
+    # and puts it on another. A composite paragraph or table row carries
+    # several blocks, so a line index is not a block identity: repaint every
+    # visible fragment of the old and new blocks, since an inline link can
+    # wrap over several composite rows.
+    def self.repaint_lynx_selection(output : Screen::Output, state : State,
+                                    old_cursor : Int32, old_col : Int32) : Nil
+      return unless lynx_active?(state)
+      old_line = state.lines[old_cursor]?
+      new_line = state.lines[state.cursor]?
+      return unless old_line && new_line
+
+      old_index = block_under_index(state, old_line, old_col)
+      new_index = block_under_index(state, new_line, state.col)
+      return if old_cursor == state.cursor && old_index == new_index
+
+      if old_line.spans || new_line.spans
+        changed = Set{old_index, new_index}
+        end_line = Math.min(state.lines.size, state.scroll + viewport_height(state))
+        (state.scroll...end_line).each do |line_index|
+          line = state.lines[line_index]
+          next unless (line.spans.try(&.any? { |span| changed.includes?(span.block_index) }))
+          Screen.write_line(output, line_row(state, line_index), render_row(state, line_index))
+        end
+        return
+      end
+
+      return if old_line.block_index == new_line.block_index
+      changed = Set(Int32).new
+      changed << old_index if old_index >= 0 && lynx_focusable?(active_blocks(state)[old_index]?)
+      changed << new_index if new_index >= 0 && lynx_focusable?(active_blocks(state)[new_index]?)
+      return if changed.empty?
+
+      end_line = Math.min(state.lines.size, state.scroll + viewport_height(state))
+      (state.scroll...end_line).each do |line_index|
+        block_index = state.lines[line_index].block_index
+        next unless block_index < active_blocks(state).size && changed.includes?(block_index)
+        Screen.write_line(output, line_row(state, line_index), render_row(state, line_index))
+      end
     end
   end
 end

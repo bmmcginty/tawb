@@ -1481,6 +1481,20 @@ module Tawb
         Reader.clamp_scroll(state)
       when "lynxHidesCursor"
         return JSON::Any.new(Reader.lynx_hides_cursor(state))
+      when "screenBefore"
+        return Reader.screen_before(state)
+      when "visibleRowsNow"
+        return JSON::Any.new(Reader.visible_rows_now(state))
+      when "patchVisibleRows"
+        previous = action["before"]?.try(&.as_a?) || [] of JSON::Any
+        return JSON::Any.new(Reader.patch_visible_rows(output, state, page_url, previous).to_i64)
+      when "repaintList"
+        return JSON::Any.new(nil) unless (repainted = Reader.repaint_list(output, state, page_url, action["before"]?))
+        return JSON::Any.new(repainted.to_i64)
+      when "repaintLynxSelection"
+        Reader.repaint_lynx_selection(output, state,
+          (action["oldCursor"]?.try(&.as_i64?) || 0).to_i32,
+          (action["oldCol"]?.try(&.as_i64?) || 0).to_i32)
       end
       nil
     end

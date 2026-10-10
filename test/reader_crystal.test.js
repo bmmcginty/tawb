@@ -13,6 +13,11 @@ const index = require('../src/index');
 const { Keymap } = require('../src/keys');
 
 const implementations = readerImplementations(index, { Keymap });
+// Every case here is a differential: without the Crystal runtime there is
+// nothing to difference, which is a skip and not a failure.
+const needsCrystal = implementations.length < 2
+  ? 'the Crystal runtime is not enabled (TAWB_TEST_CRYSTAL=1 with a built binary)'
+  : false;
 
 const LINK = { role: 'link', name: 'one', href: 'https://example.test/about' };
 const PAGE_URL = 'https://example.test/index.html';
@@ -62,7 +67,7 @@ function row(row_, text) {
   return [`\x1b[${row_};1H`, `\x1b[2K${text}`];
 }
 
-test('the title, address and hint each take their own row once', () => {
+test('the title, address and hint each take their own row once', { skip: needsCrystal }, () => {
   const { results } = both('banner rows', stateFor({ title: 'Example Domain' }), [
     { op: 'drawTitle' },
     { op: 'drawAddress' },
@@ -75,7 +80,7 @@ test('the title, address and hint each take their own row once', () => {
   ]);
 });
 
-test('an unchanged row is not rewritten, but a forced paint is', () => {
+test('an unchanged row is not rewritten, but a forced paint is', { skip: needsCrystal }, () => {
   const { results } = both('title cache', stateFor({ title: 'Example Domain' }), [
     { op: 'drawTitle' },
     { op: 'drawTitle' },
@@ -90,7 +95,7 @@ test('an unchanged row is not rewritten, but a forced paint is', () => {
   assert.deepEqual(changed.results[0].writes, row(1, 'Somewhere Else'));
 });
 
-test('a page title is escaped before it is cut to the terminal width', () => {
+test('a page title is escaped before it is cut to the terminal width', { skip: needsCrystal }, () => {
   const escaped = both('escaped title', stateFor({
     title: '中文 😀', escapeUnicode: true,
   }), [{ op: 'drawTitle' }]);
@@ -101,7 +106,7 @@ test('a page title is escaped before it is cut to the terminal width', () => {
   assert.equal(written.length, 80, 'the title row ran past the edge of the window');
 });
 
-test('a long address is truncated with a marker', () => {
+test('a long address is truncated with a marker', { skip: needsCrystal }, () => {
   const longAddress = 'https://example.test/' + 'x'.repeat(100);
   const { results } = both('address', stateFor(), [
     { op: 'drawAddress' },
@@ -111,7 +116,7 @@ test('a long address is truncated with a marker', () => {
     'the address row is exactly the terminal wide and ends with the marker');
 });
 
-test('typing in the address bar rewrites its suffix like nano', () => {
+test('typing in the address bar rewrites its suffix like nano', { skip: needsCrystal }, () => {
   // The drawn row and caret are where the last draw left them: the buffer
   // holds one more character than the row did, typed at the caret.
   const edit = both('address typing', stateFor({
@@ -135,7 +140,7 @@ test('typing in the address bar rewrites its suffix like nano', () => {
   assert.deepEqual(moved.results[0].writes, ['\x08']);
 });
 
-test('the address scrolls around the caret while it is edited', () => {
+test('the address scrolls around the caret while it is edited', { skip: needsCrystal }, () => {
   const { results } = both('address scroll', stateFor({
     mode: 'address',
     address: { text: 'x'.repeat(200), caret: 100, scroll: 0 },
@@ -154,7 +159,7 @@ test('the address scrolls around the caret while it is edited', () => {
     'an unchanged row moved only the caret');
 });
 
-test('standing on a link names where it goes on the status row', () => {
+test('standing on a link names where it goes on the status row', { skip: needsCrystal }, () => {
   const { results } = both('link status', stateFor({ cursor: 1 }), [{ op: 'drawStatus' }]);
   assert.deepEqual(results[0].writes, row(24, 'https://example.test/about'));
 
@@ -162,7 +167,7 @@ test('standing on a link names where it goes on the status row', () => {
   assert.equal(target[0].value, 'https://example.test/about');
 });
 
-test('prose, a heading and a button go nowhere', () => {
+test('prose, a heading and a button go nowhere', { skip: needsCrystal }, () => {
   for (const item of [{ role: 'text', name: 'some prose' },
     { role: 'heading', name: 'Contents', level: '2' },
     { role: 'button', name: 'Play' }]) {
@@ -178,14 +183,14 @@ test('prose, a heading and a button go nowhere', () => {
   assert.equal(valueOf('bare link', bare, [{ op: 'linkTarget' }]), null);
 });
 
-test('one of the browser\'s own lists is not the page talking', () => {
+test('one of the browser\'s own lists is not the page talking', { skip: needsCrystal }, () => {
   const state = stateFor();
   state.library = { label: 'Bookmarks', blocks: [{ item: { role: 'link', name: 'A bookmark', href: 'https://saved.test/' } }] };
   state.lines = [{ text: 'A bookmark', blockIndex: 0 }];
   assert.equal(valueOf('library link', state, [{ op: 'linkTarget' }]), null);
 });
 
-test('a row that already says it is not written again', () => {
+test('a row that already says it is not written again', { skip: needsCrystal }, () => {
   const state = stateFor({ cursor: 1 });
   state.drawn.status = 'https://example.test/about';
   const { results } = both('status cache', state, [
@@ -196,14 +201,14 @@ test('a row that already says it is not written again', () => {
   assert.deepEqual(results[1].writes, []);
 });
 
-test('a prompt owns the status row while it is up', () => {
+test('a prompt owns the status row while it is up', { skip: needsCrystal }, () => {
   const state = stateFor();
   state.mode = 'find';
   const { results } = both('prompt owns status', state, [{ op: 'drawStatus' }]);
   assert.deepEqual(results[0].writes, []);
 });
 
-test('a reader who does not want the row to speak can switch it off', () => {
+test('a reader who does not want the row to speak can switch it off', { skip: needsCrystal }, () => {
   const state = stateFor();
   state.linkAddress = false;
   state.statusMsg = 'Loaded https://example.test/index.html';
@@ -216,13 +221,13 @@ test('a reader who does not want the row to speak can switch it off', () => {
   assert.deepEqual(results[1].writes, []);
 });
 
-test('the short form is off until it is asked for', () => {
+test('the short form is off until it is asked for', { skip: needsCrystal }, () => {
   const state = stateFor({ cursor: 1 });
   state.shortLinks = true;
   assert.equal(valueOf('short links', state, [{ op: 'linkTarget' }]), '/about');
 });
 
-test('short targets are said the way a person would say them', () => {
+test('short targets are said the way a person would say them', { skip: needsCrystal }, () => {
   const cases = [
     ['https://example.test/b', HERE, '/b'],
     ['https://example.test/a/b/d?q=1', HERE, '/a/b/d?q=1'],
@@ -244,7 +249,7 @@ test('short targets are said the way a person would say them', () => {
   }
 });
 
-test('every mode is answered by its own hint', () => {
+test('every mode is answered by its own hint', { skip: needsCrystal }, () => {
   const modes = ['browse', 'address', 'type', 'field-command', 'forms', 'control',
     'page', 'find', 'number', 'choose', 'library', 'line', 'files', 'dialog', 'auth'];
   for (const mode of modes) {
@@ -267,12 +272,12 @@ test('every mode is answered by its own hint', () => {
     /arrows or Tab to move off of field/);
 });
 
-test('the webpage-keyboard hint names the key that leaves it', () => {
+test('the webpage-keyboard hint names the key that leaves it', { skip: needsCrystal }, () => {
   const state = stateFor({ mode: 'page', keys: { profile: 'default', bindings: { 'page-keyboard': ['Alt+K'] } } });
   assert.match(valueOf('page hint', state, [{ op: 'hintText' }]), /Alt\+K: stop/);
 });
 
-test('the auth hint names the origin that is asking', () => {
+test('the auth hint names the origin that is asking', { skip: needsCrystal }, () => {
   const state = stateFor({ mode: 'auth', auth: {
     challenge: { origin: 'https://example.test', realm: 'Secrets', scheme: 'Basic' },
   } });
@@ -280,7 +285,7 @@ test('the auth hint names the origin that is asking', () => {
     /Sign in to https:\/\/example\.test — "Secrets" \(Basic\)/);
 });
 
-test('a proxy challenge does not pretend to be the site', () => {
+test('a proxy challenge does not pretend to be the site', { skip: needsCrystal }, () => {
   const state = stateFor({ mode: 'auth', auth: {
     challenge: { origin: 'https://proxy.test:3128', source: 'proxy' },
   } });
@@ -288,7 +293,7 @@ test('a proxy challenge does not pretend to be the site', () => {
     /the proxy at https:\/\/proxy\.test:3128/);
 });
 
-test('the cursor parks on the reader, wherever the reader is', () => {
+test('the cursor parks on the reader, wherever the reader is', { skip: needsCrystal }, () => {
   const parked = both('park browse', stateFor({ cursor: 2, col: 3 }), [
     { op: 'parkCursor' },
   ]);
@@ -324,7 +329,7 @@ test('the cursor parks on the reader, wherever the reader is', () => {
   assert.deepEqual(line.results[0].writes, [...row(24, 'Name: tawb'), '\x1b[24;9H']);
 });
 
-test('Lynx hides its cursor at the bottom-right unless asked not to', () => {
+test('Lynx hides its cursor at the bottom-right unless asked not to', { skip: needsCrystal }, () => {
   const hidden = both('lynx hides', stateFor({
     interface: 'lynx', keys: { profile: 'lynx', preferences: {} },
   }), [{ op: 'parkCursor' }, { op: 'lynxHidesCursor' }]);
@@ -344,7 +349,7 @@ test('Lynx hides its cursor at the bottom-right unless asked not to', () => {
   assert.deepEqual(tawb.results[0].writes, ['\x1b[5;1H']);
 });
 
-test('the list repaints only its own rows, in place', () => {
+test('the list repaints only its own rows, in place', { skip: needsCrystal }, () => {
   const { results } = both('draw list', stateFor(), [{ op: 'drawList' }]);
   // The region reset, eighteen viewport rows written as a move and an
   // erase-and-write each, and the region re-armed.
@@ -358,7 +363,7 @@ test('the list repaints only its own rows, in place', () => {
   ], 'the last row is erased, not skipped, and the region is re-armed');
 });
 
-test('Lynx marks the current link with reverse video, and headings with bold', () => {
+test('Lynx marks the current link with reverse video, and headings with bold', { skip: needsCrystal }, () => {
   const state = stateFor({
     interface: 'lynx',
     keys: { profile: 'lynx', preferences: { numberLinks: true } },
@@ -383,7 +388,7 @@ test('Lynx marks the current link with reverse video, and headings with bold', (
   assert.equal(headingRows[0].value, '\x1b[1mContents\x1b[0m');
 });
 
-test('a full render clamps the scroll, repaints, and tells the core where the reader is', () => {
+test('a full render clamps the scroll, repaints, and tells the core where the reader is', { skip: needsCrystal }, () => {
   const lines = Array.from({ length: 30 }, (_, i) => ({ text: `line ${i}`, blockIndex: i }));
   const blocks = lines.map((_, i) => ({ item: { role: 'text', name: `line ${i}` } }));
   const { results, state } = both('render', stateFor({
@@ -400,7 +405,7 @@ test('a full render clamps the scroll, repaints, and tells the core where the re
     'the line the reader is on was not drawn');
 });
 
-test('clampScroll keeps the cursor inside the window and says where they are', () => {
+test('clampScroll keeps the cursor inside the window and says where they are', { skip: needsCrystal }, () => {
   const lines = Array.from({ length: 30 }, (_, i) => ({ text: `line ${i}`, blockIndex: i }));
   const blocks = lines.map((_, i) => ({ item: { role: 'text', name: `line ${i}` } }));
   const { state } = both('clamp', stateFor({
@@ -420,7 +425,7 @@ test('clampScroll keeps the cursor inside the window and says where they are', (
   assert.deepEqual(libraryState.atCalls, []);
 });
 
-test('setStatus writes the row at once and leaves the cursor on the reader', () => {
+test('setStatus writes the row at once and leaves the cursor on the reader', { skip: needsCrystal }, () => {
   const { results } = both('set status', stateFor(), [
     { op: 'setStatus', msg: 'Loading https://example.test…' },
   ]);
@@ -429,8 +434,163 @@ test('setStatus writes the row at once and leaves the cursor on the reader', () 
   ]);
 });
 
-test('the viewport is what is left after the banner and the status row', () => {
+test('the viewport is what is left after the banner and the status row', { skip: needsCrystal }, () => {
   assert.equal(valueOf('viewport', stateFor({ rows: 30, cols: 100 }), [
     { op: 'viewportHeight' },
   ]), 24);
+});
+
+// ---------------------------------------------------------------------------
+// Row-level damage: repaint only what changed, in place.
+// ---------------------------------------------------------------------------
+
+function pageRows(count) {
+  return Array.from({ length: count }, (_, i) => ({ text: `line ${i}`, blockIndex: i }));
+}
+
+test('visibleRowsNow is sparse and only as wide as the viewport', { skip: needsCrystal }, () => {
+  const { results } = both('visible rows', stateFor({
+    lines: pageRows(30), scroll: 2,
+  }), [{ op: 'visibleRowsNow' }, { op: 'screenBefore' }]);
+  const rows = results[0].value;
+  assert.equal(rows.length, 2 + 18, 'the answer is not wider than scroll plus viewport');
+  assert.equal(rows[0], null, 'the rows above the window are holes');
+  assert.equal(rows[1], null);
+  assert.equal(rows[2], 'line 2');
+  assert.equal(rows.at(-1), 'line 19');
+  assert.deepEqual(results[1].value, {
+    rows, scroll: 2, height: 18,
+  });
+});
+
+test('a repaint after a change rewrites only the rows that changed', { skip: needsCrystal }, () => {
+  const lines = pageRows(30).map((line, i) => (
+    i === 4 ? { text: 'line 4, changed', blockIndex: i } : line
+  ));
+  const before = both('screen before', stateFor({
+    lines: pageRows(30), cursor: 4,
+  }), [{ op: 'screenBefore' }]).results[0].value;
+
+  const { results } = both('patch rows', stateFor({
+    lines, cursor: 4,
+    drawn: { title: 'Example Domain', address: '[AX] https://example.test/index.html', hint: HINT.slice(0, 80) },
+    title: 'Example Domain',
+  }), [{ op: 'repaintList', before }]);
+  assert.equal(results[0].value, 1, 'one row changed, so one row was rewritten');
+  assert.deepEqual(results[0].writes, [...row(9, 'line 4, changed'), '\x1b[9;1H'],
+    'the changed row was rewritten in place and the cursor parked on the reader');
+});
+
+test('a repaint with nothing changed writes nothing but the cursor', { skip: needsCrystal }, () => {
+  const before = both('before unchanged', stateFor({ lines: pageRows(6) }), [
+    { op: 'screenBefore' },
+  ]).results[0].value;
+  const { results } = both('patch nothing', stateFor({
+    lines: pageRows(6),
+    drawn: { title: 'Example Domain', address: '[AX] https://example.test/index.html', hint: HINT.slice(0, 80) },
+    title: 'Example Domain',
+  }), [{ op: 'repaintList', before }]);
+  assert.equal(results[0].value, 0);
+  assert.deepEqual(results[0].writes, ['\x1b[5;1H']);
+});
+
+test('a scrolled view cannot be patched row by row, so it is redrawn', { skip: needsCrystal }, () => {
+  const before = both('before scrolled', stateFor({
+    lines: pageRows(30), cursor: 2,
+  }), [{ op: 'screenBefore' }]).results[0].value;
+  const { results } = both('repaint scrolled', stateFor({
+    lines: pageRows(30), cursor: 10, scroll: 10,
+    drawn: { title: 'Example Domain', address: '[AX] https://example.test/index.html', hint: HINT.slice(0, 80) },
+    title: 'Example Domain',
+  }), [{ op: 'repaintList', before }]);
+  assert.equal(results[0].value, null, 'a scrolled repaint is a full repaint');
+  assert.equal(results[0].writes[0], '\x1b[r', 'the full repaint re-arms its scroll region');
+  assert.equal(results[0].writes.filter((write) => write.startsWith('\x1b[')).length > 20,
+    true, 'every viewport row was written');
+});
+
+test('a repaint with no record of the screen falls back to a full repaint', { skip: needsCrystal }, () => {
+  const { results } = both('repaint blind', stateFor({
+    lines: pageRows(6),
+    drawn: { title: 'Example Domain', address: '[AX] https://example.test/index.html', hint: HINT.slice(0, 80) },
+    title: 'Example Domain',
+  }), [{ op: 'repaintList', before: null }]);
+  assert.equal(results[0].value, null);
+  assert.equal(results[0].writes[0], '\x1b[r');
+});
+
+test('a resized terminal cannot be patched row by row either', { skip: needsCrystal }, () => {
+  const before = both('before resized', stateFor({
+    lines: pageRows(30), rows: 24, cols: 80,
+  }), [{ op: 'screenBefore' }]).results[0].value;
+  const { results } = both('repaint resized', stateFor({
+    lines: pageRows(30), rows: 30, cols: 100,
+    drawn: { title: 'Example Domain', address: '[AX] https://example.test/index.html', hint: HINT.slice(0, 80) },
+    title: 'Example Domain',
+  }), [{ op: 'repaintList', before }]);
+  assert.equal(results[0].value, null, 'a different height is a full repaint');
+});
+
+test('the Lynx selection repaints the rows it leaves and lands on', { skip: needsCrystal }, () => {
+  const base = {
+    interface: 'lynx',
+    keys: { profile: 'lynx', preferences: {} },
+    lines: [
+      { text: 'one', blockIndex: 0 },
+      { text: 'two', blockIndex: 1 },
+      { text: 'prose', blockIndex: 2 },
+    ],
+    core: { source: 'ax', blocks: [
+      { item: { role: 'link', name: 'one', href: 'https://example.test/1' } },
+      { item: { role: 'link', name: 'two', href: 'https://example.test/2' } },
+      { item: { role: 'text', name: 'prose' } },
+    ] },
+  };
+
+  const moved = both('lynx selection', stateFor({ ...base, cursor: 1 }), [
+    { op: 'repaintLynxSelection', oldCursor: 0 },
+  ]);
+  assert.deepEqual(moved.results[0].writes, [
+    ...row(5, 'one'), ...row(6, '\x1b[7mtwo\x1b[0m'),
+  ], 'the row left was unmarked and the row landed on was marked');
+
+  const unmoved = both('lynx selection unmoved', stateFor({ ...base, cursor: 0 }), [
+    { op: 'repaintLynxSelection', oldCursor: 0 },
+  ]);
+  assert.deepEqual(unmoved.results[0].writes, [], 'no move, no repaint');
+});
+
+test('a composite row repaints every fragment of the blocks it touches', { skip: needsCrystal }, () => {
+  const state = stateFor({
+    interface: 'lynx',
+    keys: { profile: 'lynx', preferences: {} },
+    cursor: 0, col: 8,
+    lines: [
+      { text: 'Before one after', blockIndex: 0, spans: [
+        { start: 0, end: 6, blockIndex: 0 },
+        { start: 7, end: 10, blockIndex: 1 },
+        { start: 11, end: 16, blockIndex: 2 },
+      ] },
+      { text: 'Second two', blockIndex: 3, spans: [
+        { start: 0, end: 6, blockIndex: 3 },
+        { start: 7, end: 10, blockIndex: 1 },
+      ] },
+    ],
+    core: { source: 'ax', blocks: [
+      { item: { role: 'text', name: 'Before' } },
+      { item: { role: 'link', name: 'one', href: 'https://example.test/1' } },
+      { item: { role: 'text', name: 'after' } },
+      { item: { role: 'text', name: 'Second' } },
+    ] },
+  });
+  const { results } = both('lynx composite', state, [
+    { op: 'repaintLynxSelection', oldCursor: 1, oldCol: 8 },
+  ]);
+  // The cursor was on the link inside line 1 and moved to the link inside
+  // line 0; both lines carry a fragment of block 1, so both are repainted,
+  // each with its own fragment marked.
+  assert.deepEqual(results[0].writes, [
+    ...row(5, 'Before \x1b[7mone\x1b[0m after'),
+    ...row(6, 'Second \x1b[7mtwo\x1b[0m'),
+  ]);
 });

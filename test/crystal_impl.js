@@ -1264,10 +1264,24 @@ function readerImplementations(index, keysModule) {
               index.clampScroll(state); break;
             case 'lynxHidesCursor':
               value = index.lynxHidesCursor(state); break;
+            case 'screenBefore':
+              value = index.screenBefore(state); break;
+            case 'visibleRowsNow':
+              value = index.visibleRowsNow(state); break;
+            case 'patchVisibleRows':
+              value = index.patchVisibleRows(state, action.before ?? []); break;
+            case 'repaintList':
+              value = index.repaintList(state, page, action.before ?? null); break;
+            case 'repaintLynxSelection':
+              index.repaintLynxSelection(state, action.oldCursor ?? 0, action.oldCol ?? 0); break;
             default:
               throw new Error(`unknown reader action ${action.op}`);
           }
-          if (value !== undefined) entry.value = value;
+          if (value !== undefined) {
+            // Sparse arrays come back with nulls where the JavaScript
+            // original has holes, which is the same answer over the wire.
+            entry.value = JSON.parse(JSON.stringify(value));
+          }
           entry.writes = current;
           results.push(entry);
         }
