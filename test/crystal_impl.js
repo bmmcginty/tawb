@@ -27,7 +27,7 @@ function call(operation, payload) {
   return response.value;
 }
 
-function callAsync(operation, payload, { env = {} } = {}) {
+function callAsync(operation, payload, { env = {}, timeoutMs = 10000 } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, ['--conformance', operation], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -38,7 +38,7 @@ function callAsync(operation, payload, { env = {} } = {}) {
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       reject(new Error(`Crystal conformance call ${operation} timed out`));
-    }, 10000);
+    }, timeoutMs);
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => { stdout += chunk; });
@@ -1052,6 +1052,63 @@ function screenImplementations() {
   return implementations;
 }
 
+// The live observer against a real Firefox, on both runtimes. Each side
+// launches its own browser and runs the same scenario: arm before the
+// document exists, read the parse, mutate the page, and pulse across a
+// navigation. Only a browser can say whether the preload script really
+// arrives at document-start.
+function liveRealImplementations(liveModule, driverModule) {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const implementations = [{
+    name: 'JavaScript',
+    async runScenario({ profile, url, url2, mutation, timeoutMs = 45000 }) {
+      const driver = await driverModule.openDriver({
+        engine: 'firefox', profile, browserTimeoutMs: timeoutMs, log: () => {},
+      });
+      try {
+        const page = driver.context.pages()[0] || await driver.context.newPage();
+        const install = await liveModule.installLive(page);
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(
+          () => (window[Symbol.for('tweb.queue')] || []).length > 0, null, { timeout: 8000 },
+        ).catch(() => {});
+        const parseBatches = await liveModule.collect(page);
+        // A real function: the driver compiles bare strings as expressions.
+        // The Crystal side takes the same function's source text.
+        await page.evaluate(mutation);
+        await sleep(800);
+        const mutationBatches = await liveModule.collect(page);
+        const live = liveModule.createLiveState();
+        const first = await liveModule.pulse(page, live);
+        await sleep(1100);
+        await page.goto(url2, { waitUntil: 'domcontentloaded' });
+        const second = await liveModule.pulse(page, live);
+        return {
+          install,
+          parseBatches,
+          mutationBatches,
+          pulses: [first, second].map((pulse) => pulse && ({
+            changed: pulse.changed, navigated: pulse.navigated, rearmed: pulse.rearmed,
+          })),
+        };
+      } finally {
+        await driver.close().catch(() => {});
+      }
+    },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    async runScenario(args) {
+      return callAsync('live.real_scenario', {
+        ...args,
+        mutation: String(args.mutation),
+      }, { timeoutMs: 120000 });
+    },
+  });
+  return implementations;
+}
+
 function keyWizardImplementations(keysModule, keyWizard, inputModule) {
   const implementations = [{
     name: 'JavaScript',
@@ -1849,7 +1906,7 @@ module.exports = {
   firefoxAutomationImplementations, firefoxHandleImplementations, firefoxLaunchImplementations,
   firefoxPageImplementations,
   inputImplementations, interfaceImplementations, keyWizardImplementations, keymapImplementations, layoutImplementations,
-  liveImplementations, lynxActionsImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
+  liveImplementations, liveRealImplementations, lynxActionsImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, lynxOptionsImplementations, lynxPagesImplementations, lynxStateImplementations, marionetteImplementations, optionImplementations,
   placeImplementations, readerCommands, screenImplementations, sessionImplementations, unicodeImplementations,
 };

@@ -611,6 +611,8 @@ module Tawb
         lynx_state_preferences(payload)
       when "screen.patch_edited_line"
         screen_patch_edited_line(payload)
+      when "live.real_scenario"
+        live_real_scenario(payload)
       when "key_wizard.rows"
         key_wizard_rows(payload)
       when "key_wizard.run"
@@ -1297,6 +1299,61 @@ module Tawb
         "changed" => JSON::Any.new(changed),
         "writes"  => JSON::Any.new(output.writes),
       })
+    end
+
+    # The live observer against a real Firefox: launch one, arm it, read a
+    # page that mutates, and answer everything the watcher saw. The scripted
+    # conformance endpoints cannot say whether the preload script really
+    # arrives before the document does; only a browser can.
+    private def self.live_real_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      profile = object["profile"].as_s
+      url = object["url"].as_s
+      url2 = object["url2"].as_s
+      mutation = object["mutation"].as_s
+      timeout = object["timeoutMs"]?.try(&.as_i64?) || 45_000
+      started = FirefoxLaunch.launch(profile, timeout)
+      session = FirefoxDriver::BrowserSession.new(started.endpoint)
+      begin
+        session.start
+        page = session.create_page
+        watcher = Live::Watcher.new
+        install = watcher.install(page)
+        page.goto(url, "domcontentloaded")
+        sleep 1.5
+        parse_batches = watcher.collect(page)
+        page.evaluate(mutation)
+        sleep 0.8
+        mutation_batches = watcher.collect(page)
+        live = Live.create_state
+        first = watcher.pulse(page, live)
+        sleep 1.1
+        page.goto(url2, "domcontentloaded")
+        second = watcher.pulse(page, live)
+        JSON::Any.new({
+          "install" => JSON::Any.new({
+            "boundNow" => JSON::Any.new(install.bound_now),
+            "armed"     => JSON::Any.new(install.armed.to_i64),
+            "frames"    => JSON::Any.new(install.frames.to_i64),
+          }),
+          "parseBatches"    => JSON::Any.new(parse_batches),
+          "mutationBatches" => JSON::Any.new(mutation_batches),
+          "pulses"          => JSON::Any.new([first, second].map do |pulse|
+            if pulse
+              JSON::Any.new({
+                "changed"   => JSON::Any.new(pulse.changed),
+                "navigated" => JSON::Any.new(pulse.navigated),
+                "rearmed"   => JSON::Any.new(pulse.rearmed),
+              })
+            else
+              JSON::Any.new(nil)
+            end
+          end),
+        })
+      ensure
+        session.close
+        started.close
+      end
     end
 
     private def self.key_wizard_rows(payload : JSON::Any) : JSON::Any
