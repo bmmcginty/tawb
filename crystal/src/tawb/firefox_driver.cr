@@ -355,6 +355,11 @@ module Tawb
         })
       end
 
+      # Typing and key presses through the browser's own input pipeline.
+      def keyboard : Keyboard
+        Keyboard.new(@protocol, @context_id)
+      end
+
       def automation_state : Hash(String, JSON::Any)?
         result = @protocol.command("script.callFunction", {
           "functionDeclaration" => JSON::Any.new(

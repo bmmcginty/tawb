@@ -855,7 +855,7 @@ function firefoxPageImplementations({ bidi, FirefoxPage, FirefoxFrame, extractAx
 // elements held across calls. The scripted endpoint records every message,
 // so the assertions cover both the answers and the exact wire traffic —
 // which is the contract, since a real Firefox parses the same bytes.
-function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage,
+function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard,
   clickThrough, prepareRealClick, submitsAutofilled }) {
   const handleScenario = async (url, script) => {
     const session = await bidi.connect(url);
@@ -864,6 +864,7 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage,
     let current = null;
     let handle = null;
     let acting = null;
+    let keyboard = null;
     let refs = [];
     const reference = (held) => ({ id: held.contextId, url: held.url() });
     try {
@@ -875,6 +876,7 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage,
             frame._url = step.url;
             current = frame;
             acting = new FirefoxPage(session, step.context, {});
+            keyboard = new FirefoxKeyboard(session, { contextId: step.context });
             observations.push(null);
             break;
           case 'url':
@@ -960,6 +962,22 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage,
             observations.push({ ok: true });
             break;
           }
+          case 'key_type':
+            await keyboard.type(step.text);
+            observations.push(null);
+            break;
+          case 'key_press':
+            await keyboard.press(step.key);
+            observations.push(null);
+            break;
+          case 'key_error':
+            try {
+              await keyboard.press(step.key);
+              observations.push(null);
+            } catch (error) {
+              observations.push(error.message);
+            }
+            break;
           default:
             throw new Error(`unknown handle scenario op ${step.op}`);
         }

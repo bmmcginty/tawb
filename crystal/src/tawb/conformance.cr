@@ -16,6 +16,7 @@ require "./firefox_driver"
 require "./firefox_launch"
 require "./input"
 require "./interfaces"
+require "./keyboard"
 require "./keys"
 require "./layout"
 require "./lynx_config"
@@ -1000,6 +1001,7 @@ module Tawb
       frame = nil.as(FirefoxDriver::Frame?)
       current = nil.as(FirefoxDriver::Frame?)
       handle = nil.as(FirefoxDriver::Handle?)
+      keyboard = nil.as(FirefoxDriver::Keyboard?)
       refs = [] of FirefoxDriver::FrameRef
       begin
         session.command("session.new", {
@@ -1013,6 +1015,7 @@ module Tawb
           when "frame"
             frame = FirefoxDriver::Frame.new(session, step["context"].as_s, nil, step["url"].as_s)
             current = frame
+            keyboard = FirefoxDriver::Keyboard.new(session, step["context"].as_s)
             observations.push JSON::Any.new(nil)
           when "url"
             observations.push JSON::Any.new(current.not_nil!.url)
@@ -1074,6 +1077,19 @@ module Tawb
           when "hover"
             observations.push(Actions.hover(
               session, current.not_nil!.context_id, handle.not_nil!))
+          when "key_type"
+            keyboard.not_nil!.type(step["text"].as_s)
+            observations.push JSON::Any.new(nil)
+          when "key_press"
+            keyboard.not_nil!.press(step["key"].as_s)
+            observations.push JSON::Any.new(nil)
+          when "key_error"
+            begin
+              keyboard.not_nil!.press(step["key"].as_s)
+              observations.push JSON::Any.new(nil)
+            rescue error
+              observations.push JSON::Any.new(error.message || "error")
+            end
           else
             raise ArgumentError.new("unknown handle scenario op #{step["op"]}")
           end

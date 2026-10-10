@@ -10,7 +10,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 const bidi = require('../src/bidi');
-const { FirefoxPage, FirefoxFrame } = require('../src/driver_firefox');
+const { FirefoxPage, FirefoxFrame, FirefoxKeyboard } = require('../src/driver_firefox');
 const { clickThrough, prepareRealClick, submitsAutofilled } = require('../src/click');
 const { acceptWebSocket } = require('../src/broker');
 const { firefoxHandleImplementations } = require('./crystal_impl');
@@ -69,12 +69,18 @@ const SCRIPT = [
   { op: 'submits_autofilled' },
   { op: 'real_click' },
   { op: 'hover' },
+  { op: 'key_type', text: 'hi' },
+  { op: 'key_press', key: 'Control+a' },
+  { op: 'key_press', key: 'ArrowRight' },
+  { op: 'key_type', text: '\uD83D\uDE00' },
+  { op: 'key_error', key: 'F12' },
 ];
 
 const runs = {};
 
 for (const implementation of firefoxHandleImplementations({
-  bidi, FirefoxFrame, FirefoxPage, clickThrough, prepareRealClick, submitsAutofilled,
+  bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard,
+  clickThrough, prepareRealClick, submitsAutofilled,
 })) {
   test(`${implementation.name}: the handle layer answers and speaks the wire`, async () => {
     const received = [];
@@ -221,12 +227,18 @@ for (const implementation of firefoxHandleImplementations({
       false,
       { ok: true },
       { ok: true },
+      null,
+      null,
+      null,
+      null,
+      'the Firefox driver has no key named "F12"',
     ]);
 
     // The acting half on the wire. The click is named by shared reference —
     // the browser computes the element's own centre point — and the pointer
     // it pressed is released before anything else inherits it.
-    const performed = received.filter((message) => message.method === 'input.performActions');
+    const performed = received.filter((message) => message.method === 'input.performActions'
+      && message.params.actions[0].type === 'pointer');
     assert.equal(performed.length, 2, 'one performActions for the click, one for the hover');
     assert.deepEqual(performed[0].params, {
       context: 'ctx-top',
@@ -260,11 +272,36 @@ for (const implementation of firefoxHandleImplementations({
     });
     assert.equal(received.filter((message) => message.method === 'input.releaseActions').length, 1,
       'a hover releases nothing: the pointer stays on the element');
+
+    // The keyboard: real key events, one keystroke per code point, the
+    // modifier held down across the key it qualifies and released in
+    // reverse. An unknown key name is refused, not guessed.
+    const keyPerforms = received.filter((message) => message.method === 'input.performActions'
+      && message.params.actions[0].type === 'key');
+    assert.equal(keyPerforms.length, 4);
+    assert.deepEqual(keyPerforms[0].params, {
+      context: 'ctx-top',
+      actions: [{ type: 'key', id: 'tweb-keyboard', actions: [
+        { type: 'keyDown', value: 'h' }, { type: 'keyUp', value: 'h' },
+        { type: 'keyDown', value: 'i' }, { type: 'keyUp', value: 'i' },
+      ] }],
+    });
+    assert.deepEqual(keyPerforms[1].params.actions[0].actions, [
+      { type: 'keyDown', value: '\uE009' }, { type: 'keyDown', value: 'a' },
+      { type: 'keyUp', value: 'a' }, { type: 'keyUp', value: '\uE009' },
+    ]);
+    assert.deepEqual(keyPerforms[2].params.actions[0].actions, [
+      { type: 'keyDown', value: '\uE014' }, { type: 'keyUp', value: '\uE014' },
+    ]);
+    assert.deepEqual(keyPerforms[3].params.actions[0].actions, [
+      { type: 'keyDown', value: '\uD83D\uDE00' }, { type: 'keyUp', value: '\uD83D\uDE00' },
+    ], 'a character outside the basic plane is one keystroke');
   });
 }
 
 if (firefoxHandleImplementations({
-  bidi, FirefoxFrame, FirefoxPage, clickThrough, prepareRealClick, submitsAutofilled,
+  bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard,
+  clickThrough, prepareRealClick, submitsAutofilled,
 }).length > 1) {
   test('both runtimes put the same bytes on the wire', async () => {
     assert.deepEqual(runs.Crystal.received, runs.JavaScript.received);
