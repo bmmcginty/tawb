@@ -444,6 +444,86 @@ class FirefoxPage {
     }
   }
 
+  // A click the browser treats as a person's.
+  //
+  // Everything else here activates through the DOM's own default action,
+  // which is right for reading: it needs no viewport and reaches controls
+  // that are off-screen. What it cannot produce is user activation — the
+  // browser knows perfectly well that nobody touched anything — so a page
+  // that gates on a real gesture (audio, fullscreen, the clipboard, a
+  // popup) refuses, and there is nothing the page side can do about it.
+  //
+  // input.performActions is the same road the keyboard already takes: the
+  // browser's own input pipeline, above content, so the events are trusted
+  // and carry activation. The target is named by shared reference rather
+  // than by coordinates we worked out, so the browser computes the
+  // element's own centre point and hits what we meant.
+  async realClick(scope, handle) {
+    if (!handle || !handle.sharedId) {
+      throw new Error('this line carries no element reference to click');
+    }
+    const context = scope && scope.contextId ? scope.contextId : this.contextId;
+    const target = { type: 'element', element: { sharedId: handle.sharedId } };
+    try {
+      await this.session.send('input.performActions', {
+        context,
+        actions: [{
+          type: 'pointer',
+          id: 'tweb-mouse',
+          parameters: { pointerType: 'mouse' },
+          actions: [
+            { type: 'pointerMove', x: 0, y: 0, origin: target },
+            { type: 'pointerDown', button: 0 },
+            { type: 'pointerUp', button: 0 },
+          ],
+        }],
+      });
+    } finally {
+      // A pointer left pressed belongs to nobody once this returns, and the
+      // next action would inherit it.
+      await this.session.send('input.releaseActions', { context }).catch(() => {});
+    }
+  }
+
+  // The pointer moved onto the element and left there. See core.hover.
+  //
+  // No releaseActions afterwards, unlike realClick: there is no button held
+  // down to release, and releasing the action sequence is what would undo
+  // the pointer's position. The pointer has to stay on the element for the
+  // page to keep whatever it opened open.
+  // Aimed at viewport coordinates rather than at the element, which is the
+  // opposite of realClick and deliberate. An element-origin move leaves the
+  // pointer on the element without reliably leaving the *document* hovering
+  // it: measured against a Joomla menu bar, `document.querySelectorAll(':hover')`
+  // came back empty after an element-origin move and came back with the
+  // full ancestor chain after a move to the same point in viewport
+  // coordinates. Since the point handed in is the one prepareRealClick
+  // vetted, aiming at it is also aiming at what was checked.
+  //
+  // Two moves: onto the approach point just outside the element, then onto
+  // the element. See core.hover for why the pointer has to arrive from
+  // outside rather than simply appear on the target.
+  async hover(scope, handle, at = null) {
+    if (!at) {
+      throw new Error('hovering needs the point the reachability check vetted');
+    }
+    const context = scope && scope.contextId ? scope.contextId : this.contextId;
+    const fromX = Number.isFinite(at.fromX) ? at.fromX : at.x;
+    const fromY = Number.isFinite(at.fromY) ? at.fromY : at.y - 1;
+    await this.session.send('input.performActions', {
+      context,
+      actions: [{
+        type: 'pointer',
+        id: 'tweb-mouse',
+        parameters: { pointerType: 'mouse' },
+        actions: [
+          { type: 'pointerMove', x: fromX, y: fromY, origin: 'viewport' },
+          { type: 'pointerMove', x: at.x, y: at.y, origin: 'viewport' },
+        ],
+      }],
+    });
+  }
+
   async close() {
     await this.session.send('browsingContext.close', { context: this.contextId }).catch(() => {});
   }
@@ -1276,84 +1356,16 @@ async function openFirefox({
       }, item.nativeControl);
     },
 
-    // A click the browser treats as a person's.
-    //
-    // Everything else here activates through the DOM's own default action,
-    // which is right for reading: it needs no viewport and reaches controls
-    // that are off-screen. What it cannot produce is user activation — the
-    // browser knows perfectly well that nobody touched anything — so a page
-    // that gates on a real gesture (audio, fullscreen, the clipboard, a
-    // popup) refuses, and there is nothing the page side can do about it.
-    //
-    // input.performActions is the same road the keyboard already takes: the
-    // browser's own input pipeline, above content, so the events are trusted
-    // and carry activation. The target is named by shared reference rather
-    // than by coordinates we worked out, so the browser computes the
-    // element's own centre point and hits what we meant.
+    // The trusted input the page acts on. The wire lives on the page object
+    // (realClick, hover) rather than in this closure, so a differential can
+    // hold the same conversation without building the whole reader.
+
     async realClick(scope, handle) {
-      if (!handle || !handle.sharedId) {
-        throw new Error('this line carries no element reference to click');
-      }
-      const context = scope && scope.contextId ? scope.contextId : page.contextId;
-      const target = { type: 'element', element: { sharedId: handle.sharedId } };
-      try {
-        await session.send('input.performActions', {
-          context,
-          actions: [{
-            type: 'pointer',
-            id: 'tweb-mouse',
-            parameters: { pointerType: 'mouse' },
-            actions: [
-              { type: 'pointerMove', x: 0, y: 0, origin: target },
-              { type: 'pointerDown', button: 0 },
-              { type: 'pointerUp', button: 0 },
-            ],
-          }],
-        });
-      } finally {
-        // A pointer left pressed belongs to nobody once this returns, and the
-        // next action would inherit it.
-        await session.send('input.releaseActions', { context }).catch(() => {});
-      }
+      return page.realClick(scope, handle);
     },
 
-    // The pointer moved onto the element and left there. See core.hover.
-    //
-    // No releaseActions afterwards, unlike realClick: there is no button held
-    // down to release, and releasing the action sequence is what would undo
-    // the pointer's position. The pointer has to stay on the element for the
-    // page to keep whatever it opened open.
-    // Aimed at viewport coordinates rather than at the element, which is the
-    // opposite of realClick and deliberate. An element-origin move leaves the
-    // pointer on the element without reliably leaving the *document* hovering
-    // it: measured against a Joomla menu bar, `document.querySelectorAll(':hover')`
-    // came back empty after an element-origin move and came back with the
-    // full ancestor chain after a move to the same point in viewport
-    // coordinates. Since the point handed in is the one prepareRealClick
-    // vetted, aiming at it is also aiming at what was checked.
-    //
-    // Two moves: onto the approach point just outside the element, then onto
-    // the element. See core.hover for why the pointer has to arrive from
-    // outside rather than simply appear on the target.
-    async hover(scope, handle, at = null) {
-      if (!at) {
-        throw new Error('hovering needs the point the reachability check vetted');
-      }
-      const context = scope && scope.contextId ? scope.contextId : page.contextId;
-      const fromX = Number.isFinite(at.fromX) ? at.fromX : at.x;
-      const fromY = Number.isFinite(at.fromY) ? at.fromY : at.y - 1;
-      await session.send('input.performActions', {
-        context,
-        actions: [{
-          type: 'pointer',
-          id: 'tweb-mouse',
-          parameters: { pointerType: 'mouse' },
-          actions: [
-            { type: 'pointerMove', x: fromX, y: fromY, origin: 'viewport' },
-            { type: 'pointerMove', x: at.x, y: at.y, origin: 'viewport' },
-          ],
-        }],
-      });
+    async hover(scope, handle, at) {
+      return page.hover(scope, handle, at);
     },
 
     async clickSlider(scope, handle, ratio, orientation = null) {

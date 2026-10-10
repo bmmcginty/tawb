@@ -855,13 +855,15 @@ function firefoxPageImplementations({ bidi, FirefoxPage, FirefoxFrame, extractAx
 // elements held across calls. The scripted endpoint records every message,
 // so the assertions cover both the answers and the exact wire traffic —
 // which is the contract, since a real Firefox parses the same bytes.
-function firefoxHandleImplementations({ bidi, FirefoxFrame }) {
+function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage,
+  clickThrough, prepareRealClick, submitsAutofilled }) {
   const handleScenario = async (url, script) => {
     const session = await bidi.connect(url);
     const observations = [];
     let frame = null;
     let current = null;
     let handle = null;
+    let acting = null;
     let refs = [];
     const reference = (held) => ({ id: held.contextId, url: held.url() });
     try {
@@ -872,6 +874,7 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame }) {
             frame = new FirefoxFrame(session, step.context, {});
             frame._url = step.url;
             current = frame;
+            acting = new FirefoxPage(session, step.context, {});
             observations.push(null);
             break;
           case 'url':
@@ -926,6 +929,37 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame }) {
             current = frame;
             observations.push(null);
             break;
+          case 'activate':
+            observations.push(await handle.evaluate(clickThrough));
+            break;
+          case 'focus_control':
+            observations.push(await handle.evaluate((el) => { el.focus(); return true; }));
+            break;
+          case 'submits_autofilled':
+            observations.push(await handle.evaluate(submitsAutofilled));
+            break;
+          case 'real_click': {
+            // As core.realClickHandle, without the reader's navigation wait:
+            // the check first, then the browser's own click.
+            const ready = await handle.evaluate(prepareRealClick);
+            if (!ready || !ready.ok) {
+              observations.push(ready === undefined ? null : ready);
+              break;
+            }
+            await acting.realClick(current, handle);
+            observations.push({ ok: true });
+            break;
+          }
+          case 'hover': {
+            const ready = await handle.evaluate(prepareRealClick);
+            if (!ready || !ready.ok) {
+              observations.push(ready === undefined ? null : ready);
+              break;
+            }
+            await acting.hover(current, handle, ready);
+            observations.push({ ok: true });
+            break;
+          }
           default:
             throw new Error(`unknown handle scenario op ${step.op}`);
         }

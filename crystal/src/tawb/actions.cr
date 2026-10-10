@@ -1,0 +1,147 @@
+require "json"
+require "./bidi"
+require "./firefox_driver"
+
+module Tawb
+  # The page-acting half (src/core.js's activateHandle, realClickHandle and
+  # hover over src/click.js). Activation here goes through the element's own
+  # default action, aimed the way a mouse would be; a real click and a hover
+  # go through the browser's own input pipeline as trusted pointer actions,
+  # named by shared reference so the browser computes the element's own
+  # centre point and hits what we meant. The reachability check each of them
+  # runs first is the page's own prepareRealClick, embedded as an asset so
+  # both runtimes put the same question in front of the page.
+  module Actions
+    # The asset files carry a generated-from header for readers; the wire
+    # wants the function source alone — the same bytes the JavaScript driver
+    # puts there with Function.prototype.toString.
+    def self.asset_source(raw : String) : String
+      raw.lines[1..].join("\n")
+    end
+
+    PREPARE_REAL_CLICK = asset_source(
+      {{ read_file("#{__DIR__}/../../assets/prepare_real_click.js") }})
+    CLICK_THROUGH = asset_source(
+      {{ read_file("#{__DIR__}/../../assets/click_through.js") }})
+    SUBMITS_AUTOFILLED = asset_source(
+      {{ read_file("#{__DIR__}/../../assets/submits_autofilled.js") }})
+    FOCUS_CONTROL = "(el) => { el.focus(); return true; }"
+
+    # Activation through the element's own default action, aimed at the
+    # deepest descendant covering its first line box: a handler bound below
+    # the labelled control hears it, exactly as it would hear a mouse.
+    def self.activate(handle : FirefoxDriver::Handle) : JSON::Any
+      handle.evaluate(CLICK_THROUGH)
+    end
+
+    # Put a control under the browser's keyboard.
+    def self.focus_control(handle : FirefoxDriver::Handle) : JSON::Any
+      handle.evaluate(FOCUS_CONTROL)
+    end
+
+    # Whether pressing this would submit a form the browser filled in itself.
+    def self.submits_autofilled(handle : FirefoxDriver::Handle) : JSON::Any
+      handle.evaluate(SUBMITS_AUTOFILLED)
+    end
+
+    # A click the browser accounts a person's, at real coordinates, carrying
+    # user activation. Refuses rather than guesses when the element cannot be
+    # brought somewhere a mouse could reach it — the ready answer the check
+    # produced is what comes back, reason and all.
+    def self.real_click(session : Bidi::Session, context_id : String, handle : FirefoxDriver::Handle) : JSON::Any
+      ready = handle.evaluate(PREPARE_REAL_CLICK)
+      return ready unless ready?(ready)
+      perform_click(session, context_id, handle)
+      JSON::Any.new({"ok" => JSON::Any.new(true)})
+    end
+
+    # The pointer moved onto the element and left there. No releaseActions
+    # afterwards: there is no button held down to release, and releasing the
+    # action sequence is what would undo the pointer's position.
+    def self.hover(session : Bidi::Session, context_id : String, handle : FirefoxDriver::Handle) : JSON::Any
+      ready = handle.evaluate(PREPARE_REAL_CLICK)
+      return ready unless ready?(ready)
+      point = pointer_point(ready.as_h)
+      session.command("input.performActions", perform_actions_params(
+        context_id,
+        [
+          pointer_move(point[:from_x], point[:from_y], JSON::Any.new("viewport")),
+          pointer_move(point[:x], point[:y], JSON::Any.new("viewport")),
+        ]))
+      JSON::Any.new({"ok" => JSON::Any.new(true)})
+    end
+
+    private def self.ready?(ready : JSON::Any) : Bool
+      ready.as_h?.try(&.["ok"]?.try(&.as_bool?)) || false
+    end
+
+    private def self.perform_click(session : Bidi::Session, context_id : String, handle : FirefoxDriver::Handle) : Nil
+      shared = handle.shared_id
+      raise IO::Error.new("this line carries no element reference to click") unless shared
+      target = JSON::Any.new({
+        "type"    => JSON::Any.new("element"),
+        "element" => JSON::Any.new({"sharedId" => JSON::Any.new(shared)}),
+      })
+      begin
+        session.command("input.performActions", perform_actions_params(
+          context_id,
+          [
+            pointer_move(JSON::Any.new(0), JSON::Any.new(0), target),
+            JSON::Any.new({"type" => JSON::Any.new("pointerDown"), "button" => JSON::Any.new(0)}),
+            JSON::Any.new({"type" => JSON::Any.new("pointerUp"), "button" => JSON::Any.new(0)}),
+          ]))
+      ensure
+        # A pointer left pressed belongs to nobody once this returns, and the
+        # next action would inherit it.
+        session.command("input.releaseActions",
+          {"context" => JSON::Any.new(context_id)}) rescue nil
+      end
+    end
+
+    private def self.perform_actions_params(context_id : String, actions : Array(JSON::Any)) : Hash(String, JSON::Any)
+      {
+        "context" => JSON::Any.new(context_id),
+        "actions" => JSON::Any.new([JSON::Any.new({
+          "type"       => JSON::Any.new("pointer"),
+          "id"         => JSON::Any.new("tweb-mouse"),
+          "parameters" => JSON::Any.new({"pointerType" => JSON::Any.new("mouse")}),
+          "actions"    => JSON::Any.new(actions),
+        })]),
+      }
+    end
+
+    private def self.pointer_move(x : JSON::Any, y : JSON::Any, origin : JSON::Any) : JSON::Any
+      JSON::Any.new({
+        "type"   => JSON::Any.new("pointerMove"),
+        "x"      => x,
+        "y"      => y,
+        "origin" => origin,
+      })
+    end
+
+    # The point the reachability check vetted, not a point computed again
+    # afterwards: what was established is that *this* point lands on the
+    # element. prepareRealClick answers numbers for all four when it says ok;
+    # the fallbacks mirror the driver's, in case a page answered an ok
+    # without them.
+    private def self.pointer_point(ready : Hash(String, JSON::Any)) : NamedTuple(x: JSON::Any, y: JSON::Any, from_x: JSON::Any, from_y: JSON::Any)
+      x = number_at(ready, "x") || JSON::Any.new(0)
+      y = number_at(ready, "y") || JSON::Any.new(0)
+      from_x = number_at(ready, "fromX") || x
+      from_y = number_at(ready, "fromY") || begin
+        case raw = y.raw
+        when Int64   then JSON::Any.new(raw - 1)
+        when Float64 then JSON::Any.new(raw - 1.0)
+        else              JSON::Any.new(-1)
+        end
+      end
+      {x: x, y: y, from_x: from_x, from_y: from_y}
+    end
+
+    private def self.number_at(object : Hash(String, JSON::Any), key : String) : JSON::Any?
+      value = object[key]?
+      return nil unless value
+      value.raw.is_a?(Number) ? value : nil
+    end
+  end
+end

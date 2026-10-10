@@ -1,4 +1,5 @@
 require "json"
+require "./actions"
 require "./address"
 require "./aria"
 require "./blocks"
@@ -357,6 +358,8 @@ module Tawb
         firefox_handle_scenario(payload)
       when "firefox.fields_scenario"
         firefox_fields_scenario(payload)
+      when "firefox.actions_scenario"
+        firefox_actions_scenario(payload)
       when "firefox.verified_session"
         firefox_verified_session(payload)
       when "firefox.dump_scenario"
@@ -1059,6 +1062,18 @@ module Tawb
           when "use_main"
             current = frame
             observations.push JSON::Any.new(nil)
+          when "activate"
+            observations.push(Actions.activate(handle.not_nil!))
+          when "focus_control"
+            observations.push(Actions.focus_control(handle.not_nil!))
+          when "submits_autofilled"
+            observations.push(Actions.submits_autofilled(handle.not_nil!))
+          when "real_click"
+            observations.push(Actions.real_click(
+              session, current.not_nil!.context_id, handle.not_nil!))
+          when "hover"
+            observations.push(Actions.hover(
+              session, current.not_nil!.context_id, handle.not_nil!))
           else
             raise ArgumentError.new("unknown handle scenario op #{step["op"]}")
           end
@@ -1110,6 +1125,60 @@ module Tawb
         browser.close
       end
       JSON::Any.new(observations)
+    end
+
+    # Acting on a page from a real browser: activation through the element's
+    # own default action, a click the browser accounts a person's, a hover
+    # that arrives from outside the element, a control put under the
+    # keyboard. The native runtime joins a kept browser, opens its own copy
+    # of the fixture, and performs each requested action against the element
+    # it names; the page's reactions are read with the probe the caller
+    # supplies, so the JavaScript oracle drives the same fixture with its own
+    # acting half and the two must not disagree about what happened.
+    private def self.firefox_actions_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      browser = FirefoxDriver::BrowserSession.new(object["url"].as_s)
+      answers = [] of JSON::Any
+      begin
+        browser.start
+        page = browser.create_page
+        page.navigate(object["page"].as_s, "complete")
+        frame = FirefoxDriver::Frame.new(browser.protocol, page.context_id, page)
+        object["targets"].as_a.each do |target_value|
+          target = target_value.as_h
+          held = frame.evaluate_handle(
+            "(a) => document.querySelectorAll(a.selector)[a.index]",
+            JSON::Any.new({
+              "selector" => JSON::Any.new(target["selector"].as_s),
+              "index"    => JSON::Any.new(target["index"].as_i.to_i64),
+            }))
+          begin
+            case target["action"].as_s
+            when "activate"
+              answers.push(Actions.activate(held))
+            when "focus_control"
+              answers.push(Actions.focus_control(held))
+            when "submits_autofilled"
+              answers.push(Actions.submits_autofilled(held))
+            when "real_click"
+              answers.push(Actions.real_click(frame.session, frame.context_id, held))
+            when "hover"
+              answers.push(Actions.hover(frame.session, frame.context_id, held))
+            else
+              raise ArgumentError.new("unknown action #{target["action"].as_s}")
+            end
+          ensure
+            held.dispose
+          end
+        end
+        reactions = frame.evaluate(object["probe"].as_s)
+        JSON::Any.new({
+          "actions"   => JSON::Any.new(answers),
+          "reactions" => reactions,
+        })
+      ensure
+        browser.close
+      end
     end
 
     private def self.bidi_session_scenario(payload : JSON::Any) : JSON::Any
