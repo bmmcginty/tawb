@@ -1109,6 +1109,205 @@ function liveRealImplementations(liveModule, driverModule) {
   return implementations;
 }
 
+// The terminal drawing of the reader, differenced between the JavaScript
+// original and the Crystal port: a state, a page address, and the actions to
+// run in order against the same live state. What each action wrote to the
+// terminal — and what it refused to rewrite — is the behaviour under test.
+function readerImplementations(index, keysModule) {
+  const buildKeys = (spec) => new keysModule.Keymap({
+    terminfo: spec.terminfo ?? null,
+    profile: spec.profile ?? 'default',
+    file: spec.file ?? undefined,
+    load: spec.load ?? true,
+    bindings: spec.bindings ?? {},
+    unsupported: spec.unsupported ?? [],
+    preferences: spec.preferences ?? {},
+  });
+
+  const buildJsState = (spec, atCalls) => {
+    const state = {
+      rows: spec.rows ?? 24, cols: spec.cols ?? 80,
+      interface: spec.interface ?? 'tawb', mode: spec.mode ?? 'browse',
+      title: spec.title ?? '', escapeUnicode: !!spec.escapeUnicode,
+      shortLinks: !!spec.shortLinks, linkAddress: spec.linkAddress !== false,
+      statusMsg: spec.statusMsg ?? '',
+      cursor: spec.cursor ?? 0, col: spec.col ?? 0, scroll: spec.scroll ?? 0,
+      lines: (spec.lines ?? []).map((line) => ({
+        text: line.text ?? '', blockIndex: line.blockIndex ?? 0,
+        spans: line.spans ? line.spans.map((span) => ({
+          start: span.start, end: span.end, blockIndex: span.blockIndex,
+          displayNumber: span.displayNumber,
+        })) : undefined,
+        continuation: !!line.continuation,
+        displayIndent: line.displayIndent ?? 0,
+        displayPrefix: line.displayPrefix ?? '',
+        displaySuffix: line.displaySuffix ?? '',
+      })),
+      drawn: {
+        title: spec.drawn?.title ?? null,
+        address: spec.drawn?.address ?? null,
+        addressCaretCol: spec.drawn?.addressCaretCol ?? null,
+        hint: spec.drawn?.hint ?? null,
+        status: spec.drawn?.status ?? null,
+      },
+      core: {
+        source: spec.core?.source ?? 'ax',
+        blocks: spec.core?.blocks ?? [],
+        popup: spec.core?.popup ?? null,
+        popupAt: () => (spec.core?.popupAt ?? -1),
+        at: (index) => { atCalls.push(index); },
+      },
+      keys: spec.keys ? buildKeys(spec.keys) : null,
+      typing: spec.typing ? {
+        item: spec.typing.item, text: spec.typing.text ?? '', caret: spec.typing.caret ?? 0,
+      } : null,
+      address: spec.address ? {
+        text: spec.address.text ?? '', caret: spec.address.caret ?? 0,
+        scroll: spec.address.scroll ?? 0,
+      } : null,
+      auth: spec.auth ? {
+        challenge: spec.auth.challenge, refused: !!spec.auth.refused,
+        stage: spec.auth.stage ?? 'user',
+        user: { text: spec.auth.user?.text ?? '', caret: spec.auth.user?.caret ?? 0 },
+        password: { text: spec.auth.password?.text ?? '', caret: spec.auth.password?.caret ?? 0 },
+      } : null,
+      find: spec.find ? {
+        direction: spec.find.direction ?? 1, text: spec.find.text ?? '',
+        caret: spec.find.caret ?? 0,
+      } : null,
+      line: spec.line ? {
+        label: spec.line.label ?? '',
+        buffer: { text: spec.line.buffer?.text ?? '', caret: spec.line.buffer?.caret ?? 0 },
+      } : null,
+      files: spec.files ?? null,
+      library: spec.library ?? null, dialog: spec.dialog ?? null,
+      options: spec.options ?? null,
+    };
+    return state;
+  };
+
+  const implementations = [{
+    name: 'JavaScript',
+    draw(args) {
+      const atCalls = [];
+      const state = buildJsState(args.state, atCalls);
+      const pageUrl = args.page?.url ?? '';
+      const page = { url: () => pageUrl };
+      // parkCursor and set_status draw the address row from state.core.page,
+      // exactly as the reading loop's own state does.
+      state.core.page = page;
+      const saved = {
+        rows: process.stdout.rows, cols: process.stdout.columns,
+        write: process.stdout.write,
+      };
+      process.stdout.rows = args.state.rows ?? 24;
+      process.stdout.columns = args.state.cols ?? 80;
+      const results = [];
+      let current = null;
+      process.stdout.write = (chunk) => {
+        if (current) current.push(String(chunk));
+        return true;
+      };
+      try {
+        for (const action of args.actions ?? []) {
+          current = [];
+          const entry = {};
+          let value;
+          switch (action.op) {
+            case 'drawTitle':
+              index.drawTitle(state, { force: !!action.force }); break;
+            case 'drawAddress':
+              index.drawAddress(state, page, { force: !!action.force, edit: !!action.edit }); break;
+            case 'drawHint':
+              index.drawHint(state, { force: !!action.force }); break;
+            case 'setStatus':
+              index.setStatus(state, action.msg); break;
+            case 'drawStatus':
+              index.drawStatus(state, page); break;
+            case 'render':
+              index.render(state, page, { force: !!action.force }); break;
+            case 'drawList':
+              index.drawList(state); break;
+            case 'parkCursor':
+              index.parkCursor(state); break;
+            case 'drawAuthPrompt':
+              index.drawAuthPrompt(state); break;
+            case 'drawFind':
+              index.drawFind(state); break;
+            case 'drawLinePrompt':
+              index.drawLinePrompt(state); break;
+            case 'renderRow':
+              value = index.renderRow(state, action.lineIndex ?? 0); break;
+            case 'typingText': {
+              const typing = index.typingText(state);
+              value = { text: typing.text, caretCol: typing.caretCol };
+              break;
+            }
+            case 'hintText':
+              value = index.hintText(state); break;
+            case 'authPromptText': {
+              const prompt = index.authPromptText(state);
+              value = { text: prompt.text, caretCol: prompt.caretCol };
+              break;
+            }
+            case 'linkTarget':
+              value = index.linkTarget(state, page); break;
+            case 'shortTarget':
+              value = index.shortTarget(action.href, action.here); break;
+            case 'viewportHeight':
+              value = index.viewportHeight(); break;
+            case 'lineRow':
+              value = index.lineRow(state, action.lineIndex ?? 0); break;
+            case 'cursorCol':
+              value = index.cursorCol(state); break;
+            case 'clampScroll':
+              index.clampScroll(state); break;
+            case 'lynxHidesCursor':
+              value = index.lynxHidesCursor(state); break;
+            default:
+              throw new Error(`unknown reader action ${action.op}`);
+          }
+          if (value !== undefined) entry.value = value;
+          entry.writes = current;
+          results.push(entry);
+        }
+      } finally {
+        process.stdout.rows = saved.rows;
+        process.stdout.columns = saved.cols;
+        process.stdout.write = saved.write;
+      }
+      return {
+        results,
+        state: {
+          drawn: { ...state.drawn },
+          scroll: state.scroll, col: state.col, cursor: state.cursor,
+          statusMsg: state.statusMsg,
+          address: state.address
+            ? { text: state.address.text, caret: state.address.caret, scroll: state.address.scroll }
+            : null,
+          typing: state.typing ? { text: state.typing.text, caret: state.typing.caret } : null,
+          auth: state.auth ? {
+            stage: state.auth.stage,
+            user: { ...state.auth.user }, password: { ...state.auth.password },
+          } : null,
+          find: state.find
+            ? { direction: state.find.direction, text: state.find.text, caret: state.find.caret }
+            : null,
+          atCalls,
+        },
+      };
+    },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    draw(args) {
+      return call('reader.draw', args);
+    },
+  });
+  return implementations;
+}
+
 function keyWizardImplementations(keysModule, keyWizard, inputModule) {
   const implementations = [{
     name: 'JavaScript',
@@ -1908,5 +2107,5 @@ module.exports = {
   inputImplementations, interfaceImplementations, keyWizardImplementations, keymapImplementations, layoutImplementations,
   liveImplementations, liveRealImplementations, lynxActionsImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, lynxOptionsImplementations, lynxPagesImplementations, lynxStateImplementations, marionetteImplementations, optionImplementations,
-  placeImplementations, readerCommands, screenImplementations, sessionImplementations, unicodeImplementations,
+  placeImplementations, readerCommands, readerImplementations, screenImplementations, sessionImplementations, unicodeImplementations,
 };

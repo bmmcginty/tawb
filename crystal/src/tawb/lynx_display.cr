@@ -11,6 +11,7 @@ module Tawb
     # The byte-level highlights the terminal sees. The Lynx options screen
     # paints the value being chosen with the reverse pair.
     ANSI_REVERSE = "\e[7m"
+    ANSI_BOLD    = "\e[1m"
     ANSI_RESET   = "\e[0m"
 
     record TableRun, from : Int32, to : Int32, merged : Bool,

@@ -284,6 +284,7 @@ module Tawb
       getter file : String
       getter terminfo : Hash(String, String)
       getter actions : Array(Action)
+      getter by_id : Hash(String, Action)
       getter function_names : Hash(String, String)
       getter unsupported : Array(String)
       property preferences : Hash(String, JSON::Any)

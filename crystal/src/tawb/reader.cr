@@ -1,0 +1,836 @@
+require "json"
+require "./screen"
+require "./unicode_escape"
+require "./lynx_display"
+
+module Tawb
+  # The terminal drawing of src/index.js: the three banner rows, the reading
+  # list, the status row, and the cursor parking that puts the terminal
+  # cursor where the reader is. What may be written and what may not is the
+  # whole point — a repainted row is re-read by a screen reader and
+  # re-flashed by a braille display whether or not it says anything new, so
+  # every row here keeps a record of what it last said and writes only when
+  # that changed.
+  module Reader
+    # No selection marker: the terminal cursor already marks the focused
+    # line, and a screen reader / braille display tracks it there. A printed
+    # marker would only add a column of noise to every line and shift the
+    # text.
+    GUTTER      = 0
+    HEADER_ROWS = 4 # title line, address line, hint line, blank line
+    FOOTER_ROWS = 2 # blank + status line
+    TITLE_ROW   = 1
+    ADDRESS_ROW = 2
+    HINT_ROW    = 3
+
+    SOURCE_LABELS = {
+      "ax"      => "AX",
+      "render"  => "PAGE",
+      "inspect" => "INSPECT",
+      "source"  => "SOURCE",
+    }
+    LINK_ROLES = Set{"link"}
+
+    # One span of a composite display line: a piece of one block, with the
+    # columns it occupies and, for a numbered field, the number it keeps.
+    class Span
+      property start : Int32
+      property finish : Int32
+      property block_index : Int32
+      property display_number : String?
+
+      def initialize(@start, @finish, @block_index, @display_number = nil)
+      end
+    end
+
+    class Line
+      property text : String
+      property block_index : Int32
+      property spans : Array(Span)?
+      property continuation : Bool
+      property display_indent : Int32
+      property display_prefix : String
+      property display_suffix : String
+
+      def initialize(@text, @block_index = 0, @spans = nil, @continuation = false,
+                     @display_indent = 0, @display_prefix = "", @display_suffix = "")
+      end
+    end
+
+    class Buffer
+      property text : String
+      property caret : Int32
+
+      def initialize(@text = "", @caret = 0)
+      end
+    end
+
+    class Typing
+      property item : JSON::Any
+      property text : String
+      property caret : Int32
+
+      def initialize(@item, @text = "", @caret = 0)
+      end
+    end
+
+    class AddressBar
+      property text : String
+      property caret : Int32
+      property scroll : Int32
+
+      def initialize(@text = "", @caret = 0, @scroll = 0)
+      end
+    end
+
+    class Auth
+      property challenge : JSON::Any
+      property refused : Bool
+      property stage : String
+      property user : Buffer
+      property password : Buffer
+
+      def initialize(@challenge, @refused = false, @stage = "user")
+        @user = Buffer.new
+        @password = Buffer.new
+      end
+    end
+
+    class Find
+      property direction : Int32
+      property text : String
+      property caret : Int32
+
+      def initialize(@direction = 1, @text = "", @caret = 0)
+      end
+    end
+
+    class LinePrompt
+      property label : String
+      property buffer : Buffer
+
+      def initialize(@label, @buffer = Buffer.new)
+      end
+    end
+
+    class Drawn
+      property title : String?
+      property address : String?
+      property address_caret_col : Int32?
+      property hint : String?
+      property status : String?
+
+      def initialize
+        @title = nil
+        @address = nil
+        @address_caret_col = nil
+        @hint = nil
+        @status = nil
+      end
+    end
+
+    # The pieces of the core the drawing needs: which view the blocks came
+    # from, the blocks themselves, and where the reader is told to be. The
+    # `at` calls are recorded, not delivered: across the conformance boundary
+    # they are the answer to "where did the reader's cursor land".
+    class CoreState
+      property source : String
+      property blocks : Array(JSON::Any)
+      property popup : JSON::Any?
+      property popup_at : Int64
+      property at_calls : Array(Int64)
+
+      def initialize(@source = "ax", @blocks = [] of JSON::Any,
+                     @popup = nil, @popup_at = -1_i64)
+        @at_calls = [] of Int64
+      end
+
+      def at(index : Int32) : Nil
+        @at_calls << index.to_i64
+      end
+    end
+
+    class State
+      property rows : Int32
+      property cols : Int32
+      property interface : String
+      property mode : String
+      property title : String
+      property escape_unicode : Bool
+      property short_links : Bool
+      property link_address : Bool
+      property status_msg : String
+      property cursor : Int32
+      property col : Int32
+      property scroll : Int32
+      property lines : Array(Line)
+      property drawn : Drawn
+      property core : CoreState
+      property keys : Keys::Keymap?
+      property typing : Typing?
+      property address : AddressBar?
+      property auth : Auth?
+      property find : Find?
+      property line_prompt : LinePrompt?
+      property files : JSON::Any?
+      property library : JSON::Any?
+      property dialog : JSON::Any?
+      property options : JSON::Any?
+
+      def initialize
+        @rows = 24
+        @cols = 80
+        @interface = "tawb"
+        @mode = "browse"
+        @title = ""
+        @escape_unicode = false
+        @short_links = false
+        @link_address = true
+        @status_msg = ""
+        @cursor = 0
+        @col = 0
+        @scroll = 0
+        @lines = [] of Line
+        @drawn = Drawn.new
+        @core = CoreState.new
+        @keys = nil
+        @typing = nil
+        @address = nil
+        @auth = nil
+        @find = nil
+        @line_prompt = nil
+        @files = nil
+        @library = nil
+        @dialog = nil
+        @options = nil
+      end
+    end
+
+    def self.lynx_active?(state : State) : Bool
+      state.interface == "lynx"
+    end
+
+    # The JavaScript original reads process.stdout; the state carries the
+    # answer instead, so the conformance runner can be any size of window.
+    def self.viewport_height(state : State) : Int32
+      Math.max(1, state.rows - HEADER_ROWS - FOOTER_ROWS)
+    end
+
+    def self.content_width(state : State) : Int32
+      Math.max(20, state.cols - GUTTER - 1)
+    end
+
+    def self.line_row(state : State, line_index : Int32) : Int32
+      HEADER_ROWS + 1 + (line_index - state.scroll)
+    end
+
+    def self.is_visible(state : State, line_index : Int32) : Bool
+      line_index >= state.scroll && line_index < state.scroll + viewport_height(state)
+    end
+
+    def self.current_line(state : State) : Line?
+      state.lines[state.cursor]? || nil
+    end
+
+    # The blocks the screen is showing. Ordinarily the page's, but while one
+    # of the browser's own lists is open it is that list: the buffer on
+    # screen is no longer the tab, and everything that reads lines has to
+    # agree about which.
+    def self.active_blocks(state : State) : Array(JSON::Any)
+      return [] of JSON::Any if state.options
+      return blocks_of(state.library) if state.library
+      return blocks_of(state.dialog) if state.dialog
+      state.core.blocks
+    end
+
+    private def self.blocks_of(container : JSON::Any?) : Array(JSON::Any)
+      found = container.try(&.as_h?).try(&.["blocks"]?)
+      found.try(&.as_a?) || [] of JSON::Any
+    end
+
+    # The span of a composite display line the caret is standing in. A line
+    # that came from only one core block has no spans and no answer here.
+    def self.span_for_column(line : Line?, col : Int32) : Span?
+      spans = line.try(&.spans)
+      return nil unless spans && !spans.empty?
+      chosen = spans.first
+      spans.each do |span|
+        chosen = span if span.start <= col
+      end
+      chosen
+    end
+
+    # The block under a caret on one line, whether that line is one block or
+    # a reflowed paragraph/table row holding several.
+    def self.block_under(state : State, line : Line?, col : Int32) : JSON::Any?
+      return nil unless line
+      blocks = active_blocks(state)
+      span = span_for_column(line, col)
+      if span
+        return blocks[span.block_index]? || nil
+      end
+      blocks[line.block_index]? || nil
+    end
+
+    # The interactive item on a line. With one item per line there is no span
+    # lookup to do — the whole line is the item — but text blocks are not
+    # activatable.
+    def self.item_at_offset(block : JSON::Any?) : JSON::Any?
+      item = block.try(&.as_h?).try(&.["item"]?)
+      return nil unless item
+      return nil if item.as_h["role"]?.try(&.as_s?) == "text"
+      item
+    end
+
+    def self.current_block(state : State) : JSON::Any?
+      line = current_line(state)
+      block_under(state, line, state.col)
+    end
+
+    def self.item_under_cursor(state : State) : JSON::Any?
+      item_at_offset(current_block(state))
+    end
+
+    def self.cursor_col(state : State) : Int32
+      GUTTER + state.col + 1
+    end
+
+    def self.clamp_col(state : State) : Nil
+      line = current_line(state)
+      max = line ? Math.max(line.text.size - 1, 0) : 0
+      state.col = Math.min(Math.max(state.col, 0), max)
+    end
+
+    # Tell the core where the reader is, in the only currency it understands:
+    # a block index. Every cursor movement settles through clamp_scroll,
+    # which makes this the one place that has to say so. It is deliberately
+    # one-way and unacknowledged; the worst a stale answer can cost is one
+    # refused text patch.
+    def self.sync_cursor(state : State) : Nil
+      # A block index only means something to the core while the buffer is
+      # the page. With a list of bookmarks on screen, line 12 is the twelfth
+      # bookmark, and telling the core the reader is standing on the page's
+      # twelfth block would let a text patch land where they are not.
+      return if state.options || state.library || state.dialog
+      line = state.lines[state.cursor]?
+      block = block_under(state, line, state.col)
+      index = block ? active_blocks(state).index(block) || -1 : -1
+      state.core.at(index)
+    end
+
+    def self.clamp_scroll(state : State) : Nil
+      height = viewport_height(state)
+      max_scroll = Math.max(0, state.lines.size - height)
+      if state.cursor < state.scroll
+        state.scroll = state.cursor
+      elsif state.cursor >= state.scroll + height
+        state.scroll = state.cursor - height + 1
+      end
+      state.scroll = Math.min(Math.max(state.scroll, 0), max_scroll)
+      sync_cursor(state)
+    end
+
+    def self.page_text(state : State, text : String?) : String
+      return UnicodeEscape.escape(text) if state.escape_unicode
+      text || ""
+    end
+
+    # ------------------------------------------------------------------
+    # Drawing
+    # ------------------------------------------------------------------
+
+    # The page's title, on the first row of the window. Read when the buffer
+    # is rebuilt rather than on every keystroke: the banner is meant to stay
+    # untouched while reading.
+    def self.draw_title(output : Screen::Output, state : State, force = false) : Nil
+      rendered = page_text(state, state.title)[0, state.cols]
+      return if !force && rendered == state.drawn.title
+      state.drawn.title = rendered
+      Screen.write_line(output, TITLE_ROW, rendered)
+    end
+
+    # The address row is the tab's own address and nothing else. Where the
+    # link under the cursor goes is a different question and belongs on the
+    # status line.
+    def self.address_text(state : State, page_url : String) : String
+      return state.address.try(&.text) || "" if state.mode == "address"
+      page_url
+    end
+
+    # The address is one line and URLs are routinely longer than the terminal
+    # is wide, so it scrolls horizontally around the caret instead of
+    # wrapping.
+    def self.draw_address(output : Screen::Output, state : State, page_url : String,
+                          force = false, edit = false) : Nil
+      label = "[#{SOURCE_LABELS[state.core.source]? || state.core.source}] "
+      width = Math.max(10, state.cols - label.size)
+      full = address_text(state, page_url)
+
+      view = full
+      caret_offset = 0
+
+      if state.mode == "address" && (bar = state.address)
+        caret = bar.caret
+        if caret < bar.scroll
+          bar.scroll = caret
+        elsif caret >= bar.scroll + width
+          bar.scroll = caret - width + 1
+        end
+        bar.scroll = Math.max(0, Math.min(bar.scroll, Math.max(0, full.size - width + 1)))
+        view = full[bar.scroll, Math.min(width, full.size - bar.scroll)]
+        caret_offset = caret - bar.scroll
+      elsif full.size > width
+        view = full[0, width - 1] + ">"
+      end
+
+      rendered = label + view
+      previous = state.drawn.address
+      caret_col = label.size + caret_offset + 1
+      previous_caret_col = state.drawn.address_caret_col
+      cursor_placed = false
+      # force means the row is written however it reads: a full repaint
+      # cannot assume the row still says what was last drawn on it, since
+      # another screen (the keyboard wizard now shares this one) may have
+      # written over it.
+      rewrite = rendered != previous || (force && !(state.mode == "address" && edit))
+      if rewrite
+        state.drawn.address = rendered
+        if !force && state.mode == "address" && !previous.nil?
+          cursor_placed = Screen.patch_edited_line(output, ADDRESS_ROW, previous, rendered,
+            current_col: edit ? previous_caret_col : nil,
+            final_col: caret_col)
+        else
+          Screen.write_line(output, ADDRESS_ROW, rendered)
+        end
+      elsif state.mode == "address" && edit
+        cursor_placed = Screen.patch_edited_line(output, ADDRESS_ROW, rendered, rendered,
+          current_col: previous_caret_col,
+          final_col: caret_col)
+      end
+
+      if state.mode == "address"
+        state.drawn.address_caret_col = caret_col
+        Screen.move_cursor(output, ADDRESS_ROW, caret_col) unless cursor_placed
+      else
+        state.drawn.address_caret_col = nil
+      end
+    end
+
+    def self.popup_is_open(state : State) : Bool
+      !state.core.popup.nil? && state.core.popup_at >= 0
+    end
+
+    def self.action_key_label(state : State, id : String, fallback = "") : String
+      keys = state.keys
+      return fallback unless keys
+      action = keys.by_id[id]?
+      binding = action.try(&.bindings).try(&.first?)
+      binding ? keys.display(binding) : fallback
+    end
+
+    def self.hint_text(state : State) : String
+      mode = state.mode
+      if mode == "address"
+        return "Address — Enter: go  Esc: cancel"
+      elsif mode == "type"
+        if lynx_active?(state)
+          return "Enter text. Use arrows or Tab to move off of field."
+        end
+        return "Typing — Tab: next control  Esc: stop  Enter: submit"
+      elsif mode == "field-command"
+        return "Command: press one Lynx browse key  Esc: cancel"
+      elsif mode == "forms"
+        return "Forms — Tab: next control  Enter: activate  Esc: browse"
+      elsif mode == "control"
+        return "Control — arrows adjust  Home/End  Esc: stop"
+      elsif mode == "page"
+        return "Webpage keyboard — every other key goes to the page  " +
+               action_key_label(state, "page-keyboard", "Alt+K") + ": stop"
+      elsif mode == "find"
+        return "Find — Enter: search  Esc: cancel"
+      elsif mode == "number"
+        return "Follow link number — Enter: follow  g: move  Esc: cancel"
+      elsif mode == "choose"
+        return "Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel"
+      elsif mode == "library"
+        label = state.library.try(&.as_h).try(&.["label"]?.try(&.as_s?)) || ""
+        return "#{label} — type: filter  Enter: open  Esc: close"
+      elsif mode == "line"
+        return "#{state.line_prompt.try(&.label)} — Enter: save  Esc: cancel"
+      elsif mode == "files"
+        done = ""
+        if files = state.files
+          multiple = files.as_h["multiple"]?.try(&.as_bool?) || false
+          chosen = files.as_h["chosen"]?.try(&.as_a?)
+          if multiple && chosen && !chosen.empty?
+            done = "  Enter on an empty line: done"
+          end
+        end
+        return "Attach a file — Tab: complete  Enter: attach#{done}  Esc: cancel"
+      elsif mode == "dialog"
+        return "The browser is asking — Enter: press  Esc: leave it unanswered"
+      elsif mode == "auth"
+        auth = state.auth
+        refused = auth && auth.refused ? "Password refused. " : ""
+        origin = auth ? describe_challenge(auth.challenge) : ""
+        return "#{refused}Sign in to #{origin} — Enter: next  Esc: cancel"
+      elsif lynx_active?(state)
+        if popup_is_open(state)
+          return "Popup open — q or Left closes it; Enter chooses."
+        end
+        return "Commands: Use arrow keys to move, '?' for help, 'q' to quit, '<-' to go back."
+      elsif popup_is_open(state)
+        return "Popup open — q or Esc closes it; Enter chooses."
+      else
+        return "j/k line  h/l/f/b/n/p nav  / find  m click  \\ view  ^L address  c changes  q quit"
+      end
+    end
+
+    # Deliberately carries no line counter. A position indicator here would
+    # change on every keystroke and force the banner to be repainted along
+    # with it, which is the churn the split exists to avoid. Press '=' when
+    # the position is actually wanted.
+    def self.draw_hint(output : Screen::Output, state : State, force = false) : Nil
+      # The options screen owns the whole terminal and has no hint row of its
+      # own; writing one would land on a row of Lynx's screen.
+      return if state.mode == "options"
+      rendered = hint_text(state)[0, state.cols]
+      return if !force && rendered == state.drawn.hint
+      state.drawn.hint = rendered
+      Screen.write_line(output, HINT_ROW, rendered)
+    end
+
+    def self.status_row(state : State) : Int32
+      state.rows
+    end
+
+    # The one place the status row is written, so that what is on it is
+    # always known — draw_status below will not repaint a row that already
+    # says what it is about to say.
+    def self.write_status_row(output : Screen::Output, state : State, text : String) : Nil
+      # Status messages can repeat page-provided control names and carry ARIA
+      # live announcements, so they belong to the escaped page presentation
+      # too.
+      rendered = page_text(state, text)[0, state.cols]
+      state.drawn.status = rendered
+      Screen.write_line(output, status_row(state), rendered)
+    end
+
+    def self.set_status(output : Screen::Output, state : State, page_url : String,
+                        msg : String) : Nil
+      state.status_msg = msg
+      write_status_row(output, state, msg)
+      park_cursor(output, state, page_url)
+    end
+
+    # The link the reader is standing on, and where it goes, said as the
+    # reader arrives on it. Nothing at all when the reader has switched it
+    # off. Only ever the page's own buffer: with one of the browser's own
+    # lists open the lines on screen are bookmarks or history entries rather
+    # than links on the page.
+    def self.link_target(state : State, page_url : String) : String?
+      return nil unless state.link_address
+      return nil if state.library || state.dialog
+      item = item_under_cursor(state)
+      return nil unless item
+      role = item.as_h["role"]?.try(&.as_s?) || ""
+      return nil unless LINK_ROLES.includes?(role)
+      href = item.as_h["href"]?.try(&.as_s?)
+      return nil unless href
+      state.short_links ? short_target(href, page_url) : href
+    end
+
+    # The same address, said the way a person would say it to someone already
+    # standing on the page: a link from /a/b/c to /b is "/b", because the
+    # host is the one they are on and repeating it says nothing. A link that
+    # leaves the site is said in full — that it leaves is the most important
+    # thing about it, and it is the host that carries that news. Same page,
+    # different fragment, is shorter still: "#notes". Anything that will not
+    # parse is handed back untouched rather than guessed at.
+    def self.short_target(href : String, here : String) : String
+      link = parse_uri(href) || return href
+      page = parse_uri(here) || return href
+      link_origin = origin_of(link)
+      return href if link_origin == "null" || link_origin != origin_of(page)
+
+      link_search = link.query ? "?#{link.query}" : ""
+      page_search = page.query ? "?#{page.query}" : ""
+      if link_path_of(link) == link_path_of(page) && link_search == page_search
+        if link.fragment
+          return "##{link.fragment}"
+        end
+        tail = "#{link_path_of(link)}#{link_search}"
+        return tail.empty? ? "/" : tail
+      end
+      tail = "#{link_path_of(link)}#{link_search}#{link.fragment ? "##{link.fragment}" : ""}"
+      tail.empty? ? "/" : tail
+    end
+
+    private def self.parse_uri(text : String) : URI?
+      URI.parse(text)
+    rescue
+      nil
+    end
+
+    # A URL's pathname: JavaScript's URL always gives the root a "/", so the
+    # answers say "/" where a bare host was meant.
+    private def self.link_path_of(uri : URI) : String
+      path = uri.path || ""
+      return "/" if path.empty? && (uri.scheme == "http" || uri.scheme == "https")
+      path
+    end
+
+    private def self.origin_of(uri : URI) : String
+      scheme = uri.scheme.try(&.downcase) || ""
+      host = uri.host || ""
+      return "null" if host.empty? || (scheme != "http" && scheme != "https")
+      port = uri.port
+      default = (scheme == "https" && port == 443) || (scheme == "http" && port == 80)
+      "#{scheme}://#{host}#{default || port.nil? ? "" : ":#{port}"}"
+    end
+
+    # Browse mode only: the find prompt, the sign-in prompt, the path prompt
+    # and the one-line prompt are all drawn on this row and own it while they
+    # are up. A message wins while it is news — set_status writes it whatever
+    # the cursor is standing on — and the next move brings the link target
+    # back. Nothing is written when the row already says it, which is most
+    # keystrokes and is what keeps a screen reader from re-reading and a
+    # braille display from re-flashing a row that did not change.
+    def self.draw_status(output : Screen::Output, state : State, page_url : String) : Nil
+      return unless state.mode == "browse"
+      wanted = link_target(state, page_url) || state.status_msg
+      rendered = page_text(state, wanted)[0, state.cols]
+      return if rendered == state.drawn.status
+      write_status_row(output, state, rendered)
+    end
+
+    def self.typing_text(state : State) : NamedTuple(text: String, caret_col: Int32)
+      typing = state.typing.not_nil!
+      value = page_text(state, typing.text)
+      if lynx_active?(state)
+        line = current_line(state)
+        # On a merged table row the marker lives in the span, not on the
+        # line, so the field being edited keeps the number it had in the row.
+        span = nil
+        if line && (spans = line.spans)
+          span = spans.find do |one|
+            block = active_blocks(state)[one.block_index]?
+            block && block.as_h["item"]? == typing.item
+          end
+        end
+        marker = span && span.display_number ? "[#{span.display_number}]" : ""
+        number = line ? " " * line.display_indent + marker + line.display_prefix : ""
+        suffix = line ? line.display_suffix : ""
+        name = typing.item.as_h["name"]?.try(&.as_s?) || ""
+        label = number + (name.empty? ? "" : page_text(state, name) + " ")
+        width = Math.max(20, value.size)
+        shown = value[0, Math.min(width, value.size)]
+        offset = state.escape_unicode ? UnicodeEscape.escaped_offset(typing.text, typing.caret) : typing.caret
+        return {
+          text:      label + shown + ("_" * Math.max(0, width - value.size)) + suffix,
+          caret_col: GUTTER + label.size + offset + 1,
+        }
+      end
+      name = typing.item.as_h["name"]?.try(&.as_s?) || ""
+      label = "[#{page_text(state, name)}: "
+      offset = state.escape_unicode ? UnicodeEscape.escaped_offset(typing.text, typing.caret) : typing.caret
+      {
+        text:      label + value + "]",
+        caret_col: GUTTER + label.size + offset + 1,
+      }
+    end
+
+    def self.render_row(state : State, line_index : Int32) : String
+      if state.mode == "type" && line_index == state.cursor
+        return typing_text(state)[:text]
+      end
+      line = state.lines[line_index]?
+      text = line ? line.text : ""
+      return text unless lynx_active?(state)
+
+      selected = state.lines[state.cursor]?
+      current = nil
+      if line && (spans = line.spans) && !spans.empty? && selected
+        current = current_block(state)
+      end
+      render_lynx_row(state, line, text, selected, current)
+    end
+
+    # One display row as Lynx's terminal would write it. Reverse video marks
+    # the current control and bold marks a heading; the number marker is
+    # outside the span and so outside the highlight, which is what keeps a
+    # marker from being read as part of the thing it numbers.
+    def self.render_lynx_row(state : State, line : Line?, text : String,
+                             selected : Line?, current : JSON::Any?) : String
+      indent = line ? " " * line.display_indent : ""
+      prefix = indent + (line ? line.display_prefix : "")
+      suffix = line ? line.display_suffix : ""
+
+      spans = line.try(&.spans)
+      if spans && !spans.empty?
+        return lynx_row_text(line, text) unless current && lynx_focusable?(current)
+        current_index = active_blocks(state).index(current) || -1
+        pieces = [] of String
+        at = 0
+        spans.each do |span|
+          next if span.block_index != current_index
+          pieces << text[at...span.start] if span.start > at
+          pieces << LynxDisplay::ANSI_REVERSE +
+                    text[span.start...span.finish] + LynxDisplay::ANSI_RESET
+          at = span.finish
+        end
+        return lynx_row_text(line, text) if pieces.empty?
+        return prefix + pieces.join + text[at..] + suffix
+      end
+
+      block = line ? active_blocks(state)[line.block_index]? : nil
+      # Lynx highlights every visible part of a wrapped current link.
+      if line && selected && line.block_index == selected.block_index && lynx_focusable?(block)
+        return "#{prefix}#{LynxDisplay::ANSI_REVERSE}#{text}#{LynxDisplay::ANSI_RESET}#{suffix}"
+      end
+      if block && block.as_h["item"]?.try(&.as_h["role"]?.try(&.as_s?)) == "heading"
+        return "#{prefix}#{LynxDisplay::ANSI_BOLD}#{text}#{LynxDisplay::ANSI_RESET}#{suffix}"
+      end
+      lynx_row_text(line, text)
+    end
+
+    # One display row as plain text: the document margin, the number marker
+    # and any suffix put back around the row's own text.
+    def self.lynx_row_text(line : Line?, text : String) : String
+      indent = line ? " " * line.display_indent : ""
+      indent + (line ? line.display_prefix : "") + text + (line ? line.display_suffix : "")
+    end
+
+    def self.lynx_focusable?(block : JSON::Any?) : Bool
+      item = block.try(&.as_h?).try(&.["item"]?)
+      return false unless item
+      role = item.as_h["role"]?.try(&.as_s?)
+      return false unless role
+      Aria::FOCUSABLE_ROLES.includes?(role)
+    end
+
+    # Repaints only the list region. No clear-screen: the header rows and the
+    # status row are left exactly as they are. The scroll region is reset and
+    # re-armed around the repaint so the header stays put and a single-line
+    # step past an edge costs one new line instead of a repaint.
+    def self.draw_list(output : Screen::Output, state : State) : Nil
+      height = viewport_height(state)
+      output.write("\e[r")
+      (0...height).each do |i|
+        line_index = state.scroll + i
+        Screen.write_line(output, HEADER_ROWS + 1 + i,
+          line_index < state.lines.size ? render_row(state, line_index) : "")
+      end
+      output.write("\e[#{HEADER_ROWS + 1};#{HEADER_ROWS + height}r")
+    end
+
+    # Who is asking, in the words the reader needs. The origin, not the page:
+    # a challenge can come from an image or a frame belonging to somewhere
+    # else entirely, and telling someone they must sign in to the site they
+    # can see when the password is going somewhere else is the shape of every
+    # credential-phishing trick there is.
+    def self.describe_challenge(challenge : JSON::Any) : String
+      object = challenge.as_h
+      source = object["source"]?.try(&.as_s?) || ""
+      origin = object["origin"]?.try(&.as_s?) || ""
+      where = source == "proxy" ? "the proxy at #{origin}" : origin
+      realm = object["realm"]?.try(&.as_s?) || ""
+      scheme = object["scheme"]?.try(&.as_s?) || ""
+      "#{where}#{realm.empty? ? "" : " — \"#{realm}\""}#{scheme.empty? ? "" : " (#{scheme})"}"
+    end
+
+    def self.auth_prompt_text(state : State) : NamedTuple(text: String, caret_col: Int32)
+      auth = state.auth.not_nil!
+      label = auth.stage == "user" ? "user: " : "password: "
+      buffer = auth.stage == "user" ? auth.user : auth.password
+      # A password is not echoed. The reader may be on a shared terminal, and
+      # a terminal keeps scrollback.
+      shown = auth.stage == "user" ? buffer.text : "*" * buffer.text.size
+      {text: label + shown, caret_col: label.size + buffer.caret + 1}
+    end
+
+    def self.draw_auth_prompt(output : Screen::Output, state : State) : Nil
+      prompt = auth_prompt_text(state)
+      write_status_row(output, state, prompt[:text])
+      Screen.move_cursor(output, status_row(state), Math.min(prompt[:caret_col], state.cols))
+    end
+
+    def self.find_prompt(state : State) : String
+      find = state.find.not_nil!
+      (find.direction > 0 ? "/" : "?") + find.text
+    end
+
+    def self.draw_find(output : Screen::Output, state : State) : Nil
+      write_status_row(output, state, find_prompt(state))
+      Screen.move_cursor(output, status_row(state),
+        Math.min(state.find.not_nil!.caret + 2, state.cols))
+    end
+
+    def self.draw_line_prompt(output : Screen::Output, state : State) : Nil
+      prompt = state.line_prompt.not_nil!
+      text = "#{prompt.label}: #{prompt.buffer.text}"
+      write_status_row(output, state, text)
+      Screen.move_cursor(output, status_row(state),
+        Math.min(prompt.label.size + 2 + prompt.buffer.caret + 1, state.cols))
+    end
+
+    # Whether the Lynx profile asks for the cursor to be hidden rather than
+    # parked on the current item. Lynx's SHOW_CURSOR is documented for speech
+    # and braille interfaces; with it off, Lynx leaves the cursor at the
+    # bottom-right and marks the current link with reverse video instead.
+    # Absent means Lynx's own default, which is to hide it.
+    def self.lynx_hides_cursor(state : State) : Bool
+      return false if state.interface != "lynx"
+      preferences = state.keys.try(&.preferences)
+      value = preferences.try(&.["showCursor"]?)
+      !(preferences && value && value.as_bool?)
+    end
+
+    # Puts the terminal cursor back where the reader is.
+    def self.park_cursor(output : Screen::Output, state : State, page_url : String) : Nil
+      if state.mode == "auth"
+        draw_auth_prompt(output, state)
+        return
+      end
+      if state.mode == "address"
+        draw_address(output, state, page_url)
+        return
+      end
+      if state.mode == "find"
+        draw_find(output, state)
+        return
+      end
+      if state.mode == "field-command"
+        Screen.move_cursor(output, status_row(state),
+          Math.min(state.status_msg.size + 1, state.cols))
+        return
+      end
+      if state.mode == "type"
+        typing = typing_text(state)
+        Screen.move_cursor(output, line_row(state, state.cursor), typing[:caret_col])
+        return
+      end
+      # Browsing, with SHOW_CURSOR off: hide the cursor at the bottom-right
+      # the way Lynx does. The current item is still marked by reverse video,
+      # and the status row still names the link under it. Prompts, choosers,
+      # lists and dialogs are drawn by their own code and keep the cursor
+      # where it is.
+      if state.mode == "browse" && lynx_hides_cursor(state)
+        Screen.move_cursor(output, state.rows, state.cols)
+        return
+      end
+      Screen.move_cursor(output, line_row(state, state.cursor), cursor_col(state))
+    end
+
+    def self.render(output : Screen::Output, state : State, page_url : String,
+                    force = false) : Nil
+      clamp_scroll(state)
+      draw_title(output, state, force)
+      draw_address(output, state, page_url, force)
+      draw_hint(output, state, force)
+      draw_list(output, state)
+      write_status_row(output, state, state.status_msg) unless state.status_msg.empty?
+      park_cursor(output, state, page_url)
+    end
+  end
+end

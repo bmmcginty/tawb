@@ -32,6 +32,7 @@ require "./lynx_number"
 require "./lynx_state"
 require "./marionette"
 require "./options"
+require "./reader"
 require "./place"
 require "./session"
 require "./screen"
@@ -611,6 +612,8 @@ module Tawb
         lynx_state_preferences(payload)
       when "screen.patch_edited_line"
         screen_patch_edited_line(payload)
+      when "reader.draw"
+        reader_draw(payload)
       when "live.real_scenario"
         live_real_scenario(payload)
       when "key_wizard.rows"
@@ -1282,6 +1285,259 @@ module Tawb
       def write(text : String) : Nil
         @writes << JSON::Any.new(text)
       end
+    end
+
+    # One drawing pass over the reader's terminal: a state, a page address,
+    # and the actions to run in order against the same live state. What each
+    # action wrote, and the state as it stands afterwards, come back — the
+    # drawn-row caches are part of the answer, since whether a row is
+    # rewritten is the behaviour under test.
+    private def self.reader_draw(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      state = reader_state(object["state"])
+      page_url = object["page"]?.try(&.as_h?).try(&.["url"]?.try(&.as_s?)) || ""
+      results = [] of JSON::Any
+      (object["actions"]?.try(&.as_a?) || [] of JSON::Any).each do |step_value|
+        action = step_value.as_h
+        output = RecordingScreen.new
+        value = reader_action(output, state, action, page_url)
+        entry = {"writes" => JSON::Any.new(output.writes)} of String => JSON::Any
+        entry["value"] = value unless value.nil?
+        results << JSON::Any.new(entry)
+      end
+      JSON::Any.new({
+        "results" => JSON::Any.new(results),
+        "state"   => reader_state_json(state),
+      })
+    end
+
+    private def self.reader_state(payload : JSON::Any) : Reader::State
+      object = payload.as_h
+      state = Reader::State.new
+      state.rows = (object["rows"]?.try(&.as_i64?) || 24).to_i32
+      state.cols = (object["cols"]?.try(&.as_i64?) || 80).to_i32
+      state.interface = object["interface"]?.try(&.as_s?) || "tawb"
+      state.mode = object["mode"]?.try(&.as_s?) || "browse"
+      state.title = object["title"]?.try(&.as_s?) || ""
+      state.escape_unicode = object["escapeUnicode"]?.try(&.as_bool?) || false
+      state.short_links = object["shortLinks"]?.try(&.as_bool?) || false
+      state.link_address = object["linkAddress"]?.try(&.as_bool?) != false
+      state.status_msg = object["statusMsg"]?.try(&.as_s?) || ""
+      state.cursor = (object["cursor"]?.try(&.as_i64?) || 0).to_i32
+      state.col = (object["col"]?.try(&.as_i64?) || 0).to_i32
+      state.scroll = (object["scroll"]?.try(&.as_i64?) || 0).to_i32
+      (object["lines"]?.try(&.as_a?) || [] of JSON::Any).each do |line_json|
+        line_object = line_json.as_h
+        spans = line_object["spans"]?.try(&.as_a?).try do |list|
+          list.map do |span_json|
+            span = span_json.as_h
+            Reader::Span.new(
+              (span["start"]?.try(&.as_i64?) || 0).to_i32,
+              (span["end"]?.try(&.as_i64?) || 0).to_i32,
+              (span["blockIndex"]?.try(&.as_i64?) || 0).to_i32,
+              span["displayNumber"]?.try(&.as_s?))
+          end
+        end
+        state.lines << Reader::Line.new(
+          line_object["text"]?.try(&.as_s?) || "",
+          (line_object["blockIndex"]?.try(&.as_i64?) || 0).to_i32,
+          spans,
+          line_object["continuation"]?.try(&.as_bool?) || false,
+          (line_object["displayIndent"]?.try(&.as_i64?) || 0).to_i32,
+          line_object["displayPrefix"]?.try(&.as_s?) || "",
+          line_object["displaySuffix"]?.try(&.as_s?) || "")
+      end
+      if drawn = object["drawn"]?.try(&.as_h?)
+        state.drawn.title = drawn["title"]?.try(&.as_s?)
+        state.drawn.address = drawn["address"]?.try(&.as_s?)
+        state.drawn.address_caret_col = drawn["addressCaretCol"]?.try(&.as_i64?).try(&.to_i32)
+        state.drawn.hint = drawn["hint"]?.try(&.as_s?)
+        state.drawn.status = drawn["status"]?.try(&.as_s?)
+      end
+      if core = object["core"]?.try(&.as_h?)
+        state.core = Reader::CoreState.new(
+          core["source"]?.try(&.as_s?) || "ax",
+          core["blocks"]?.try(&.as_a?) || [] of JSON::Any,
+          core["popup"]?,
+          core["popupAt"]?.try(&.as_i64?) || -1_i64)
+      end
+      if keys = object["keys"]?
+        state.keys = build_keymap(keys)
+      end
+      if typing = object["typing"]?.try(&.as_h?)
+        item = typing["item"]?
+        if item
+          state.typing = Reader::Typing.new(
+            item,
+            typing["text"]?.try(&.as_s?) || "",
+            (typing["caret"]?.try(&.as_i64?) || 0).to_i32)
+        end
+      end
+      if address = object["address"]?.try(&.as_h?)
+        state.address = Reader::AddressBar.new(
+          address["text"]?.try(&.as_s?) || "",
+          (address["caret"]?.try(&.as_i64?) || 0).to_i32,
+          (address["scroll"]?.try(&.as_i64?) || 0).to_i32)
+      end
+      if auth = object["auth"]?.try(&.as_h?)
+        if challenge = auth["challenge"]?
+          prompted = Reader::Auth.new(
+            challenge,
+            auth["refused"]?.try(&.as_bool?) || false,
+            auth["stage"]?.try(&.as_s?) || "user")
+          if user = auth["user"]?.try(&.as_h?)
+            prompted.user = Reader::Buffer.new(
+              user["text"]?.try(&.as_s?) || "",
+              (user["caret"]?.try(&.as_i64?) || 0).to_i32)
+          end
+          if password = auth["password"]?.try(&.as_h?)
+            prompted.password = Reader::Buffer.new(
+              password["text"]?.try(&.as_s?) || "",
+              (password["caret"]?.try(&.as_i64?) || 0).to_i32)
+          end
+          state.auth = prompted
+        end
+      end
+      if find = object["find"]?.try(&.as_h?)
+        state.find = Reader::Find.new(
+          (find["direction"]?.try(&.as_i64?) || 1).to_i32,
+          find["text"]?.try(&.as_s?) || "",
+          (find["caret"]?.try(&.as_i64?) || 0).to_i32)
+      end
+      if line = object["line"]?.try(&.as_h?)
+        buffer = line["buffer"]?.try(&.as_h?)
+        state.line_prompt = Reader::LinePrompt.new(
+          line["label"]?.try(&.as_s?) || "",
+          Reader::Buffer.new(
+            buffer.try(&.["text"]?).try(&.as_s?) || "",
+            (buffer.try(&.["caret"]?).try(&.as_i64?) || 0).to_i32))
+      end
+      state.files = object["files"]?
+      state.library = object["library"]?
+      state.dialog = object["dialog"]?
+      state.options = object["options"]?
+      state
+    end
+
+    private def self.reader_action(output : RecordingScreen, state : Reader::State,
+                                   action : Hash(String, JSON::Any),
+                                   page_url : String) : JSON::Any?
+      op = action["op"]?.try(&.as_s?) || ""
+      force = action["force"]?.try(&.as_bool?) || false
+      case op
+      when "drawTitle"
+        Reader.draw_title(output, state, force)
+      when "drawAddress"
+        Reader.draw_address(output, state, page_url, force,
+          action["edit"]?.try(&.as_bool?) || false)
+      when "drawHint"
+        Reader.draw_hint(output, state, force)
+      when "setStatus"
+        Reader.set_status(output, state, page_url, action["msg"].as_s)
+      when "drawStatus"
+        Reader.draw_status(output, state, page_url)
+      when "render"
+        Reader.render(output, state, page_url, force)
+      when "drawList"
+        Reader.draw_list(output, state)
+      when "parkCursor"
+        Reader.park_cursor(output, state, page_url)
+      when "drawAuthPrompt"
+        Reader.draw_auth_prompt(output, state)
+      when "drawFind"
+        Reader.draw_find(output, state)
+      when "drawLinePrompt"
+        Reader.draw_line_prompt(output, state)
+      when "renderRow"
+        return JSON::Any.new(Reader.render_row(state,
+          (action["lineIndex"]?.try(&.as_i64?) || 0).to_i32))
+      when "typingText"
+        typing = Reader.typing_text(state)
+        return JSON::Any.new({
+          "text"     => JSON::Any.new(typing[:text]),
+          "caretCol" => JSON::Any.new(typing[:caret_col].to_i64),
+        })
+      when "hintText"
+        return JSON::Any.new(Reader.hint_text(state))
+      when "authPromptText"
+        prompt = Reader.auth_prompt_text(state)
+        return JSON::Any.new({
+          "text"     => JSON::Any.new(prompt[:text]),
+          "caretCol" => JSON::Any.new(prompt[:caret_col].to_i64),
+        })
+      when "linkTarget"
+        found = Reader.link_target(state, page_url)
+        return JSON::Any.new(found)
+      when "shortTarget"
+        return JSON::Any.new(Reader.short_target(action["href"].as_s, action["here"].as_s))
+      when "viewportHeight"
+        return JSON::Any.new(Reader.viewport_height(state).to_i64)
+      when "lineRow"
+        return JSON::Any.new(Reader.line_row(state,
+          (action["lineIndex"]?.try(&.as_i64?) || 0).to_i32).to_i64)
+      when "cursorCol"
+        return JSON::Any.new(Reader.cursor_col(state).to_i64)
+      when "clampScroll"
+        Reader.clamp_scroll(state)
+      when "lynxHidesCursor"
+        return JSON::Any.new(Reader.lynx_hides_cursor(state))
+      end
+      nil
+    end
+
+    private def self.reader_state_json(state : Reader::State) : JSON::Any
+      address = state.address ? JSON::Any.new({
+        "text"   => JSON::Any.new(state.address.not_nil!.text),
+        "caret"  => JSON::Any.new(state.address.not_nil!.caret.to_i64),
+        "scroll" => JSON::Any.new(state.address.not_nil!.scroll.to_i64),
+      }) : JSON::Any.new(nil)
+      typing = state.typing ? JSON::Any.new({
+        "text"  => JSON::Any.new(state.typing.not_nil!.text),
+        "caret" => JSON::Any.new(state.typing.not_nil!.caret.to_i64),
+      }) : JSON::Any.new(nil)
+      auth = if state.auth
+        JSON::Any.new({
+          "stage"    => JSON::Any.new(state.auth.not_nil!.stage),
+          "user"     => reader_buffer_json(state.auth.not_nil!.user),
+          "password" => reader_buffer_json(state.auth.not_nil!.password),
+        })
+      else
+        JSON::Any.new(nil)
+      end
+      find = state.find ? JSON::Any.new({
+        "direction" => JSON::Any.new(state.find.not_nil!.direction.to_i64),
+        "text"      => JSON::Any.new(state.find.not_nil!.text),
+        "caret"     => JSON::Any.new(state.find.not_nil!.caret.to_i64),
+      }) : JSON::Any.new(nil)
+      address_caret = JSON::Any.new(nil)
+      if caret = state.drawn.address_caret_col
+        address_caret = JSON::Any.new(caret.to_i64)
+      end
+      JSON::Any.new({
+        "drawn" => JSON::Any.new({
+          "title"           => JSON::Any.new(state.drawn.title),
+          "address"         => JSON::Any.new(state.drawn.address),
+          "addressCaretCol" => address_caret,
+          "hint"   => JSON::Any.new(state.drawn.hint),
+          "status" => JSON::Any.new(state.drawn.status),
+        }),
+        "scroll"    => JSON::Any.new(state.scroll.to_i64),
+        "col"       => JSON::Any.new(state.col.to_i64),
+        "cursor"    => JSON::Any.new(state.cursor.to_i64),
+        "statusMsg" => JSON::Any.new(state.status_msg),
+        "address"   => address,
+        "typing"    => typing,
+        "auth"      => auth,
+        "find"      => find,
+        "atCalls"   => JSON::Any.new(state.core.at_calls.map { |call| JSON::Any.new(call) }),
+      })
+    end
+
+    private def self.reader_buffer_json(buffer : Reader::Buffer) : JSON::Any
+      JSON::Any.new({
+        "text"  => JSON::Any.new(buffer.text),
+        "caret" => JSON::Any.new(buffer.caret.to_i64),
+      })
     end
 
     private def self.screen_patch_edited_line(payload : JSON::Any) : JSON::Any
