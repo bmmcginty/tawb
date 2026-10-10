@@ -438,5 +438,6 @@ function createLiveState() {
 
 module.exports = {
   installLive, collect, armFrame, armRenderedFrames, refreshDue, createLiveState, pulse,
+  OBSERVER_SCRIPT, DRAIN_SCRIPT, PULSE_SCRIPT,
   TICK_MS, MIN_INTERVAL_MS, DUTY_CYCLE, INPUT_GRACE_MS, PULSE_MS,
 };

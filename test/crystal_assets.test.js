@@ -9,6 +9,7 @@ const { readFieldStateInPage } = require('../src/core');
 const { clickThrough, prepareRealClick, submitsAutofilled } = require('../src/click');
 const { sliderStateOf } = require('../src/core');
 const { sliderGeometry } = require('../src/driver_firefox');
+const { OBSERVER_SCRIPT, DRAIN_SCRIPT, PULSE_SCRIPT } = require('../src/live');
 const { CLEAR_SCRIPT, PIERCE_PARENT_SCRIPT, libraryParentScript } = require('../src/firefox');
 
 const ROOT = path.join(__dirname, '..');
@@ -33,6 +34,9 @@ const assets = {
   'slider_geometry.js': {
     source: 'src/driver_firefox.js sliderGeometry', value: sliderGeometry.toString(),
   },
+  'live_observer.js': { source: 'src/live.js OBSERVER_SCRIPT', value: OBSERVER_SCRIPT.toString() },
+  'live_drain.js': { source: 'src/live.js DRAIN_SCRIPT', value: DRAIN_SCRIPT.toString() },
+  'live_pulse.js': { source: 'src/live.js PULSE_SCRIPT', value: PULSE_SCRIPT.toString() },
 };
 
 for (const [name, { source, value }] of Object.entries(assets)) {
