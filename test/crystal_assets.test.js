@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { extractAxItems } = require('../src/ax_own');
-const { readFieldStateInPage } = require('../src/core');
+const { readFieldStateInPage, SCROLL_TO_BOTTOM, RESTORE_SCROLL } = require('../src/core');
 const { clickThrough, prepareRealClick, submitsAutofilled } = require('../src/click');
 const { sliderStateOf } = require('../src/core');
 const { sliderGeometry } = require('../src/driver_firefox');
@@ -37,6 +37,10 @@ const assets = {
   'live_observer.js': { source: 'src/live.js OBSERVER_SCRIPT', value: OBSERVER_SCRIPT.toString() },
   'live_drain.js': { source: 'src/live.js DRAIN_SCRIPT', value: DRAIN_SCRIPT.toString() },
   'live_pulse.js': { source: 'src/live.js PULSE_SCRIPT', value: PULSE_SCRIPT.toString() },
+  'scroll_to_bottom.js': {
+    source: 'src/core.js SCROLL_TO_BOTTOM', value: SCROLL_TO_BOTTOM.toString(),
+  },
+  'restore_scroll.js': { source: 'src/core.js RESTORE_SCROLL', value: RESTORE_SCROLL.toString() },
 };
 
 for (const [name, { source, value }] of Object.entries(assets)) {

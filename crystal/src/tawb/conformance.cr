@@ -264,6 +264,8 @@ module Tawb
         core_tab_scenario(payload)
       when "core.snapshot_scenario"
         core_snapshot_scenario(payload)
+      when "core.more_scenario"
+        core_more_scenario(payload)
       when "core.diff_blocks"
         object = payload.as_h
         previous = object["previous_texts"].as_a.map(&.as_s)
@@ -645,6 +647,22 @@ module Tawb
         JSON::Any.new(UnicodeEscape.escaped_offset(value, offset).to_i64)
       else
         raise ArgumentError.new("unknown conformance operation #{operation}")
+      end
+    end
+
+    private def self.core_more_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      session = Bidi::Session.new(object["url"].as_s)
+      page = FirefoxDriver::Page.new(session, "main", "https://example.test/")
+      core = Core.new(page: page)
+      core.rendered_url = page.url
+      core.blocks = [Core::Block.new("page")]
+      begin
+        result = core.ask_for_more(page).as_h
+        result["exhausted"] = JSON::Any.new(core.no_more_to_load?)
+        JSON::Any.new(result)
+      ensure
+        session.close
       end
     end
 

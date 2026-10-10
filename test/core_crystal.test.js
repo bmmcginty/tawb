@@ -558,4 +558,75 @@ if (implementations.length > 1) {
       await new Promise((resolve) => server.close(resolve));
     }
   });
+
+  test('Crystal asks a lazy feed for more and puts a barren scroll back', async () => {
+    const server = http.createServer();
+    const sockets = new Set();
+    const calls = new Map();
+    const remote = (value) => {
+      if (value === undefined) return { type: 'undefined' };
+      if (value === null) return { type: 'null' };
+      if (typeof value === 'boolean') return { type: 'boolean', value };
+      if (typeof value === 'number') return { type: 'number', value };
+      if (typeof value === 'string') return { type: 'string', value };
+      if (Array.isArray(value)) return { type: 'array', value: value.map(remote) };
+      return { type: 'object', value: Object.entries(value).map(([key, item]) => [key, remote(item)]) };
+    };
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    server.on('upgrade', (request, socket, head) => {
+      const mode = request.url.startsWith('/grow') ? 'grow'
+        : request.url.startsWith('/stuck') ? 'stuck' : 'static';
+      const tally = { counts: 0, restores: 0 };
+      calls.set(mode, tally);
+      let peer;
+      peer = acceptWebSocket(request, socket, (text) => {
+        const message = JSON.parse(text);
+        let result = {};
+        if (message.method === 'script.callFunction') {
+          const declaration = message.params.functionDeclaration;
+          if (declaration.includes('scrollingElement')) {
+            result = { result: remote(mode === 'static'
+              ? { elements: 5, scrollable: false, moved: false, target: 'nothing' }
+              : { elements: 10, scrollable: true, moved: mode === 'grow', target: 'document' }) };
+          } else if (declaration.includes('getElementsByTagName')) {
+            tally.counts += 1;
+            result = { result: remote(tally.counts > 1 && mode === 'grow' ? 12 : 10) };
+          } else if (declaration.includes('undo')) {
+            tally.restores += 1;
+            result = { result: remote(true) };
+          }
+        }
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+      }, () => {});
+      if (head.length) peer.consume(head);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    try {
+      const grown = await crystal.moreScenario(`ws://127.0.0.1:${port}/grow`);
+      assert.deepEqual(grown, {
+        grew: true, scrollable: true, moved: true, target: 'document', exhausted: false,
+      });
+      const stuck = await crystal.moreScenario(`ws://127.0.0.1:${port}/stuck`);
+      assert.deepEqual(stuck, {
+        grew: false, scrollable: true, moved: false, target: 'document', exhausted: true,
+      });
+      const still = await crystal.moreScenario(`ws://127.0.0.1:${port}/static`);
+      assert.deepEqual(still, {
+        grew: false, scrollable: false, moved: false, target: 'nothing', exhausted: true,
+      });
+      assert.equal(calls.get('grow').restores, 0);
+      assert.ok(calls.get('grow').counts >= 2);
+      assert.equal(calls.get('stuck').restores, 1);
+      assert.ok(calls.get('stuck').counts >= 2);
+      assert.equal(calls.get('static').restores, 1);
+      assert.equal(calls.get('static').counts, 0);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
 }

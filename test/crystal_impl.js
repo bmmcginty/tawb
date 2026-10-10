@@ -356,6 +356,7 @@ function coreImplementations(javascript) {
     snapshotScenario(url, cursor) {
       return callAsync('core.snapshot_scenario', { url, cursor });
     },
+    moreScenario(url) { return callAsync('core.more_scenario', { url }); },
   });
   return implementations;
 }

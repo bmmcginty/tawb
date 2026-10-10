@@ -1631,6 +1631,7 @@ class Core {
 
 module.exports = {
   Core, ActionTimeout, withTimeout, sliderTarget, sliderStateOf, readFieldState, readFieldStateInPage,
+  SCROLL_TO_BOTTOM, RESTORE_SCROLL,
   ACTION_TIMEOUT_MS, OPERATION_TIMEOUT_MS, NAVIGATION_TIMEOUT_MS,
   REANCHOR_WINDOW, CONTEXT_RADIUS,
   ALL_SOURCES, SOURCE_LABELS, DOM_SOURCES,

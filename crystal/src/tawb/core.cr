@@ -103,6 +103,12 @@ module Tawb
     ACTION_TIMEOUT_MS     = 6000
     OPERATION_TIMEOUT_MS  = 8000
     NAVIGATION_TIMEOUT_MS = 20000
+    LOAD_MORE_TIMEOUT_MS  = 2500
+    LOAD_MORE_SETTLED_MS  = 800
+    SCROLL_TO_BOTTOM = Actions.asset_source(
+      {{ read_file("#{__DIR__}/../../assets/scroll_to_bottom.js") }})
+    RESTORE_SCROLL = Actions.asset_source(
+      {{ read_file("#{__DIR__}/../../assets/restore_scroll.js") }})
 
     # How far past a text match the context has to agree before a re-anchor
     # believes it: the normal case for a block whose own content is what
@@ -564,6 +570,41 @@ module Tawb
     def no_more_to_load? : Bool
       return false unless exhausted = @exhausted
       exhausted.url == @rendered_url && exhausted.blocks == @blocks.size
+    end
+
+    # Ask a lazy feed for more once, restoring its visual scroll position if
+    # no elements arrive. Ordinary long documents are already fully present
+    # in the buffer; only a growing DOM counts as more content.
+    def ask_for_more(page : FirefoxDriver::Page? = @page) : JSON::Any
+      target = page || raise IO::Error.new("this core has no page")
+      probe = target.evaluate(SCROLL_TO_BOTTOM).as_h
+      scrollable = probe["scrollable"]?.try(&.as_bool?) || false
+      moved = probe["moved"]?.try(&.as_bool?) || false
+      before = Core.js_number(probe["elements"]?)
+      grew = false
+      if scrollable
+        timeout = moved ? LOAD_MORE_TIMEOUT_MS : LOAD_MORE_SETTLED_MS
+        deadline = Time.monotonic + timeout.milliseconds
+        while Time.monotonic < deadline
+          count = Core.js_number(target.evaluate(
+            "() => document.getElementsByTagName('*').length"))
+          if count > before
+            grew = true
+            break
+          end
+          sleep 250.milliseconds
+        end
+      end
+      unless grew
+        target.evaluate(RESTORE_SCROLL) rescue nil
+        @exhausted = Exhausted.new(@rendered_url, @blocks.size)
+      end
+      JSON::Any.new({
+        "grew"       => JSON::Any.new(grew),
+        "scrollable" => JSON::Any.new(scrollable),
+        "moved"      => JSON::Any.new(moved),
+        "target"     => JSON::Any.new(probe["target"]?.try(&.as_s?) || "nothing"),
+      })
     end
 
     # -----------------------------------------------------------------------
