@@ -830,6 +830,36 @@ function lynxActionsImplementations() {
 // differenced between the JavaScript original and the Crystal port: the same
 // injected imports, saved settings, key files, and reimport requests must
 // produce the same map, the same preferences, and the same writes.
+// The internal Lynx pages' row builders, differenced between the JavaScript
+// original and the Crystal port: the same help text, document information,
+// visited and session lists, reference lists that keep the block Enter must
+// activate, and control descriptions.
+function lynxPagesImplementations(lynxPages) {
+  const implementations = [{
+    name: 'JavaScript',
+    page(method, args) {
+      switch (method) {
+        case 'help': return lynxPages.helpRows({ unsupported: args.unsupported });
+        case 'document_info': return lynxPages.documentInfoRows(args);
+        case 'visited': return lynxPages.visitedRows(args.visited);
+        case 'session': return lynxPages.sessionRows(args.pageLog);
+        case 'link_list': return lynxPages.linkListRows(args);
+        case 'describe': return lynxPages.describeItem(args.item);
+        case 'trace': return lynxPages.traceRows(args.text);
+        default: throw new Error(`unknown lynx pages method ${method}`);
+      }
+    },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    page(method, args) {
+      return call('lynx_pages.call', { method, ...args });
+    },
+  });
+  return implementations;
+}
+
 function lynxStateImplementations(lynxState) {
   const describe = (options, map, tallies) => {
     const actions = {};
@@ -1622,6 +1652,6 @@ module.exports = {
   firefoxPageImplementations,
   inputImplementations, interfaceImplementations, keymapImplementations, layoutImplementations,
   liveImplementations, lynxActionsImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
-  lynxNumberImplementations, lynxStateImplementations, marionetteImplementations, optionImplementations,
+  lynxNumberImplementations, lynxPagesImplementations, lynxStateImplementations, marionetteImplementations, optionImplementations,
   placeImplementations, readerCommands, sessionImplementations, unicodeImplementations,
 };

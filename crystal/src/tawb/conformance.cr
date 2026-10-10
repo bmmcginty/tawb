@@ -22,6 +22,7 @@ require "./layout"
 require "./live"
 require "./lynx_actions"
 require "./lynx_config"
+require "./lynx_pages"
 require "./lynx_display"
 require "./lynx_keymap"
 require "./lynx_number"
@@ -594,6 +595,8 @@ module Tawb
       when "keys.save"
         build_keymap(payload).save
         JSON::Any.new(true)
+      when "lynx_pages.call"
+        lynx_pages_call(payload)
       when "lynx_state.keymap"
         lynx_state_keymap(payload)
       when "lynx_state.preferences"
@@ -961,6 +964,53 @@ module Tawb
         "start" => JSON::Any.new(region.start.to_i64),
         "end"   => JSON::Any.new(region.stop.to_i64),
       })
+    end
+
+    private def self.rows_json(rows : Array(LynxPages::Row)) : JSON::Any
+      JSON::Any.new(rows.map do |row|
+        JSON::Any.new({
+          "text"  => JSON::Any.new(row.text),
+          "entry" => row.entry || JSON::Any.new(nil),
+        })
+      end)
+    end
+
+    private def self.lynx_pages_call(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      case object["method"].as_s
+      when "help"
+        unsupported = (object["unsupported"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s)
+        JSON::Any.new(LynxPages.help_rows(unsupported).map { |row| JSON::Any.new(row) })
+      when "document_info"
+        item = object["item"]?
+        item = nil if item && item.raw.nil?
+        rows_json(LynxPages.document_info_rows(
+          object["title"]?.try(&.as_s?) || "",
+          object["url"]?.try(&.as_s?) || "",
+          object["source"]?.try(&.as_s?) || "",
+          object["size"]?.try(&.as_i64?) || 0_i64,
+          item,
+        ))
+      when "visited"
+        rows_json(LynxPages.visited_rows(object["visited"]?.try(&.as_a?) || [] of JSON::Any))
+      when "session"
+        rows_json(LynxPages.session_rows(object["pageLog"]?.try(&.as_a?) || [] of JSON::Any))
+      when "link_list"
+        rows_json(LynxPages.link_list_rows(
+          object["blocks"]?.try(&.as_a?) || [] of JSON::Any,
+          object["lines"]?.try(&.as_a?) || [] of JSON::Any,
+          object["addresses"]?.try(&.as_bool?) == true,
+          object["numbered"]?.try(&.as_bool?) == true,
+        ))
+      when "describe"
+        item = object["item"]?
+        item = nil if item && item.raw.nil?
+        JSON::Any.new(LynxPages.describe_item(item))
+      when "trace"
+        rows_json(LynxPages.trace_rows(object["text"]?.try(&.as_s?) || ""))
+      else
+        raise ArgumentError.new("unknown lynx pages method #{object["method"].as_s}")
+      end
     end
 
     private def self.lynx_state_keymap(payload : JSON::Any) : JSON::Any

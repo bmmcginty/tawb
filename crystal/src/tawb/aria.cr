@@ -8,6 +8,7 @@ module Tawb
       "tab", "switch", "checkbox", "radio", "option",
     }
     FIELD_ROLES = {"textbox", "searchbox", "combobox", "listbox", "slider", "spinbutton"}
+    FOCUSABLE_ROLES = LINK_ROLES + BUTTON_ROLES + FIELD_ROLES
 
     def self.render_line(item : JSON::Any) : String
       object = item.as_h
