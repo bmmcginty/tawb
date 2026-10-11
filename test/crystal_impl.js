@@ -1115,6 +1115,7 @@ function liveRealImplementations(liveModule, driverModule) {
 // run in order against the same live state. What each action wrote to the
 // terminal — and what it refused to rewrite — is the behaviour under test.
 function readerImplementations(index, keysModule) {
+  const coreModule = require('../src/core');
   const buildKeys = (spec) => new keysModule.Keymap({
     terminfo: spec.terminfo ?? null,
     profile: spec.profile ?? 'default',
@@ -1136,8 +1137,43 @@ function readerImplementations(index, keysModule) {
       forgetPopup() { this.popup = null; },
       async activate(item) {
         this.activated = (this.activated ?? []).concat([item]);
-        return spec.core?.activatedStatus ?? null;
+        const failure = spec.core?.activationFailure;
+        if (failure) {
+          if (failure.timeout) throw new coreModule.ActionTimeout('Activating timed out after 6000ms');
+          throw new Error(failure.message ?? 'the activation failed');
+        }
+        // The real activation always answers an object, with a status when
+        // the page said one; the reader fills in its own words otherwise.
+        return spec.core?.activatedStatus ?? {};
       },
+      async fragmentOf() { return spec.core?.fragment ?? null; },
+      async focusControl() { return spec.core?.focusOk ?? true; },
+      async attachFiles(item, paths) {
+        this.attachments = (this.attachments ?? []).concat([{ item, paths }]);
+        return true;
+      },
+      async optionsFor() { return spec.core?.listing ?? null; },
+      async fieldForTyping() { return spec.core?.field ?? null; },
+      async chooseOption() {
+        const failure = spec.core?.chooseFailure;
+        if (failure) {
+          if (failure.timeout) throw new coreModule.ActionTimeout('Choosing timed out after 6000ms');
+          throw new Error(failure.message ?? 'the choice failed');
+        }
+        return spec.core?.chooseOutcome ?? { changed: true };
+      },
+      followPopup(controls) { this.popup = controls ? { controls } : null; return this.popup; },
+      noteChanges() { return spec.core?.changes ?? []; },
+      async blockAtFragment() { return spec.core?.fragmentBlock ?? -1; },
+      async watchActivationFocus() {
+        return spec.core?.watchFocus ? { token: 'watch' } : null;
+      },
+      async cancelActivationFocus() {},
+      async activationFocus() {
+        return spec.core?.focusFound ? { found: true } : null;
+      },
+      async focusDestinationBlock() { return spec.core?.focusBlock ?? -1; },
+      async dropFocusDestination() {},
       async rescan() {
         if (spec.core?.rescanBlocks) this.blocks = spec.core.rescanBlocks;
         this.snapshotCostMs = spec.core?.rescanCost ?? 0;
@@ -1149,6 +1185,18 @@ function readerImplementations(index, keysModule) {
       live: spec.core?.live ?? null,
       snapshotCostMs: spec.core?.snapshotCostMs ?? 0,
     };
+    // The dropdown's entries are spliced into the block list by the real
+    // chooser implementation, borrowed from the Core prototype so the
+    // scripted core cannot drift from the real one. The blocks are read
+    // through so a rescan that replaces the list is seen, not dodged.
+    const chooserHost = Object.create(coreModule.Core.prototype);
+    Object.defineProperty(chooserHost, 'blocks', { get: () => core.blocks });
+    core.openChooser = (at, listing) =>
+      coreModule.Core.prototype.openChooser.call(chooserHost, at, listing);
+    core.showChooser = (filter) =>
+      coreModule.Core.prototype.showChooser.call(chooserHost, filter);
+    core.closeChooser = () => coreModule.Core.prototype.closeChooser.call(chooserHost);
+    Object.defineProperty(core, 'chooser', { get: () => chooserHost.chooser });
     const state = {
       rows: spec.rows ?? 24, cols: spec.cols ?? 80,
       interface: spec.interface ?? 'tawb', mode: spec.mode ?? 'browse',
@@ -1175,6 +1223,9 @@ function readerImplementations(index, keysModule) {
         status: spec.drawn?.status ?? null,
       },
       core,
+      // The activation path logs against the driver; a scripted state still
+      // carries the name it would have in the real loop.
+      driver: spec.driver ?? { name: 'scripted' },
       keys: spec.keys ? buildKeys(spec.keys) : null,
       typing: spec.typing ? {
         item: spec.typing.item, text: spec.typing.text ?? '', caret: spec.typing.caret ?? 0,
@@ -1203,6 +1254,8 @@ function readerImplementations(index, keysModule) {
       files: spec.files ?? null,
       library: spec.library ?? null, dialog: spec.dialog ?? null,
       options: spec.options ?? null,
+      controlling: spec.controlling ?? null,
+      chooser: spec.chooser ?? null,
     };
     return state;
   };
@@ -1353,6 +1406,26 @@ function readerImplementations(index, keysModule) {
         }) ?? null;
       case 'moveToPopup':
         index.moveToPopup(state, page, action.item ?? null); return undefined;
+      case 'openChooser':
+        index.openChooser(state, page, action.item, action.listing); return undefined;
+      case 'closeChooser':
+        index.closeChooser(state, page, { note: action.note ?? null }); return undefined;
+      case 'refilter':
+        index.refilter(state, page, action.filter ?? ''); return undefined;
+      case 'chooserLines': {
+        const range = index.chooserLines(state);
+        return range ? { first: range.first, last: range.last } : null;
+      }
+      case 'filePromptText': {
+        const prompt = index.filePromptText(state);
+        return { text: prompt.text, caretCol: prompt.caretCol };
+      }
+      case 'completePath': {
+        const completion = index.completePath(action.text ?? '');
+        return { text: completion.text, note: completion.note ?? null };
+      }
+      case 'fileToAttach':
+        return index.fileToAttach(action.text ?? '');
       case 'findKey':
         index.handleFindKey(action.chunk, state, page); return undefined;
       case 'findText': {
@@ -1371,6 +1444,9 @@ function readerImplementations(index, keysModule) {
     title: state.title,
     popup: state.core.popup ?? null,
     live: state.core.live ?? null,
+    chooser: state.core.chooser ?? null,
+    attachments: state.core.attachments ?? [],
+    activated: state.core.activated ?? [],
     visitedLinks: state.visitedLinks ?? [],
     pageLog: state.pageLog ?? [],
     drawn: { ...state.drawn },
@@ -1404,6 +1480,9 @@ function readerImplementations(index, keysModule) {
     lastFind: state.lastFind
       ? { direction: state.lastFind.direction, text: state.lastFind.text }
       : null,
+    controlling: state.controlling ?? null,
+    chooserMode: state.chooser ?? null,
+    files: state.files ?? null,
     atCalls,
     inputMarks: state.core.inputMarks ?? 0,
   });
@@ -1414,7 +1493,11 @@ function readerImplementations(index, keysModule) {
       const atCalls = [];
       const state = buildJsState(args.state, atCalls);
       const pageUrl = args.page?.url ?? '';
-      const page = { url: () => pageUrl, title: async () => (args.page?.title ?? '') };
+      const page = { url: () => pageUrl, title: async () => (args.page?.title ?? ''),
+        // The page the reader drives cannot be asked to evaluate anything:
+        // the page-side probes (history identity, focus watch) then fall
+        // back the way they would against a browser that refused.
+        evaluate: async () => { throw new Error('the page cannot be asked'); } };
       // parkCursor and set_status draw the address row from state.core.page,
       // exactly as the reading loop's own state does.
       state.core.page = page;
@@ -1458,6 +1541,7 @@ function readerImplementations(index, keysModule) {
       const state = buildJsState(args.state, atCalls);
       const pageUrl = args.page?.url ?? '';
       const page = { url: () => pageUrl, title: async () => (args.page?.title ?? ''),
+        evaluate: async () => { throw new Error('the page cannot be asked'); },
         keyboard: { presses: [], async press(key) {
           if (args.page?.failPress) throw new Error('the page refused');
           this.presses.push(key);
@@ -1487,6 +1571,46 @@ function readerImplementations(index, keysModule) {
           } else if (action.op === 'closePopup') {
             await index.closePopup(state, page);
             value = undefined;
+          } else if (action.op === 'beginTyping') {
+            value = await index.beginTyping(state, page, action.item);
+          } else if (action.op === 'activate') {
+            if (action.keys) {
+              const queue = action.keys.map((k) => (k === '<eof>' ? EOF : k));
+              state.keyReader = {
+                claim() { return 'token'; },
+                release() {},
+                async next() {
+                  if (!queue.length) throw new Error('the prompt asked for a key nobody pressed');
+                  return queue.shift();
+                },
+              };
+            }
+            await index.activateCurrent(state, page);
+            value = undefined;
+          } else if (action.op === 'chooseKey') {
+            await index.handleChooseKey(action.chunk, state, page);
+            value = undefined;
+          } else if (action.op === 'reportAfterAction') {
+            value = await index.reportAfterAction(state, page, {
+              previousTexts: action.previousTexts ?? [],
+              previousUrl: action.previousUrl ?? '',
+              anchor: action.anchor ?? null,
+              screen: action.screen ?? null,
+              focused: action.focused ?? null,
+            });
+          } else if (action.op === 'askFiles') {
+            const queue = (action.keys ?? []).map((k) => (k === '<eof>' ? EOF : k));
+            state.keyReader = {
+              claim() { return 'token'; },
+              release() {},
+              async next() {
+                if (!queue.length) throw new Error('the prompt asked for a key nobody pressed');
+                return queue.shift();
+              },
+            };
+            value = (await index.askForFilePaths(state, {
+              asking: action.asking, multiple: !!action.multiple, accept: action.accept ?? '',
+            })) ?? null;
           } else if (action.op === 'pageKey') {
             const before = page.keyboard.presses.length;
             await index.handlePageKey(action.chunk, state, page);

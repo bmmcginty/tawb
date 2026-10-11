@@ -1422,6 +1422,35 @@ module Tawb
         scripted.activated_status = core["activatedStatus"]?
         scripted.live = core["live"]?
         scripted.snapshot_cost = core["snapshotCostMs"]?.try(&.as_i64?) || 0_i64
+        # Activation, typing and the chooser are scripted as answers: what
+        # the element layer would have found, and what the choice changed.
+        # An absent or JSON-null answer is the same as "none".
+        if fragment = scripted_value(core, "fragment")
+          scripted.fragment = fragment
+        end
+        scripted.focus_control_ok = core["focusOk"]?.try(&.as_bool?) != false
+        if listing = scripted_value(core, "listing")
+          scripted.listing = listing
+        end
+        if field = scripted_value(core, "field")
+          scripted.field_info = field
+        end
+        if outcome = scripted_value(core, "chooseOutcome")
+          scripted.choose_outcome = outcome
+        end
+        if failure = scripted_value(core, "chooseFailure")
+          scripted.choose_failure = failure
+        end
+        if failure = scripted_value(core, "activationFailure")
+          scripted.activation_failure = failure
+        end
+        if changes = core["changes"]?.try(&.as_a?)
+          scripted.changes = changes
+        end
+        scripted.fragment_block = (core["fragmentBlock"]?.try(&.as_i64?) || -1).to_i32
+        scripted.watch_focus = core["watchFocus"]?.try(&.as_bool?) || false
+        scripted.focus_found = core["focusFound"]?.try(&.as_bool?) || false
+        scripted.focus_block = (core["focusBlock"]?.try(&.as_i64?) || -1).to_i32
       end
       if keys = object["keys"]?
         state.keys = build_keymap(keys)
@@ -1484,7 +1513,16 @@ module Tawb
       state.library = object["library"]?
       state.dialog = object["dialog"]?
       state.options = object["options"]?
+      state.controlling = object["controlling"]?
+      state.chooser = object["chooser"]?
       state
+    end
+
+    # A scripted answer that may be absent or JSON null; both mean "none".
+    private def self.scripted_value(object : Hash(String, JSON::Any), key : String) : JSON::Any?
+      value = object[key]?
+      return nil if value.nil? || value.raw.is_a?(Nil)
+      value
     end
 
     private def self.reader_action(output : RecordingScreen, state : Reader::State,
@@ -1649,6 +1687,64 @@ module Tawb
       when "closePopup"
         return JSON::Any.new(nil) unless page
         ReaderKeys.close_popup(output, state, page.not_nil!)
+      when "beginTyping"
+        return JSON::Any.new(nil) unless page
+        entered = ReaderKeys.begin_typing(output, state, page.not_nil!, action["item"])
+        return JSON::Any.new(entered)
+      when "activate"
+        return JSON::Any.new(nil) unless page
+        keyboard = nil
+        if keys = action["keys"]?.try(&.as_a?)
+          keyboard = ScriptedKeyboard.new(keys.map do |key|
+            text = key.as_s
+            text == "<eof>" ? Input::EOF.as(Input::Key) : text.as(Input::Key)
+          end)
+        end
+        ReaderKeys.activate_current(output, state, page.not_nil!, keyboard)
+      when "chooseKey"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.handle_choose_key(output, state, page.not_nil!, action["chunk"].as_s)
+      when "openChooser"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.open_chooser(output, state, page.not_nil!, action["item"], action["listing"])
+      when "closeChooser"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.close_chooser(output, state, page.not_nil!, action["note"]?.try(&.as_s?))
+      when "refilter"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.refilter(output, state, page.not_nil!, action["filter"]?.try(&.as_s?) || "")
+      when "chooserLines"
+        range = ReaderKeys.chooser_lines(state)
+        return JSON::Any.new(nil) unless range
+        return JSON::Any.new({"first" => JSON::Any.new(range[:first].to_i64),
+                              "last"  => JSON::Any.new(range[:last].to_i64)})
+      when "reportAfterAction"
+        return JSON::Any.new(nil) unless page
+        previous_texts = (action["previousTexts"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s)
+        followed = ReaderKeys.report_after_action(output, state, page.not_nil!,
+          previous_texts, action["previousUrl"]?.try(&.as_s?) || "",
+          action["anchor"]?, action["screen"]?, action["focused"]?)
+        return JSON::Any.new(followed)
+      when "filePromptText"
+        prompt = ReaderKeys.file_prompt_text(state)
+        return JSON::Any.new({"text"     => JSON::Any.new(prompt[:text]),
+                              "caretCol" => JSON::Any.new(prompt[:caret_col].to_i64)})
+      when "askFiles"
+        keys = (action["keys"]?.try(&.as_a?) || [] of JSON::Any).map do |key|
+          text = key.as_s
+          text == "<eof>" ? Input::EOF.as(Input::Key) : text.as(Input::Key)
+        end
+        answer = ReaderKeys.ask_for_file_paths(output, state, page_url,
+          ScriptedKeyboard.new(keys), action["asking"]?.try(&.as_s?) || "",
+          action["multiple"]?.try(&.as_bool?) || false,
+          action["accept"]?.try(&.as_s?) || "")
+        return answer ? JSON::Any.new(answer.raw) : JSON::Any.new(nil)
+      when "completePath"
+        completion = ReaderKeys.complete_path(action["text"]?.try(&.as_s?) || "")
+        return JSON::Any.new({"text" => JSON::Any.new(completion[:text]),
+                              "note" => completion[:note] ? JSON::Any.new(completion[:note].not_nil!) : JSON::Any.new(nil)})
+      when "fileToAttach"
+        return ReaderKeys.file_to_attach(action["text"]?.try(&.as_s?) || "")
       when "authKey"
         step = ReaderKeys.handle_auth_key(state, action["chunk"].as_s)
         return JSON::Any.new("continue") if step.is_a?(ReaderKeys::AuthStep)
@@ -1760,6 +1856,9 @@ module Tawb
         "title"        => JSON::Any.new(state.title),
         "popup"        => state.core.popup || JSON::Any.new(nil),
         "live"         => state.core.live || JSON::Any.new(nil),
+        "chooser"      => state.core.chooser || JSON::Any.new(nil),
+        "attachments"  => JSON::Any.new(state.core.attached_calls),
+        "activated"    => JSON::Any.new(state.core.activated),
         "visitedLinks" => JSON::Any.new(state.visited_links),
         "pageLog"      => JSON::Any.new(state.page_log),
         "drawn"        => JSON::Any.new({
@@ -1779,6 +1878,9 @@ module Tawb
         "auth"       => auth,
         "find"       => find,
         "lastFind"   => last_find_json,
+        "controlling" => state.controlling || JSON::Any.new(nil),
+        "chooserMode" => state.chooser || JSON::Any.new(nil),
+        "files"      => state.files || JSON::Any.new(nil),
         "inputMarks" => JSON::Any.new(state.core.input_marks.to_i64),
         "atCalls"    => JSON::Any.new(state.core.at_calls.map { |call| JSON::Any.new(call) }),
       })

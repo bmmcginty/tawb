@@ -75,8 +75,11 @@ module Tawb
       property item : JSON::Any
       property text : String
       property caret : Int32
+      # What the field's line last showed, so a keystroke can patch the row
+      # instead of rewriting it.
+      property drawn : String?
 
-      def initialize(@item, @text = "", @caret = 0)
+      def initialize(@item, @text = "", @caret = 0, @drawn = nil)
       end
     end
 
@@ -146,6 +149,14 @@ module Tawb
       abstract def keyboard_press(key : String) : Nil
     end
 
+    # A page-touching operation outlived its budget. The core's own timeouts
+    # raise this (the browser-side source of it is the same in JavaScript:
+    # core.js's ActionTimeout). Activation says how long it gave the page
+    # before giving up, because "error" would read as the reader's mistake
+    # when it is the page's.
+    class ActionTimeout < Exception
+    end
+
     # The core, as the key handlers see it: the buffer, the popup the page
     # has open, the live-update switches, and the operations a keystroke can
     # set in motion. The terminal loop binds this to the real core; the
@@ -167,6 +178,59 @@ module Tawb
       abstract def snapshot_cost_ms : Int64
       abstract def live : JSON::Any?
       abstract def set_live_snapshot_cost(ms : Int64) : Nil
+
+      # -- activation ---------------------------------------------------
+
+      # The fragment an item's href points at, when it is one.
+      abstract def fragment_of(item : JSON::Any) : JSON::Any?
+      # Whether the browser could give the control the keyboard. A slider is
+      # driven by keystrokes, so adjustment needs focus first.
+      abstract def focus_control(item : JSON::Any) : Bool
+      abstract def attach_files(item : JSON::Any, paths : Array(String)) : Bool
+      # A native select's entries, read off the element, or nil when the
+      # control is not one.
+      abstract def options_for(item : JSON::Any) : JSON::Any?
+      # Focus an editable field and read what is already in it, or nil when
+      # the control cannot take typed text at all.
+      abstract def field_for_typing(item : JSON::Any) : JSON::Any?
+      abstract def choose_option(control : JSON::Any, index : Int32) : JSON::Any
+      # If this control says it opens something, follow it: the thing it
+      # opens is very often rendered at the end of the document.
+      abstract def follow_popup(controls : String?) : Nil
+      # Which parts of the page an action changed, so a button that rewrote
+      # something far from the cursor is not silent.
+      abstract def note_changes(previous_texts : Array(String)) : Array(JSON::Any)
+      abstract def block_at_fragment(hash : String) : Int32
+
+      # -- the open dropdown --------------------------------------------
+
+      # The open dropdown: where its entries start, how many are shown, the
+      # filter they were shown under.
+      abstract def chooser : JSON::Any?
+      abstract def open_chooser(at : Int32, listing : JSON::Any) : Nil
+      abstract def close_chooser : Nil
+      # Re-draws the entries honouring a new filter, and says how many
+      # survive it.
+      abstract def show_chooser(filter : String) : Int32
+
+      # -- focus observation around one activation -----------------------
+      #
+      # A page can implement a skip link by focusing its destination instead
+      # of navigating to it. The URL then says nothing happened, while a
+      # graphical browser follows the new focus. The watch is armed against
+      # the element Enter is about to activate; the poll after the activation
+      # answers where focus went, and the resolution turns that into a block
+      # of this view.
+
+      abstract def watch_activation_focus(item : JSON::Any) : JSON::Any?
+      # The activation raised before anything was pressed: disarm, don't
+      # follow.
+      abstract def cancel_activation_focus(watch : JSON::Any) : Nil
+      abstract def activation_focus(watch : JSON::Any) : JSON::Any?
+      abstract def focus_destination_block(focused : JSON::Any) : Int32
+      # A navigation leaves the watched destination pointing at the old
+      # document; only the disposal is still owed.
+      abstract def drop_focus_destination(focused : JSON::Any) : Nil
     end
 
     # The pieces of the core the drawing needs: which view the blocks came
@@ -178,6 +242,27 @@ module Tawb
     class CoreState
       include CoreEnv
 
+      # The open dropdown, kept live: open_chooser splices its entries into
+      # the block list, show_chooser re-splices under a filter. It mirrors
+      # src/core.js's own chooser (and the real Core's) exactly, because the
+      # choose-mode keys read the entries back out of the block list.
+      class ScriptedChooser
+        property block_index : Int32
+        property at : Int32
+        property count : Int32
+        property filter : String
+        property shown : Array(Int32)
+        property options : Array(JSON::Any)
+        property multiple : Bool
+
+        def initialize(@block_index, @options, @multiple)
+          @at = @block_index + 1
+          @count = 0
+          @filter = ""
+          @shown = [] of Int32
+        end
+      end
+
       property source : String
       property blocks : Array(JSON::Any)
       property popup : JSON::Any?
@@ -185,21 +270,38 @@ module Tawb
       property at_calls : Array(Int64)
       property input_marks : Int32
       property activated : Array(JSON::Any)
+      property attached_calls : Array(JSON::Any)
+      property followed_popups : Array(String?)
       # Scripted answers, for the conformance harness.
       property rescan_blocks : Array(JSON::Any)?
       property rescan_cost : Int64
       property anchor_json : JSON::Any?
       property restore_block : Int32
       property activated_status : JSON::Any?
+      property activation_failure : JSON::Any?
       property live : JSON::Any?
       property snapshot_cost : Int64
       property reanchored : JSON::Any?
+      property fragment : JSON::Any?
+      property focus_control_ok : Bool
+      property listing : JSON::Any?
+      property field_info : JSON::Any?
+      property choose_outcome : JSON::Any?
+      property choose_failure : JSON::Any?
+      property changes : Array(JSON::Any)
+      property fragment_block : Int32
+      property watch_focus : Bool
+      property focus_found : Bool
+      property focus_block : Int32
+      property scripted_chooser : ScriptedChooser?
 
       def initialize(@source = "ax", @blocks = [] of JSON::Any,
                      @popup = nil, @popup_at = -1_i64)
         @at_calls = [] of Int64
         @input_marks = 0
         @activated = [] of JSON::Any
+        @attached_calls = [] of JSON::Any
+        @followed_popups = [] of String?
         @rescan_blocks = nil
         @rescan_cost = 0
         @anchor_json = nil
@@ -207,6 +309,16 @@ module Tawb
         @activated_status = nil
         @live = nil
         @snapshot_cost = 0
+        @fragment = nil
+        @focus_control_ok = true
+        @listing = nil
+        @field_info = nil
+        @choose_outcome = nil
+        @changes = [] of JSON::Any
+        @fragment_block = -1
+        @watch_focus = false
+        @focus_found = false
+        @focus_block = -1
       end
 
       def at(index : Int32) : Nil
@@ -226,7 +338,140 @@ module Tawb
 
       def activate(item : JSON::Any) : JSON::Any
         @activated << item
+        if failure = @activation_failure
+          if failure.as_h["timeout"]?.try(&.as_bool?)
+            raise ActionTimeout.new("Activating timed out after 6000ms")
+          end
+          raise IO::Error.new(failure.as_h["message"]?.try(&.as_s?) || "the activation failed")
+        end
         @activated_status || JSON::Any.new(nil)
+      end
+
+      def fragment_of(item : JSON::Any) : JSON::Any?
+        @fragment
+      end
+
+      def focus_control(item : JSON::Any) : Bool
+        @focus_control_ok
+      end
+
+      def attach_files(item : JSON::Any, paths : Array(String)) : Bool
+        @attached_calls << JSON::Any.new({
+          "item"  => item,
+          "paths" => JSON::Any.new(paths.map { |path| JSON::Any.new(path) }),
+        })
+        true
+      end
+
+      def options_for(item : JSON::Any) : JSON::Any?
+        @listing
+      end
+
+      def field_for_typing(item : JSON::Any) : JSON::Any?
+        @field_info
+      end
+
+      def choose_option(control : JSON::Any, index : Int32) : JSON::Any
+        if failure = @choose_failure
+          if failure.as_h["timeout"]?.try(&.as_bool?)
+            raise ActionTimeout.new("Choosing timed out after 6000ms")
+          end
+          raise IO::Error.new(failure.as_h["message"]?.try(&.as_s?) || "the choice failed")
+        end
+        @choose_outcome || JSON::Any.new({"changed" => JSON::Any.new(true)})
+      end
+
+      def follow_popup(controls : String?) : Nil
+        @followed_popups << controls
+        @popup = controls && !controls.empty? ? JSON::Any.new({"controls" => JSON::Any.new(controls)}) : nil
+      end
+
+      def note_changes(previous_texts : Array(String)) : Array(JSON::Any)
+        @changes
+      end
+
+      def block_at_fragment(hash : String) : Int32
+        @fragment_block
+      end
+
+      def open_chooser(at : Int32, listing : JSON::Any) : Nil
+        close_chooser
+        object = listing.as_h? || {} of String => JSON::Any
+        @scripted_chooser = ScriptedChooser.new(
+          at,
+          object["options"]?.try(&.as_a?) || [] of JSON::Any,
+          object["multiple"]?.try(&.as_bool?) || false)
+        show_chooser
+      end
+
+      def show_chooser(filter : String = "") : Int32
+        chooser = @scripted_chooser || return 0
+        chooser.filter = filter
+        @blocks.delete_at(chooser.at, chooser.count) if chooser.count > 0
+
+        needle = chooser.filter.strip.downcase
+        shown = [] of Int32
+        blocks = [] of JSON::Any
+        chooser.options.each_with_index do |option, index|
+          object = option.as_h? || {} of String => JSON::Any
+          option_text = object["text"]?.try(&.as_s?) || ""
+          next if !needle.empty? && !option_text.downcase.includes?(needle)
+          selected = object["selected"]?.try(&.as_bool?) || false
+          disabled = object["disabled"]?.try(&.as_bool?) || false
+          shown << index
+          blocks << JSON::Any.new({
+            "text" => JSON::Any.new("    #{selected ? "(*)" : "( )"} #{option_text}" +
+              (disabled ? " — unavailable" : "")),
+            "item" => JSON::Any.new({
+              "role"         => JSON::Any.new("option"),
+              "name"         => JSON::Any.new(option_text),
+              "chooserIndex" => JSON::Any.new(index.to_i64),
+              "disabled"     => JSON::Any.new(disabled),
+            }),
+          })
+        end
+        blocks.each_with_index { |block, offset| @blocks.insert(chooser.at + offset, block) }
+        chooser.count = blocks.size
+        chooser.shown = shown
+        blocks.size
+      end
+
+      def close_chooser : Nil
+        if chooser = @scripted_chooser
+          @blocks.delete_at(chooser.at, chooser.count) if chooser.count > 0
+        end
+        @scripted_chooser = nil
+      end
+
+      def chooser : JSON::Any?
+        chooser = @scripted_chooser || return nil
+        JSON::Any.new({
+          "blockIndex" => JSON::Any.new(chooser.block_index.to_i64),
+          "at"          => JSON::Any.new(chooser.at.to_i64),
+          "count"       => JSON::Any.new(chooser.count.to_i64),
+          "filter"      => JSON::Any.new(chooser.filter),
+          "shown"       => JSON::Any.new(chooser.shown.map { |index| JSON::Any.new(index.to_i64) }),
+          "options"     => JSON::Any.new(chooser.options),
+          "multiple"    => JSON::Any.new(chooser.multiple),
+        })
+      end
+
+      def watch_activation_focus(item : JSON::Any) : JSON::Any?
+        @watch_focus ? JSON::Any.new({"token" => JSON::Any.new("watch")}) : nil
+      end
+
+      def cancel_activation_focus(watch : JSON::Any) : Nil
+      end
+
+      def activation_focus(watch : JSON::Any) : JSON::Any?
+        @focus_found ? JSON::Any.new({"found" => JSON::Any.new(true)}) : nil
+      end
+
+      def focus_destination_block(focused : JSON::Any) : Int32
+        @focus_block
+      end
+
+      def drop_focus_destination(focused : JSON::Any) : Nil
       end
 
       def rescan : Nil
@@ -287,6 +532,10 @@ module Tawb
       property library : JSON::Any?
       property dialog : JSON::Any?
       property options : JSON::Any?
+      # The slider the control mode is adjusting, and the dropdown whose
+      # entries are on screen: each mode's own record of what it is acting on.
+      property controlling : JSON::Any?
+      property chooser : JSON::Any?
       property last_find : Find?
       property page_keyboard_exit_until : Int64
       property visited_links : Array(JSON::Any)
@@ -318,6 +567,8 @@ module Tawb
         @library = nil
         @dialog = nil
         @options = nil
+        @controlling = nil
+        @chooser = nil
         @last_find = nil
         @page_keyboard_exit_until = 0
         @visited_links = [] of JSON::Any

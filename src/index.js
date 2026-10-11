@@ -18,8 +18,7 @@ const {
 } = require('./lynx_display');
 const { openDriver } = require('./driver');
 const { claimedTargets, releaseTab } = require('./session');
-const { capturePlace, restorePlace, exactBlockForElement } = require('./place');
-const { armActivationFocus, focusedByActivation, cancelActivationFocus } = require('./focus');
+const { capturePlace, restorePlace } = require('./place');
 const { Keymap } = require('./keys');
 const {
   contextNavigationAction, lynxHidesCursor, needsLayoutMetadata,
@@ -2660,59 +2659,28 @@ async function jumpToFragment(state, page, hash) {
   return true;
 }
 
-// Arm focus observation against the element Enter is about to activate. The
-// before-and-after observation window, rather than document.activeElement at
-// some unrelated time, ties a destination to this particular action.
-async function watchActivationFocus(state, page, item) {
-  const scope = item.frame || page;
-  let handle = null;
-  try {
-    handle = await withTimeout(
-      state.core.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating focused control');
-    return await armActivationFocus(scope, handle);
-  } finally {
-    if (handle) await handle.dispose().catch(() => {});
-  }
-}
-
 // Move only to an exact element represented in this view. Focus is the page's
 // explicit keyboard destination; guessing at a nearby line would turn that
-// useful signal into an unexplained jump.
+// useful signal into an unexplained jump. The element-handle half — polling
+// the page for where focus landed, then resolving it to a block — lives on
+// the core, which owns the handles; what is left here is the reader's own
+// half: putting the cursor on the line and saying what it was.
 async function followActivationFocus(state, page, focused) {
-  if (!focused || !focused.handle) return null;
-  try {
-    const block = await exactBlockForElement({
-      source: state.core.source,
-      blocks: state.core.blocks,
-      lines: state.lines,
-    }, page, focused.handle, focused.frame);
-    const line = lineForBlock(state, block);
-    if (line < 0) return null;
-    const item = state.core.blocks[block] && state.core.blocks[block].item;
-    moveSelection(state, line, page, 0);
-    return item && item.name ? item.name : state.core.blocks[block].text;
-  } finally {
-    await focused.handle.dispose().catch(() => {});
-  }
+  const block = await state.core.focusDestinationBlock(focused).catch(() => -1);
+  if (block < 0) return null;
+  const line = lineForBlock(state, block);
+  if (line < 0) return null;
+  const item = state.core.blocks[block] && state.core.blocks[block].item;
+  moveSelection(state, line, page, 0);
+  return item && item.name ? item.name : state.core.blocks[block].text;
 }
 
 async function beginTyping(state, page, item) {
-  const handle = await withTimeout(
-    state.core.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating field');
-  const editable = await handle.evaluate((el) => {
-    const tag = el && el.tagName;
-    return !!el && !el.disabled && !el.readOnly
-      && (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable);
-  });
-  if (!editable) {
-    await handle.dispose().catch(() => {});
-    return false;
-  }
+  const info = await state.core.fieldForTyping(item, page);
+  if (!info) return false;
 
-  await withTimeout(handle.evaluate((el) => el.focus()), ACTION_TIMEOUT_MS, 'Focusing field');
-  const info = await readFieldState(handle);
   state.mode = 'type';
-  state.typing = { handle, item, text: info.text, caret: info.caret, drawn: null };
+  state.typing = { handle: info.handle, item, text: info.text, caret: info.caret, drawn: null };
   drawHint(state);
   state.typing.drawn = typingText(state).text;
   writeLine(lineRow(state, state.cursor), state.typing.drawn);
@@ -2793,16 +2761,16 @@ async function activateCurrent(state, page) {
       }
     }
 
-    const focusWatch = await watchActivationFocus(state, page, item).catch(() => null);
+    const focusWatch = await state.core.watchActivationFocus(item, page).catch(() => null);
     let done;
     try {
       done = await state.core.activate(item, page);
     } catch (err) {
-      if (focusWatch) await cancelActivationFocus(focusWatch).catch(() => {});
+      if (focusWatch) await state.core.cancelActivationFocus(focusWatch).catch(() => {});
       throw err;
     }
     focused = focusWatch
-      ? await focusedByActivation(focusWatch).catch(() => null)
+      ? await state.core.activationFocus(focusWatch).catch(() => null)
       : null;
     state.statusMsg = done.status || `Activated: ${item.name}`;
     // If this control says it opens something, follow it: the thing it opens
@@ -2865,7 +2833,7 @@ async function reportAfterAction(
   // destination in the new one. Disposal is still owed even though it cannot
   // be followed.
   const focusName = navigated
-    ? (focused && focused.handle ? await focused.handle.dispose().catch(() => {}) : null)
+    ? (focused ? await state.core.dropFocusDestination(focused).catch(() => {}) : null)
     : await followActivationFocus(state, page, focused);
   const regions = navigated ? [] : noteChanges(state, previousTexts);
   // A different page is a different screen, so there is nothing to compare
@@ -5312,6 +5280,8 @@ module.exports = {
   itemUnderCursor, linkTarget, shortTarget,
   findQuickNav, focusableEdge, findParagraph, jumpTo, currentLine, currentBlock, QUICK_ACTIONS,
   clickAsHuman, reportAfterAction,
+  beginTyping, openChooser, closeChooser, handleChooseKey, refilter, chooserLines,
+  askForFilePaths, filePromptText,
   expandPath, completePath, fileToAttach, fileSize, attachedNote,
   anchorFor, restoreAnchor, capturePlace, restorePlace, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,

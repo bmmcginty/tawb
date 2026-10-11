@@ -10,6 +10,10 @@ const { remapIndex } = require('./remap');
 const { claimTab } = require('./session');
 const { log } = require('./log');
 const { renderLine, BUTTON_ROLES, LINK_ROLES } = require('./aria');
+const {
+  armActivationFocus, focusedByActivation, cancelActivationFocus,
+} = require('./focus');
+const { exactBlockForElement } = require('./place');
 
 // The core: everything about a page that is not about a terminal.
 //
@@ -466,6 +470,11 @@ class Core {
     this.cursorBlock = -1;
     this.changes = [];
     this.changeIndex = -1;
+    // The field the reader is typing into, kept between the entry that read
+    // it and the keystrokes that read it again. See fieldForTyping.
+    this.typingHandle = null;
+    // Where the last activation moved focus, resolved but not yet followed.
+    this.activationFocused = null;
     // How often each place has changed lately, so a ticker can be told from
     // news. Keyed by block index, which holds still for as long as only text
     // is being replaced — which is exactly the case this is about.
@@ -1617,6 +1626,95 @@ class Core {
     }
     if (!href || !href.startsWith('#') || href.length < 2) return null;
     return decodeURIComponent(href.slice(1));
+  }
+
+  // Whether the element Enter is standing on can take typed text at all.
+  // A control that is disabled, read-only, or none of the three editing
+  // shapes has nothing for a caret to enter.
+  static FIELD_EDITABLE(el) {
+    const tag = el && el.tagName;
+    return !!el && !el.disabled && !el.readOnly
+      && (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable);
+  }
+
+  // Makes an item ready to type into and reads what is already there. The
+  // editable check, the focus and the read are one act as far as the reader
+  // is concerned; the handle is kept on the core because the typing mode
+  // keeps reading the live value through it until the field is left.
+  async fieldForTyping(item, page = this.page) {
+    const handle = await withTimeout(
+      this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating field');
+    const editable = await handle.evaluate(Core.FIELD_EDITABLE);
+    if (!editable) {
+      await handle.dispose().catch(() => {});
+      return null;
+    }
+
+    await withTimeout(handle.evaluate((el) => el.focus()), ACTION_TIMEOUT_MS, 'Focusing field');
+    const info = await readFieldState(handle);
+    if (this.typingHandle && this.typingHandle !== handle) {
+      await this.typingHandle.dispose().catch(() => {});
+    }
+    this.typingHandle = handle;
+    return { ...info, handle };
+  }
+
+  // Arm focus observation against the element Enter is about to activate.
+  // The before-and-after observation window, rather than
+  // document.activeElement at some unrelated time, ties a destination to
+  // this particular action.
+  async watchActivationFocus(item, page = this.page) {
+    const scope = item.frame || page;
+    let handle = null;
+    try {
+      handle = await withTimeout(
+        this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating focused control');
+      return await armActivationFocus(scope, handle);
+    } finally {
+      if (handle) await handle.dispose().catch(() => {});
+    }
+  }
+
+  // An activation raised before anything was pressed: the observation is
+  // cancelled, not followed.
+  async cancelActivationFocus(watch) {
+    if (!watch) return;
+    await cancelActivationFocus(watch).catch(() => {});
+  }
+
+  // What focus did the activation move, resolved once and kept until the
+  // reader decides to follow it or — after a navigation — to let it go.
+  // A handle belongs to the old document after that and cannot be a
+  // destination in the new one.
+  async activationFocus(watch) {
+    if (!watch) return null;
+    const focused = await focusedByActivation(watch).catch(() => null);
+    if (focused && focused.handle) this.activationFocused = focused;
+    return focused ? { found: true } : null;
+  }
+
+  // The focused destination, as an exact block in the current view. Focus
+  // is the page's explicit keyboard destination; guessing at a nearby line
+  // would turn that useful signal into an unexplained jump.
+  async focusDestinationBlock(focused) {
+    const watched = focused && focused.handle ? focused : this.activationFocused;
+    this.activationFocused = null;
+    if (!watched || !watched.handle) return -1;
+    try {
+      return await exactBlockForElement(
+        { source: this.source, blocks: this.blocks }, this.page,
+        watched.handle, watched.frame);
+    } finally {
+      await watched.handle.dispose().catch(() => {});
+    }
+  }
+
+  // A navigation happened: the watched destination can only be disposed of,
+  // never followed.
+  async dropFocusDestination(focused) {
+    const watched = focused && focused.handle ? focused : this.activationFocused;
+    this.activationFocused = null;
+    if (watched && watched.handle) await watched.handle.dispose().catch(() => {});
   }
 
   // Which block a fragment points at, found through the text at the target:
