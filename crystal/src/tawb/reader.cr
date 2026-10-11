@@ -158,6 +158,8 @@ module Tawb
       # Asks the engine to stop loading. Best effort: a page already gone
       # is not an error worth reporting.
       abstract def stop_loading : Nil
+      # Read the same address again, with or without the cache.
+      abstract def reload(ignore_cache : Bool) : Nil
     end
 
     # A page-touching operation outlived its budget. The core's own timeouts
@@ -256,6 +258,36 @@ module Tawb
       # to be made through the control's visual geometry because it ignored
       # the standard key.
       abstract def adjust_control(item : JSON::Any, key : String) : JSON::Any
+
+      # -- the browse map -----------------------------------------------
+
+      # Whether asking a lazy feed for more has already been tried and
+      # answered no.
+      abstract def no_more_to_load : Bool
+      # Ask a lazy feed for more once, restoring its scroll if nothing
+      # arrives. The answer says whether the page grew.
+      abstract def ask_for_more : JSON::Any
+      # Putting the reader back after a rebuild the reader asked for: the
+      # anchor first, then the text the buffer used to hold.
+      abstract def reanchor_with_texts(saved : JSON::Any, previous_texts : Array(String)) : JSON::Any
+      # A click the browser treats as a person's, above content, where the
+      # events are trusted and carry user activation.
+      abstract def can_real_click : Bool
+      abstract def real_click(item : JSON::Any) : JSON::Any
+      # The pointer put somewhere, pressing nothing.
+      abstract def can_hover : Bool
+      abstract def hover(item : JSON::Any) : JSON::Any
+      # A link handed to the browser's own download manager.
+      abstract def download_link(item : JSON::Any) : JSON::Any
+      # Which parts of the page have changed, in document order, for the
+      # change-to-change walking.
+      abstract def change_targets : Array(JSON::Any)
+      abstract def change_index : Int32
+      abstract def change_index=(value : Int32) : Nil
+
+      # Which browser engine the core drives, said when a driver cannot do
+      # something the reader asked for.
+      abstract def driver_name : String
     end
 
     # The pieces of the core the drawing needs: which view the blocks came
@@ -324,6 +356,17 @@ module Tawb
       property typing_released : Bool
       property adjust_outcome : JSON::Any?
       property adjust_failure : JSON::Any?
+      property no_more_to_load : Bool
+      property ask_more_outcome : JSON::Any?
+      property ask_more_failure : JSON::Any?
+      property can_real_click : Bool
+      property real_click_outcome : JSON::Any?
+      property can_hover : Bool
+      property hover_outcome : JSON::Any?
+      property download_outcome : JSON::Any?
+      property change_targets : Array(JSON::Any)
+      property change_index : Int32
+      property driver_name : String
 
       def initialize(@source = "ax", @blocks = [] of JSON::Any,
                      @popup = nil, @popup_at = -1_i64)
@@ -354,6 +397,17 @@ module Tawb
         @typing_released = false
         @adjust_outcome = nil
         @adjust_failure = nil
+        @no_more_to_load = false
+        @ask_more_outcome = nil
+        @ask_more_failure = nil
+        @can_real_click = true
+        @real_click_outcome = nil
+        @can_hover = true
+        @hover_outcome = nil
+        @download_outcome = nil
+        @change_targets = [] of JSON::Any
+        @change_index = -1
+        @driver_name = "scripted"
       end
 
       def at(index : Int32) : Nil
@@ -534,6 +588,63 @@ module Tawb
         })
       end
 
+      def no_more_to_load : Bool
+        @no_more_to_load
+      end
+
+      def ask_for_more : JSON::Any
+        if failure = @ask_more_failure
+          raise IO::Error.new(failure.as_h["message"]?.try(&.as_s?) || "the page would not say")
+        end
+        @ask_more_outcome || JSON::Any.new({
+          "grew"       => JSON::Any.new(false),
+          "scrollable" => JSON::Any.new(false),
+          "moved"      => JSON::Any.new(false),
+          "target"     => JSON::Any.new("nothing"),
+        })
+      end
+
+      def reanchor_with_texts(saved : JSON::Any, previous_texts : Array(String)) : JSON::Any
+        @reanchored || JSON::Any.new({"block" => JSON::Any.new(-1_i64),
+                                      "exact" => JSON::Any.new(false)})
+      end
+
+      def can_real_click : Bool
+        @can_real_click
+      end
+
+      def real_click(item : JSON::Any) : JSON::Any
+        @real_click_outcome || JSON::Any.new({"ok" => JSON::Any.new(true)})
+      end
+
+      def can_hover : Bool
+        @can_hover
+      end
+
+      def hover(item : JSON::Any) : JSON::Any
+        @hover_outcome || JSON::Any.new({"ok" => JSON::Any.new(true)})
+      end
+
+      def download_link(item : JSON::Any) : JSON::Any
+        @download_outcome || JSON::Any.new({"ok" => JSON::Any.new(true)})
+      end
+
+      def change_targets : Array(JSON::Any)
+        @change_targets
+      end
+
+      def change_index : Int32
+        @change_index
+      end
+
+      def change_index=(value : Int32) : Nil
+        @change_index = value
+      end
+
+      def driver_name : String
+        @driver_name
+      end
+
       def rescan : Nil
         if incoming = @rescan_blocks
           @blocks = incoming
@@ -606,6 +717,12 @@ module Tawb
       # The search engine an address that is not an address is given to;
       # nil is the default one.
       property search : String?
+      # A load-more is already asking the page for more; a second request
+      # would fight the first one's rebuild.
+      property loading_more : Bool
+      # The search engine an address that is not an address is given to;
+      # nil is the default one.
+      property search : String?
 
       def initialize
         @rows = 24
@@ -641,6 +758,7 @@ module Tawb
         @page_log = [] of JSON::Any
         @link_number = nil
         @search = nil
+        @loading_more = false
       end
     end
 

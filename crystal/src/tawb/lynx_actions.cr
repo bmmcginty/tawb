@@ -1,4 +1,6 @@
+require "json"
 require "./keys"
+require "./reader"
 
 module Tawb
   # What the Lynx interface does about a key, once the ordinary browse path
@@ -21,6 +23,10 @@ module Tawb
     class State
       property interface : String
       property keys : Keys::Keymap?
+      # The reader state the view was reduced from, when there is one. The
+      # host's own actions — opening the number prompt, entering a field —
+      # need the reader's half, and this is how they reach it.
+      property reader : Reader::State?
 
       def initialize(interface : String = "default")
         @interface = interface
@@ -51,11 +57,14 @@ module Tawb
 
     # The item under the cursor, as far as these decisions see it: they only
     # ever ask what role it plays, and hand it back to the host that knows
-    # the rest.
+    # the rest. Some hosts — the field entry, chiefly — need the whole item
+    # they were handed; it travels along when the host that produced it has
+    # one.
     class Item
       getter role : String
+      getter json : JSON::Any?
 
-      def initialize(@role : String); end
+      def initialize(@role : String, @json = nil); end
     end
 
     # The host the terminal loop hands in. The JavaScript original took a
@@ -68,13 +77,13 @@ module Tawb
       abstract def set_status(state : State, message : String) : Nil
       abstract def current_item(state : State) : Item?
       abstract def is_field(role : String) : Bool
-      abstract def begin_typing(state : State, page, item : Item) : Bool
+      abstract def begin_typing(state : State, page : Reader::PageEnv?, item : Item) : Bool
       abstract def open_link_number_prompt(state : State, digits : String?) : Nil
-      abstract def open_help(state : State, page) : Nil
-      abstract def describe_current(state : State, page) : Nil
-      abstract def open_main_menu(state : State, page) : Nil
-      abstract def open_options(state : State, page) : Nil
-      abstract def open_trace_log(state : State, page) : Nil
+      abstract def open_help(state : State, page : Reader::PageEnv?) : Nil
+      abstract def describe_current(state : State, page : Reader::PageEnv?) : Nil
+      abstract def open_main_menu(state : State, page : Reader::PageEnv?) : Nil
+      abstract def open_options(state : State, page : Reader::PageEnv?) : Nil
+      abstract def open_trace_log(state : State, page : Reader::PageEnv?) : Nil
       abstract def toggle_trace(state : State) : Nil
     end
 
@@ -106,7 +115,7 @@ module Tawb
     # one, so the ordinary dispatcher can stop. `link-number` is here without
     # the interface gate because that is how it has always behaved: the
     # action exists only in the Lynx map, and reaching it opened the prompt.
-    def action?(action : String, state : State, page) : Bool
+    def action?(action : String, state : State, page : Reader::PageEnv?) : Bool
       if action == "link-number"
         @host.open_link_number_prompt(state, nil)
         return true
@@ -138,7 +147,7 @@ module Tawb
 
     # Lynx enters a text field as soon as a movement lands on it, unless the
     # profile asks for TEXTFIELDS_NEED_ACTIVATION.
-    def after_quick_nav(found : Bool, state : State, page) : Nil
+    def after_quick_nav(found : Bool, state : State, page : Reader::PageEnv?) : Nil
       return unless active?(state) && found
       preferences = state.keys.try(&.preferences)
       return if flag?(preferences, "textfieldsNeedActivation")

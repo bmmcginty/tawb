@@ -37,7 +37,9 @@ module Tawb
     # The interface view the Lynx decisions read. Built per question, since
     # the reader state carries the interface and the keymap separately.
     def self.lynx_view(state : Reader::State) : LynxActions::State
-      LynxActions::State.new(state.interface, state.keys)
+      LynxActions::State.new(state.interface, state.keys).tap do |view|
+        view.reader = state
+      end
     end
 
     # ------------------------------------------------------------------
@@ -342,19 +344,19 @@ module Tawb
       def open_link_number_prompt(state : LynxActions::State, digits : String?) : Nil
       end
 
-      def open_help(state : LynxActions::State, page) : Nil
+      def open_help(state : LynxActions::State, page : Reader::PageEnv?) : Nil
       end
 
-      def describe_current(state : LynxActions::State, page) : Nil
+      def describe_current(state : LynxActions::State, page : Reader::PageEnv?) : Nil
       end
 
-      def open_main_menu(state : LynxActions::State, page) : Nil
+      def open_main_menu(state : LynxActions::State, page : Reader::PageEnv?) : Nil
       end
 
-      def open_options(state : LynxActions::State, page) : Nil
+      def open_options(state : LynxActions::State, page : Reader::PageEnv?) : Nil
       end
 
-      def open_trace_log(state : LynxActions::State, page) : Nil
+      def open_trace_log(state : LynxActions::State, page : Reader::PageEnv?) : Nil
       end
 
       def toggle_trace(state : LynxActions::State) : Nil
@@ -1397,10 +1399,15 @@ module Tawb
     # picks the handler for the mode it is in.
     # ------------------------------------------------------------------
 
-    # The Lynx decisions the mode handlers read. The predicates need a
-    # keymap and a status row; the loop's own host will carry the rest.
+    # The Lynx decisions the mode handlers read. The host is the loop's:
+    # the pieces it needs now are the reader's own key test, the status row
+    # and the field entry; the screens it will open — help, options, the
+    # trace log — arrive with the loop and the library work.
     private class ModeHost
       include LynxActions::Host
+
+      def initialize(@output : Screen::Output, @page_url : String)
+      end
 
       def fallback_keymap : Keys::Keymap
         FALLBACK_KEYMAP
@@ -1411,44 +1418,55 @@ module Tawb
       end
 
       def set_status(state : LynxActions::State, message : String) : Nil
+        reader = state.reader
+        Reader.set_status(@output, reader, @page_url, message) if reader
       end
 
       def current_item(state : LynxActions::State) : LynxActions::Item?
-        nil
+        reader = state.reader
+        return nil unless reader
+        item = Reader.current_block(reader).try(&.as_h).try(&.["item"]?)
+        role = item.try(&.as_h).try(&.["role"]?).try(&.as_s?)
+        role ? LynxActions::Item.new(role, item) : nil
       end
 
       def is_field(role : String) : Bool
         Aria::FIELD_ROLES.includes?(role)
       end
 
-      def begin_typing(state : LynxActions::State, page, item : LynxActions::Item) : Bool
-        false
+      def begin_typing(state : LynxActions::State, page : Reader::PageEnv?, item : LynxActions::Item) : Bool
+        reader = state.reader
+        return false unless reader && page && (json = item.json)
+        ReaderKeys.begin_typing(@output, reader, page, json)
       end
 
       def open_link_number_prompt(state : LynxActions::State, digits : String?) : Nil
+        reader = state.reader
+        return unless reader
+        ReaderKeys.open_link_number_prompt(@output, reader, @page_url, digits)
       end
 
-      def open_help(state : LynxActions::State, page) : Nil
+      def open_help(state : LynxActions::State, page : Reader::PageEnv?) : Nil
       end
 
-      def describe_current(state : LynxActions::State, page) : Nil
+      def describe_current(state : LynxActions::State, page : Reader::PageEnv?) : Nil
       end
 
-      def open_main_menu(state : LynxActions::State, page) : Nil
+      def open_main_menu(state : LynxActions::State, page : Reader::PageEnv?) : Nil
       end
 
-      def open_options(state : LynxActions::State, page) : Nil
+      def open_options(state : LynxActions::State, page : Reader::PageEnv?) : Nil
       end
 
-      def open_trace_log(state : LynxActions::State, page) : Nil
+      def open_trace_log(state : LynxActions::State, page : Reader::PageEnv?) : Nil
       end
 
       def toggle_trace(state : LynxActions::State) : Nil
       end
     end
 
-    private def self.mode_actions : LynxActions
-      LynxActions.new(ModeHost.new)
+    private def self.mode_actions(output : Screen::Output, page_url : String) : LynxActions
+      LynxActions.new(ModeHost.new(output, page_url))
     end
 
     def self.handle_type_key(output : Screen::Output, state : Reader::State,
@@ -1478,7 +1496,7 @@ module Tawb
         return
       end
 
-      lynx_arrow = mode_actions.tab_arrow?(lynx_view(state), chunk)
+      lynx_arrow = mode_actions(output, page.url).tab_arrow?(lynx_view(state), chunk)
       if key_is(chunk, "Tab", state) || key_is(chunk, "Shift+Tab", state) || lynx_arrow
         direction = key_is(chunk, "Shift+Tab", state) || key_is(chunk, "ArrowUp", state) ? -1 : 1
         screen = Reader.screen_before(state)
@@ -1505,15 +1523,15 @@ module Tawb
         # and select-only widgets stay in forms mode: they are not activated
         # merely by receiving focus, but Tab can continue through the form
         # from them.
-        needs_activation = mode_actions.tab_needs_activation?(lynx_view(state))
+        needs_activation = mode_actions(output, page.url).tab_needs_activation?(lynx_view(state))
         if !needs_activation && item &&
            Aria::FIELD_ROLES.includes?(item.as_h["role"]?.try(&.as_s?) || "") &&
            begin_typing(output, state, page, item.not_nil!)
           Reader.set_status(output, state, page.url,
-            mode_actions.tab_typing_status(lynx_view(state), name))
+            mode_actions(output, page.url).tab_typing_status(lynx_view(state), name))
           return
         end
-        state.mode = mode_actions.tab_landed_mode(lynx_view(state))
+        state.mode = mode_actions(output, page.url).tab_landed_mode(lynx_view(state))
         Reader.draw_hint(output, state)
         Reader.set_status(output, state, page.url,
           "#{direction > 0 ? "Next" : "Previous"} control: #{name}.")
@@ -1554,7 +1572,7 @@ module Tawb
         return
       end
 
-      if mode_actions.type_command?(lynx_view(state), chunk)
+      if mode_actions(output, page.url).type_command?(lynx_view(state), chunk)
         state.mode = "field-command"
         Reader.draw_hint(output, state)
         Reader.set_status(output, state, page.url, "Command:")
@@ -1917,6 +1935,660 @@ module Tawb
       end
 
       Reader.draw_address(output, state, page.url, false, true)
+    end
+
+    # ------------------------------------------------------------------
+    # The browse map
+    #
+    # One dispatch for everything reading does: quit, go somewhere, move,
+    # toggle, refresh, and press what the cursor is standing on. What it
+    # cannot do yet is the work of the pieces that are still
+    # JavaScript-only: switching views by element (the element-handle half
+    # of place.js), the history traversal, the browser's own lists, the
+    # tabs, the native dialogs, and the keyboard wizard's takeover of the
+    # screen. Those actions are noted where they would go.
+    # ------------------------------------------------------------------
+
+    # Asking first: Lynx tells quitting apart from aborting. QUIT asks,
+    # ABORT does not.
+    def self.ask_yes_no(output : Screen::Output, state : Reader::State,
+                        keyboard : Keyboard?, question : String,
+                        default_yes : Bool = false) : Bool
+      return false unless keyboard
+      previous_mode = state.mode
+      previous_status = state.status_msg
+      state.mode = "confirm"
+      token = keyboard.claim
+      Reader.draw_hint(output, state, force: true)
+      Reader.set_status(output, state, "", "#{question} (#{default_yes ? "y" : "y/n"})")
+      Screen.move_cursor(output, Reader.status_row(state),
+        Math.min(question.size + 8, state.cols))
+      answer = false
+      begin
+        answer = loop do
+          chunk = keyboard.next_key(token)
+          break false if chunk.is_a?(Input::Eof)
+          chunk = chunk.as(String)
+          break false if key_is(chunk, "Escape", state)
+          break false if chunk.matches?(/^[nN]$/)
+          break true if chunk.matches?(/^[yY]$/)
+          # Enter is the answer the prompt is showing as its default.
+          break true if default_yes && (chunk == "\r" || chunk == "\n")
+        end
+      ensure
+        keyboard.release(token)
+        state.mode = previous_mode
+        state.status_msg = previous_status
+        Reader.draw_hint(output, state, force: true)
+      end
+    end
+
+    private def self.reload_page(output : Screen::Output, state : Reader::State,
+                                 page : Reader::PageEnv, ignore_cache : Bool) : Nil
+      anchor = state.core.anchor
+      screen = Reader.screen_before(state)
+      Reader.set_status(output, state, page.url,
+        "#{ignore_cache ? "Reloading without cache" : "Reloading"} #{page.url}…")
+      begin
+        page.reload(ignore_cache)
+        Reader.refresh(state, page, false, anchor)
+        Reader.repaint_list(output, state, page.url, screen)
+        Reader.set_status(output, state, page.url,
+          "#{ignore_cache ? "Reloaded without cache" : "Reloaded"} #{page.url}.")
+      rescue err
+        Reader.set_status(output, state, page.url,
+          "Could not reload the page: #{(err.message || err.to_s).lines.first?}")
+      end
+    end
+
+    private def self.interrupt_loading(output : Screen::Output, state : Reader::State,
+                                       page : Reader::PageEnv) : Nil
+      # Every page can be asked to stop; the refusal is the engine's.
+      begin
+        page.stop_loading
+        Reader.set_status(output, state, page.url, "Stopped loading.")
+      rescue err
+        Reader.set_status(output, state, page.url,
+          "Could not stop loading: #{(err.message || err.to_s).lines.first?}")
+      end
+    end
+
+    private def self.at_end?(state : Reader::State) : Bool
+      state.cursor >= state.lines.size - 1
+    end
+
+    # Moving past the last line is how the reader asks a feed for more.
+    def self.load_more(output : Screen::Output, state : Reader::State,
+                       page : Reader::PageEnv) : Nil
+      return if state.loading_more
+
+      # Already asked, already answered. The reader gets the truth
+      # immediately instead of the same two and a half seconds of waiting
+      # for it.
+      if state.core.no_more_to_load
+        Reader.set_status(output, state, page.url, "End of page.")
+        return
+      end
+
+      state.loading_more = true
+      # Hold off the live refresh: the page is about to mutate heavily, and
+      # a rebuild landing in the middle of this one would fight with it.
+      was_refreshing = live_value(state, "refreshing")
+      set_live_value(state, "refreshing", JSON::Any.new(true))
+      Reader.set_status(output, state, page.url, "Loading more…")
+
+      lines_before = state.lines.size
+      asked = begin
+        state.core.ask_for_more
+      rescue
+        state.loading_more = false
+        if was = was_refreshing
+        set_live_value(state, "refreshing", was)
+      end
+        Reader.set_status(output, state, page.url, "Could not ask the page for more.")
+        return
+      end
+
+      unless asked.as_h["grew"]?.try(&.as_bool?)
+        # Nothing arrived, so there is nothing to rebuild — and a rebuild
+        # here does not merely cost a snapshot for no gain, it can lose
+        # content. The core has put the scroll back and remembered the
+        # answer.
+        state.loading_more = false
+        if was = was_refreshing
+          set_live_value(state, "refreshing", was)
+        end
+        Reader.set_status(output, state, page.url, "End of page.")
+        return
+      end
+
+      previous_texts = state.core.blocks.map do |block|
+        block.as_h["text"]?.try(&.as_s?) || ""
+      end
+      anchor = state.core.anchor
+      screen = Reader.screen_before(state)
+
+      begin
+        Reader.refresh(state, page)
+      rescue
+        # The rebuild failed; the bookkeeping below still runs.
+      end
+      settled = state.core.reanchor_with_texts(anchor, previous_texts)
+      line = Reader.line_for_block(state,
+        (settled.as_h["block"]?.try(&.as_i64?) || -1).to_i32)
+      state.cursor = line if line >= 0
+      state.cursor = Math.min(Math.max(state.cursor, 0), Math.max(state.lines.size - 1, 0))
+      Reader.clamp_col(state)
+      Reader.clamp_scroll(state)
+
+      added = state.lines.size - lines_before
+      set_live_value(state, "lastPulseMs", JSON::Any.new(0_i64)) # the fingerprint is stale now
+      if was = was_refreshing
+        set_live_value(state, "refreshing", was)
+      end
+      state.loading_more = false
+
+      Reader.repaint_list(output, state, page.url, screen)
+
+      if added > 0
+        # The reader asked to move down, so move down — onto the first of
+        # what just arrived, which is where they were headed.
+        Reader.move_selection(output, state, page.url, state.cursor + 1)
+        Reader.set_status(output, state, page.url,
+          "#{added} more line#{added == 1 ? "" : "s"}.")
+      else
+        # The page grew but said nothing worth reading: trackers, a spinner.
+        Reader.set_status(output, state, page.url, "Nothing more to read.")
+      end
+    end
+
+    private def self.live_value(state : Reader::State, key : String) : JSON::Any?
+      live = state.core.live
+      hash = live.try(&.as_h?)
+      hash.try(&.[key]?)
+    end
+
+    private def self.set_live_value(state : Reader::State, key : String, value : JSON::Any) : Nil
+      live = state.core.live
+      hash = live.try(&.as_h?)
+      return unless hash
+      hash[key] = value
+    end
+
+    # ------------------------------------------------------------------
+    # A click the browser treats as a person's, and the pointer put
+    # somewhere, pressing nothing
+    # ------------------------------------------------------------------
+
+    def self.click_as_human(output : Screen::Output, state : Reader::State,
+                            page : Reader::PageEnv) : Nil
+      item = Reader.item_under_cursor(state)
+      unless item
+        Reader.set_status(output, state, page.url, "Nothing on this line to click.")
+        return
+      end
+      unless state.core.can_real_click
+        Reader.set_status(output, state, page.url,
+          "The #{state.core.driver_name} driver cannot send a real click.")
+        return
+      end
+
+      previous_texts = state.core.blocks.map do |block|
+        block.as_h["text"]?.try(&.as_s?) || ""
+      end
+      previous_url = page.url
+      # The page-history place the JavaScript original remembers here is
+      # ported with the history traversal helpers.
+      anchor = state.core.anchor
+      screen = Reader.screen_before(state)
+
+      Reader.set_status(output, state, page.url,
+        "Clicking \"#{item.as_h["name"]?.try(&.as_s?)}\" as a person would...")
+      clicked = state.core.real_click(item.not_nil!)
+      unless clicked.as_h["ok"]?.try(&.as_bool?)
+        reason = clicked.as_h["reason"]?.try(&.as_s?) || "could not be found"
+        Reader.set_status(output, state, page.url,
+          "Cannot click \"#{item.as_h["name"]?.try(&.as_s?)}\": it #{reason}." +
+          " Enter activates it without a real click.")
+        return
+      end
+      state.status_msg = "Clicked \"#{item.as_h["name"]?.try(&.as_s?)}\""
+
+      report_after_action(output, state, page, previous_texts, previous_url,
+        anchor, screen, nil)
+    end
+
+    # A menu that slides or fades open is not finished when the pointer
+    # arrives, so the page is given a moment before it is read again.
+    private HOVER_SETTLE_MS = 600
+
+    def self.hover_as_human(output : Screen::Output, state : Reader::State,
+                            page : Reader::PageEnv) : Nil
+      item = Reader.item_under_cursor(state)
+      unless item
+        Reader.set_status(output, state, page.url, "Nothing on this line to hover.")
+        return
+      end
+      unless state.core.can_hover
+        Reader.set_status(output, state, page.url,
+          "The #{state.core.driver_name} driver cannot move the pointer.")
+        return
+      end
+
+      previous_texts = state.core.blocks.map do |block|
+        block.as_h["text"]?.try(&.as_s?) || ""
+      end
+      previous_url = page.url
+      anchor = state.core.anchor
+      screen = Reader.screen_before(state)
+
+      Reader.set_status(output, state, page.url,
+        "Putting the pointer on \"#{item.as_h["name"]?.try(&.as_s?)}\"…")
+      hovered = state.core.hover(item.not_nil!)
+      unless hovered.as_h["ok"]?.try(&.as_bool?)
+        reason = hovered.as_h["reason"]?.try(&.as_s?) || "could not be found"
+        Reader.set_status(output, state, page.url,
+          "Cannot hover \"#{item.as_h["name"]?.try(&.as_s?)}\": it #{reason}.")
+        return
+      end
+      state.status_msg = "Pointer on \"#{item.as_h["name"]?.try(&.as_s?)}\""
+
+      sleep HOVER_SETTLE_MS.milliseconds
+      report_after_action(output, state, page, previous_texts, previous_url,
+        anchor, screen, nil)
+    end
+
+    def self.download_current_link(output : Screen::Output, state : Reader::State,
+                                   page : Reader::PageEnv) : Nil
+      item = Reader.item_under_cursor(state)
+      role = item.try(&.as_h).try(&.["role"]?).try(&.as_s?) || ""
+      if item.nil? || !Aria::LINK_ROLES.includes?(role)
+        Reader.set_status(output, state, page.url, "Move to a link before downloading.")
+        return
+      end
+      name = item.not_nil!.as_h["name"]?.try(&.as_s?) || ""
+      Reader.set_status(output, state, page.url, "Downloading \"#{name}\"…")
+      begin
+        result = state.core.download_link(item.not_nil!)
+        unless result.as_h["ok"]?.try(&.as_bool?)
+          reason = result.as_h["reason"]?.try(&.as_s?) || "could not be found"
+          Reader.set_status(output, state, page.url,
+            "Could not download \"#{name}\": #{reason}.")
+          return
+        end
+        Reader.set_status(output, state, page.url, "Added \"#{name}\" to downloads.")
+      rescue err
+        reason = (err.message || err.to_s).lines.first? || err.to_s
+        Reader.set_status(output, state, page.url,
+          "Could not download \"#{name}\": #{reason}")
+      end
+    end
+
+    def self.jump_to_change(output : Screen::Output, state : Reader::State,
+                            page : Reader::PageEnv, direction : Int32) : Nil
+      # Resolved against the buffer as it stands now, and in document order,
+      # so repeated presses walk down the page rather than around the order
+      # things happened to arrive in.
+      targets = state.core.change_targets
+      if targets.empty?
+        Reader.set_status(output, state, page.url, "No recorded changes.")
+        return
+      end
+      count = targets.size
+      state.core.change_index = (state.core.change_index + direction + count) % count
+      target = targets[state.core.change_index]
+      line_index = Reader.line_for_block(state,
+        (target.as_h["block"]?.try(&.as_i64?) || -1).to_i32)
+      if line_index < 0
+        Reader.set_status(output, state, page.url, "Changed area is no longer present.")
+        return
+      end
+      Reader.move_selection(output, state, page.url, line_index, 0)
+      size = (target.as_h["size"]?.try(&.as_i64?) || 0).to_i32
+      Reader.set_status(output, state, page.url,
+        "Change #{state.core.change_index + 1} of #{count} (#{size} line#{size == 1 ? "" : "s"}).")
+    end
+
+    # The cursor is parked at the bottom-right while nothing is being
+    # chosen, the way a fixed screen leaves it.
+    private def self.action_key_label(state : Reader::State, id : String,
+                                      fallback : String) : String
+      Reader.action_key_label(state, id, fallback)
+    end
+
+    def self.handle_browse_key(output : Screen::Output, state : Reader::State,
+                               page : Reader::PageEnv, keyboard : Keyboard?,
+                               chunk : String, now : Int64 = 0_i64) : String?
+      state.core.mark_input
+      actions = mode_actions(output, page.url)
+      if actions.digit?(chunk, lynx_view(state))
+        return nil
+      end
+      action = keymap_for(state).action_for(chunk)
+      if Reader.popup_is_open(state)
+        context_action = context_action(chunk, state)
+        verdict = popup_key(action, chunk, context_action,
+          key_is(chunk, "Escape", state))
+        return "quit" if verdict == "quit"
+        if verdict == "close"
+          close_popup(output, state, page)
+          return nil
+        end
+      end
+      if action == "quit"
+        return "quit"
+      end
+      if action == "abort"
+        return "quit"
+      end
+      if action == "confirm-quit"
+        return ask_yes_no(output, state, keyboard,
+          "Are you sure you want to quit?", true) ? "quit" : nil
+      end
+
+      # The actions only Lynx has. link-number is handled here without the
+      # interface gate because the action exists only in the Lynx map.
+      if (candidate = action) && actions.action?(candidate, lynx_view(state), page)
+        return nil
+      end
+
+      # A reader inside a menu must always have a way out that also shuts
+      # it, rather than one that leaves it open and them somewhere else.
+      if action == "close-popup" && state.core.popup
+        close_popup(output, state, page)
+        return nil
+      end
+
+      if action == "location-bar" || action == "goto" || action == "location-edit"
+        focus_address_bar(output, state, page, action == "goto" ? "" : page.url)
+        return nil
+      end
+
+      # ELGOTO: the link's own address, which is not the document's.
+      if action == "link-address"
+        item = Reader.item_under_cursor(state)
+        href = item.try(&.as_h).try(&.["href"]?).try(&.as_s?)
+        unless item && href && !href.empty?
+          Reader.set_status(output, state, page.url,
+            "Move to a link before editing its address.")
+          return nil
+        end
+        focus_address_bar(output, state, page, href)
+        return nil
+      end
+
+      # The keyboard wizard takes the screen over; it arrives with the loop
+      # that owns the terminal.
+      if action == "keyboard-wizard"
+        return nil
+      end
+
+      if action == "refresh"
+        previous = state.core.blocks.map do |block|
+          block.as_h["text"]?.try(&.as_s?) || ""
+        end
+        anchor = state.core.anchor
+        screen = Reader.screen_before(state)
+        Reader.refresh(state, page, false, anchor)
+        state.core.note_changes(previous)
+        Reader.repaint_list(output, state, page.url, screen)
+        Reader.set_status(output, state, page.url, "Rescanned.")
+        return nil
+      end
+
+      if action == "reload-page"
+        reload_page(output, state, page, false)
+        return nil
+      end
+      if action == "reload-no-cache"
+        reload_page(output, state, page, true)
+        return nil
+      end
+      if action == "interrupt"
+        interrupt_loading(output, state, page)
+        return nil
+      end
+
+      # Switching views keeps the reader's place by element, and the
+      # element-handle half of place.js is still JavaScript-only. Until it
+      # is ported, a view switch is not offered here.
+      if action == "cycle-view" || action == "source-view"
+        return nil
+      end
+
+      if action == "next-line"
+        if at_end?(state)
+          load_more(output, state, page)
+          return nil
+        end
+        Reader.move_selection(output, state, page.url, state.cursor + 1)
+        return nil
+      end
+      if action == "previous-line"
+        Reader.move_selection(output, state, page.url, state.cursor - 1)
+        return nil
+      end
+      if action == "next-character"
+        Reader.move_caret_right(output, state, page.url)
+        return nil
+      end
+      if action == "previous-character"
+        Reader.move_caret_left(output, state, page.url)
+        return nil
+      end
+      if action == "next-screen"
+        if at_end?(state)
+          load_more(output, state, page)
+          return nil
+        end
+        Reader.move_screen(output, state, 1, page.url)
+        return nil
+      end
+      if action == "previous-screen"
+        Reader.move_screen(output, state, -1, page.url)
+        return nil
+      end
+      # Lynx moves half a page with '(' and ')'. The step is counted in
+      # lines, where a screen's step is one line short of its height so
+      # that the reader keeps a line of context across the join.
+      if action == "next-half-screen"
+        Reader.move_screen(output, state, 1, page.url,
+          Reader.viewport_height(state),
+          Math.max(1, Reader.viewport_height(state) // 2))
+        return nil
+      end
+      if action == "previous-half-screen"
+        Reader.move_screen(output, state, -1, page.url,
+          Reader.viewport_height(state),
+          Math.max(1, Reader.viewport_height(state) // 2))
+        return nil
+      end
+      if action == "top"
+        Reader.move_selection(output, state, page.url, 0)
+        return nil
+      end
+      if action == "bottom"
+        Reader.move_selection(output, state, page.url, state.lines.size - 1)
+        return nil
+      end
+      if action == "line-start"
+        Reader.move_selection(output, state, page.url, state.cursor, 0)
+        return nil
+      end
+      if action == "line-end"
+        line = Reader.current_line(state)
+        Reader.move_selection(output, state, page.url, state.cursor,
+          line ? line.text.size - 1 : 0)
+        return nil
+      end
+
+      # The history traversal helpers are still JavaScript-only; back and
+      # forward arrive with them.
+      if action == "history-back" || action == "history-forward"
+        return nil
+      end
+
+      # The browser's own lists — bookmarks, history, downloads, the link
+      # lists, the document info — are the library integration, ported with
+      # the bookmarks and history work.
+      if action == "bookmarks" || action == "add-bookmark" ||
+         action == "visited-links" || action == "session-history" ||
+         action == "delete-bookmark" || action == "history" ||
+         action == "downloads" || action == "list-links" ||
+         action == "list-addresses" || action == "document-info"
+        return nil
+      end
+
+      if action == "download-link"
+        download_current_link(output, state, page)
+        return nil
+      end
+
+      # The tabs are connected to the interactive interface with the loop
+      # that owns them.
+      if action == "new-tab" || action == "next-tab" ||
+         action == "previous-tab" || action == "close-tab"
+        return nil
+      end
+
+      if action == "next-change"
+        jump_to_change(output, state, page, 1)
+        return nil
+      end
+      if action == "previous-change"
+        jump_to_change(output, state, page, -1)
+        return nil
+      end
+
+      if action == "where"
+        block = Reader.current_block(state)
+        total = state.lines.size
+        role = block.try(&.as_h).try(&.["item"]?).try(&.as_h).try(&.["role"]?) || "nothing"
+        Reader.set_status(output, state, page.url,
+          "Line #{state.cursor + 1} of #{total}, column #{state.col + 1} — #{role}.")
+        return nil
+      end
+
+      # A page that updates itself is not always welcome: a clock or a
+      # ticker would keep marking changes while you are trying to read
+      # something else.
+      if action == "toggle-live"
+        enabled = !(live_value(state, "enabled").try(&.as_bool?) || false)
+        set_live_value(state, "enabled", JSON::Any.new(enabled))
+        Reader.set_status(output, state, page.url, enabled ?
+          "Live updates on." :
+          "Live updates off — press r to refresh manually.")
+        return nil
+      end
+
+      # A row that speaks is not always wanted. Turning it off leaves the
+      # last message standing, which is what the row said before any of
+      # this existed.
+      if action == "toggle-link-address"
+        state.link_address = !state.link_address
+        Reader.set_status(output, state, page.url, state.link_address ?
+          "Link addresses on." :
+          "Link addresses off.")
+        return nil
+      end
+
+      # The host is news only when it changes. Saying it on every link of a
+      # site the reader is already reading is a sentence of nothing, over
+      # and over.
+      if action == "toggle-short-links"
+        state.short_links = !state.short_links
+        Reader.set_status(output, state, page.url, state.short_links ?
+          "Short link addresses on — links on this site say their path alone." :
+          "Short link addresses off — links say their full address.")
+        return nil
+      end
+
+      if action == "real-click"
+        click_as_human(output, state, page)
+        return nil
+      end
+
+      if action == "hover-line"
+        hover_as_human(output, state, page)
+        return nil
+      end
+
+      if action == "page-keyboard"
+        # Key repeat can leave another copy of the exit chord queued behind
+        # the one that just left page mode. Without this short guard that
+        # copy is handled in browse mode and immediately puts the reader
+        # back in.
+        if state.page_keyboard_exit_until > now
+          return nil
+        end
+        state.mode = "page"
+        Reader.draw_hint(output, state)
+        exit = action_key_label(state, "page-keyboard", "Alt+K")
+        Reader.set_status(output, state, page.url,
+          "Webpage keyboard on — Space can play or pause and m can mute or unmute; #{exit} returns to reading.")
+        return nil
+      end
+
+      if action == "find-forward" || action == "find-backward"
+        state.mode = "find"
+        state.find = Reader::Find.new(action == "find-forward" ? 1 : -1)
+        Reader.draw_hint(output, state)
+        Reader.draw_find(output, state)
+        return nil
+      end
+
+      if action == "repeat-find" || action == "repeat-find-forward" || action == "repeat-find-backward"
+        last = state.last_find
+        unless last
+          Reader.set_status(output, state, page.url,
+            "Nothing searched for yet — press / to search.")
+          return nil
+        end
+        direction = action == "repeat-find-backward" ? -1 :
+                    action == "repeat-find-forward" ? 1 : last.direction
+        last.direction = direction
+        run_search(output, state, page.url, last.text, direction)
+        return nil
+      end
+
+      if action == "first-focusable" || action == "last-focusable"
+        direction = action == "first-focusable" ? 1 : -1
+        found = Reader.focusable_edge(state, direction)
+        unless found
+          Reader.set_status(output, state, page.url,
+            "No links or form controls in this document.")
+          return nil
+        end
+        Reader.move_selection(output, state, page.url, found[:line], found[:col])
+        return nil
+      end
+
+      if action == "next-paragraph" || action == "previous-paragraph"
+        direction = action == "next-paragraph" ? 1 : -1
+        QuickNav.jump_to(output, state, page.url,
+          QuickNav.find_paragraph(state, direction), "paragraph", direction)
+        return nil
+      end
+
+      if (candidate = action) && (spec = QuickNav.specification(candidate))
+        found = QuickNav.find(state, candidate)
+        QuickNav.jump_to(output, state, page.url, found, spec.label, spec.direction)
+        mode_actions(output, page.url).after_quick_nav(!found.nil?, lynx_view(state), page)
+        return nil
+      end
+
+      # The browser's own questions are answered by the native-dialog
+      # support, which is a decision the project has not made yet.
+      if action == "browser-question"
+        return nil
+      end
+
+      if action == "activate"
+        activate_current(output, state, page, keyboard)
+        return nil
+      end
+
+      nil
     end
   end
 end

@@ -1336,11 +1336,13 @@ module Tawb
       property url : String
       property goto_fault : String?
       property goto_hang : Bool
+      property reload_fault : String?
 
       def initialize(@url : String, @title : String, @fail_press = false)
         @presses = [] of String
         @goto_fault = nil
         @goto_hang = false
+        @reload_fault = nil
       end
 
       def url : String
@@ -1367,6 +1369,10 @@ module Tawb
 
       def stop_loading : Nil
       end
+
+      def reload(ignore_cache : Bool) : Nil
+        raise IO::Error.new(@reload_fault.not_nil!) if @reload_fault
+      end
     end
 
     # One drawing pass over the reader's terminal: a state, a page address,
@@ -1384,6 +1390,7 @@ module Tawb
       if page_spec = object["page"]?.try(&.as_h?)
         page.goto_fault = page_spec["gotoFault"]?.try(&.as_s?)
         page.goto_hang = page_spec["gotoHang"]?.try(&.as_bool?) || false
+        page.reload_fault = page_spec["reloadFault"]?.try(&.as_s?)
       end
       results = [] of JSON::Any
       (object["actions"]?.try(&.as_a?) || [] of JSON::Any).each do |step_value|
@@ -1497,6 +1504,29 @@ module Tawb
         if failure = scripted_value(core, "adjustFailure")
           scripted.adjust_failure = failure
         end
+        scripted.no_more_to_load = core["noMoreToLoad"]?.try(&.as_bool?) || false
+        if outcome = scripted_value(core, "askMoreOutcome")
+          scripted.ask_more_outcome = outcome
+        end
+        if failure = scripted_value(core, "askMoreFailure")
+          scripted.ask_more_failure = failure
+        end
+        scripted.can_real_click = core["canRealClick"]?.try(&.as_bool?) != false
+        if outcome = scripted_value(core, "realClickOutcome")
+          scripted.real_click_outcome = outcome
+        end
+        scripted.can_hover = core["canHover"]?.try(&.as_bool?) != false
+        if outcome = scripted_value(core, "hoverOutcome")
+          scripted.hover_outcome = outcome
+        end
+        if outcome = scripted_value(core, "downloadOutcome")
+          scripted.download_outcome = outcome
+        end
+        if changes = core["changeTargets"]?.try(&.as_a?)
+          scripted.change_targets = changes
+        end
+        scripted.change_index = (core["changeIndex"]?.try(&.as_i64?) || -1).to_i32
+        scripted.driver_name = core["driverName"]?.try(&.as_s?) || "scripted"
       end
       if keys = object["keys"]?
         state.keys = build_keymap(keys)
@@ -1564,6 +1594,7 @@ module Tawb
       state.chooser = scripted_value(object, "chooser")
       state.link_number = scripted_value(object, "linkNumber")
       state.search = object["search"]?.try(&.as_s?)
+      state.page_keyboard_exit_until = object["pageKeyboardExitUntil"]?.try(&.as_i64?) || 0_i64
       state
     end
 
@@ -1801,6 +1832,35 @@ module Tawb
         end
         ReaderKeys.handle_address_key(output, state, page.not_nil!, keyboard,
           action["chunk"].as_s)
+      when "browseKey"
+        return JSON::Any.new(nil) unless page
+        keyboard = nil
+        if keys = action["keys"]?.try(&.as_a?)
+          keyboard = ScriptedKeyboard.new(keys.map do |key|
+            text = key.as_s
+            text == "<eof>" ? Input::EOF.as(Input::Key) : text.as(Input::Key)
+          end)
+        end
+        verdict = ReaderKeys.handle_browse_key(output, state, page.not_nil!, keyboard,
+          action["chunk"].as_s, action["now"]?.try(&.as_i64?) || 0_i64)
+        return JSON::Any.new(verdict) if verdict
+        return JSON::Any.new(nil)
+      when "loadMore"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.load_more(output, state, page.not_nil!)
+      when "clickAsHuman"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.click_as_human(output, state, page.not_nil!)
+      when "hoverAsHuman"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.hover_as_human(output, state, page.not_nil!)
+      when "downloadCurrentLink"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.download_current_link(output, state, page.not_nil!)
+      when "jumpToChange"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.jump_to_change(output, state, page.not_nil!,
+          (action["direction"]?.try(&.as_i64?) || 1).to_i32)
       when "openChooser"
         return JSON::Any.new(nil) unless page
         ReaderKeys.open_chooser(output, state, page.not_nil!, action["item"], action["listing"])
@@ -1979,6 +2039,8 @@ module Tawb
         "chooserMode" => state.chooser || JSON::Any.new(nil),
         "files"      => state.files || JSON::Any.new(nil),
         "linkNumber" => link_number_json(state.link_number),
+        "loadingMore" => JSON::Any.new(state.loading_more),
+        "changeIndex" => JSON::Any.new(state.core.change_index.to_i64),
         "typingReads" => JSON::Any.new(state.core.typed_field_reads.to_i64),
         "typingReleased" => JSON::Any.new(state.core.typing_released),
         "inputMarks" => JSON::Any.new(state.core.input_marks.to_i64),

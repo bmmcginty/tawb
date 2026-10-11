@@ -5280,7 +5280,7 @@ module.exports = {
   spanForColumn, blockUnder, positionForBlock,
   itemUnderCursor, linkTarget, shortTarget,
   findQuickNav, focusableEdge, findParagraph, jumpTo, currentLine, currentBlock, QUICK_ACTIONS,
-  clickAsHuman, reportAfterAction,
+  clickAsHuman, hoverAsHuman, reportAfterAction,
   beginTyping, openChooser, closeChooser, handleChooseKey, refilter, chooserLines,
   askForFilePaths, filePromptText,
   expandPath, completePath, fileToAttach, fileSize, attachedNote,

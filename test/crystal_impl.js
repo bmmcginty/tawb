@@ -1207,6 +1207,29 @@ function readerImplementations(index, keysModule) {
         }
         return spec.core?.adjustOutcome ?? { changed: true, fallback: false };
       },
+      driver: { name: spec.core?.driverName ?? 'scripted' },
+      noMoreToLoad() { return !!spec.core?.noMoreToLoad; },
+      async askForMore() {
+        const failure = spec.core?.askMoreFailure;
+        if (failure) throw new Error(failure.message ?? 'the page would not say');
+        return spec.core?.askMoreOutcome ?? { grew: false, scrollable: false, moved: false, target: 'nothing' };
+      },
+      async reanchor() {
+        return { block: spec.core?.reanchorBlock ?? -1, exact: spec.core?.reanchorExact ?? false };
+      },
+      canRealClick() { return spec.core?.canRealClick !== false; },
+      async realClick() {
+        return spec.core?.realClickOutcome ?? { ok: true };
+      },
+      canHover() { return spec.core?.canHover !== false; },
+      async hover() {
+        return spec.core?.hoverOutcome ?? { ok: true };
+      },
+      async downloadLink() {
+        return spec.core?.downloadOutcome ?? { ok: true };
+      },
+      changeTargets() { return spec.core?.changeTargets ?? []; },
+      changeIndex: spec.core?.changeIndex ?? -1,
       async rescan() {
         if (spec.core?.rescanBlocks) this.blocks = spec.core.rescanBlocks;
         this.snapshotCostMs = spec.core?.rescanCost ?? 0;
@@ -1520,6 +1543,8 @@ function readerImplementations(index, keysModule) {
     controlling: state.controlling ?? null,
     chooserMode: state.chooser ?? null,
     files: state.files ?? null,
+    loadingMore: state.loadingMore ?? false,
+    changeIndex: state.core.changeIndex ?? -1,
     linkNumber: state.linkNumber
       ? {
         text: state.linkNumber.text ?? '',
@@ -1553,10 +1578,14 @@ function readerImplementations(index, keysModule) {
           if (args.page?.gotoHang) return new Promise(() => {});
           pageUrl = url;
         },
-        async stopLoading() {} };
+        async stopLoading() {},
+        async reload() {
+          if (args.page?.reloadFault) throw new Error(args.page.reloadFault);
+        } };
       // parkCursor and set_status draw the address row from state.core.page,
       // exactly as the reading loop's own state does.
       state.core.page = page;
+      const savedWrite = process.stdout.write.bind(process.stdout);
       const saved = {
         rows: process.stdout.rows, cols: process.stdout.columns,
         write: process.stdout.write,
@@ -1605,6 +1634,9 @@ function readerImplementations(index, keysModule) {
           pageUrl = url;
         },
         async stopLoading() {},
+        async reload() {
+          if (args.page?.reloadFault) throw new Error(args.page.reloadFault);
+        },
         keyboard: { presses: [], async press(key) {
           if (args.page?.failPress) throw new Error('the page refused');
           this.presses.push(key);
@@ -1613,6 +1645,7 @@ function readerImplementations(index, keysModule) {
           this.presses.push(text);
         } } };
       state.core.page = page;
+      const savedWrite = process.stdout.write.bind(process.stdout);
       const saved = {
         rows: process.stdout.rows, cols: process.stdout.columns,
         write: process.stdout.write,
@@ -1655,6 +1688,24 @@ function readerImplementations(index, keysModule) {
           } else if (action.op === 'formsKey') {
             if (action.keys) state.keyReader = scriptedKeyReader(action.keys);
             await index.handleFormsKey(action.chunk, state, page);
+            value = undefined;
+          } else if (action.op === 'browseKey') {
+            if (action.keys) state.keyReader = scriptedKeyReader(action.keys);
+            value = await index.handleBrowseKey(action.chunk, state, page) ?? null;
+          } else if (action.op === 'loadMore') {
+            await index.loadMore(state, page);
+            value = undefined;
+          } else if (action.op === 'clickAsHuman') {
+            await index.clickAsHuman(state, page);
+            value = undefined;
+          } else if (action.op === 'hoverAsHuman') {
+            await index.hoverAsHuman(state, page);
+            value = undefined;
+          } else if (action.op === 'downloadCurrentLink') {
+            await index.downloadCurrentLink(state, page);
+            value = undefined;
+          } else if (action.op === 'jumpToChange') {
+            index.jumpToChange(state, page, action.direction ?? 1);
             value = undefined;
           } else if (action.op === 'openNumberPrompt') {
             index.openLinkNumberPrompt(state, action.digits ?? '');
