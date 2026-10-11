@@ -21,6 +21,7 @@ require "./keyboard"
 require "./keys"
 require "./layout"
 require "./live"
+require "./log"
 require "./lynx_actions"
 require "./lynx_config"
 require "./lynx_options"
@@ -34,6 +35,8 @@ require "./marionette"
 require "./options"
 require "./reader"
 require "./reader_keys"
+require "./runtime"
+require "./startup"
 require "./quicknav"
 require "./place"
 require "./session"
@@ -102,6 +105,118 @@ module Tawb
         unsupported: (object["unsupported"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s),
         preferences: preferences,
       )
+    end
+
+    private def self.startup_scenario(payload : JSON::Any) : JSON::Any
+      writes = [] of JSON::Any
+      object = payload.as_h
+      status = StartupStatus.new(
+        ->(text : String) { writes << JSON::Any.new(text); nil },
+        object["tty"]?.try(&.as_bool?) != false,
+        1.hour)
+      observations = [] of JSON::Any
+      object["script"].as_a.each do |entry|
+        step = entry.as_h
+        case step["op"].as_s
+        when "update"
+          observations << JSON::Any.new(status.update(step["message"]?.try(&.as_s?)))
+        when "show"
+          status.show_now
+          observations << JSON::Any.new(nil)
+        when "finish"
+          status.finish
+          observations << JSON::Any.new(nil)
+        end
+      end
+      JSON::Any.new({"observations" => JSON::Any.new(observations),
+                     "writes" => JSON::Any.new(writes)})
+    end
+
+    private def self.log_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      logger = Log.new
+      now = Time.unix_ms(object["now"].as_i64).to_local
+      path = logger.enable(object["directory"].as_s, now,
+        object["pid"].as_i64, object["home"].as_s)
+      object["events"].as_a.each do |entry|
+        event = entry.as_h
+        case event["op"].as_s
+        when "write"
+          logger.write(event["event"].as_s,
+            event["fields"]?.try(&.as_h?) || {} of String => JSON::Any)
+        when "count"
+          logger.count(event["name"].as_s, event["amount"]?.try(&.as_i64?) || 1_i64)
+        when "flush_counters"
+          logger.flush_counters(event["fields"]?.try(&.as_h?) || {} of String => JSON::Any)
+        end
+      end
+      logger.close
+      JSON::Any.new({
+        "path"     => JSON::Any.new(path),
+        "contents" => JSON::Any.new(File.read(path)),
+        "mode"     => JSON::Any.new((File.info(path).permissions.value & 0o777).to_i64),
+      })
+    end
+
+    private class RuntimePage
+      include Runtime::InitialPage
+      getter calls : Array(String)
+
+      def initialize(@goto_fault : String? = nil, @close_fault : String? = nil)
+        @calls = [] of String
+      end
+
+      def goto_blank : Nil
+        @calls << "blank"
+        raise IO::Error.new(@goto_fault.not_nil!) if @goto_fault
+      end
+
+      def close : Nil
+        @calls << "close"
+        raise IO::Error.new(@close_fault.not_nil!) if @close_fault
+      end
+    end
+
+    private def self.runtime_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      page = if object["page"]?.try(&.as_bool?) == false
+               nil
+             else
+               RuntimePage.new(object["gotoFault"]?.try(&.as_s?),
+                 object["closeFault"]?.try(&.as_s?))
+             end
+      events = [] of JSON::Any
+      logger = ->(event : String, fields : Hash(String, JSON::Any)) do
+        events << JSON::Any.new({"event" => JSON::Any.new(event),
+                                 "fields" => JSON::Any.new(fields)})
+        nil
+      end
+      result = Runtime.close_initial_tab(page,
+        (object["pages"]?.try(&.as_i64?) || 0).to_i32,
+        object["keep"]?.try(&.as_bool?) || false, logger)
+
+      output = IO::Memory.new
+      terminal = Runtime::Terminal.new(output, -1,
+        object["alt"]?.try(&.as_bool?) != false)
+      terminal.acquire
+      cleaned = 0
+      cleanup_ms = object["cleanupMs"]?.try(&.as_i64?) || 0_i64
+      shutdown = Runtime::Shutdown.new(terminal, -> do
+        sleep cleanup_ms.milliseconds if cleanup_ms > 0
+        cleaned += 1
+        nil
+      end, (object["timeoutMs"]?.try(&.as_i64?) || 100_i64).milliseconds)
+      first = shutdown.run
+      second = shutdown.run
+      JSON::Any.new({
+        "result"   => JSON::Any.new(result),
+        "calls"    => JSON::Any.new(page ? page.calls.map { |call| JSON::Any.new(call) } : [] of JSON::Any),
+        "events"   => JSON::Any.new(events),
+        "terminal" => JSON::Any.new(output.to_s),
+        "first"    => JSON::Any.new(first),
+        "second"   => JSON::Any.new(second),
+        "cleaned"  => JSON::Any.new(cleaned.to_i64),
+      })
     end
 
     # A scripted pass over the reader: chunks written at particular moments,
@@ -438,6 +553,12 @@ module Tawb
       when "layout.lines"
         object = payload.as_h
         JSON::Any.new(Layout.lines(object["blocks"].as_a, object["width"].as_i))
+      when "log.scenario"
+        log_scenario(payload)
+      when "runtime.scenario"
+        runtime_scenario(payload)
+      when "startup.scenario"
+        startup_scenario(payload)
       when "live.create_state"
         live_state_json(Live.create_state)
       when "live.classify_scenario"

@@ -7,7 +7,10 @@ require "./frames"
 require "./layout"
 require "./lynx_display"
 require "./lynx_settings"
+require "./log"
 require "./options"
+require "./runtime"
+require "./startup"
 
 module Tawb
   module Cli
@@ -38,6 +41,10 @@ module Tawb
       --keep-browser                leave the browser running after quitting
       --browser-timeout <seconds>   how long to wait for the browser to start
 
+    Logging:
+      --log                         write a diagnostic log
+      --log-dir <dir>               where to write it (TAWB_LOG_DIR)
+
     Other:
       -h, --help                    show this help and exit
 
@@ -47,6 +54,7 @@ module Tawb
     TEXT
 
     def self.run(argv : Array(String) = ARGV, env : Hash(String, String) = ENV.to_h) : Nil
+      Runtime.restore_invocation_directory(env["INIT_CWD"]?)
       options = Options.parse_reader(argv, env)
       if options["help"].as_bool
         STDOUT << USAGE
@@ -58,10 +66,26 @@ module Tawb
       if options["keyboard"].as_bool && options["dump"].as_bool
         raise ArgumentError.new("--keyboard cannot be combined with --dump")
       end
+      logger = Log.new
+      log_path = options["log"].as_bool ? logger.enable(options["logDir"].as_s?) : nil
+      logger.write("start", {
+        "url"       => options["url"],
+        "logPath"   => log_path ? JSON::Any.new(log_path) : JSON::Any.new(nil),
+        "connect"   => options["connect"],
+        "engine"    => options["engine"],
+        "interface" => options["frontEnd"],
+      })
       if options["dump"].as_bool
-        run_dump(options)
+        begin
+          run_dump(options)
+          logger.write("exit")
+        ensure
+          logger.close
+        end
         return
       end
+      logger.write("exit", {"reason" => JSON::Any.new("interactive-not-enabled")})
+      logger.close
       STDERR.puts "The native Crystal interactive reader is not ported yet; use --dump or --help."
       exit 2
     rescue error
