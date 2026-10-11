@@ -12,6 +12,12 @@ module Tawb
     # process.stdout; the interactive front end supplies the real one.
     module Output
       abstract def write(text : String) : Nil
+
+      # How many writes this terminal has taken. A row patch compares the
+      # count it saw when it started against the count now: a write in
+      # between means a concurrent refresh touched the screen, and a
+      # relative caret update would land in the wrong place.
+      abstract def generation : Int32
     end
 
     def self.move_cursor(output : Output, row : Int32, col : Int32) : Nil

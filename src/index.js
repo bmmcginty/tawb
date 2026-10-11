@@ -6,7 +6,7 @@ const { itemAtOffset } = require('./blocks');
 const {
   Core, ALL_SOURCES, SOURCE_LABELS, DOM_SOURCES,
   findBlockWithText, sameDocumentFragment,
-  ActionTimeout, withTimeout, readFieldState, ACTION_TIMEOUT_MS,
+  ActionTimeout, withTimeout, ACTION_TIMEOUT_MS,
 } = require('./core');
 const { armFrame, refreshDue, pulse, TICK_MS } = require('./live');
 const {
@@ -2680,7 +2680,7 @@ async function beginTyping(state, page, item) {
   if (!info) return false;
 
   state.mode = 'type';
-  state.typing = { handle: info.handle, item, text: info.text, caret: info.caret, drawn: null };
+  state.typing = { item, text: info.text, caret: info.caret, drawn: null };
   drawHint(state);
   state.typing.drawn = typingText(state).text;
   writeLine(lineRow(state, state.cursor), state.typing.drawn);
@@ -4268,7 +4268,7 @@ async function handleTypeKey(chunk, state, page) {
     const anchor = anchorFor(state);
     state.mode = 'browse';
     state.typing = null;
-    await t.handle.dispose().catch(() => {});
+    await state.core.releaseTypingField().catch(() => {});
     await refresh(state, page, { anchor });
     repaintList(state, page, screen);
 
@@ -4341,7 +4341,8 @@ async function handleTypeKey(chunk, state, page) {
     t.caret += chunk.length;
   }
 
-  const info = await readFieldState(t.handle);
+  const info = await state.core.readTypingField();
+  if (!info) return;
   t.text = info.text;
   t.caret = info.native ? info.caret : Math.min(Math.max(t.caret, 0), t.text.length);
   const { text, caretCol } = typingText(state);
@@ -4381,7 +4382,7 @@ async function handleFieldCommandKey(chunk, state, page) {
   const anchor = anchorFor(state);
   state.mode = 'browse';
   state.typing = null;
-  await typing.handle.dispose().catch(() => {});
+  await state.core.releaseTypingField().catch(() => {});
   await refresh(state, page, { anchor });
   repaintList(state, page, screen);
   drawHint(state);

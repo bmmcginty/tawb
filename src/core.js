@@ -1656,7 +1656,21 @@ class Core {
       await this.typingHandle.dispose().catch(() => {});
     }
     this.typingHandle = handle;
-    return { ...info, handle };
+    return info;
+  }
+
+  // The typing mode reads the live value through this handle until the
+  // field is left. Kept here rather than on the reader state so disposal
+  // has one owner.
+  async readTypingField() {
+    if (!this.typingHandle) return null;
+    return readFieldState(this.typingHandle);
+  }
+
+  // Leaving the field: the handle is disposed of and forgotten.
+  async releaseTypingField() {
+    if (this.typingHandle) await this.typingHandle.dispose().catch(() => {});
+    this.typingHandle = null;
   }
 
   // Arm focus observation against the element Enter is about to activate.

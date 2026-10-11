@@ -147,6 +147,11 @@ module Tawb
       # One key into the page's own keyboard. Raises when the page or the
       # driver refuses; the caller says so on the status row.
       abstract def keyboard_press(key : String) : Nil
+      # Waits for the document to settle after a key that may navigate —
+      # Enter submitting a form, chiefly. A page that refuses to say
+      # anything is not an error; the refresh that follows reads whatever
+      # document is there by then.
+      abstract def wait_for_load : Nil
     end
 
     # A page-touching operation outlived its budget. The core's own timeouts
@@ -231,6 +236,20 @@ module Tawb
       # A navigation leaves the watched destination pointing at the old
       # document; only the disposal is still owed.
       abstract def drop_focus_destination(focused : JSON::Any) : Nil
+
+      # -- the field being typed into ------------------------------------
+
+      # The field's live text and caret, read straight from the DOM after a
+      # keystroke. The handle is the core's; the reader only reads through
+      # it. Nil when there is no field being typed into.
+      abstract def read_typing_field : JSON::Any?
+      # Leaving the field: its handle is disposed of and forgotten.
+      abstract def release_typing_field : Nil
+      # One keyboard command to an already-focused adjustable control. The
+      # answer says whether the page changed, and whether the adjustment had
+      # to be made through the control's visual geometry because it ignored
+      # the standard key.
+      abstract def adjust_control(item : JSON::Any, key : String) : JSON::Any
     end
 
     # The pieces of the core the drawing needs: which view the blocks came
@@ -294,6 +313,11 @@ module Tawb
       property focus_found : Bool
       property focus_block : Int32
       property scripted_chooser : ScriptedChooser?
+      property typed_fields : Array(JSON::Any)
+      property typed_field_reads : Int32
+      property typing_released : Bool
+      property adjust_outcome : JSON::Any?
+      property adjust_failure : JSON::Any?
 
       def initialize(@source = "ax", @blocks = [] of JSON::Any,
                      @popup = nil, @popup_at = -1_i64)
@@ -319,6 +343,11 @@ module Tawb
         @watch_focus = false
         @focus_found = false
         @focus_block = -1
+        @typed_fields = [] of JSON::Any
+        @typed_field_reads = 0
+        @typing_released = false
+        @adjust_outcome = nil
+        @adjust_failure = nil
       end
 
       def at(index : Int32) : Nil
@@ -472,6 +501,31 @@ module Tawb
       end
 
       def drop_focus_destination(focused : JSON::Any) : Nil
+      end
+
+      def read_typing_field : JSON::Any?
+        @typed_field_reads += 1
+        fields = @typed_fields
+        return nil if fields.empty?
+        index = Math.min(@typed_field_reads - 1, fields.size - 1)
+        fields[index]
+      end
+
+      def release_typing_field : Nil
+        @typing_released = true
+      end
+
+      def adjust_control(item : JSON::Any, key : String) : JSON::Any
+        if failure = @adjust_failure
+          if failure.as_h["timeout"]?.try(&.as_bool?)
+            raise ActionTimeout.new("Adjusting timed out after 6000ms")
+          end
+          raise IO::Error.new(failure.as_h["message"]?.try(&.as_s?) || "the adjustment failed")
+        end
+        @adjust_outcome || JSON::Any.new({
+          "changed"  => JSON::Any.new(true),
+          "fallback" => JSON::Any.new(false),
+        })
       end
 
       def rescan : Nil

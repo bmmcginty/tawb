@@ -1231,5 +1231,341 @@ module Tawb
       files_object["buffer"].as_h["text"] = JSON::Any.new(buffer.text)
       files_object["buffer"].as_h["caret"] = JSON::Any.new(buffer.caret.to_i64)
     end
+
+    # ------------------------------------------------------------------
+    # The modes that fill a form in
+    #
+    # Typing, adjusting a slider, Lynx's one-command escape, and forms mode
+    # itself are four small state machines around the same actors: the
+    # field being typed into, the control being adjusted, the quick-nav
+    # walk that lands on the next control, and the activation that submits
+    # or presses. They live here rather than in the loop so the loop only
+    # picks the handler for the mode it is in.
+    # ------------------------------------------------------------------
+
+    # The Lynx decisions the mode handlers read. The predicates need a
+    # keymap and a status row; the loop's own host will carry the rest.
+    private class ModeHost
+      include LynxActions::Host
+
+      def fallback_keymap : Keys::Keymap
+        FALLBACK_KEYMAP
+      end
+
+      def key_is(chunk : String, name : String, state : LynxActions::State) : Bool
+        (state.keys || FALLBACK_KEYMAP).is_key(chunk, name)
+      end
+
+      def set_status(state : LynxActions::State, message : String) : Nil
+      end
+
+      def current_item(state : LynxActions::State) : LynxActions::Item?
+        nil
+      end
+
+      def is_field(role : String) : Bool
+        Aria::FIELD_ROLES.includes?(role)
+      end
+
+      def begin_typing(state : LynxActions::State, page, item : LynxActions::Item) : Bool
+        false
+      end
+
+      def open_link_number_prompt(state : LynxActions::State, digits : String?) : Nil
+      end
+
+      def open_help(state : LynxActions::State, page) : Nil
+      end
+
+      def describe_current(state : LynxActions::State, page) : Nil
+      end
+
+      def open_main_menu(state : LynxActions::State, page) : Nil
+      end
+
+      def open_options(state : LynxActions::State, page) : Nil
+      end
+
+      def open_trace_log(state : LynxActions::State, page) : Nil
+      end
+
+      def toggle_trace(state : LynxActions::State) : Nil
+      end
+    end
+
+    private def self.mode_actions : LynxActions
+      LynxActions.new(ModeHost.new)
+    end
+
+    def self.handle_type_key(output : Screen::Output, state : Reader::State,
+                             page : Reader::PageEnv, chunk : String) : Nil
+      state.core.mark_input
+      typing = state.typing
+      unless typing
+        state.mode = "browse"
+        return
+      end
+      old_caret_col = Reader.typing_text(state)[:caret_col]
+      output_generation = output.generation
+
+      if key_is(chunk, "Escape", state)
+        # Captured while the field is still drawn as it is on screen, so
+        # the one row that changes — the field, back to its ordinary
+        # form — is the one row repainted.
+        screen = Reader.screen_before(state)
+        anchor = state.core.anchor
+        state.mode = "browse"
+        state.typing = nil
+        Reader.refresh(state, page, false, anchor)
+        Reader.repaint_list(output, state, page.url, screen)
+        field_name = typing.item.as_h["name"]?.try(&.as_s?) || ""
+        Reader.set_status(output, state, page.url,
+          "Stopped typing into \"#{field_name}\".")
+        return
+      end
+
+      lynx_arrow = mode_actions.tab_arrow?(lynx_view(state), chunk)
+      if key_is(chunk, "Tab", state) || key_is(chunk, "Shift+Tab", state) || lynx_arrow
+        direction = key_is(chunk, "Shift+Tab", state) || key_is(chunk, "ArrowUp", state) ? -1 : 1
+        screen = Reader.screen_before(state)
+        anchor = state.core.anchor
+        state.mode = "browse"
+        state.typing = nil
+        state.core.release_typing_field
+        Reader.refresh(state, page, false, anchor)
+        Reader.repaint_list(output, state, page.url, screen)
+
+        action = direction > 0 ? "next-focusable" : "previous-focusable"
+        found = QuickNav.find(state, action)
+        unless found
+          Reader.set_status(output, state, page.url,
+            "No #{direction > 0 ? "next" : "previous"} control.")
+          return
+        end
+        Reader.move_selection(output, state, page.url, found[:line], found[:col])
+        block = Reader.current_block(state)
+        item = block.try(&.as_h).try(&.["item"]?)
+        name = item.try(&.as_h).try(&.["name"]?).try(&.as_s?) ||
+               QuickNav.specification(action).try(&.label) || ""
+        # Tab between editable fields stays in typing mode. Buttons, links
+        # and select-only widgets stay in forms mode: they are not activated
+        # merely by receiving focus, but Tab can continue through the form
+        # from them.
+        needs_activation = mode_actions.tab_needs_activation?(lynx_view(state))
+        if !needs_activation && item &&
+           Aria::FIELD_ROLES.includes?(item.as_h["role"]?.try(&.as_s?) || "") &&
+           begin_typing(output, state, page, item.not_nil!)
+          Reader.set_status(output, state, page.url,
+            mode_actions.tab_typing_status(lynx_view(state), name))
+          return
+        end
+        state.mode = mode_actions.tab_landed_mode(lynx_view(state))
+        Reader.draw_hint(output, state)
+        Reader.set_status(output, state, page.url,
+          "#{direction > 0 ? "Next" : "Previous"} control: #{name}.")
+        return
+      end
+
+      if chunk == "\r" || chunk == "\n"
+        previous_url = page.url
+        # The page-history place the JavaScript original remembers here is
+        # ported with the history traversal helpers.
+        screen = Reader.screen_before(state)
+        anchor = state.core.anchor
+        page.keyboard_press("Enter")
+        page.wait_for_load
+        state.mode = "browse"
+        state.typing = nil
+
+        # A submit that navigated is a new page and there is nothing to
+        # keep. One that submitted in place is the same page with a
+        # different list on it, and the reader is still standing in the form
+        # they just filled in — resetting the cursor there threw them to the
+        # top of the document for no reason they could see.
+        navigated = page.url != previous_url
+        if navigated
+          Reader.refresh(state, page, true)
+        else
+          Reader.refresh(state, page, false, anchor)
+        end
+        if navigated
+          Reader.render(output, state, page.url)
+        else
+          Reader.repaint_list(output, state, page.url, screen)
+        end
+        field_name = typing.item.as_h["name"]?.try(&.as_s?) || ""
+        Reader.set_status(output, state, page.url, navigated ?
+          "Submitted \"#{field_name}\" — loaded #{page.url}" :
+          "Submitted \"#{field_name}\".")
+        return
+      end
+
+      if mode_actions.type_command?(lynx_view(state), chunk)
+        state.mode = "field-command"
+        Reader.draw_hint(output, state)
+        Reader.set_status(output, state, page.url, "Command:")
+        return
+      end
+
+      editing = Edit.edit_action(chunk, keymap_for(state))
+      if editing
+        Edit.send_field_edit(->(key : String) { page.keyboard_press(key) }, editing)
+      elsif chunk.starts_with?(ESC) || chunk < " "
+        return
+      else
+        page.keyboard_press(chunk)
+        typing.caret += chunk.size
+      end
+
+      info = state.core.read_typing_field
+      return unless info
+      info_object = info.as_h
+      typing.text = info_object["text"]?.try(&.as_s?) || ""
+      if info_object["native"]?.try(&.as_bool?)
+        typing.caret = (info_object["caret"]?.try(&.as_i64?) || 0).to_i32
+      else
+        typing.caret = Math.min(Math.max(typing.caret, 0), typing.text.size)
+      end
+      shown = Reader.typing_text(state)
+      row = Reader.line_row(state, state.cursor)
+      Screen.patch_edited_line(output, row, typing.drawn, shown[:text],
+        # Browser editing is asynchronous. Use the relative update when no
+        # concurrent refresh touched the terminal, and an absolute start
+        # when one did; either way the complete edit is one write.
+        current_col: output.generation == output_generation ? old_caret_col : nil,
+        final_col: shown[:caret_col])
+      typing.drawn = shown[:text]
+    end
+
+    def self.handle_field_command_key(output : Screen::Output, state : Reader::State,
+                                      page : Reader::PageEnv, chunk : String) : Nil
+      state.core.mark_input
+      typing = state.typing
+      unless typing
+        state.mode = "browse"
+        return
+      end
+      if key_is(chunk, "Escape", state)
+        state.mode = "type"
+        Reader.draw_hint(output, state)
+        Reader.set_status(output, state, page.url, "Command cancelled.")
+        return
+      end
+      action = keymap_for(state).action_for(chunk)
+      unless action
+        state.mode = "type"
+        Reader.draw_hint(output, state)
+        Reader.set_status(output, state, page.url, "That is not a Lynx browse command.")
+        return
+      end
+
+      # Complete the field before running the command, just as Lynx hands
+      # the escaped key from its line editor back to the main keymap.
+      # Refreshing first keeps the ordinary reading line synchronized with
+      # the browser value. The command itself is one of the browse map's —
+      # it is dispatched there when the loop and its browse dispatch exist;
+      # until then the escaped key completes the field and stops.
+      screen = Reader.screen_before(state)
+      anchor = state.core.anchor
+      state.mode = "browse"
+      state.typing = nil
+      state.core.release_typing_field
+      Reader.refresh(state, page, false, anchor)
+      Reader.repaint_list(output, state, page.url, screen)
+      Reader.draw_hint(output, state)
+    end
+
+    def self.handle_forms_key(output : Screen::Output, state : Reader::State,
+                              page : Reader::PageEnv, keyboard : Keyboard?,
+                              chunk : String) : Nil
+      state.core.mark_input
+      action = context_action(chunk, state)
+      if key_is(chunk, "Escape", state) || action == "cancel"
+        state.mode = "browse"
+        Reader.draw_hint(output, state)
+        Reader.set_status(output, state, page.url, "Left forms mode.")
+        return
+      end
+      if chunk == "\r" || chunk == "\n" || action == "accept"
+        activate_current(output, state, page, keyboard)
+        return
+      end
+      previous = key_is(chunk, "Shift+Tab", state) || action == "previous"
+      next_key = key_is(chunk, "Tab", state) || action == "next"
+      return unless previous || next_key
+
+      direction = previous ? -1 : 1
+      screen = Reader.screen_before(state)
+      anchor = state.core.anchor
+      Reader.refresh(state, page, false, anchor)
+      Reader.repaint_list(output, state, page.url, screen)
+      found = QuickNav.find(state, direction > 0 ? "next-focusable" : "previous-focusable")
+      unless found
+        Reader.set_status(output, state, page.url,
+          "No #{direction > 0 ? "next" : "previous"} control.")
+        return
+      end
+      Reader.move_selection(output, state, page.url, found[:line], found[:col])
+      block = Reader.current_block(state)
+      item = block.try(&.as_h).try(&.["item"]?)
+      name = item.try(&.as_h).try(&.["name"]?).try(&.as_s?) ||
+             QuickNav.specification(direction > 0 ? "next-focusable" : "previous-focusable").try(&.label) || ""
+      if item && Aria::FIELD_ROLES.includes?(item.as_h["role"]?.try(&.as_s?) || "") &&
+         begin_typing(output, state, page, item.not_nil!)
+        Reader.set_status(output, state, page.url,
+          "Typing into \"#{name}\" — Tab: next control, Esc: stop, Enter: submit.")
+        return
+      end
+      state.mode = "forms"
+      Reader.set_status(output, state, page.url,
+        "#{direction > 0 ? "Next" : "Previous"} control: #{name}.")
+    end
+
+    def self.handle_control_key(output : Screen::Output, state : Reader::State,
+                                page : Reader::PageEnv, chunk : String) : Nil
+      state.core.mark_input
+      controlling = state.controlling
+      unless controlling
+        state.mode = "browse"
+        return
+      end
+      name = controlling.as_h["item"]?.try(&.as_h).try(&.["name"]?).try(&.as_s?) || ""
+
+      if key_is(chunk, "Escape", state) || chunk == "\r" || chunk == "\n"
+        state.mode = "browse"
+        state.controlling = nil
+        Reader.draw_hint(output, state)
+        Reader.set_status(output, state, page.url, "Stopped controlling \"#{name}\".")
+        return
+      end
+
+      keys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]
+      key = keys.find { |candidate| key_is(chunk, candidate, state) }
+      return unless key
+
+      begin
+        adjusted = state.core.adjust_control(controlling.as_h["item"].not_nil!, key)
+      rescue err
+        reason = (err.message || err.to_s).lines.first? || err.to_s
+        Reader.set_status(output, state, page.url,
+          "Could not adjust \"#{name}\": #{reason}")
+        return
+      end
+      screen = Reader.screen_before(state)
+      Reader.refresh(state, page, false, state.core.anchor)
+      Reader.repaint_list(output, state, page.url, screen)
+      changed = adjusted.as_h["changed"]?.try(&.as_bool?) || false
+      fallback = adjusted.as_h["fallback"]?.try(&.as_bool?) || false
+      if !changed
+        Reader.set_status(output, state, page.url,
+          "The page ignored #{key} on \"#{name}\".")
+      elsif fallback
+        Reader.set_status(output, state, page.url,
+          "Adjusted \"#{name}\" with its visual slider because it ignored #{key}.")
+      else
+        Reader.set_status(output, state, page.url,
+          "Adjusted \"#{name}\" with #{key}.")
+      end
+    end
   end
 end

@@ -1287,6 +1287,10 @@ module Tawb
       def write(text : String) : Nil
         @writes << JSON::Any.new(text)
       end
+
+      def generation : Int32
+        @writes.size
+      end
     end
 
     # A prompt's keyboard, fed from the scenario: one queued keystroke per
@@ -1334,6 +1338,9 @@ module Tawb
       def keyboard_press(key : String) : Nil
         raise IO::Error.new("the page refused") if @fail_press
         @presses << key
+      end
+
+      def wait_for_load : Nil
       end
     end
 
@@ -1451,6 +1458,15 @@ module Tawb
         scripted.watch_focus = core["watchFocus"]?.try(&.as_bool?) || false
         scripted.focus_found = core["focusFound"]?.try(&.as_bool?) || false
         scripted.focus_block = (core["focusBlock"]?.try(&.as_i64?) || -1).to_i32
+        if typed = core["typedFields"]?.try(&.as_a?)
+          scripted.typed_fields = typed
+        end
+        if outcome = scripted_value(core, "adjustOutcome")
+          scripted.adjust_outcome = outcome
+        end
+        if failure = scripted_value(core, "adjustFailure")
+          scripted.adjust_failure = failure
+        end
       end
       if keys = object["keys"]?
         state.keys = build_keymap(keys)
@@ -1461,7 +1477,8 @@ module Tawb
           state.typing = Reader::Typing.new(
             item,
             typing["text"]?.try(&.as_s?) || "",
-            (typing["caret"]?.try(&.as_i64?) || 0).to_i32)
+            (typing["caret"]?.try(&.as_i64?) || 0).to_i32,
+            typing["drawn"]?.try(&.as_s?))
         end
       end
       if address = object["address"]?.try(&.as_h?)
@@ -1509,12 +1526,12 @@ module Tawb
             buffer.try(&.["text"]?).try(&.as_s?) || "",
             (buffer.try(&.["caret"]?).try(&.as_i64?) || 0).to_i32))
       end
-      state.files = object["files"]?
+      state.files = scripted_value(object, "files")
       state.library = object["library"]?
       state.dialog = object["dialog"]?
       state.options = object["options"]?
-      state.controlling = object["controlling"]?
-      state.chooser = object["chooser"]?
+      state.controlling = scripted_value(object, "controlling")
+      state.chooser = scripted_value(object, "chooser")
       state
     end
 
@@ -1704,6 +1721,25 @@ module Tawb
       when "chooseKey"
         return JSON::Any.new(nil) unless page
         ReaderKeys.handle_choose_key(output, state, page.not_nil!, action["chunk"].as_s)
+      when "typeKey"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.handle_type_key(output, state, page.not_nil!, action["chunk"].as_s)
+      when "fieldCommandKey"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.handle_field_command_key(output, state, page.not_nil!, action["chunk"].as_s)
+      when "formsKey"
+        return JSON::Any.new(nil) unless page
+        keyboard = nil
+        if keys = action["keys"]?.try(&.as_a?)
+          keyboard = ScriptedKeyboard.new(keys.map do |key|
+            text = key.as_s
+            text == "<eof>" ? Input::EOF.as(Input::Key) : text.as(Input::Key)
+          end)
+        end
+        ReaderKeys.handle_forms_key(output, state, page.not_nil!, keyboard, action["chunk"].as_s)
+      when "controlKey"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.handle_control_key(output, state, page.not_nil!, action["chunk"].as_s)
       when "openChooser"
         return JSON::Any.new(nil) unless page
         ReaderKeys.open_chooser(output, state, page.not_nil!, action["item"], action["listing"])
@@ -1881,6 +1917,8 @@ module Tawb
         "controlling" => state.controlling || JSON::Any.new(nil),
         "chooserMode" => state.chooser || JSON::Any.new(nil),
         "files"      => state.files || JSON::Any.new(nil),
+        "typingReads" => JSON::Any.new(state.core.typed_field_reads.to_i64),
+        "typingReleased" => JSON::Any.new(state.core.typing_released),
         "inputMarks" => JSON::Any.new(state.core.input_marks.to_i64),
         "atCalls"    => JSON::Any.new(state.core.at_calls.map { |call| JSON::Any.new(call) }),
       })

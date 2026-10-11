@@ -1174,6 +1174,21 @@ function readerImplementations(index, keysModule) {
       },
       async focusDestinationBlock() { return spec.core?.focusBlock ?? -1; },
       async dropFocusDestination() {},
+      async readTypingField() {
+        this.typingReads = (this.typingReads ?? 0) + 1;
+        const fields = spec.core?.typedFields ?? [];
+        if (!fields.length) return null;
+        return fields[Math.min(this.typingReads - 1, fields.length - 1)];
+      },
+      async releaseTypingField() { this.typingReleased = true; },
+      async adjustControl() {
+        const failure = spec.core?.adjustFailure;
+        if (failure) {
+          if (failure.timeout) throw new coreModule.ActionTimeout('Adjusting timed out after 6000ms');
+          throw new Error(failure.message ?? 'the adjustment failed');
+        }
+        return spec.core?.adjustOutcome ?? { changed: true, fallback: false };
+      },
       async rescan() {
         if (spec.core?.rescanBlocks) this.blocks = spec.core.rescanBlocks;
         this.snapshotCostMs = spec.core?.rescanCost ?? 0;
@@ -1228,7 +1243,8 @@ function readerImplementations(index, keysModule) {
       driver: spec.driver ?? { name: 'scripted' },
       keys: spec.keys ? buildKeys(spec.keys) : null,
       typing: spec.typing ? {
-        item: spec.typing.item, text: spec.typing.text ?? '', caret: spec.typing.caret ?? 0,
+        item: spec.typing.item, text: spec.typing.text ?? '',
+        caret: spec.typing.caret ?? 0, drawn: spec.typing.drawn ?? null,
       } : null,
       address: spec.address ? {
         text: spec.address.text ?? '', caret: spec.address.caret ?? 0,
@@ -1485,6 +1501,8 @@ function readerImplementations(index, keysModule) {
     files: state.files ?? null,
     atCalls,
     inputMarks: state.core.inputMarks ?? 0,
+    typingReads: state.core.typingReads ?? 0,
+    typingReleased: state.core.typingReleased ?? false,
   });
 
   const implementations = [{
@@ -1497,7 +1515,8 @@ function readerImplementations(index, keysModule) {
         // The page the reader drives cannot be asked to evaluate anything:
         // the page-side probes (history identity, focus watch) then fall
         // back the way they would against a browser that refused.
-        evaluate: async () => { throw new Error('the page cannot be asked'); } };
+        evaluate: async () => { throw new Error('the page cannot be asked'); },
+        waitForLoadState: async () => {} };
       // parkCursor and set_status draw the address row from state.core.page,
       // exactly as the reading loop's own state does.
       state.core.page = page;
@@ -1542,9 +1561,13 @@ function readerImplementations(index, keysModule) {
       const pageUrl = args.page?.url ?? '';
       const page = { url: () => pageUrl, title: async () => (args.page?.title ?? ''),
         evaluate: async () => { throw new Error('the page cannot be asked'); },
+        waitForLoadState: async () => {},
         keyboard: { presses: [], async press(key) {
           if (args.page?.failPress) throw new Error('the page refused');
           this.presses.push(key);
+        }, async type(text) {
+          if (args.page?.failPress) throw new Error('the page refused');
+          this.presses.push(text);
         } } };
       state.core.page = page;
       const saved = {
@@ -1589,6 +1612,29 @@ function readerImplementations(index, keysModule) {
             value = undefined;
           } else if (action.op === 'chooseKey') {
             await index.handleChooseKey(action.chunk, state, page);
+            value = undefined;
+          } else if (action.op === 'typeKey') {
+            await index.handleTypeKey(action.chunk, state, page);
+            value = undefined;
+          } else if (action.op === 'fieldCommandKey') {
+            await index.handleFieldCommandKey(action.chunk, state, page);
+            value = undefined;
+          } else if (action.op === 'formsKey') {
+            if (action.keys) {
+              const queue = action.keys.map((k) => (k === '<eof>' ? EOF : k));
+              state.keyReader = {
+                claim() { return 'token'; },
+                release() {},
+                async next() {
+                  if (!queue.length) throw new Error('the prompt asked for a key nobody pressed');
+                  return queue.shift();
+                },
+              };
+            }
+            await index.handleFormsKey(action.chunk, state, page);
+            value = undefined;
+          } else if (action.op === 'controlKey') {
+            await index.handleControlKey(action.chunk, state, page);
             value = undefined;
           } else if (action.op === 'reportAfterAction') {
             value = await index.reportAfterAction(state, page, {
