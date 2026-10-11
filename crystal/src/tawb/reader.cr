@@ -152,6 +152,12 @@ module Tawb
       # anything is not an error; the refresh that follows reads whatever
       # document is there by then.
       abstract def wait_for_load : Nil
+      # Go somewhere. Raises when the navigation is refused; the fault is
+      # the caller's to classify and say.
+      abstract def goto(url : String) : Nil
+      # Asks the engine to stop loading. Best effort: a page already gone
+      # is not an error worth reporting.
+      abstract def stop_loading : Nil
     end
 
     # A page-touching operation outlived its budget. The core's own timeouts
@@ -594,6 +600,12 @@ module Tawb
       property page_keyboard_exit_until : Int64
       property visited_links : Array(JSON::Any)
       property page_log : Array(JSON::Any)
+      # Lynx's number prompt: the text typed so far, where the reader was
+      # when it opened, and the numbers on screen with the blocks they name.
+      property link_number : JSON::Any?
+      # The search engine an address that is not an address is given to;
+      # nil is the default one.
+      property search : String?
 
       def initialize
         @rows = 24
@@ -627,6 +639,8 @@ module Tawb
         @page_keyboard_exit_until = 0
         @visited_links = [] of JSON::Any
         @page_log = [] of JSON::Any
+        @link_number = nil
+        @search = nil
       end
     end
 

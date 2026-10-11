@@ -1116,6 +1116,24 @@ function liveRealImplementations(liveModule, driverModule) {
 // terminal — and what it refused to rewrite — is the behaviour under test.
 function readerImplementations(index, keysModule) {
   const coreModule = require('../src/core');
+  // A keyboard for one prompt: queued keystrokes, and the race a pending
+  // navigation runs against them.
+  const scriptedKeyReader = (keys) => {
+    const queue = (keys ?? []).map((k) => (k === '<eof>' ? EOF : k));
+    return {
+      claim() { return 'token'; },
+      release() {},
+      async next() {
+        if (!queue.length) throw new Error('the prompt asked for a key nobody pressed');
+        return queue.shift();
+      },
+      async nextOr(operation) {
+        if (queue.length) return { key: queue.shift() };
+        const value = await operation;
+        return { value };
+      },
+    };
+  };
   const buildKeys = (spec) => new keysModule.Keymap({
     terminfo: spec.terminfo ?? null,
     profile: spec.profile ?? 'default',
@@ -1229,6 +1247,7 @@ function readerImplementations(index, keysModule) {
         displayIndent: line.displayIndent ?? 0,
         displayPrefix: line.displayPrefix ?? '',
         displaySuffix: line.displaySuffix ?? '',
+        displayNumber: line.displayNumber ?? null,
       })),
       drawn: {
         title: spec.drawn?.title ?? null,
@@ -1272,6 +1291,8 @@ function readerImplementations(index, keysModule) {
       options: spec.options ?? null,
       controlling: spec.controlling ?? null,
       chooser: spec.chooser ?? null,
+      linkNumber: spec.linkNumber ?? null,
+      search: spec.search ?? null,
     };
     return state;
   };
@@ -1499,6 +1520,16 @@ function readerImplementations(index, keysModule) {
     controlling: state.controlling ?? null,
     chooserMode: state.chooser ?? null,
     files: state.files ?? null,
+    linkNumber: state.linkNumber
+      ? {
+        text: state.linkNumber.text ?? '',
+        cursor: state.linkNumber.cursor ?? 0,
+        col: state.linkNumber.col ?? 0,
+        targets: (state.linkNumber.targets ?? []).map((target) => ({
+          number: target.number ?? null, line: target.line ?? 0, col: target.col ?? 0,
+        })),
+      }
+      : null,
     atCalls,
     inputMarks: state.core.inputMarks ?? 0,
     typingReads: state.core.typingReads ?? 0,
@@ -1510,13 +1541,19 @@ function readerImplementations(index, keysModule) {
     draw(args) {
       const atCalls = [];
       const state = buildJsState(args.state, atCalls);
-      const pageUrl = args.page?.url ?? '';
+      let pageUrl = args.page?.url ?? '';
       const page = { url: () => pageUrl, title: async () => (args.page?.title ?? ''),
         // The page the reader drives cannot be asked to evaluate anything:
         // the page-side probes (history identity, focus watch) then fall
         // back the way they would against a browser that refused.
         evaluate: async () => { throw new Error('the page cannot be asked'); },
-        waitForLoadState: async () => {} };
+        waitForLoadState: async () => {},
+        async goto(url) {
+          if (args.page?.gotoFault) throw new Error(args.page.gotoFault);
+          if (args.page?.gotoHang) return new Promise(() => {});
+          pageUrl = url;
+        },
+        async stopLoading() {} };
       // parkCursor and set_status draw the address row from state.core.page,
       // exactly as the reading loop's own state does.
       state.core.page = page;
@@ -1558,10 +1595,16 @@ function readerImplementations(index, keysModule) {
     async drawAsync(args) {
       const atCalls = [];
       const state = buildJsState(args.state, atCalls);
-      const pageUrl = args.page?.url ?? '';
+      let pageUrl = args.page?.url ?? '';
       const page = { url: () => pageUrl, title: async () => (args.page?.title ?? ''),
         evaluate: async () => { throw new Error('the page cannot be asked'); },
         waitForLoadState: async () => {},
+        async goto(url) {
+          if (args.page?.gotoFault) throw new Error(args.page.gotoFault);
+          if (args.page?.gotoHang) return new Promise(() => {});
+          pageUrl = url;
+        },
+        async stopLoading() {},
         keyboard: { presses: [], async press(key) {
           if (args.page?.failPress) throw new Error('the page refused');
           this.presses.push(key);
@@ -1597,17 +1640,7 @@ function readerImplementations(index, keysModule) {
           } else if (action.op === 'beginTyping') {
             value = await index.beginTyping(state, page, action.item);
           } else if (action.op === 'activate') {
-            if (action.keys) {
-              const queue = action.keys.map((k) => (k === '<eof>' ? EOF : k));
-              state.keyReader = {
-                claim() { return 'token'; },
-                release() {},
-                async next() {
-                  if (!queue.length) throw new Error('the prompt asked for a key nobody pressed');
-                  return queue.shift();
-                },
-              };
-            }
+            if (action.keys) state.keyReader = scriptedKeyReader(action.keys);
             await index.activateCurrent(state, page);
             value = undefined;
           } else if (action.op === 'chooseKey') {
@@ -1620,18 +1653,22 @@ function readerImplementations(index, keysModule) {
             await index.handleFieldCommandKey(action.chunk, state, page);
             value = undefined;
           } else if (action.op === 'formsKey') {
-            if (action.keys) {
-              const queue = action.keys.map((k) => (k === '<eof>' ? EOF : k));
-              state.keyReader = {
-                claim() { return 'token'; },
-                release() {},
-                async next() {
-                  if (!queue.length) throw new Error('the prompt asked for a key nobody pressed');
-                  return queue.shift();
-                },
-              };
-            }
+            if (action.keys) state.keyReader = scriptedKeyReader(action.keys);
             await index.handleFormsKey(action.chunk, state, page);
+            value = undefined;
+          } else if (action.op === 'openNumberPrompt') {
+            index.openLinkNumberPrompt(state, action.digits ?? '');
+            value = undefined;
+          } else if (action.op === 'numberKey') {
+            if (action.keys) state.keyReader = scriptedKeyReader(action.keys);
+            await index.handleNumberKey(action.chunk, state, page);
+            value = undefined;
+          } else if (action.op === 'focusAddress') {
+            index.focusAddressBar(state, page, action.text);
+            value = undefined;
+          } else if (action.op === 'addressKey') {
+            if (action.keys) state.keyReader = scriptedKeyReader(action.keys);
+            await index.handleAddressKey(action.chunk, state, page);
             value = undefined;
           } else if (action.op === 'controlKey') {
             await index.handleControlKey(action.chunk, state, page);
@@ -1645,15 +1682,7 @@ function readerImplementations(index, keysModule) {
               focused: action.focused ?? null,
             });
           } else if (action.op === 'askFiles') {
-            const queue = (action.keys ?? []).map((k) => (k === '<eof>' ? EOF : k));
-            state.keyReader = {
-              claim() { return 'token'; },
-              release() {},
-              async next() {
-                if (!queue.length) throw new Error('the prompt asked for a key nobody pressed');
-                return queue.shift();
-              },
-            };
+            state.keyReader = scriptedKeyReader(action.keys);
             value = (await index.askForFilePaths(state, {
               asking: action.asking, multiple: !!action.multiple, accept: action.accept ?? '',
             })) ?? null;

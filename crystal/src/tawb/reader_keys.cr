@@ -6,6 +6,7 @@ require "./lynx_actions"
 require "./keys"
 require "./input"
 require "./interfaces"
+require "./auth"
 require "./unicode_escape"
 
 module Tawb
@@ -143,7 +144,15 @@ module Tawb
       abstract def claim : Input::Token
       abstract def next_key(token : Input::Token) : Input::Key
       abstract def release(token : Input::Token) : Nil
+
+      # Wait for either a key or a pending navigation to finish. Unlike a
+      # bare race with next_key, the losing side's wait is removed, so the
+      # next key cannot disappear into an abandoned promise.
+      abstract def next_or(operation : Channel(NavigateOutcome), token : Input::Token) : Input::OperationResult(NavigateOutcome) | Input::KeyResult
     end
+
+    # How a navigation ended: on its own, or cancelled by a key.
+    alias NavigateOutcome = NamedTuple(ok: Bool, fault: String?, cancelled: Bool)
 
     # What one key did to the auth prompt: nothing yet, or an answer.
     enum AuthStep
@@ -1233,6 +1242,151 @@ module Tawb
     end
 
     # ------------------------------------------------------------------
+    # Lynx's number prompt
+    #
+    # A count, an optional command, and an optional sign, in either order:
+    # `12` follows link 12, `3p` goes to page 3, `2+p` two pages on, `4-g`
+    # four links back without pressing. The arithmetic lives in LynxNumber;
+    # what is here is the prompt itself and where each answer lands.
+    # ------------------------------------------------------------------
+
+    # The line a number was seen on, and the block it named. A composite
+    # paragraph or table row can hold several numbers, so they come from its
+    # spans rather than from the line.
+    def self.open_link_number_prompt(output : Screen::Output, state : Reader::State,
+                                     page_url : String, digits : String? = nil) : Nil
+      targets = [] of JSON::Any
+      entries = [] of JSON::Any
+      remember = ->(number : JSON::Any?, block_index : Int32, line : Int32, col : Int32) do
+        # What the JavaScript original skips: no number at all, a zero, an
+        # empty marker, or a block the buffer does not hold.
+        present = number && !number.raw.is_a?(Nil) && number.as_i64? != 0_i64 &&
+                  number.as_s? != ""
+        named = present && state.core.blocks[block_index]?
+        taken = named && entries.any? { |entry| entry.as_h["number"] == number }
+        unless taken
+          entries << JSON::Any.new({
+            "number"     => number || JSON::Any.new(nil),
+            "blockIndex" => JSON::Any.new(block_index.to_i64),
+          })
+          targets << JSON::Any.new({
+            "number" => number || JSON::Any.new(nil),
+            "line"   => JSON::Any.new(line.to_i64),
+            "col"    => JSON::Any.new(col.to_i64),
+          })
+        end
+        block_index
+      end
+      state.lines.each_with_index do |line, line_index|
+        if spans = line.spans
+          spans.each do |span|
+            remember.call(span.display_number, span.block_index, line_index, span.start)
+          end
+          next
+        end
+        next unless line.display_number
+        remember.call(line.display_number, line.block_index, line_index, 0)
+      end
+      state.mode = "number"
+      state.link_number = JSON::Any.new({
+        "text"    => JSON::Any.new(digits == "0" ? "" : (digits || "")),
+        "targets" => JSON::Any.new(targets),
+        "entries" => JSON::Any.new(entries),
+        "cursor"  => JSON::Any.new(state.cursor.to_i64),
+        "col"     => JSON::Any.new(state.col.to_i64),
+      })
+      Reader.draw_hint(output, state)
+      draw_link_number_prompt(output, state)
+    end
+
+    def self.draw_link_number_prompt(output : Screen::Output, state : Reader::State) : Nil
+      prompt = state.link_number.not_nil!.as_h
+      text = "Follow link (or goto link or page) number: #{prompt["text"]?.try(&.as_s?)}"
+      Reader.write_status_row(output, state, text)
+      Screen.move_cursor(output, Reader.status_row(state), Math.min(text.size + 1, state.cols))
+    end
+
+    def self.handle_number_key(output : Screen::Output, state : Reader::State,
+                               page : Reader::PageEnv, keyboard : Keyboard?,
+                               chunk : String) : Nil
+      state.core.mark_input
+      prompt = state.link_number
+      unless prompt
+        state.mode = "browse"
+        return
+      end
+      prompt_object = prompt.as_h
+      text = prompt_object["text"]?.try(&.as_s?) || ""
+
+      if key_is(chunk, "Escape", state) || key_is(chunk, "Ctrl+C", state)
+        state.mode = "browse"
+        state.link_number = nil
+        Reader.draw_hint(output, state)
+        Reader.set_status(output, state, page.url, "Cancelled.")
+        return
+      end
+      if key_is(chunk, "Backspace", state)
+        prompt_object["text"] = JSON::Any.new(text.size > 0 ? text[0, text.size - 1] : "")
+        draw_link_number_prompt(output, state)
+        return
+      end
+      if chunk.matches?(/^\d+$/) || chunk.matches?(/^[pP+-]$/)
+        prompt_object["text"] = JSON::Any.new(text + chunk)
+        draw_link_number_prompt(output, state)
+        return
+      end
+      typed_go = chunk == "g" || chunk == "G"
+      return unless typed_go || chunk == "\r" || chunk == "\n"
+
+      expression = LynxNumber.parse(text + (typed_go ? chunk : ""))
+      state.mode = "browse"
+      state.link_number = nil
+      Reader.draw_hint(output, state)
+      unless expression
+        Reader.set_status(output, state, page.url,
+          "Invalid link number: #{text.empty? ? "0" : text}.")
+        return
+      end
+      answer = expression.not_nil!
+      number = answer["number"].as_i64
+      command = answer["command"].as_s
+      relative = answer["relative"].as_i64
+
+      if command == "page"
+        height = Math.max(1, Reader.viewport_height(state))
+        page_count = Math.max(1, (state.lines.size + height - 1) // height)
+        current_page = (prompt_object["cursor"].as_i64 // height) + 1
+        requested = relative == 0 ? number : current_page + (relative * number)
+        page_number = Math.max(1, Math.min(requested == 0 ? 1 : requested, page_count)).to_i32
+        Reader.move_selection(output, state, page.url,
+          Math.min((page_number - 1) * height, state.lines.size - 1), 0)
+        Reader.set_status(output, state, page.url, "Page #{page_number} of #{page_count}.")
+        return
+      end
+
+      followed = relative == 0 ? number : LynxNumber.relative(prompt, number, relative)
+      found = prompt_object["entries"].as_a.find do |one|
+        one.as_h["number"] == JSON::Any.new(followed)
+      end
+      block_index = found ? found.as_h["blockIndex"].as_i64.to_i32 : -1
+      position = block_index < 0 ? nil : Reader.position_for_block(state, block_index)
+      unless position
+        Reader.set_status(output, state, page.url,
+          "No link #{followed} on this page.")
+        return
+      end
+      Reader.move_selection(output, state, page.url, position[:line], position[:col])
+      item = state.core.blocks[block_index]?.try(&.as_h).try(&.["item"]?)
+      if command == "move" || item.nil? ||
+         !Aria::LINK_ROLES.includes?(item.as_h["role"]?.try(&.as_s?) || "")
+        Reader.set_status(output, state, page.url, "Link #{followed}.")
+        return
+      end
+      activate_current(output, state, page, keyboard)
+    end
+
+
+    # ------------------------------------------------------------------
     # The modes that fill a form in
     #
     # Typing, adjusting a slider, Lynx's one-command escape, and forms mode
@@ -1566,6 +1720,203 @@ module Tawb
         Reader.set_status(output, state, page.url,
           "Adjusted \"#{name}\" with #{key}.")
       end
+    end
+
+    # ------------------------------------------------------------------
+    # Going somewhere
+    #
+    # The address bar takes an address when it is given one and searches
+    # when it is not. The navigation itself must not own the keyboard for
+    # an entire protocol timeout, so it runs while the reader keeps
+    # typing, and Escape asks the engine to stop without waiting for that
+    # request or the original command to answer.
+    # ------------------------------------------------------------------
+
+    # Go somewhere, and say what happened rather than throwing. The caller
+    # reads the tab either way, because either way there is something in it.
+    private def self.navigate(page : Reader::PageEnv, url : String) : NavigateOutcome
+      page.goto(url)
+      {ok: true, fault: nil, cancelled: false}
+    rescue err
+      {ok: false, fault: navigation_fault(err.message || err.to_s), cancelled: false}
+    end
+
+    # What to say a refusal was, which is the engine's business as much as
+    # ours: Chromium's net::ERR_ codes, Firefox's NS_ERROR_ ones, and the
+    # certificate codes buried inside a generic failure are the parts worth
+    # repeating to a reader.
+    private def self.navigation_fault(message : String?) : String
+      text = (message || "").lines.first? || ""
+      codes = text.scan(/\b(?:net::)?((?:ERR|NS_ERROR|MOZILLA_PKIX_ERROR|SEC_ERROR)_[A-Z0-9_]+)\b/)
+        .map(&.[1])
+      # Firefox wraps the diagnosis in a generic failure and a module name,
+      # so the code that actually says what is wrong with the certificate
+      # is preferred over whatever came first.
+      specific = codes.find { |code| code.matches?(/^(ERR_CERT|MOZILLA_PKIX_ERROR|SEC_ERROR)/) }
+      return specific.not_nil! if specific
+      return codes.first.not_nil! unless codes.empty?
+      text.gsub(/^page\.goto:\s*/, "").gsub(/^unknown error:\s*(Error:\s*)?/, "")[0, 120]
+    end
+
+    private def self.navigate_interruptibly(output : Screen::Output, state : Reader::State,
+                                            page : Reader::PageEnv, keyboard : Keyboard?,
+                                            url : String) : NavigateOutcome
+      pending = Channel(NavigateOutcome).new
+      spawn { pending.send(navigate(page, url)) }
+      unless keyboard
+        value = pending.receive
+        return {ok: value[:ok], fault: value[:fault], cancelled: false}
+      end
+
+      token = keyboard.claim
+      loop do
+        answer = keyboard.next_or(pending, token)
+        if answer.is_a?(Input::OperationResult(NavigateOutcome))
+          keyboard.release(token)
+          value = answer.value
+          return {ok: value[:ok], fault: value[:fault], cancelled: false}
+        end
+        key = answer.key
+        if key.is_a?(Input::Eof)
+          begin
+            page.stop_loading
+          rescue
+            # already gone
+          end
+          keyboard.release(token)
+          return {ok: false, fault: nil, cancelled: true}
+        end
+        state.core.mark_input
+        chunk = key.as(String)
+        action = keymap_for(state).action_for(chunk)
+        next unless key_is(chunk, "Escape", state) || action == "interrupt"
+        begin
+          page.stop_loading
+        rescue
+          # already gone
+        end
+        keyboard.release(token)
+        return {ok: false, fault: nil, cancelled: true}
+      end
+    end
+
+    # The error page arrives a moment after the navigation that failed: the
+    # throw comes from the network layer, and the page that replaces the
+    # document is rendered after it. So the buffer is read again until it
+    # holds something, bounded, and the bound is not an error in itself.
+    private def self.settle_after_fault(output : Screen::Output, state : Reader::State,
+                                        page : Reader::PageEnv) : Bool
+      deadline = Time.monotonic + 4.seconds
+      loop do
+        Reader.refresh(state, page, true)
+        return true unless state.lines.empty?
+        return false if Time.monotonic >= deadline
+        sleep 150.milliseconds
+      end
+    end
+
+    # Going somewhere, from wherever the address came from — the address
+    # bar, or a line in one of the browser's own lists.
+    def self.load_address(output : Screen::Output, state : Reader::State,
+                          page : Reader::PageEnv, keyboard : Keyboard?, url : String) : NavigateOutcome
+      # The page-history place the JavaScript original remembers here is
+      # ported with the history traversal helpers.
+      Reader.set_status(output, state, page.url, "Loading #{url} — Esc: stop.")
+      went = navigate_interruptibly(output, state, page, keyboard, url)
+      if went[:cancelled]
+        Reader.render(output, state, page.url, force: true)
+        Reader.set_status(output, state, page.url, "Stopped loading #{url}.")
+        return went
+      end
+      # Read the tab whether or not the navigation succeeded: a refusal
+      # leaves the browser's own warning page in it, and that page is where
+      # the reader finds out why and how to go on anyway.
+      if went[:ok]
+        Reader.refresh(state, page, true)
+      else
+        settle_after_fault(output, state, page)
+      end
+      Reader.render(output, state, page.url, force: true)
+      Reader.set_status(output, state, page.url, went[:ok] ?
+        "Loaded #{page.url}" :
+        "#{url} was refused — #{went[:fault]}. The browser's own warning is on screen.")
+      went
+    end
+
+    def self.focus_address_bar(output : Screen::Output, state : Reader::State,
+                               page : Reader::PageEnv, text : String? = nil) : Nil
+      address = text || page.url
+      state.mode = "address"
+      state.address = Reader::AddressBar.new(address, address.size, 0)
+      Reader.draw_hint(output, state)
+      Reader.draw_address(output, state, page.url, force: true)
+    end
+
+    def self.handle_address_key(output : Screen::Output, state : Reader::State,
+                                page : Reader::PageEnv, keyboard : Keyboard?,
+                                chunk : String) : Nil
+      state.core.mark_input
+      bar = state.address.not_nil!
+
+      if key_is(chunk, "Escape", state)
+        state.mode = "browse"
+        Reader.draw_hint(output, state)
+        Reader.draw_address(output, state, page.url, force: true)
+        Reader.park_cursor(output, state, page.url)
+        return
+      end
+
+      if chunk == "\r" || chunk == "\n"
+        target = bar.text.strip
+        state.mode = "browse"
+        Reader.draw_hint(output, state)
+        if target.empty?
+          Reader.draw_address(output, state, page.url, force: true)
+          Reader.park_cursor(output, state, page.url)
+          return
+        end
+        # An address bar takes an address when it is given one and searches
+        # when it is not — see address.cr for which is which. Words are not
+        # an address with a scheme missing, and treating them as one is how
+        # a browser sends you nowhere.
+        resolved = Address.resolve(target, state.search || Address::DEFAULT_SEARCH)
+        if resolved["error"]?
+          Reader.draw_address(output, state, page.url, force: true)
+          Reader.park_cursor(output, state, page.url)
+          return
+        end
+        # https://user:password@host is deprecated for subresources in
+        # Chrome and interrupted by a confirmation of its own in Firefox, so
+        # the pair is taken out here and used to answer the challenge
+        # instead. The credentials store that remembers it is ported with
+        # the browser-authentication work.
+        credentials = Auth.split_credentials(resolved["url"].as_s)
+        # Say that a search happened. A reader who typed a host name with a
+        # typo in it is otherwise handed a results page with no account of
+        # why.
+        if resolved["searched"]?.try(&.as_bool?)
+          Reader.set_status(output, state, page.url,
+            "Searching for \"#{resolved["words"]?.try(&.as_s?)}\"…")
+        end
+        load_address(output, state, page, keyboard, credentials["url"].as_s)
+        return
+      end
+
+      editing = Edit.edit_action(chunk, keymap_for(state))
+      if editing
+        buffer = Edit::Buffer.new(bar.text, bar.caret)
+        Edit.apply_buffer_edit(buffer, editing)
+        bar.text = buffer.text
+        bar.caret = buffer.caret
+      elsif key_is(chunk, "Ctrl+L", state)
+        bar.text = ""
+        bar.caret = 0
+      elsif !chunk.starts_with?(ESC) && chunk >= " "
+        bar.text = bar.text[0, bar.caret] + chunk + bar.text[bar.caret..]
+        bar.caret += chunk.size
+      end
+
+      Reader.draw_address(output, state, page.url, false, true)
     end
   end
 end

@@ -1313,6 +1313,17 @@ module Tawb
 
       def release(token : Input::Token) : Nil
       end
+
+      # The navigation is scripted to finish or hang on its own, so a race
+      # against a queued key is settled by the key when there is one and by
+      # the navigation when there is not — the same answer the sequential
+      # reader in the JavaScript harness gives.
+      def next_or(operation : Channel(ReaderKeys::NavigateOutcome), token : Input::Token) : Input::OperationResult(ReaderKeys::NavigateOutcome) | Input::KeyResult
+        if key = @queue.shift?
+          return Input::KeyResult.new(key)
+        end
+        Input::OperationResult.new(operation.receive)
+      end
     end
 
     # The page the scenario describes: an address, a title, and a keyboard
@@ -1322,9 +1333,14 @@ module Tawb
 
       getter presses : Array(String)
       property fail_press : Bool
+      property url : String
+      property goto_fault : String?
+      property goto_hang : Bool
 
       def initialize(@url : String, @title : String, @fail_press = false)
         @presses = [] of String
+        @goto_fault = nil
+        @goto_hang = false
       end
 
       def url : String
@@ -1342,6 +1358,15 @@ module Tawb
 
       def wait_for_load : Nil
       end
+
+      def goto(target : String) : Nil
+        raise IO::Error.new(@goto_fault.not_nil!) if @goto_fault
+        sleep if @goto_hang
+        @url = target
+      end
+
+      def stop_loading : Nil
+      end
     end
 
     # One drawing pass over the reader's terminal: a state, a page address,
@@ -1356,6 +1381,10 @@ module Tawb
       page_title = object["page"]?.try(&.as_h?).try(&.["title"]?.try(&.as_s?)) || ""
       page = ScriptedPage.new(page_url, page_title,
         object["page"]?.try(&.as_h?).try(&.["failPress"]?.try(&.as_bool?)) || false)
+      if page_spec = object["page"]?.try(&.as_h?)
+        page.goto_fault = page_spec["gotoFault"]?.try(&.as_s?)
+        page.goto_hang = page_spec["gotoHang"]?.try(&.as_bool?) || false
+      end
       results = [] of JSON::Any
       (object["actions"]?.try(&.as_a?) || [] of JSON::Any).each do |step_value|
         action = step_value.as_h
@@ -1405,7 +1434,8 @@ module Tawb
           line_object["continuation"]?.try(&.as_bool?) || false,
           (line_object["displayIndent"]?.try(&.as_i64?) || 0).to_i32,
           line_object["displayPrefix"]?.try(&.as_s?) || "",
-          line_object["displaySuffix"]?.try(&.as_s?) || "")
+          line_object["displaySuffix"]?.try(&.as_s?) || "",
+          line_object["displayNumber"]?)
       end
       if drawn = object["drawn"]?.try(&.as_h?)
         state.drawn.title = drawn["title"]?.try(&.as_s?)
@@ -1532,6 +1562,8 @@ module Tawb
       state.options = object["options"]?
       state.controlling = scripted_value(object, "controlling")
       state.chooser = scripted_value(object, "chooser")
+      state.link_number = scripted_value(object, "linkNumber")
+      state.search = object["search"]?.try(&.as_s?)
       state
     end
 
@@ -1740,6 +1772,35 @@ module Tawb
       when "controlKey"
         return JSON::Any.new(nil) unless page
         ReaderKeys.handle_control_key(output, state, page.not_nil!, action["chunk"].as_s)
+      when "openNumberPrompt"
+        ReaderKeys.open_link_number_prompt(output, state, page_url,
+          action["digits"]?.try(&.as_s?))
+      when "numberKey"
+        return JSON::Any.new(nil) unless page
+        keyboard = nil
+        if keys = action["keys"]?.try(&.as_a?)
+          keyboard = ScriptedKeyboard.new(keys.map do |key|
+            text = key.as_s
+            text == "<eof>" ? Input::EOF.as(Input::Key) : text.as(Input::Key)
+          end)
+        end
+        ReaderKeys.handle_number_key(output, state, page.not_nil!, keyboard,
+          action["chunk"].as_s)
+      when "focusAddress"
+        return JSON::Any.new(nil) unless page
+        ReaderKeys.focus_address_bar(output, state, page.not_nil!,
+          action["text"]?.try(&.as_s?))
+      when "addressKey"
+        return JSON::Any.new(nil) unless page
+        keyboard = nil
+        if keys = action["keys"]?.try(&.as_a?)
+          keyboard = ScriptedKeyboard.new(keys.map do |key|
+            text = key.as_s
+            text == "<eof>" ? Input::EOF.as(Input::Key) : text.as(Input::Key)
+          end)
+        end
+        ReaderKeys.handle_address_key(output, state, page.not_nil!, keyboard,
+          action["chunk"].as_s)
       when "openChooser"
         return JSON::Any.new(nil) unless page
         ReaderKeys.open_chooser(output, state, page.not_nil!, action["item"], action["listing"])
@@ -1917,10 +1978,22 @@ module Tawb
         "controlling" => state.controlling || JSON::Any.new(nil),
         "chooserMode" => state.chooser || JSON::Any.new(nil),
         "files"      => state.files || JSON::Any.new(nil),
+        "linkNumber" => link_number_json(state.link_number),
         "typingReads" => JSON::Any.new(state.core.typed_field_reads.to_i64),
         "typingReleased" => JSON::Any.new(state.core.typing_released),
         "inputMarks" => JSON::Any.new(state.core.input_marks.to_i64),
         "atCalls"    => JSON::Any.new(state.core.at_calls.map { |call| JSON::Any.new(call) }),
+      })
+    end
+
+    private def self.link_number_json(prompt : JSON::Any?) : JSON::Any
+      return JSON::Any.new(nil) unless prompt
+      object = prompt.as_h
+      JSON::Any.new({
+        "text"    => object["text"]? || JSON::Any.new(""),
+        "cursor"  => object["cursor"]? || JSON::Any.new(0_i64),
+        "col"     => object["col"]? || JSON::Any.new(0_i64),
+        "targets" => object["targets"]? || JSON::Any.new([] of JSON::Any),
       })
     end
 
