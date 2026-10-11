@@ -162,6 +162,21 @@ module Tawb
       abstract def reload(ignore_cache : Bool) : Nil
     end
 
+    # Tab ownership sits beside the page interface rather than in the key
+    # handler. The browser-backed loop and the scripted harness both provide
+    # this small inventory, so switching a tab changes the page subsequent
+    # keys act on instead of merely changing one invocation's local value.
+    module TabEnv
+      abstract def current_page : PageEnv
+      abstract def next_tab(direction : Int32) : PageEnv?
+      abstract def tab_after(page : PageEnv) : PageEnv?
+      abstract def adopt_tab(page : PageEnv) : Nil
+      abstract def new_tab : PageEnv
+      abstract def close_tab(page : PageEnv) : Nil
+      abstract def tab_position(page : PageEnv) : NamedTuple(position: Int32, of: Int32)
+      abstract def tab_label(page : PageEnv) : String
+    end
+
     # A page-touching operation outlived its budget. The core's own timeouts
     # raise this (the browser-side source of it is the same in JavaScript:
     # core.js's ActionTimeout). Activation says how long it gave the page
@@ -693,6 +708,7 @@ module Tawb
       property lines : Array(Line)
       property drawn : Drawn
       property core : CoreEnv
+      property tabs : TabEnv?
       property keys : Keys::Keymap?
       property typing : Typing?
       property address : AddressBar?
@@ -740,6 +756,7 @@ module Tawb
         @lines = [] of Line
         @drawn = Drawn.new
         @core = CoreState.new
+        @tabs = nil
         @keys = nil
         @typing = nil
         @address = nil

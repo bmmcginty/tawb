@@ -1230,6 +1230,9 @@ function readerImplementations(index, keysModule) {
       },
       changeTargets() { return spec.core?.changeTargets ?? []; },
       changeIndex: spec.core?.changeIndex ?? -1,
+      async attachLive() { return { armed: true }; },
+      async collectLive() {},
+      async pulseLive() {},
       async rescan() {
         if (spec.core?.rescanBlocks) this.blocks = spec.core.rescanBlocks;
         this.snapshotCostMs = spec.core?.rescanCost ?? 0;
@@ -1561,6 +1564,83 @@ function readerImplementations(index, keysModule) {
     typingReleased: state.core.typingReleased ?? false,
   });
 
+  const scriptedTabPage = (entry = {}) => {
+    let url = entry.url ?? 'about:blank';
+    let closed = false;
+    const page = {
+      _blocks: entry.blocks,
+      url: () => url,
+      title: async () => (entry.title ?? ''),
+      mainFrame: () => page,
+      on: () => {},
+      isClosed: () => closed,
+      async goto(target) { url = target; },
+      async waitForLoadState() {},
+      async close() { closed = true; },
+      keyboard: { async press() {}, async type() {} },
+    };
+    return page;
+  };
+
+  const configureScriptedTabs = (state, spec) => {
+    const entries = spec.core?.tabs;
+    if (!entries) return null;
+    const pages = entries.map(scriptedTabPage);
+    if (!pages.length) pages.push(scriptedTabPage());
+    let current = pages[Math.max(0, Math.min(spec.core?.currentTab ?? 0, pages.length - 1))];
+    state.core.page = current;
+    // switchToTab starts the production ticker after attaching a page. The
+    // harness has no clock-driven live work; a non-enumerable sentinel keeps
+    // that timer out of both the process and the state comparison.
+    if (state.core.live) Object.defineProperty(state.core.live, 'ticker', {
+      value: true, writable: true, configurable: true,
+    });
+    if (current._blocks) state.core.blocks = current._blocks;
+    state.core.tabs = () => pages.filter((page) => !page.isClosed());
+    state.core.adoptTab = async (page) => {
+      current = page;
+      state.core.page = page;
+      if (page._blocks) state.core.blocks = page._blocks;
+    };
+    state.core.nextTab = (direction) => {
+      const all = state.core.tabs();
+      if (all.length < 2) return null;
+      const at = Math.max(0, all.indexOf(current));
+      return all[(at + direction + all.length) % all.length];
+    };
+    state.core.tabAfter = (page) => {
+      const all = state.core.tabs();
+      if (all.length < 2) return null;
+      const at = Math.max(0, all.indexOf(page));
+      return all[(at + 1) % all.length];
+    };
+    state.core.where = (page = current) => {
+      const all = state.core.tabs();
+      return { position: all.indexOf(page) + 1, of: all.length };
+    };
+    state.core.tabLabel = async (page) => {
+      const title = String(await page.title()).replace(/\s+/g, ' ').trim();
+      return (title || page.url() || 'untitled').slice(0, 60);
+    };
+    state.core.newTab = async () => {
+      if (spec.core?.newTabFault) throw new Error(spec.core.newTabFault);
+      const page = scriptedTabPage();
+      page._blocks = [];
+      pages.push(page);
+      return page;
+    };
+    state.core.closeTab = async (page) => {
+      if (spec.core?.closeTabFault) throw new Error(spec.core.closeTabFault);
+      await page.close();
+    };
+    const originalRescan = state.core.rescan.bind(state.core);
+    state.core.rescan = async ({ page } = {}) => {
+      if (page?._blocks) state.core.blocks = page._blocks;
+      else await originalRescan();
+    };
+    return current;
+  };
+
   const implementations = [{
     name: 'JavaScript',
     draw(args) {
@@ -1625,7 +1705,7 @@ function readerImplementations(index, keysModule) {
       const atCalls = [];
       const state = buildJsState(args.state, atCalls);
       let pageUrl = args.page?.url ?? '';
-      const page = { url: () => pageUrl, title: async () => (args.page?.title ?? ''),
+      let page = { url: () => pageUrl, title: async () => (args.page?.title ?? ''),
         evaluate: async () => { throw new Error('the page cannot be asked'); },
         waitForLoadState: async () => {},
         async goto(url) {
@@ -1645,6 +1725,7 @@ function readerImplementations(index, keysModule) {
           this.presses.push(text);
         } } };
       state.core.page = page;
+      page = configureScriptedTabs(state, args.state) ?? page;
       const savedWrite = process.stdout.write.bind(process.stdout);
       const saved = {
         rows: process.stdout.rows, cols: process.stdout.columns,
@@ -1660,6 +1741,7 @@ function readerImplementations(index, keysModule) {
       };
       try {
         for (const action of args.actions ?? []) {
+          page = state.core.page;
           current = [];
           const entry = {};
           let value;

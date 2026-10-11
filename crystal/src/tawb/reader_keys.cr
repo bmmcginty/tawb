@@ -1938,6 +1938,73 @@ module Tawb
     end
 
     # ------------------------------------------------------------------
+    # Tabs
+    #
+    # A tab switch replaces the whole document the buffer describes, so it
+    # resets rather than reanchors. The TabEnv owns the changing current page;
+    # every later key asks it again through the loop/harness.
+    # ------------------------------------------------------------------
+
+    def self.switch_to_tab(output : Screen::Output, state : Reader::State,
+                           tabs : Reader::TabEnv, page : Reader::PageEnv,
+                           note : String = "") : Bool
+      return false if page.same?(tabs.current_page)
+      tabs.adopt_tab(page)
+      Reader.refresh(state, page, true)
+      Reader.render(output, state, page.url, true)
+      position = tabs.tab_position(page)
+      label = tabs.tab_label(page)
+      message = "Tab #{position[:position]} of #{position[:of]}: #{label}"
+      message = "#{note} — tab #{position[:position]} of #{position[:of]}: #{label}" unless note.empty?
+      Reader.set_status(output, state, page.url, message)
+      true
+    end
+
+    def self.cycle_tab(output : Screen::Output, state : Reader::State,
+                       tabs : Reader::TabEnv, direction : Int32) : Nil
+      page = tabs.next_tab(direction)
+      unless page
+        Reader.set_status(output, state, tabs.current_page.url, "Only one tab open.")
+        return
+      end
+      switch_to_tab(output, state, tabs, page)
+    end
+
+    def self.open_new_tab(output : Screen::Output, state : Reader::State,
+                          tabs : Reader::TabEnv) : Nil
+      begin
+        page = tabs.new_tab
+        switch_to_tab(output, state, tabs, page, "Opened a new tab")
+        focus_address_bar(output, state, page, "")
+      rescue err
+        reason = (err.message || err.to_s).lines.first? || err.to_s
+        Reader.set_status(output, state, tabs.current_page.url,
+          "Could not open a new tab: #{reason}")
+      end
+    end
+
+    def self.close_current_tab(output : Screen::Output, state : Reader::State,
+                               tabs : Reader::TabEnv) : Nil
+      current = tabs.current_page
+      following = tabs.tab_after(current)
+      unless following
+        Reader.set_status(output, state, current.url,
+          "This is the only tab open — press q to quit.")
+        return
+      end
+      label = tabs.tab_label(current)
+      begin
+        tabs.close_tab(current)
+      rescue err
+        reason = (err.message || err.to_s).lines.first? || err.to_s
+        Reader.set_status(output, state, current.url,
+          "Could not close this tab: #{reason}")
+        return
+      end
+      switch_to_tab(output, state, tabs, following, "Closed \"#{label}\"")
+    end
+
+    # ------------------------------------------------------------------
     # The browse map
     #
     # One dispatch for everything reading does: quit, go somewhere, move,
@@ -1945,8 +2012,8 @@ module Tawb
     # cannot do yet is the work of the pieces that are still
     # JavaScript-only: switching views by element (the element-handle half
     # of place.js), the history traversal, the browser's own lists, the
-    # tabs, the native dialogs, and the keyboard wizard's takeover of the
-    # screen. Those actions are noted where they would go.
+    # native dialogs, and the keyboard wizard's takeover of the screen.
+    # Those actions are noted where they would go.
     # ------------------------------------------------------------------
 
     # Asking first: Lynx tells quitting apart from aborting. QUIT asks,
@@ -2444,10 +2511,20 @@ module Tawb
         return nil
       end
 
-      # The tabs are connected to the interactive interface with the loop
-      # that owns them.
       if action == "new-tab" || action == "next-tab" ||
          action == "previous-tab" || action == "close-tab"
+        if tabs = state.tabs
+          case action
+          when "new-tab"
+            open_new_tab(output, state, tabs)
+          when "next-tab"
+            cycle_tab(output, state, tabs, 1)
+          when "previous-tab"
+            cycle_tab(output, state, tabs, -1)
+          when "close-tab"
+            close_current_tab(output, state, tabs)
+          end
+        end
         return nil
       end
 

@@ -1337,12 +1337,14 @@ module Tawb
       property goto_fault : String?
       property goto_hang : Bool
       property reload_fault : String?
+      property blocks : Array(JSON::Any)?
 
       def initialize(@url : String, @title : String, @fail_press = false)
         @presses = [] of String
         @goto_fault = nil
         @goto_hang = false
         @reload_fault = nil
+        @blocks = nil
       end
 
       def url : String
@@ -1375,6 +1377,85 @@ module Tawb
       end
     end
 
+    # A small browser inventory for reader-key scenarios. Each page can carry
+    # the blocks a rescan of that tab returns, and failures exercise the same
+    # status paths as a driver refusing to create or close one.
+    private class ScriptedTabs
+      include Reader::TabEnv
+
+      getter pages : Array(ScriptedPage)
+      property new_fault : String?
+      property close_fault : String?
+
+      def initialize(@state : Reader::State, specs : Array(JSON::Any), current : Int32)
+        @pages = specs.map do |value|
+          spec = value.as_h
+          page = ScriptedPage.new(spec["url"]?.try(&.as_s?) || "about:blank",
+            spec["title"]?.try(&.as_s?) || "")
+          page.blocks = spec["blocks"]?.try(&.as_a?)
+          page
+        end
+        @pages << ScriptedPage.new("about:blank", "") if @pages.empty?
+        @current = @pages[Math.min(Math.max(current, 0), @pages.size - 1)]
+        @new_fault = nil
+        @close_fault = nil
+        install_blocks(@current)
+      end
+
+      def current_page : Reader::PageEnv
+        @current
+      end
+
+      def next_tab(direction : Int32) : Reader::PageEnv?
+        return nil if @pages.size < 2
+        at = @pages.index(@current) || 0
+        @pages[(at + direction + @pages.size) % @pages.size]
+      end
+
+      def tab_after(page : Reader::PageEnv) : Reader::PageEnv?
+        return nil if @pages.size < 2
+        at = @pages.index { |candidate| candidate.same?(page) } || 0
+        @pages[(at + 1) % @pages.size]
+      end
+
+      def adopt_tab(page : Reader::PageEnv) : Nil
+        @current = page.as(ScriptedPage)
+        install_blocks(@current)
+      end
+
+      def new_tab : Reader::PageEnv
+        raise IO::Error.new(@new_fault.not_nil!) if @new_fault
+        made = ScriptedPage.new("about:blank", "")
+        made.blocks = [] of JSON::Any
+        @pages << made
+        made
+      end
+
+      def close_tab(page : Reader::PageEnv) : Nil
+        raise IO::Error.new(@close_fault.not_nil!) if @close_fault
+        @pages.reject! { |candidate| candidate.same?(page) }
+      end
+
+      def tab_position(page : Reader::PageEnv) : NamedTuple(position: Int32, of: Int32)
+        at = @pages.index { |candidate| candidate.same?(page) }
+        {position: at ? at + 1 : 0, of: @pages.size}
+      end
+
+      def tab_label(page : Reader::PageEnv) : String
+        value = page.title.gsub(/\s+/, " ").strip
+        value = page.url if value.empty?
+        value = "untitled" if value.empty?
+        value[0, Math.min(value.size, 60)]
+      rescue
+        "untitled"
+      end
+
+      private def install_blocks(page : ScriptedPage) : Nil
+        return unless blocks = page.blocks
+        @state.core.as(Reader::CoreState).rescan_blocks = blocks
+      end
+    end
+
     # One drawing pass over the reader's terminal: a state, a page address,
     # and the actions to run in order against the same live state. What each
     # action wrote, and the state as it stands afterwards, come back — the
@@ -1392,11 +1473,23 @@ module Tawb
         page.goto_hang = page_spec["gotoHang"]?.try(&.as_bool?) || false
         page.reload_fault = page_spec["reloadFault"]?.try(&.as_s?)
       end
+      if core_spec = object["state"].as_h["core"]?.try(&.as_h?)
+        if tab_specs = core_spec["tabs"]?.try(&.as_a?)
+          tabs = ScriptedTabs.new(state, tab_specs,
+            (core_spec["currentTab"]?.try(&.as_i64?) || 0).to_i32)
+          tabs.new_fault = core_spec["newTabFault"]?.try(&.as_s?)
+          tabs.close_fault = core_spec["closeTabFault"]?.try(&.as_s?)
+          state.tabs = tabs
+          page = tabs.current_page.as(ScriptedPage)
+        end
+      end
       results = [] of JSON::Any
       (object["actions"]?.try(&.as_a?) || [] of JSON::Any).each do |step_value|
         action = step_value.as_h
         output = RecordingScreen.new
-        value = reader_action(output, state, action, page_url, page)
+        current_page = state.tabs.try(&.current_page) || page
+        value = reader_action(output, state, action, current_page.url,
+          current_page.as(ScriptedPage))
         entry = {"writes" => JSON::Any.new(output.writes)} of String => JSON::Any
         entry["value"] = value unless value.nil?
         results << JSON::Any.new(entry)
