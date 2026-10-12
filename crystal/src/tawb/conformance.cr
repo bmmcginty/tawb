@@ -21,6 +21,7 @@ require "./interfaces"
 require "./keyboard"
 require "./keys"
 require "./layout"
+require "./library"
 require "./live"
 require "./log"
 require "./lynx_actions"
@@ -606,6 +607,28 @@ module Tawb
         runtime_scenario(payload)
       when "startup.scenario"
         startup_scenario(payload)
+      when "library.entry_line"
+        object = payload.as_h
+        JSON::Any.new(Library.entry_line(object["kind"].as_s, object["entry"],
+          object["now"]?.try(&.as_i64?) || Time.utc.to_unix_ms))
+      when "library.matches"
+        object = payload.as_h
+        JSON::Any.new(Library.matches?(object["line"].as_s, object["filter"].as_s))
+      when "library.relative_age"
+        object = payload.as_h
+        JSON::Any.new(Library.relative_age(object["when"]?.try(&.as_i64?), object["now"].as_i64))
+      when "library.size_text"
+        object = payload.as_h
+        JSON::Any.new(Library.size_text(object["bytes"]?.try(&.as_i64?),
+          object["total"]?.try(&.as_i64?)))
+      when "library.short_address"
+        object = payload.as_h
+        JSON::Any.new(Library.short_address(object["url"].as_s,
+          (object["max"]?.try(&.as_i64?) || Library::MAX_ADDRESS).to_i32))
+      when "library.order_entries"
+        object = payload.as_h
+        JSON::Any.new(Library.order_entries(object["kind"].as_s, object["entries"].as_a,
+          (object["max"]?.try(&.as_i64?) || Library::MAX_ENTRIES).to_i32))
       when "live.create_state"
         live_state_json(Live.create_state)
       when "live.classify_scenario"
