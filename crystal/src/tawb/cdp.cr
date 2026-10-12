@@ -102,6 +102,7 @@ module Tawb
         @browser_socket = nil.as(String?)
         @browser_channel = nil.as(Transport::Channel?)
         @browser_next_id = 0_i64
+        @auth_handler = nil.as(Proc(JSON::Any, String, JSON::Any?)?)
       end
 
       # The tabs the browser has open, in the order it lists them.
@@ -155,6 +156,7 @@ module Tawb
 
       def create_page : Page
         page = Page.new(@endpoint)
+        page.auth_handler = @auth_handler
         @pages[page.target.id] = page
         page
       end
@@ -225,6 +227,14 @@ module Tawb
         page.target.id
       end
 
+      # Who answers a password prompt, for every tab this session hands out.
+      # Taking the prompt over happens per tab and only when the tab is
+      # adopted; see Page#arm_auth.
+      def attach_auth(handler : Proc(JSON::Any, String, JSON::Any?)) : Nil
+        @auth_handler = handler
+        @pages.each_value { |page| page.auth_handler = handler }
+      end
+
       def close_page(page : Page) : Nil
         @pages.delete(page.target.id)
         @internal.delete(page.target.id)
@@ -257,8 +267,170 @@ module Tawb
         page = Page.new(@endpoint, Target.new(target_id, socket),
           Transport::WebSocket.new(socket))
         page.set_url(url)
+        page.auth_handler = @auth_handler
         @pages[target_id] = page
         page
+      end
+    end
+
+    # The password prompt a 401 raises, taken over (src/driver_chromium.js
+    # armAuth).
+    #
+    # That prompt is drawn by browser chrome, so it cannot be read or reached
+    # from the page: a reader who cannot see it has no way to answer. CDP
+    # hands it over through Fetch, which is a heavier instrument than
+    # Firefox's auth-only intercept — with interception on, every request
+    # pauses and has to be let through — so it runs on a connection of its
+    # own, with one fiber doing nothing but letting requests through and
+    # answering challenges. Sharing the reader's connection would mean a
+    # request pausing with nobody reading the socket, which is a page that
+    # never finishes.
+    #
+    # The prompt is ours the moment this is armed: the browser stops drawing
+    # its own dialog and holds the request instead. So a session that leaves
+    # without answering leaves a question nobody can answer — a tab loading
+    # for ever in a browser the reader goes on using. Cancelling loads the
+    # 401's own body, which is what escaping the prompt does: a page, and a
+    # tab that has finished.
+    class AuthWatcher
+      def initialize(@page : Page, @socket : String,
+                     @handler : Proc(JSON::Any, String, JSON::Any?))
+        @channel = nil.as(Transport::Channel?)
+        @next_id = 0_i64
+        @pending = Set(String).new
+        @closed = false
+      end
+
+      def arm : Bool
+        return true if @channel
+        channel = Transport::WebSocket.new(@socket)
+        @channel = channel
+        # Every request, because a challenge can come from any of them, and
+        # at the request stage, because that is where one is raised.
+        reply = send("Fetch.enable", {
+          "handleAuthRequests" => JSON::Any.new(true),
+          "patterns"           => JSON.parse(%([{"urlPattern":"*","requestStage":"Request"}])),
+        })
+        await_reply(reply)
+        spawn { watch }
+        true
+      rescue
+        @channel.try(&.close) rescue nil
+        @channel = nil
+        false
+      end
+
+      # Every challenge still waiting on an answer, cancelled. It matters
+      # before letting go of the connection as well as after: letting go of
+      # one with requests paused on it is itself a wait.
+      def cancel_pending : Nil
+        waiting = @pending.to_a
+        @pending.clear
+        waiting.each do |request_id|
+          send("Fetch.continueWithAuth", {
+            "requestId"             => JSON::Any.new(request_id),
+            "authChallengeResponse" => JSON::Any.new({
+              "response" => JSON::Any.new("CancelAuth"),
+            }),
+          })
+        rescue
+          # the request went with the tab
+        end
+      end
+
+      def close : Nil
+        return if @closed
+        @closed = true
+        cancel_pending
+        @channel.try(&.close) rescue nil
+        @channel = nil
+      end
+
+      private def watch : Nil
+        channel = @channel || return
+        until @closed
+          message = JSON.parse(channel.receive)
+          object = message.as_h
+          case object["method"]?.try(&.as_s?)
+          when "Fetch.requestPaused"
+            # Nothing is being inspected; the interception exists only so
+            # that a challenge can be answered, so everything else goes
+            # straight through.
+            request_id = object["params"].as_h["requestId"].as_s
+            send("Fetch.continueRequest", {"requestId" => JSON::Any.new(request_id)})
+          when "Fetch.authRequired"
+            answer(object["params"].as_h)
+          end
+        end
+      rescue
+        # The tab closed and took its interception with it.
+      end
+
+      private def answer(params : Hash(String, JSON::Any)) : Nil
+        request_id = params["requestId"]?.try(&.as_s?) || return
+        challenge = params["authChallenge"]?.try(&.as_h?) || {} of String => JSON::Any
+        @pending << request_id
+        raw = JSON::Any.new({
+          "source" => challenge["source"]? || JSON::Any.new("server"),
+          "origin" => challenge["origin"]? || JSON::Any.new(""),
+          "realm"  => challenge["realm"]? || JSON::Any.new(""),
+          "scheme" => challenge["scheme"]? || JSON::Any.new(""),
+          "url"    => params["request"]?.try(&.as_h?).try(&.["url"]?) || JSON::Any.new(""),
+        })
+        # The interception id is a counter within this target, so it names
+        # the request only alongside the frame it belongs to.
+        frame = params["frameId"]?.try(&.as_s?) || "page"
+        given = begin
+          @handler.call(raw, "#{frame}:#{request_id}")
+        rescue
+          nil
+        end
+        # Gone from the set means it was cancelled on the way out, and the
+        # request is no longer ours to answer.
+        return unless @pending.delete(request_id)
+        fields = given.try(&.as_h?)
+        response = if fields
+                     JSON::Any.new({
+                       "response" => JSON::Any.new("ProvideCredentials"),
+                       "username" => fields["username"]? || JSON::Any.new(""),
+                       "password" => fields["password"]? || JSON::Any.new(""),
+                     })
+                   else
+                     JSON::Any.new({"response" => JSON::Any.new("CancelAuth")})
+                   end
+        send("Fetch.continueWithAuth", {
+          "requestId"             => JSON::Any.new(request_id),
+          "authChallengeResponse" => response,
+        })
+      rescue
+        # Nothing left to answer with, and nothing to answer to.
+      end
+
+      # Fire and forget: the watching fiber is the only reader of this
+      # connection, so a reply is read there and ignored like any other
+      # message that is not an event worth acting on.
+      private def send(method : String, params : Hash(String, JSON::Any)) : Int64
+        channel = @channel || raise IO::Error.new("the auth connection is closed")
+        @next_id += 1
+        channel.send({
+          "id"     => JSON::Any.new(@next_id),
+          "method" => JSON::Any.new(method),
+          "params" => JSON::Any.new(params),
+        }.to_json)
+        @next_id
+      end
+
+      # Only used before the fiber starts, when nothing else is reading.
+      private def await_reply(wanted : Int64) : Nil
+        channel = @channel || return
+        loop do
+          object = JSON.parse(channel.receive).as_h
+          next unless object["id"]?.try(&.as_i64?) == wanted
+          if error = object["error"]?
+            raise IO::Error.new("CDP Fetch.enable failed: #{error.to_json}")
+          end
+          return
+        end
       end
     end
 
@@ -731,6 +903,8 @@ module Tawb
       @frames = {} of String => FrameRecord
       @default_timeout_ms = 15_000
       @navigation_timeout_ms = 30_000
+      @auth_handler : Proc(JSON::Any, String, JSON::Any?)? = nil
+      @auth : AuthWatcher? = nil
 
       def initialize(@endpoint : String)
         body = Transport.http(@endpoint, "PUT", "/json/new?about%3Ablank")
@@ -1064,6 +1238,7 @@ module Tawb
 
       def close : Nil
         @closed = true
+        release_auth
         @socket.close
         Transport.http(@endpoint, "GET", "/json/close/#{@target.id}")
       rescue
@@ -1072,7 +1247,11 @@ module Tawb
 
       # Let go of the connection without closing the tab: the tab belongs to
       # the browser, and a reader leaving is not a reason to take it away.
+      # The interception does go, and every challenge it was holding is
+      # cancelled first — the 401's own body then loads, which leaves the
+      # reader a page rather than a tab that never finishes.
       def detach : Nil
+        release_auth
         @socket.close
       rescue
       end
@@ -1206,6 +1385,29 @@ module Tawb
         evaluate("() => document.visibilityState === 'visible'").as_bool? || false
       rescue
         false
+      end
+
+      # The handler for a password prompt raised in this tab, given by the
+      # session that opened the tab. Nothing is intercepted until the tab is
+      # armed: taking the prompt from a tab somebody else is reading would
+      # leave them a request held with no dialog to answer.
+      def auth_handler=(handler : Proc(JSON::Any, String, JSON::Any?)?) : Nil
+        @auth_handler = handler
+      end
+
+      # One tab, armed because it is now this reader's. Answers whether the
+      # prompt in this tab can be answered from here.
+      def arm_auth : Bool
+        handler = @auth_handler || return false
+        watcher = @auth ||= AuthWatcher.new(self, @target.web_socket_url, handler)
+        watcher.arm
+      end
+
+      # Every challenge this tab is still holding, cancelled, and the
+      # interception let go of.
+      def release_auth : Nil
+        @auth.try(&.close)
+        @auth = nil
       end
 
       # The connection this tab is reached over. CDP gives each tab one of

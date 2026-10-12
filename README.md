@@ -56,10 +56,9 @@ Chrome DevTools Protocol or WebDriver BiDi.
 A native Crystal implementation is being developed so a future release can be
 copied to a Linux machine without installing Node or extracting another runtime.
 It reads pages interactively through Firefox and Chromium, in the ordinary and
-the Lynx interface, and produces `--dump` output through either. On Chromium
-the password prompt a 401 raises is not available yet. The edb front end and
-the standalone `--keyboard` wizard are not available on either engine, and the
-packaged `tawb` command is still the Node one.
+the Lynx interface, and produces `--dump` output through either. The edb front
+end and the standalone `--keyboard` wizard are not available on either engine,
+and the packaged `tawb` command is still the Node one.
 
 Build it with Crystal 1.21 or newer:
 

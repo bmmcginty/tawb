@@ -53,9 +53,8 @@ module Tawb
 
     The native Crystal reader reads pages interactively through Firefox and
     Chromium, in this interface or Lynx's, and writes dumps through either.
-    On Chromium the password prompt a 401 raises is not yet available. The
-    edb front end and the standalone keyboard wizard are not yet available
-    at all.
+    The edb front end and the standalone keyboard wizard are not yet
+    available on either engine.
     TEXT
 
     def self.run(argv : Array(String) = ARGV, env : Hash(String, String) = ENV.to_h) : Nil
@@ -218,12 +217,21 @@ module Tawb
         end
         # The password prompt a 401 raises is drawn by browser chrome, so it
         # can only be answered through an interception the engine offers.
-        # Firefox has an auth-only intercept; Chromium's goes through Fetch
-        # and pauses every request, which is a separate port.
-        if session = browser.as?(FirefoxDriver::BrowserSession)
+        # Firefox has an auth-only intercept, armed for the whole session;
+        # Chromium's goes through Fetch and is armed per tab, as the tab is
+        # adopted — see Core#adopt_tab.
+        case session = browser
+        when FirefoxDriver::BrowserSession
           session.attach_auth(->(challenge : JSON::Any, id : String, _page : FirefoxDriver::Page?) {
             credentials.answer(challenge, id)
           })
+        when Cdp::BrowserSession
+          session.attach_auth(->(challenge : JSON::Any, id : String) {
+            credentials.answer(challenge, id)
+          })
+          # The tab was adopted before the handler existed, so it is armed
+          # now; every tab adopted afterwards arms itself.
+          page.not_nil!.arm_auth rescue nil
         end
         unless adopted
           logger.timed("goto", {"url" => JSON::Any.new(target)}) { page.not_nil!.goto(target) }

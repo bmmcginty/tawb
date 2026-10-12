@@ -941,6 +941,13 @@ module Tawb
         @context_id
       end
 
+      # The password prompt a 401 raises is intercepted for the whole session
+      # when the reader attaches to it, so a tab needs nothing of its own —
+      # which is the answer, not a refusal.
+      def arm_auth : Bool
+        true
+      end
+
       # The connection this tab is reached over. A preload script is
       # installed per connection rather than per tab, so whatever keeps track
       # of having installed one keeps track by this. BiDi has one session for

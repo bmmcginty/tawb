@@ -1290,9 +1290,11 @@ module Tawb
       if (port = @browser_port)
         Session.claim_tab(port, target_id)
       end
-      # Intercept only this tab's chooser. Taking one from somebody else's tab
-      # suppresses the browser's own dialog and leaves them unable to answer.
+      # Intercept only this tab's chooser and its password prompts. Taking
+      # either from somebody else's tab suppresses the browser's own dialog
+      # and leaves them unable to answer.
       page.arm_file_chooser rescue nil
+      page.arm_auth rescue nil
       page.set_default_timeout(OPERATION_TIMEOUT_MS)
       page.set_default_navigation_timeout(NAVIGATION_TIMEOUT_MS)
       @page = page

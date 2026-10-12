@@ -2034,8 +2034,7 @@ dynamic dependency is not the thing being shipped.
 What the native reader does today: it reads pages interactively through
 Firefox and through Chromium, in the ordinary interface and in the Lynx one,
 and it writes `--dump` output through either. What it does not do yet: the
-password prompt a 401 raises on Chromium, the edb front end, and the
-standalone `--keyboard` wizard. The packaged `tawb` command is still the Node one;
+edb front end and the standalone `--keyboard` wizard. The packaged `tawb` command is still the Node one;
 `resume2.md` carries the remaining list.
 
 `crystal/src/tawb/engine.cr` is where the two engines meet. JavaScript gets
