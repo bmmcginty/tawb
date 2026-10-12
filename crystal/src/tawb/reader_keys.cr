@@ -667,12 +667,7 @@ module Tawb
         block.as_h["text"]?.try(&.as_s?) || ""
       end
       previous_url = page.url
-      # The JavaScript original also remembers the page-history place here
-      # (rememberCurrentHistoryPlace), and would let a set of credentials it
-      # is holding reconsider whether to ask again; the history traversal
-      # helpers and the credentials store are ported with the history and
-      # browser-auth work, and until then there is nothing here to remember
-      # into.
+      remember_history_place(state, page)
       anchor = state.core.anchor
       screen = Reader.screen_before(state)
       fragment = Aria::LINK_ROLES.includes?(role) ? state.core.fragment_of(item.not_nil!) : nil
@@ -1542,8 +1537,7 @@ module Tawb
 
       if chunk == "\r" || chunk == "\n"
         previous_url = page.url
-        # The page-history place the JavaScript original remembers here is
-        # ported with the history traversal helpers.
+        remember_history_place(state, page)
         screen = Reader.screen_before(state)
         anchor = state.core.anchor
         page.keyboard_press("Enter")
@@ -1839,10 +1833,8 @@ module Tawb
     # bar, or a line in one of the browser's own lists.
     def self.load_address(output : Screen::Output, state : Reader::State,
                           page : Reader::PageEnv, keyboard : Keyboard?, url : String) : NavigateOutcome
-      # The page-history place the JavaScript original remembers here is
-      # ported with the history traversal helpers.
+      remember_history_place(state, page)
       Reader.set_status(output, state, page.url, "Loading #{url} — Esc: stop.")
-      state.credentials.try(&.reconsider)
       went = navigate_interruptibly(output, state, page, keyboard, url)
       if went[:cancelled]
         Reader.render(output, state, page.url, force: true)
@@ -1946,16 +1938,52 @@ module Tawb
 
     # ------------------------------------------------------------------
     # Page history
+    #
+    # Each history entry keeps the terminal position it was left at, so Back
+    # and Forward return to the line being read rather than treating a
+    # restored page as new. A place is filed twice — under the entry's own
+    # identity and under its address — because a page reached again by a
+    # different route is still the page the reader was reading.
+    #
+    # Every deliberate move passes through remember_history_place: an
+    # address, a link, a form submitted, a real click, a step through
+    # history. That makes it the place to say that a reader who escaped a
+    # password prompt would like to be asked again. Escaping one has to stop
+    # a page of thirty protected images asking thirty times; it must not
+    # mean the realm can never be signed in to again.
     # ------------------------------------------------------------------
 
     private def self.remember_history_place(state : Reader::State,
                                             page : Reader::PageEnv) : Nil
       state.credentials.try(&.reconsider)
-      state.history_places[page.history_identity] = JSON::Any.new({
+      place = JSON::Any.new({
         "cursor" => JSON::Any.new(state.cursor.to_i64),
-        "col" => JSON::Any.new(state.col.to_i64),
+        "col"    => JSON::Any.new(state.col.to_i64),
         "scroll" => JSON::Any.new(state.scroll.to_i64),
       })
+      state.history_places[page.history_identity] = place
+      url = page.url
+      state.history_places["url:#{url}"] = place unless url.empty?
+    end
+
+    # The place filed for this entry: the entry's own identity first, then
+    # its address. Answers whether a place was found, since a restore that
+    # found nothing leaves the reader wherever the rebuild put them.
+    private def self.restore_history_place(state : Reader::State,
+                                           page : Reader::PageEnv,
+                                           identity : String) : Bool
+      url = page.url
+      saved = state.history_places[identity]? ||
+              (url.empty? ? nil : state.history_places["url:#{url}"]?)
+      return false unless saved
+      place = saved.as_h
+      state.cursor = Math.min(Math.max((place["cursor"]?.try(&.as_i64?) || 0).to_i32, 0),
+        Math.max(state.lines.size - 1, 0))
+      state.col = (place["col"]?.try(&.as_i64?) || 0).to_i32
+      state.scroll = (place["scroll"]?.try(&.as_i64?) || 0).to_i32
+      Reader.clamp_col(state)
+      Reader.clamp_scroll(state)
+      true
     end
 
     def self.move_in_history(output : Screen::Output, state : Reader::State,
@@ -1970,15 +1998,12 @@ module Tawb
         end
         identity = page.history_identity
         Reader.refresh(state, page, true)
-        if saved = state.history_places[identity]?
-          place = saved.as_h
-          state.cursor = Math.min(Math.max((place["cursor"]?.try(&.as_i64?) || 0).to_i32, 0),
-            Math.max(state.lines.size - 1, 0))
-          state.col = (place["col"]?.try(&.as_i64?) || 0).to_i32
-          state.scroll = (place["scroll"]?.try(&.as_i64?) || 0).to_i32
-          Reader.clamp_col(state)
-          Reader.clamp_scroll(state)
-        end
+        restore_history_place(state, page, identity)
+        # The history command has rebuilt the destination and restored its
+        # cursor. The live pulse still holds the address of the page that was
+        # left; if that stale baseline survives, the next tick calls this a
+        # new navigation and resets the cursor to the top. Advance the
+        # baseline here so a later content refresh re-anchors instead.
         set_live_value(state, "href", JSON::Any.new(page.url))
         set_live_value(state, "navigated", JSON::Any.new(false))
         Reader.render(output, state, page.url, true)
@@ -2546,8 +2571,7 @@ module Tawb
         block.as_h["text"]?.try(&.as_s?) || ""
       end
       previous_url = page.url
-      # The page-history place the JavaScript original remembers here is
-      # ported with the history traversal helpers.
+      remember_history_place(state, page)
       anchor = state.core.anchor
       screen = Reader.screen_before(state)
 

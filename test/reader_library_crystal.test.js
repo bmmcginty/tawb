@@ -81,6 +81,35 @@ test('back and forward restore the place held for each history entry', { skip },
   assert.equal(result.state.statusMsg, 'Went back to https://example.test/one');
 });
 
+// Every deliberate move files the place the entry is being left at, not just
+// a step through history: a link followed, a form submitted, an address
+// loaded, a real click. Back then returns to the line that was being read.
+test('a link followed files the place its entry is left at', { skip }, async () => {
+  const pageBlocks = [
+    { text: 'page text', item: { role: 'text' } },
+    { text: '[Go]', item: { role: 'link', name: 'Go', href: '/elsewhere' } },
+  ];
+  const history = [
+    { url: 'https://example.test/one', title: 'One',
+      blocks: [{ text: 'one top', item: { role: 'text' } }] },
+    { url: PAGE, title: 'Example', blocks: pageBlocks },
+  ];
+  const initial = state({
+    cursor: 1,
+    lines: pageBlocks.map((block, index) => ({ text: block.text, blockIndex: index })),
+    keys: { bindings: { 'history-back': ['K'], 'history-forward': ['J'] } },
+    core: { source: 'ax', blocks: pageBlocks, popup: null, popupAt: -1,
+      live: { enabled: true, dirty: false, refreshing: false, snapshotCostMs: 0 } },
+  });
+  const result = await both('place filed by a link', initial, [
+    { op: 'browseKey', chunk: '\r' },
+    { op: 'browseKey', chunk: 'K' },
+    { op: 'browseKey', chunk: 'J' },
+  ], false, { url: PAGE, title: 'Example', history, historyIndex: 1 });
+  assert.equal(result.state.title, 'Example', 'forward came back to the page');
+  assert.equal(result.state.cursor, 1, 'and to the line the link was followed from');
+});
+
 test('the current page can be bookmarked through the browser agent', { skip }, async () => {
   const saved = await both('save bookmark', state(), [
     { op: 'browseKey', chunk: 'A', keys: ['\r'] },
