@@ -20,6 +20,19 @@ module Tawb
     }
 
     record Target, id : String, web_socket_url : String
+
+    # One document below the top one: who holds it, where it is, and the
+    # session that answers for it when its process is its own.
+    class FrameRecord
+      property parent_id : String?
+      property url : String
+      property own_session : String?
+
+      def initialize(@parent_id : String?, @url : String = "about:blank",
+                     @own_session : String? = nil)
+      end
+    end
+
     record ShadowPair, host_id : Int64, root_id : Int64, kind : String
     # Where an element sits in the top-level viewport, and how big it is.
     record Box, x : Float64, y : Float64, width : Float64, height : Float64
@@ -268,6 +281,83 @@ module Tawb
       end
     end
 
+    # One document of a tab (src/cdp_page.js CdpFrame), and the handful of
+    # things a reader asks of it: run a function, hold what it answers, list
+    # the documents below it.
+    #
+    # A frame is named rather than held: the page keeps the tree, so a frame
+    # object stays correct across a navigation that replaces the document
+    # under the same id, and a frame whose document has gone says so when it
+    # is asked rather than when it was made.
+    class Frame
+      getter frame_id : String
+
+      def initialize(@page : Page, @frame_id : String)
+      end
+
+      def url : String
+        @page.frame_url(@frame_id)
+      end
+
+      def set_url(url : String) : Nil
+        @page.set_frame_url(@frame_id, url)
+      end
+
+      def evaluate(fn : String, arg : JSON::Any? = nil, expression = false) : JSON::Any
+        result = call(fn, arg, expression, by_value: true)
+        result["result"]?.try(&.as_h?).try(&.["value"]?) || JSON::Any.new(nil)
+      end
+
+      def evaluate_handle(fn : String, arg : JSON::Any? = nil, expression = false) : Handle
+        result = call(fn, arg, expression, by_value: false)
+        object = result["result"].as_h["objectId"]?.try(&.as_s?) ||
+                 raise IO::Error.new("the page answered no reference")
+        Handle.new(@page, object, @page.context_for(@frame_id)[1])
+      end
+
+      # Only ever called for frame elements, and what the caller wants from
+      # each is the document inside it.
+      def query_all(selector : String) : Array(Handle)
+        list = evaluate_handle("(sel) => Array.from(document.querySelectorAll(sel))",
+          JSON::Any.new(selector))
+        begin
+          properties = @page.command("Runtime.getProperties", {
+            "objectId"      => JSON::Any.new(list.object_id),
+            "ownProperties" => JSON::Any.new(true),
+          }, list.session_id).as_h["result"].as_h["result"].as_a
+          properties.compact_map do |property|
+            object = property.as_h
+            next nil unless object["name"].as_s.matches?(/^\d+$/)
+            object_id = object["value"]?.try(&.as_h?).try(&.["objectId"]?.try(&.as_s?))
+            object_id ? Handle.new(@page, object_id, list.session_id) : nil
+          end
+        ensure
+          list.dispose
+        end
+      end
+
+      def child_frames : Array(Frame)
+        @page.child_frames_of(@frame_id)
+      end
+
+      private def call(fn : String, arg : JSON::Any?, expression : Bool,
+                       by_value : Bool) : Hash(String, JSON::Any)
+        context = @page.context_for(@frame_id)
+        arguments = arg ? [Cdp.call_argument(arg)] : [] of JSON::Any
+        parameters = {
+          "functionDeclaration" => JSON::Any.new(Cdp.function_declaration(fn, expression)),
+          "arguments"           => JSON::Any.new(arguments),
+          "awaitPromise"        => JSON::Any.new(true),
+          "executionContextId"  => JSON::Any.new(context[0]),
+        } of String => JSON::Any
+        parameters["returnByValue"] = JSON::Any.new(true) if by_value
+        result = @page.command("Runtime.callFunctionOn", parameters, context[1])
+          .as_h["result"].as_h
+        Cdp.raise_on_exception(result, "evaluating")
+        result
+      end
+    end
+
     # Typing, through the browser's own input pipeline (src/cdp_page.js
     # CdpKeyboard). This is the piece that cannot be faked from inside the
     # page: a script-dispatched KeyboardEvent is untrusted and inserts no
@@ -461,6 +551,8 @@ module Tawb
       # Which lifecycle names the current document has reached. A new
       # document starts the count again; see note_event.
       @reached = Set(String).new
+      # The documents below the top one, by the browser's own name for each.
+      @frames = {} of String => FrameRecord
 
       def initialize(@endpoint : String)
         body = Transport.http(@endpoint, "PUT", "/json/new?about%3Ablank")
@@ -493,6 +585,96 @@ module Tawb
         # this tab's own document, and an event that arrives before the
         # answer is known would be read as somebody else's.
         main_frame_id
+      end
+
+      # ------------------------------------------------------------------
+      # The documents in this tab
+      #
+      # The browser announces documents rather than being asked for them, so
+      # the tree is kept as the announcements arrive and read when something
+      # needs it. A frame names its parent, which is what a coordinate from
+      # an out-of-process document has to be offset through, and what says
+      # which documents belonged to the one a navigation just replaced.
+      # ------------------------------------------------------------------
+
+      def main_frame : Frame
+        Frame.new(self, main_frame_id)
+      end
+
+      # Every document below this tab, including the top one. Live updates
+      # use this to drain only the contexts they have armed, without walking
+      # page elements or touching unrelated tabs.
+      def all_frames : Array(Frame)
+        read_frame_tree
+        ordered = [main_frame_id]
+        seen = Set{main_frame_id}
+        # Breadth first, so a parent is always offered before its children.
+        at = 0
+        while at < ordered.size
+          parent = ordered[at]
+          @frames.each do |frame_id, record|
+            next unless record.parent_id == parent
+            ordered << frame_id if seen.add?(frame_id)
+          end
+          at += 1
+        end
+        # A document whose parent has gone is still in this tab and still
+        # readable; it is offered after the ones that have a place in the
+        # tree rather than left out of the list.
+        @frames.each_key { |frame_id| ordered << frame_id if seen.add?(frame_id) }
+        ordered.map { |frame_id| Frame.new(self, frame_id) }
+      end
+
+      def child_frames_of(frame_id : String) : Array(Frame)
+        read_frame_tree
+        @frames.compact_map do |child_id, record|
+          record.parent_id == frame_id ? Frame.new(self, child_id) : nil
+        end
+      end
+
+      def frame_url(frame_id : String) : String
+        return @url if frame_id == @main_frame_id
+        @frames[frame_id]?.try(&.url) || "about:blank"
+      end
+
+      def set_frame_url(frame_id : String, url : String) : Nil
+        if frame_id == @main_frame_id
+          @url = url
+          return
+        end
+        if record = @frames[frame_id]?
+          record.url = url
+        end
+      end
+
+      # The tree as the browser has it now. Asked rather than trusted,
+      # because an out-of-process document is announced on its own target
+      # and the tab's tree may not mention it at all.
+      private def read_frame_tree : Nil
+        tree = command("Page.getFrameTree").as_h["result"].as_h["frameTree"]
+        record_frame_tree(tree, nil)
+      rescue
+        # A tab mid-navigation has no tree to give; what is already known is
+        # the best there is.
+      end
+
+      private def record_frame_tree(node : JSON::Any, own_session : String?) : Nil
+        object = node.as_h
+        frame = object["frame"].as_h
+        frame_id = frame["id"].as_s
+        url = frame["url"]?.try(&.as_s?) || "about:blank"
+        parent = frame["parentId"]?.try(&.as_s?)
+        if frame_id == @main_frame_id
+          @url = url if @url == "about:blank"
+        elsif record = @frames[frame_id]?
+          record.url = url
+          record.parent_id ||= parent
+        else
+          @frames[frame_id] = FrameRecord.new(parent, url, own_session)
+        end
+        (object["childFrames"]?.try(&.as_a?) || [] of JSON::Any).each do |child|
+          record_frame_tree(child, own_session)
+        end
       end
 
       # ------------------------------------------------------------------
@@ -819,26 +1001,26 @@ module Tawb
       # parent is asked where it put it.
       #
       # The tab's own session needs no offset. A frame with a process of its
-      # own is offset by the box its parent gave it; a frame nested inside
-      # another out-of-process frame needs each containing offset in turn,
-      # which needs the parent chain the frame tree carries. Until that is
-      # ported, a nested case answers nil rather than a wrong point, and the
-      # caller refuses rather than clicking somewhere else.
+      # own is offset by the box its parent put it in, and a frame nested
+      # inside another such frame by each containing offset in turn.
       def session_offset(session_id : String?) : Point?
         return Point.new(0.0, 0.0) if session_id.nil?
-        frame_id = @frame_sessions.each.find { |_id, session| session == session_id }
+        frame_id = @frames.each.find { |_id, record| record.own_session == session_id }
           .try(&.[0]) || return nil
+        parent_id = @frames[frame_id].parent_id || return nil
+        parent_session = frame_session(parent_id)
         owner = command("DOM.getFrameOwner",
-          {"frameId" => JSON::Any.new(frame_id)}).as_h["result"].as_h
+          {"frameId" => JSON::Any.new(frame_id)}, parent_session).as_h["result"].as_h
         model = command("DOM.getBoxModel",
-          {"backendNodeId" => owner["backendNodeId"]})
+          {"backendNodeId" => owner["backendNodeId"]}, parent_session)
           .as_h["result"].as_h["model"].as_h
         quad = (model["border"]? || model["content"]?).try(&.as_a?) || return nil
         return nil if quad.size < 8
         numbers = quad.map { |value| Core.js_number(value) }
+        above = session_offset(parent_session) || return nil
         Point.new(
-          [numbers[0], numbers[2], numbers[4], numbers[6]].min,
-          [numbers[1], numbers[3], numbers[5], numbers[7]].min)
+          above.x + [numbers[0], numbers[2], numbers[4], numbers[6]].min,
+          above.y + [numbers[1], numbers[3], numbers[5], numbers[7]].min)
       rescue
         nil
       end
@@ -897,7 +1079,41 @@ module Tawb
         @frame_sessions[frame_id] = session
         command("Page.enable", session_id: session)
         command("Runtime.enable", session_id: session)
+        # Only the root of this target claims the session. Its own child
+        # documents are same-process and answered by it, which walking up the
+        # parent chain works out on its own.
+        if record = @frames[frame_id]?
+          record.own_session = session
+        else
+          @frames[frame_id] = FrameRecord.new(nil, "about:blank", session)
+        end
+        # The target's own tree is where this document's address is: the tab's
+        # tree may not mention an out-of-process document at all, and the
+        # attachment itself says nothing about where it went.
+        begin
+          own_tree = command("Page.getFrameTree", session_id: session)
+            .as_h["result"].as_h["frameTree"]
+          record_frame_tree(own_tree, session)
+        rescue
+          # A target still arriving has no tree to give.
+        end
         session
+      end
+
+      # The session that answers for this document: its own when its process
+      # is its own, otherwise whichever containing document's is, and the
+      # tab's when nothing above it claimed one.
+      def frame_session(frame_id : String) : String?
+        seen = Set(String).new
+        current = frame_id
+        while !current.empty? && seen.add?(current)
+          record = @frames[current]? || break
+          if own = record.own_session
+            return own
+          end
+          current = record.parent_id || break
+        end
+        nil
       end
 
       private def evaluate_items(context_id : Int64?, session_id : String? = nil, layout = false) : Array(JSON::Any)
@@ -1019,6 +1235,15 @@ module Tawb
         ids
       end
 
+      private def drop_children_of(frame_id : String) : Nil
+        @frames.each_key.to_a.each do |child_id|
+          next unless @frames[child_id]?.try(&.parent_id) == frame_id
+          drop_children_of(child_id)
+          @frames.delete(child_id)
+          @contexts.delete(child_id)
+        end
+      end
+
       # One pushed event, read for the bookkeeping it carries. Public because
       # the conformance harness feeds the announcements a real browser would
       # push, there being no browser behind a recorded channel.
@@ -1059,10 +1284,37 @@ module Tawb
               @loading = false if name == "load"
             end
           end
+        when "Page.frameAttached"
+          parameters = object["params"].as_h
+          frame_id = parameters["frameId"].as_s
+          parent = parameters["parentFrameId"]?.try(&.as_s?)
+          @frames[frame_id] ||= FrameRecord.new(parent)
         when "Page.frameNavigated"
           frame = object["params"].as_h["frame"].as_h
-          if frame["id"]?.try(&.as_s?) == @main_frame_id
+          frame_id = frame["id"]?.try(&.as_s?)
+          if frame_id == @main_frame_id
             @url = frame["url"]?.try(&.as_s?) || @url
+          elsif frame_id
+            record = @frames[frame_id] ||= FrameRecord.new(frame["parentId"]?.try(&.as_s?))
+            record.url = frame["url"]?.try(&.as_s?) || record.url
+          end
+          # A new document has committed here, so every frame that hung below
+          # this one belonged to the document being replaced. Chromium
+          # announces the new document's children afterwards; it never
+          # announces that the old ones have gone. Without this a tab keeps
+          # every frame it has ever had, and each one costs a snapshot the
+          # full frame budget before giving up.
+          drop_children_of(frame_id) if frame_id
+        when "Page.frameDetached"
+          parameters = object["params"].as_h
+          # A frame going cross-process is detached from the session it was
+          # on and reattached to a target of its own. That is a change of
+          # address, not a document going away.
+          unless parameters["reason"]?.try(&.as_s?) == "swap"
+            frame_id = parameters["frameId"].as_s
+            drop_children_of(frame_id)
+            @frames.delete(frame_id)
+            @contexts.delete(frame_id)
           end
         when "Page.navigatedWithinDocument"
           parameters = object["params"].as_h

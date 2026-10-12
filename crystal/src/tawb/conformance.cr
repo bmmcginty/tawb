@@ -512,6 +512,8 @@ module Tawb
         cdp_scenario(payload)
       when "cdp.tabs_scenario"
         cdp_tabs_scenario(payload)
+      when "cdp.frames_scenario"
+        cdp_frames_scenario(payload)
       when "dump.resolve_target"
         object = payload.as_h
         existing = object["existing"].as_a.map(&.as_s).to_set
@@ -3474,6 +3476,43 @@ module Tawb
         })
       ensure
         opened.try(&.close) rescue nil
+        session.close
+      end
+    end
+
+    # The documents of a tab against a real Chromium: what the tree contains,
+    # and that each one can be evaluated in on its own. A frame's own
+    # process is the case nothing can be stubbed for — the tab's session
+    # does not answer for it at all.
+    private def self.cdp_frames_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      session = Cdp::BrowserSession.new(object["endpoint"].as_s)
+      page = session.create_page
+      begin
+        page.goto(object["url"].as_s, "domcontentloaded")
+        # A child frame commits after its parent has parsed the <iframe>, so
+        # a document embedded in this one is given the same moment to arrive
+        # that the dump gives it.
+        Dump.settle_embedded_frames(page)
+        # The extraction is what attaches an out-of-process document's own
+        # target, which is how its frame comes to claim a session.
+        page.accessibility_documents
+        frames = page.all_frames
+        JSON::Any.new({
+          "count"     => JSON::Any.new(frames.size.to_i64),
+          "urls"      => JSON::Any.new(frames.map { |frame| JSON::Any.new(frame.url) }),
+          "titles"    => JSON::Any.new(frames.map do |frame|
+            JSON::Any.new(begin
+              frame.evaluate("() => document.title").as_s? || ""
+            rescue error
+              "error: #{error.message}"
+            end)
+          end),
+          "children"  => JSON::Any.new(page.main_frame.child_frames.size.to_i64),
+          "selectors" => JSON::Any.new(page.main_frame.query_all("iframe").size.to_i64),
+        })
+      ensure
+        session.close_page(page) rescue nil
         session.close
       end
     end
