@@ -7,6 +7,7 @@ const { readFieldStateInPage, SCROLL_TO_BOTTOM, RESTORE_SCROLL, TEXT_AT_FRAGMENT
 const { clickThrough, prepareRealClick, submitsAutofilled } = require('../src/click');
 const { sliderStateOf } = require('../src/core');
 const { sliderGeometry } = require('../src/driver_firefox');
+const { sliderTrack } = require('../src/driver_chromium');
 const { OBSERVER_SCRIPT, DRAIN_SCRIPT, PULSE_SCRIPT } = require('../src/live');
 const { CLEAR_SCRIPT, PIERCE_PARENT_SCRIPT, libraryParentScript } = require('../src/firefox');
 const { describeElement, locateElement } = require('../src/place');
@@ -46,6 +47,9 @@ const assets = {
   },
   'locate_element.js': {
     source: 'src/place.js locateElement', value: locateElement.toString(),
+  },
+  'slider_track.js': {
+    source: 'src/driver_chromium.js sliderTrack', value: sliderTrack.toString(),
   },
 };
 

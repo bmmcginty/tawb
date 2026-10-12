@@ -2861,7 +2861,7 @@ module Tawb
       browser.start
       core = Core.new(driver: browser, browser_port: port)
       find_page = ->(id : String) do
-        core.tabs.find { |page| page.context_id == id } ||
+        core.tabs.find { |page| page.tab_id == id } ||
         raise ArgumentError.new("no tab #{id}")
       end
       begin
@@ -2869,7 +2869,7 @@ module Tawb
           step = step_value.as_h
           case step["op"].as_s
           when "tabs"
-            observations.push(JSON::Any.new(core.tabs.map { |page| JSON::Any.new(page.context_id) }))
+            observations.push(JSON::Any.new(core.tabs.map { |page| JSON::Any.new(page.tab_id) }))
           when "adopt"
             observations.push(JSON::Any.new(core.adopt_tab(find_page.call(step["id"].as_s))))
           when "where"
@@ -2880,16 +2880,16 @@ module Tawb
             }))
           when "next"
             page = core.next_tab(step["direction"].as_i)
-            observations.push(JSON::Any.new(page.try(&.context_id)))
+            observations.push(JSON::Any.new(page.try(&.tab_id)))
           when "after"
             page = core.tab_after(find_page.call(step["id"].as_s))
-            observations.push(JSON::Any.new(page.try(&.context_id)))
+            observations.push(JSON::Any.new(page.try(&.tab_id)))
           when "label"
             observations.push(JSON::Any.new(core.tab_label(find_page.call(step["id"].as_s))))
           when "foreground"
             observations.push(JSON::Any.new(core.foreground?(find_page.call(step["id"].as_s))))
           when "new"
-            observations.push(JSON::Any.new(core.new_tab.context_id))
+            observations.push(JSON::Any.new(core.new_tab.tab_id))
           when "close"
             core.close_tab(find_page.call(step["id"].as_s))
             observations.push(JSON::Any.new(nil))
@@ -3683,13 +3683,11 @@ module Tawb
             observations.push(Actions.submits_autofilled(handle.not_nil!))
           when "set_files"
             paths = step["paths"].as_a.map(&.as_s)
-            observations.push(JSON::Any.new(acting.not_nil!.set_files(handle.not_nil!, paths)))
+            observations.push(JSON::Any.new(handle.not_nil!.set_files(paths)))
           when "real_click"
-            observations.push(Actions.real_click(
-              session, current.not_nil!.context_id, handle.not_nil!))
+            observations.push(Actions.real_click(handle.not_nil!))
           when "hover"
-            observations.push(Actions.hover(
-              session, current.not_nil!.context_id, handle.not_nil!))
+            observations.push(Actions.hover(handle.not_nil!))
           when "key_type"
             keyboard.not_nil!.type(step["text"].as_s)
             observations.push JSON::Any.new(nil)
@@ -3704,7 +3702,7 @@ module Tawb
               observations.push JSON::Any.new(error.message || "error")
             end
           when "click_slider"
-            Actions.click_slider(session, current.not_nil!.context_id, handle.not_nil!,
+            Actions.click_slider(handle.not_nil!,
               step["ratio"].as_f, step["orientation"]?)
             observations.push JSON::Any.new(nil)
           else
@@ -3794,14 +3792,12 @@ module Tawb
             when "submits_autofilled"
               answers.push(Actions.submits_autofilled(held))
             when "real_click"
-              answers.push(Actions.real_click(frame.session, frame.context_id, held))
+              answers.push(Actions.real_click(held))
             when "hover"
-              answers.push(Actions.hover(frame.session, frame.context_id, held))
+              answers.push(Actions.hover(held))
             when "adjust_control"
-              keyboard = FirefoxDriver::Keyboard.new(browser.protocol, page.context_id)
               answers.push(Actions.adjust_control(
-                keyboard, frame.context_id, target["role"]?.try(&.as_s?), held,
-                target["key"].as_s))
+                held, target["role"]?.try(&.as_s?), target["key"].as_s))
             else
               raise ArgumentError.new("unknown action #{target["action"].as_s}")
             end
@@ -3844,7 +3840,7 @@ module Tawb
         button = frame.evaluate_handle(
           "(sel) => document.querySelector(sel)", object["button"])
         begin
-          clicked = Actions.real_click(frame.session, frame.context_id, button)
+          clicked = Actions.real_click(button)
         ensure
           button.dispose
         end

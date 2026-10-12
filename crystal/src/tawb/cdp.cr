@@ -1,5 +1,6 @@
 require "json"
 require "./address"
+require "./actions"
 require "./core"
 require "./transport"
 
@@ -12,6 +13,15 @@ module Tawb
 
     # How long a document is given to announce the context it runs in.
     CONTEXT_WAIT = 2.seconds
+    # Where a slider's track begins and ends inside its own box, measured in
+    # the page (src/driver_chromium.js sliderTrack). The engine's own, not
+    # the policy's: Firefox measures the same thing its own way.
+    SLIDER_TRACK = Actions.asset_source(
+      {{ read_file("#{__DIR__}/../../assets/slider_track.js") }})
+
+    # CDP's own bit for the Alt key, as the modifiers field wants it.
+    ALT_MODIFIER = 1
+
     # The lifecycle names CDP uses for the states a caller asks about.
     LIFECYCLE = {
       "load"             => "load",
@@ -176,6 +186,28 @@ module Tawb
       end
     end
 
+    # A file dialog Chromium handed over instead of drawing. It must always
+    # be answered: an empty list is cancellation, while leaving the dialog
+    # unanswered wedges later uploads in that tab.
+    class FileChooser
+      getter multiple : Bool
+
+      def initialize(@page : Page, @backend_node_id : Int64, @multiple : Bool)
+      end
+
+      def set_files(paths : Array(String)) : Bool
+        @page.command("DOM.setFileInputFiles", {
+          "backendNodeId" => JSON::Any.new(@backend_node_id),
+          "files"         => JSON::Any.new(paths.map { |path| JSON::Any.new(path) }),
+        })
+        true
+      end
+
+      def cancel : Bool
+        set_files([] of String)
+      end
+    end
+
     # A value living in the page, held by reference (src/cdp_page.js
     # CdpHandle). The handle is the called function's first argument, as
     # Playwright has it rather than as CDP has it, so the page-side assets
@@ -261,6 +293,62 @@ module Tawb
         @object_id == other.object_id
       end
 
+      # Files given straight to this file input, which is what a reader who
+      # typed a path means. The element is named by reference, so a control
+      # with no name and no form around it is still answerable.
+      def set_files(paths : Array(String)) : Bool
+        @page.command("DOM.setFileInputFiles", {
+          "objectId" => JSON::Any.new(@object_id),
+          "files"    => JSON::Any.new(paths.map { |path| JSON::Any.new(path) }),
+        }, @session_id)
+        true
+      end
+
+      # The keyboard of the document this element belongs to. CDP dispatches
+      # key events per session rather than per document, and a frame with a
+      # process of its own has a session of its own.
+      def keyboard : Keyboard
+        Keyboard.new(@page, @session_id)
+      end
+
+      # The pointer brought onto the element from just outside it and left
+      # there, pressing nothing.
+      def hover_at(from_x : Float64, from_y : Float64, x : Float64, y : Float64) : Nil
+        @page.move_to(from_x, from_y)
+        @page.move_to(x, y)
+      end
+
+      # Chromium's native save-target gesture: Alt held over the click, which
+      # keeps the current tab in place and gives the request to the browser's
+      # ordinary download manager, cookies, proxy, filename handling and
+      # downloads history and all.
+      def download_link : Nil
+        click(ALT_MODIFIER)
+      end
+
+      # A custom ARIA slider that ignores its required keyboard commands can
+      # still expose an honest range. Hover once — players commonly reveal
+      # the track only then — remeasure, and press the requested fraction
+      # with real browser input. Whether the value actually changed is the
+      # caller's to verify rather than assume.
+      def click_slider(ratio : Float64, orientation : JSON::Any?) : Nil
+        box = click_box || raise IO::Error.new("the slider has no box on screen")
+        @page.move_to(box.x + box.width / 2, box.y + box.height / 2)
+        sleep(120.milliseconds)
+        box = click_box || raise IO::Error.new("the slider disappeared when hovered")
+        wanted = orientation.try(&.as_s?)
+        vertical = wanted == "vertical" ||
+                   (wanted.nil? && box.height > box.width * 1.5)
+        track = evaluate(SLIDER_TRACK, JSON::Any.new(vertical)).as_h
+        size = Core.js_number(track["size"]?)
+        start = Core.js_number(track["start"]?) / size
+        finish = Core.js_number(track["end"]?) / size
+        along = start + (vertical ? 1 - ratio : ratio) * (finish - start)
+        x = vertical ? box.x + box.width / 2 : box.x + along * box.width
+        y = vertical ? box.y + along * box.height : box.y + box.height / 2
+        @page.click_at(x, y)
+      end
+
       private def call(fn : String, arg : JSON::Any?, expression : Bool,
                        by_value : Bool) : Hash(String, JSON::Any)
         arguments = arg ? [Cdp.call_argument(arg)] : [] of JSON::Any
@@ -336,8 +424,20 @@ module Tawb
         end
       end
 
+      def document_id : String
+        @frame_id
+      end
+
       def child_frames : Array(Frame)
         @page.child_frames_of(@frame_id)
+      end
+
+      # A real click at a point inside this document's own viewport, for a
+      # document whose contents could not be read even after piercing.
+      # Dispatched on that document's own session, so the coordinates are
+      # its own.
+      def click_in_frame(x : Float64, y : Float64) : Nil
+        @page.click_at(x, y, 0, @page.frame_session(@frame_id))
       end
 
       private def call(fn : String, arg : JSON::Any?, expression : Bool,
@@ -436,7 +536,7 @@ module Tawb
         CHARACTER_KEYS[character]? || {"", 0}
       end
 
-      def initialize(@page : Page)
+      def initialize(@page : Page, @session_id : String? = nil)
       end
 
       def type(text : String) : Nil
@@ -528,7 +628,7 @@ module Tawb
       end
 
       private def send(parameters : Hash(String, JSON::Any)) : Nil
-        @page.command("Input.dispatchKeyEvent", parameters)
+        @page.command("Input.dispatchKeyEvent", parameters, @session_id)
       end
     end
 
@@ -553,6 +653,8 @@ module Tawb
       @reached = Set(String).new
       # The documents below the top one, by the browser's own name for each.
       @frames = {} of String => FrameRecord
+      @default_timeout_ms = 15_000
+      @navigation_timeout_ms = 30_000
 
       def initialize(@endpoint : String)
         body = Transport.http(@endpoint, "PUT", "/json/new?about%3Ablank")
@@ -949,6 +1051,82 @@ module Tawb
 
       def keyboard : Keyboard
         Keyboard.new(self)
+      end
+
+      # This document's name, as the browser knows it. The top document of a
+      # tab is a document like any other, and anything that keeps track of
+      # documents keeps track of them by this.
+      def document_id : String
+        main_frame_id
+      end
+
+      # One document of this tab, by the browser's own name for it.
+      def frame_for(frame_id : String) : Frame
+        Frame.new(self, frame_id)
+      end
+
+      # ------------------------------------------------------------------
+      # Files, and the dialog the browser would otherwise draw
+      # ------------------------------------------------------------------
+
+      # Take this tab's own chooser dialog over. Only this tab's: taking one
+      # from somebody else's suppresses the browser's own dialog and leaves
+      # them unable to answer it.
+      def arm_file_chooser : Bool
+        command("Page.setInterceptFileChooserDialog", {"enabled" => JSON::Any.new(true)})
+        true
+      rescue
+        false
+      end
+
+      # Wait for the chooser Chromium raises after a trusted press. The event
+      # names the input itself, so answering it needs no page-side handle.
+      def next_file_chooser : FileChooser
+        loop do
+          params = wait_event("Page.fileChooserOpened").as_h["params"].as_h
+          node = params["backendNodeId"]?.try(&.as_i64?)
+          next unless node
+          multiple = params["mode"]?.try(&.as_s?) == "selectMultiple"
+          return FileChooser.new(self, node, multiple)
+        end
+      end
+
+      # The timeouts a caller sets for this tab. CDP commands carry their own
+      # bounds, so these are the navigation waits' defaults and nothing else.
+      def set_default_timeout(milliseconds : Int32) : Nil
+        @default_timeout_ms = milliseconds
+      end
+
+      def set_default_navigation_timeout(milliseconds : Int32) : Nil
+        @navigation_timeout_ms = milliseconds
+      end
+
+      # This tab's name, as the browser knows it and as every reader process
+      # knows it: what a claim on a tab is made of.
+      def tab_id : String
+        @target.id
+      end
+
+      def foreground? : Bool
+        evaluate("() => document.visibilityState === 'visible'").as_bool? || false
+      rescue
+        false
+      end
+
+      # The connection this tab is reached over. CDP gives each tab one of
+      # its own, so a preload script installed on it reaches this tab's
+      # documents and no others.
+      def connection_id : String
+        @target.id
+      end
+
+      # Run this in every document of this tab, from now on, before the
+      # document's own scripts. Used to arm the mutation observer at
+      # document-start, which is the only way to see a parse as it happens.
+      # The source is a function, so it is called where it is installed.
+      def add_preload_script(source : String) : Nil
+        command("Page.addScriptToEvaluateOnNewDocument",
+          {"source" => JSON::Any.new("(#{source})()")})
       end
 
       # A real click at a point in the top-level viewport. Moved to, then

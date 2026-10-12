@@ -15,6 +15,11 @@ module Tawb
     ]
     NAVIGATION_GRACE_MS = 150
     EXTRACT_AX = {{ read_file("#{__DIR__}/../../assets/extract_ax_items.js") }}
+    # Where a slider's track begins and ends inside its own box, measured in
+    # the page (src/driver_firefox.js sliderGeometry). The engine's own, not
+    # the policy's: Chromium measures the same thing its own way.
+    SLIDER_GEOMETRY = Actions.asset_source(
+      {{ read_file("#{__DIR__}/../../assets/slider_geometry.js") }})
 
     class BrowserSession
       getter protocol : Bidi::Session
@@ -234,6 +239,73 @@ module Tawb
 
     # BiDi takes a function declaration; the reader writes bare expressions.
     # A source already shaped like a function goes through untouched.
+    # The WebDriver action envelopes a trusted pointer gesture travels in.
+    # They live here rather than with the policy above them because they are
+    # BiDi's own shapes, and a second engine has nothing to do with them.
+    def self.pointer_params(context_id : String, id : String,
+                            actions : Array(JSON::Any)) : Hash(String, JSON::Any)
+      {
+        "context" => JSON::Any.new(context_id),
+        "actions" => JSON::Any.new([JSON::Any.new({
+          "type"       => JSON::Any.new("pointer"),
+          "id"         => JSON::Any.new(id),
+          "parameters" => JSON::Any.new({"pointerType" => JSON::Any.new("mouse")}),
+          "actions"    => JSON::Any.new(actions),
+        })]),
+      }
+    end
+
+    # The same gesture with keys held down across it. The key source's pauses
+    # match the pointer source's actions tick for tick, which is what keeps
+    # the modifier down for the whole of the click rather than only at the
+    # moment it was pressed.
+    def self.modified_pointer_params(context_id : String, modifiers : Array(String),
+                                     actions : Array(JSON::Any)) : Hash(String, JSON::Any)
+      key_actions = [] of JSON::Any
+      modifiers.each do |value|
+        key_actions << JSON::Any.new({"type" => JSON::Any.new("keyDown"),
+                                      "value" => JSON::Any.new(value)})
+      end
+      actions.size.times { key_actions << JSON::Any.new({"type" => JSON::Any.new("pause")}) }
+      modifiers.reverse.each do |value|
+        key_actions << JSON::Any.new({"type" => JSON::Any.new("keyUp"),
+                                      "value" => JSON::Any.new(value)})
+      end
+      pointer_actions = [JSON::Any.new({"type" => JSON::Any.new("pause")})] +
+                        actions +
+                        [JSON::Any.new({"type" => JSON::Any.new("pause")})]
+      {
+        "context" => JSON::Any.new(context_id),
+        "actions" => JSON::Any.new([
+          JSON::Any.new({
+            "type"    => JSON::Any.new("key"),
+            "id"      => JSON::Any.new("tweb-modifier-key"),
+            "actions" => JSON::Any.new(key_actions),
+          }),
+          JSON::Any.new({
+            "type"       => JSON::Any.new("pointer"),
+            "id"         => JSON::Any.new("tweb-modifier-mouse"),
+            "parameters" => JSON::Any.new({"pointerType" => JSON::Any.new("mouse")}),
+            "actions"    => JSON::Any.new(pointer_actions),
+          }),
+        ]),
+      }
+    end
+
+    # WebDriver pointer coordinates are whole numbers of CSS pixels.
+    def self.whole(value : Float64) : JSON::Any
+      JSON::Any.new(Core.js_round(value).to_i64)
+    end
+
+    def self.pointer_move(x : JSON::Any, y : JSON::Any, origin : JSON::Any) : JSON::Any
+      JSON::Any.new({
+        "type"   => JSON::Any.new("pointerMove"),
+        "x"      => x,
+        "y"      => y,
+        "origin" => origin,
+      })
+    end
+
     def self.as_function_declaration(fn : String, expression = false) : String
       expression ? "() => { return (#{fn}); }" : fn
     end
@@ -301,6 +373,27 @@ module Tawb
       # Elements embedded in this one, by selector: BiDi will not hand back a
       # live list, so what comes back is one reference per position — the Nth
       # frame element resolves to the Nth child context.
+      def document_id : String
+        @context_id
+      end
+
+      # A real click at a point inside this document's own viewport, for a
+      # document whose contents could not be read even after piercing.
+      def click_in_frame(x : Float64, y : Float64) : Nil
+        begin
+          @session.command("input.performActions",
+            FirefoxDriver.pointer_params(@context_id, "tweb-mouse", [
+              FirefoxDriver.pointer_move(JSON::Any.new(Core.js_round(x).to_i64),
+                JSON::Any.new(Core.js_round(y).to_i64), JSON::Any.new("viewport")),
+              JSON::Any.new({"type" => JSON::Any.new("pointerDown"), "button" => JSON::Any.new(0)}),
+              JSON::Any.new({"type" => JSON::Any.new("pointerUp"), "button" => JSON::Any.new(0)}),
+            ]))
+        ensure
+          @session.command("input.releaseActions",
+            {"context" => JSON::Any.new(@context_id)}) rescue nil
+        end
+      end
+
       def query_all(selector : String) : Array(FrameRef)
         count = evaluate(
           "(sel) => document.querySelectorAll(sel).length", JSON::Any.new(selector)
@@ -358,6 +451,132 @@ module Tawb
 
       def content_frame : Nil
         nil # frames are reached by position; see Frame#query_all
+      end
+
+      # Files given straight to this file input, which is what a reader who
+      # typed a path means. The element is named by reference, so a control
+      # with no name and no form around it is still answerable.
+      def set_files(paths : Array(String)) : Bool
+        shared = @shared_id || raise IO::Error.new(
+          "that control cannot be given files: the browser gave no reference to it")
+        @session.command("input.setFiles", {
+          "context" => JSON::Any.new(@context_id),
+          "element" => JSON::Any.new({"sharedId" => JSON::Any.new(shared)}),
+          "files"   => JSON::Any.new(paths.map { |path| JSON::Any.new(path) }),
+        })
+        true
+      end
+
+      # The keyboard of the document this element belongs to: a key reaches
+      # the element that has focus in that document, not in the tab's top
+      # one.
+      def keyboard : Keyboard
+        Keyboard.new(@session, @context_id)
+      end
+
+      # ----------------------------------------------------------------
+      # Trusted input on this element
+      #
+      # The engine's own half of the real click, the hover, the download
+      # gesture and the slider press. What is worth doing at all and what
+      # the answer means is Actions' to decide; which protocol commands say
+      # it is the driver's, which is the seam src/driver.js draws.
+      # ----------------------------------------------------------------
+
+      # A pointer press and release at this element's own centre, with
+      # whatever modifiers are being held. The element is named by reference
+      # so the browser computes the point itself and hits what was meant.
+      def click(modifiers : Array(String) = [] of String) : Nil
+        reference = element_origin
+        pointer = [
+          FirefoxDriver.pointer_move(JSON::Any.new(0), JSON::Any.new(0), reference),
+          JSON::Any.new({"type" => JSON::Any.new("pointerDown"), "button" => JSON::Any.new(0)}),
+          JSON::Any.new({"type" => JSON::Any.new("pointerUp"), "button" => JSON::Any.new(0)}),
+        ]
+        begin
+          if modifiers.empty?
+            @session.command("input.performActions",
+              FirefoxDriver.pointer_params(@context_id, "tweb-mouse", pointer))
+          else
+            # Keyboard and pointer sources advance together in BiDi ticks, so
+            # a modifier is down before the pointer moves and stays down until
+            # after the release has produced the click.
+            @session.command("input.performActions",
+              FirefoxDriver.modified_pointer_params(@context_id, modifiers, pointer))
+          end
+        ensure
+          # A pointer left pressed belongs to nobody once this returns, and
+          # the next action would inherit it.
+          @session.command("input.releaseActions",
+            {"context" => JSON::Any.new(@context_id)}) rescue nil
+        end
+      end
+
+      # The pointer brought onto the element from just outside it and left
+      # there. No releaseActions afterwards: there is no button held down to
+      # release, and releasing the sequence is what would undo the pointer's
+      # position.
+      def hover_at(from_x : Float64, from_y : Float64,
+                   x : Float64, y : Float64) : Nil
+        viewport = JSON::Any.new("viewport")
+        @session.command("input.performActions",
+          FirefoxDriver.pointer_params(@context_id, "tweb-mouse", [
+            FirefoxDriver.pointer_move(FirefoxDriver.whole(from_x),
+              FirefoxDriver.whole(from_y), viewport),
+            FirefoxDriver.pointer_move(FirefoxDriver.whole(x),
+              FirefoxDriver.whole(y), viewport),
+          ]))
+      end
+
+      # Firefox's native Alt-click save gesture (src/driver_firefox.js
+      # downloadLink): the browser's own download manager takes the target
+      # without the current tab navigating.
+      def download_link : Nil
+        click(["\u{E00A}"])
+      end
+
+      # The track of a slider, and a trusted press at the point a requested
+      # position maps onto. Used when a custom ARIA slider advertises a range
+      # and then ignores every standard key: the caller maps the value onto
+      # the range, this maps it onto the pixels the page actually has.
+      def click_slider(ratio : Float64, orientation : JSON::Any?) : Nil
+        reference = element_origin
+        begin
+          # The first move reveals hover-only tracks. Element-origin offsets
+          # are from its centre in WebDriver actions, so the second move
+          # needs only the dimensions after that disclosure has happened.
+          @session.command("input.performActions",
+            FirefoxDriver.pointer_params(@context_id, "tweb-slider",
+              [FirefoxDriver.pointer_move(JSON::Any.new(0), JSON::Any.new(0), reference)]))
+          sleep(120.milliseconds)
+          geometry = evaluate(SLIDER_GEOMETRY, orientation || JSON::Any.new(nil)).as_h
+          vertical = geometry["vertical"]?.try(&.as_bool?) || false
+          start = Core.js_number(geometry["start"]?)
+          finish = Core.js_number(geometry["end"]?)
+          width = Core.js_number(geometry["width"]?)
+          height = Core.js_number(geometry["height"]?)
+          along = start + (vertical ? 1 - ratio : ratio) * (finish - start)
+          x = vertical ? JSON::Any.new(0) : JSON::Any.new(Core.js_round(along - width / 2).to_i64)
+          y = vertical ? JSON::Any.new(Core.js_round(along - height / 2).to_i64) : JSON::Any.new(0)
+          @session.command("input.performActions",
+            FirefoxDriver.pointer_params(@context_id, "tweb-slider", [
+              FirefoxDriver.pointer_move(x, y, reference),
+              JSON::Any.new({"type" => JSON::Any.new("pointerDown"), "button" => JSON::Any.new(0)}),
+              JSON::Any.new({"type" => JSON::Any.new("pointerUp"), "button" => JSON::Any.new(0)}),
+            ]))
+        ensure
+          @session.command("input.releaseActions",
+            {"context" => JSON::Any.new(@context_id)}) rescue nil
+        end
+      end
+
+      private def element_origin : JSON::Any
+        shared = @shared_id ||
+                 raise IO::Error.new("this line carries no element reference to act on")
+        JSON::Any.new({
+          "type"    => JSON::Any.new("element"),
+          "element" => JSON::Any.new({"sharedId" => JSON::Any.new(shared)}),
+        })
       end
 
       def dispose : Nil
@@ -703,6 +922,42 @@ module Tawb
       end
 
       # Typing and key presses through the browser's own input pipeline.
+      # This document's name, as the browser knows it. The top document of a
+      # tab is a document like any other, and anything that keeps track of
+      # documents — the live-update arming, an item that came from a frame —
+      # keeps track of them by this.
+      def document_id : String
+        @context_id
+      end
+
+      # One document of this tab, by the browser's own name for it.
+      def frame_for(context_id : String) : Frame
+        Frame.new(@protocol, context_id, self)
+      end
+
+      # This tab's name, as the browser knows it and as every reader process
+      # knows it: what a claim on a tab is made of.
+      def tab_id : String
+        @context_id
+      end
+
+      # The connection this tab is reached over. A preload script is
+      # installed per connection rather than per tab, so whatever keeps track
+      # of having installed one keeps track by this. BiDi has one session for
+      # the whole browser; CDP has one per tab.
+      def connection_id : String
+        @protocol.object_id.to_s
+      end
+
+      # Run this in every document of this connection, from now on, before
+      # the document's own scripts. Used to arm the mutation observer at
+      # document-start, which is the only way to see a parse as it happens.
+      def add_preload_script(source : String) : Nil
+        @protocol.command("script.addPreloadScript", {
+          "functionDeclaration" => JSON::Any.new(source),
+        })
+      end
+
       def keyboard : Keyboard
         Keyboard.new(@protocol, @context_id)
       end

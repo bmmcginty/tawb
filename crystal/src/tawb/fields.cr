@@ -11,7 +11,7 @@ module Tawb
   module Fields
     READ_FIELD_STATE = {{ read_file("#{__DIR__}/../../assets/read_field_state.js") }}
 
-    def self.read_field_state(handle : FirefoxDriver::Handle) : JSON::Any
+    def self.read_field_state(handle : Engine::Handle) : JSON::Any
       handle.evaluate(READ_FIELD_STATE)
     end
   end

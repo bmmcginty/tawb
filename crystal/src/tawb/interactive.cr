@@ -17,13 +17,13 @@ module Tawb
     class Page
       include Reader::PageEnv
       include Runtime::InitialPage
-      getter raw : FirefoxDriver::Page
+      getter raw : Engine::Page
 
       def initialize(@raw); end
       def url : String; @raw.url; end
       def title : String; @raw.title; end
       def keyboard_press(key : String) : Nil
-        FirefoxDriver::Keyboard.new(@raw.protocol, @raw.context_id).press(key)
+        @raw.keyboard.press(key)
       end
       def wait_for_load : Nil; @raw.wait_for_load_state; end
       def goto(url : String) : Nil; @raw.goto(url); end
@@ -211,7 +211,7 @@ module Tawb
       include Reader::TabEnv
       getter current_page : Reader::PageEnv
 
-      def initialize(@core : Core, @driver : FirefoxDriver::BrowserSession, initial : FirefoxDriver::Page)
+      def initialize(@core : Core, @driver : Engine::Session, initial : Engine::Page)
         @pages = {} of String => Page
         @current_page = wrap(initial)
       end
@@ -232,12 +232,12 @@ module Tawb
       end
       def tab_label(page : Reader::PageEnv) : String; @core.tab_label(unwrap(page)); end
 
-      private def wrap(page : FirefoxDriver::Page) : Page
-        @pages[page.context_id]? || begin
-          made = Page.new(page); @pages[page.context_id] = made; made
+      private def wrap(page : Engine::Page) : Page
+        @pages[page.tab_id]? || begin
+          made = Page.new(page); @pages[page.tab_id] = made; made
         end
       end
-      private def unwrap(page : Reader::PageEnv) : FirefoxDriver::Page; page.as(Page).raw; end
+      private def unwrap(page : Reader::PageEnv) : Engine::Page; page.as(Page).raw; end
     end
 
     class LibraryBinding

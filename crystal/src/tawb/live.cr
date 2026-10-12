@@ -61,26 +61,22 @@ module Tawb
     # armed: the top document and rendered child frames.
     class Watcher
       def initialize
-        @preloaded = Set(Bidi::Session).new
+        @preloaded = Set(String).new
         @armed = Set(String).new
       end
 
-      def install(page : FirefoxDriver::Page) : InstallResult
-        bound_now = @preloaded.add?(page.protocol) != nil
-        if bound_now
-          page.protocol.command("script.addPreloadScript", {
-            "functionDeclaration" => JSON::Any.new(OBSERVER_SCRIPT),
-          })
-        end
+      def install(page : Engine::Page) : InstallResult
+        bound_now = @preloaded.add?(page.connection_id) != nil
+        page.add_preload_script(OBSERVER_SCRIPT) if bound_now
         armed = arm_frame(page) ? 1 : 0
         InstallResult.new(bound_now, armed, frame_count(page))
       end
 
-      def arm_frame(frame : FirefoxDriver::Frame | FirefoxDriver::Page,
+      def arm_frame(frame : Engine::Scope,
                     force = false, again = false) : Bool
-        return false if @armed.includes?(frame.context_id) && !again
+        return false if @armed.includes?(frame.document_id) && !again
         frame.evaluate(OBSERVER_SCRIPT, JSON::Any.new(force))
-        @armed.add(frame.context_id)
+        @armed.add(frame.document_id)
         true
       rescue
         false
@@ -89,21 +85,21 @@ module Tawb
       # Cross-origin frames are armed only after they contributed rendered
       # content. Context ids are stable over a document replacement; `again`
       # is reserved for pulse detecting that replacement.
-      def arm_rendered_frames(frames : Array(FirefoxDriver::Frame), limit = 8) : Int32
+      def arm_rendered_frames(frames : Array(Engine::Frame), limit = 8) : Int32
         armed = 0
         frames.first(limit).each { |frame| armed += 1 if arm_frame(frame, force: true) }
         armed
       end
 
-      def collect(page : FirefoxDriver::Page) : Array(JSON::Any)
-        contexts = [page.context_id]
+      def collect(page : Engine::Page) : Array(JSON::Any)
+        documents = [page.document_id]
         page.all_frames.each do |frame|
-          contexts << frame.context_id if @armed.includes?(frame.context_id)
+          documents << frame.document_id if @armed.includes?(frame.document_id)
         end
         out = [] of JSON::Any
-        contexts.uniq.each do |context_id|
+        documents.uniq.each do |document_id|
           begin
-            frame = FirefoxDriver::Frame.new(page.protocol, context_id, page)
+            frame = page.frame_for(document_id)
             payloads = frame.evaluate(DRAIN_SCRIPT).as_a?
             out.concat(payloads) if payloads
           rescue
@@ -113,7 +109,7 @@ module Tawb
         out
       end
 
-      def pulse(page : FirefoxDriver::Page, live : State,
+      def pulse(page : Engine::Page, live : State,
                 now : Int64 = Time.utc.to_unix_ms) : PulseResult?
         return nil unless live.enabled
         return nil if now - live.last_pulse_ms < PULSE_MS
@@ -138,7 +134,7 @@ module Tawb
         nil
       end
 
-      private def frame_count(page : FirefoxDriver::Page) : Int32
+      private def frame_count(page : Engine::Page) : Int32
         page.all_frames.size
       rescue
         1

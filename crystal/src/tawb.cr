@@ -1,3 +1,4 @@
+require "./tawb/engine"
 require "./tawb/cli"
 require "./tawb/conformance"
 

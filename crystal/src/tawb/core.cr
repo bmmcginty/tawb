@@ -398,12 +398,12 @@ module Tawb
     getter chooser : Chooser?
     property change_index : Int32
     getter live : Live::State
-    getter page : FirefoxDriver::Page?
+    getter page : Engine::Page?
     getter snapshot_cost_ms : Int64
 
     def initialize(source : String = "ax", layout : Bool = false,
-                   driver : FirefoxDriver::BrowserSession? = nil,
-                   page : FirefoxDriver::Page? = nil,
+                   driver : Engine::Session? = nil,
+                   page : Engine::Page? = nil,
                    browser_port : Int32? = nil)
       @source = source
       @driver = driver
@@ -424,8 +424,8 @@ module Tawb
       @snapshot_cost_ms = 0_i64
       @live_watcher = Live::Watcher.new
       @chooser = nil
-      @typing_handle = nil.as(FirefoxDriver::Handle?)
-      @place_handle = nil.as(FirefoxDriver::Handle?)
+      @typing_handle = nil.as(Engine::Handle?)
+      @place_handle = nil.as(Engine::Handle?)
       @attached_files = {} of String => Hash(String, AttachedFile)
       # The popup the reader has open, if any, named by the id its control
       # points at. See relocate_popup().
@@ -446,7 +446,7 @@ module Tawb
 
     # Install the page-side observer for this tab. The same watcher owns the
     # preload registration, armed-frame set, queue drains, and pulse baseline.
-    def attach_live(page : FirefoxDriver::Page? = @page) : Live::InstallResult
+    def attach_live(page : Engine::Page? = @page) : Live::InstallResult
       target = page || raise IO::Error.new("this core has no page")
       @live_watcher.install(target)
     end
@@ -455,16 +455,16 @@ module Tawb
     # classification policy. A front end receives only decisions, never raw
     # browser payloads, so disabled updates and refresh-in-flight protection
     # cannot be accidentally bypassed.
-    def collect_live(page : FirefoxDriver::Page? = @page) : Array(JSON::Any)
+    def collect_live(page : Engine::Page? = @page) : Array(JSON::Any)
       target = page || raise IO::Error.new("this core has no page")
       @live_watcher.collect(target).map { |payload| classify(payload) }
     end
 
-    def arm_live_frames(frames : Array(FirefoxDriver::Frame), limit = 8) : Int32
+    def arm_live_frames(frames : Array(Engine::Frame), limit = 8) : Int32
       @live_watcher.arm_rendered_frames(frames, limit)
     end
 
-    def pulse_live(page : FirefoxDriver::Page? = @page,
+    def pulse_live(page : Engine::Page? = @page,
                    now : Int64 = Time.utc.to_unix_ms) : Live::PulseResult?
       target = page || raise IO::Error.new("this core has no page")
       @live_watcher.pulse(target, @live, now)
@@ -507,7 +507,7 @@ module Tawb
     # is the extraction currently available to the interactive native core;
     # other view extractors remain separate release work rather than silently
     # returning AX under the wrong label.
-    def rescan(page : FirefoxDriver::Page? = @page) : Array(Block)
+    def rescan(page : Engine::Page? = @page) : Array(Block)
       target = page || raise IO::Error.new("this core has no page")
       unless EXTRACTABLE_SOURCES.includes?(@source)
         raise IO::Error.new("native interactive extraction for #{@source} is not ported")
@@ -520,7 +520,7 @@ module Tawb
         Block.new(object["text"]?.try(&.as_s?) || "",
           object["item"]? || JSON::Any.new(nil))
       end
-      restore_attached_files(target.context_id)
+      restore_attached_files(target.tab_id)
       @generation += 1
       @rendered_url = target.url
       relocate_popup
@@ -535,7 +535,7 @@ module Tawb
 
     # Re-read, re-anchor without proportional guesses, and remember all new
     # regions as one operation so callers cannot compare mismatched generations.
-    def rebuild(anchor : Anchor, page : FirefoxDriver::Page? = @page,
+    def rebuild(anchor : Anchor, page : Engine::Page? = @page,
                 keep_place = true) : RebuildResult
       previous = texts
       rescan(page)
@@ -586,7 +586,7 @@ module Tawb
     # Ask a lazy feed for more once, restoring its visual scroll position if
     # no elements arrive. Ordinary long documents are already fully present
     # in the buffer; only a growing DOM counts as more content.
-    def ask_for_more(page : FirefoxDriver::Page? = @page) : JSON::Any
+    def ask_for_more(page : Engine::Page? = @page) : JSON::Any
       target = page || raise IO::Error.new("this core has no page")
       probe = target.evaluate(SCROLL_TO_BOTTOM).as_h
       scrollable = probe["scrollable"]?.try(&.as_bool?) || false
@@ -943,7 +943,7 @@ module Tawb
     # Resolve the element retained by whichever view produced this item. The
     # page-side extractors keep arrays under stable symbols; an item carries
     # its position in the corresponding array and the frame that owns it.
-    def handle_for(item : JSON::Any, page : FirefoxDriver::Page? = @page) : FirefoxDriver::Handle
+    def handle_for(item : JSON::Any, page : Engine::Page? = @page) : Engine::Handle
       acting = page || raise IO::Error.new("this core has no page")
       object = item.as_h
       scope = item_scope(object["frame"]?, acting)
@@ -967,7 +967,7 @@ module Tawb
     # The item's policy chooses trusted input only where default activation is
     # insufficient: a pierced challenge and a button submitting credentials
     # the browser filled itself. Everything else keeps the DOM's own action.
-    def activate(item : JSON::Any, page : FirefoxDriver::Page? = @page) : JSON::Any
+    def activate(item : JSON::Any, page : Engine::Page? = @page) : JSON::Any
       acting = page || raise IO::Error.new("this core has no page")
       object = item.as_h
       if object["nativeControl"]?
@@ -979,10 +979,10 @@ module Tawb
         })
       end
       held = object["pressFrame"]? ? nil : handle_for(item, acting)
-      Actions.activate_item(acting.protocol, acting.context_id, item, held)
+      Actions.activate_item(acting, item, held)
     end
 
-    def focus_control(item : JSON::Any, page : FirefoxDriver::Page? = @page) : Bool
+    def focus_control(item : JSON::Any, page : Engine::Page? = @page) : Bool
       if item.as_h["nativeControl"]?
         acting = page || raise IO::Error.new("this core has no page")
         return native_control(item, acting, "tweb.focusNativeControl")
@@ -995,36 +995,35 @@ module Tawb
     end
 
     def adjust_control(item : JSON::Any, key : String,
-                       page : FirefoxDriver::Page? = @page) : JSON::Any
+                       page : Engine::Page? = @page) : JSON::Any
       acting = page || raise IO::Error.new("this core has no page")
       if item.as_h["nativeControl"]?
-        FirefoxDriver::Keyboard.new(acting.protocol, acting.context_id).press(key)
+        acting.keyboard.press(key)
         return JSON::Any.new({"changed" => JSON::Any.new(true),
                               "fallback" => JSON::Any.new(false)})
       end
       handle = handle_for(item, acting)
       role = item.as_h["role"]?.try(&.as_s?)
-      keyboard = FirefoxDriver::Keyboard.new(acting.protocol, handle.context_id)
-      Actions.adjust_control(keyboard, handle.context_id, role, handle, key)
+      Actions.adjust_control(handle, role, key)
     ensure
       handle.try(&.dispose)
     end
 
     def attach_files(item : JSON::Any, paths : Array(String),
-                     page : FirefoxDriver::Page? = @page) : Bool
+                     page : Engine::Page? = @page) : Bool
       acting = page || raise IO::Error.new("this core has no page")
       handle = handle_for(item, acting)
-      attached = acting.set_files(handle, paths)
-      remember_attached_files(item, paths, acting.context_id)
+      attached = handle.set_files(paths)
+      remember_attached_files(item, paths, acting.tab_id)
       attached
     ensure
       handle.try(&.dispose)
     end
 
-    def hover(item : JSON::Any, page : FirefoxDriver::Page? = @page) : JSON::Any
+    def hover(item : JSON::Any, page : Engine::Page? = @page) : JSON::Any
       acting = page || raise IO::Error.new("this core has no page")
       handle = handle_for(item, acting)
-      Actions.hover(acting.protocol, handle.context_id, handle)
+      Actions.hover(handle)
     ensure
       handle.try(&.dispose)
     end
@@ -1034,7 +1033,7 @@ module Tawb
     # Both engines implement this as their native Alt-click gesture, so
     # cookies, proxy settings, filename selection and the downloads list
     # remain the browser's rather than being reimplemented here.
-    def download_link(item : JSON::Any, page : FirefoxDriver::Page? = @page) : JSON::Any
+    def download_link(item : JSON::Any, page : Engine::Page? = @page) : JSON::Any
       role = item.as_h["role"]?.try(&.as_s?)
       unless role && Aria::LINK_ROLES.includes?(role)
         return JSON::Any.new({
@@ -1054,7 +1053,7 @@ module Tawb
           "reason" => JSON::Any.new(reason),
         })
       end
-      Actions.download_link(acting.protocol, handle.context_id, handle)
+      Actions.download_link(handle)
       JSON::Any.new({"ok" => JSON::Any.new(true)})
     ensure
       handle.try(&.dispose)
@@ -1064,12 +1063,12 @@ module Tawb
     # be followed even when the page cancels the click and handles it in
     # script — in which case the URL never changes and there is nothing else
     # to go on (src/core.js Core.prototype.fragmentOf).
-    def fragment_of(item : JSON::Any, page : FirefoxDriver::Page? = @page) : String?
+    def fragment_of(item : JSON::Any, page : Engine::Page? = @page) : String?
       if DOM_SOURCES.includes?(@source)
         href = item.as_h["attrs"]?.try(&.as_h?).try(&.["href"]?).try(&.as_s?)
         return fragment_hash(href)
       end
-      handle : FirefoxDriver::Handle? = nil
+      handle : Engine::Handle? = nil
       begin
         handle = handle_for(item, page)
         fragment_hash(handle.not_nil!.evaluate("(el) => el.getAttribute('href')").as_s?)
@@ -1083,7 +1082,7 @@ module Tawb
     # Which block a fragment points at, found through the text at the target:
     # the buffer has no ids in it, and the anchor itself is usually an empty
     # element with nothing to match on (src/core.js Core.prototype.blockAtFragment).
-    def block_at_fragment(hash : String, page : FirefoxDriver::Page? = @page) : Int32
+    def block_at_fragment(hash : String, page : Engine::Page? = @page) : Int32
       acting = page || raise IO::Error.new("this core has no page")
       snippet = acting.evaluate(TEXT_AT_FRAGMENT, JSON::Any.new(hash)).as_s?
       return -1 unless snippet && !snippet.empty?
@@ -1119,7 +1118,7 @@ module Tawb
     # the policy: a patch that lands ends the event, a patch that misses and
     # every other change mark the buffer dirty, and dirty state is cleared
     # only once a refresh has actually replaced it.
-    def live_cycle(payload : JSON::Any?, page : FirefoxDriver::Page? = @page,
+    def live_cycle(payload : JSON::Any?, page : Engine::Page? = @page,
                    wraps : Proc(Array(Int32), Bool)? = nil,
                    keep_place : Bool? = nil) : JSON::Any
       classified = classify(payload).as_h
@@ -1191,7 +1190,7 @@ module Tawb
       nil
     end
 
-    def real_click(item : JSON::Any, page : FirefoxDriver::Page? = @page) : JSON::Any
+    def real_click(item : JSON::Any, page : Engine::Page? = @page) : JSON::Any
       acting = page || raise IO::Error.new("this core has no page")
       if item.as_h["nativeControl"]?
         pressed = native_control(item, acting, "tweb.nativeControl")
@@ -1200,12 +1199,12 @@ module Tawb
             "the browser's #{item.as_h["name"]?.try(&.as_s?) || "media"} control is no longer visible")})
       end
       handle = handle_for(item, acting)
-      Actions.real_click(acting.protocol, handle.context_id, handle)
+      Actions.real_click(handle)
     ensure
       handle.try(&.dispose)
     end
 
-    private def native_control(item : JSON::Any, page : FirefoxDriver::Page,
+    private def native_control(item : JSON::Any, page : Engine::Page,
                                symbol : String) : Bool
       object = item.as_h
       token = object["nativeControl"]? || return false
@@ -1215,7 +1214,7 @@ module Tawb
       false
     end
 
-    private def item_scope(frame : JSON::Any?, page : FirefoxDriver::Page) : FirefoxDriver::Frame | FirefoxDriver::Page
+    private def item_scope(frame : JSON::Any?, page : Engine::Page) : Engine::Scope
       return page unless frame
       context_id = if value = frame.as_s?
                      value
@@ -1224,7 +1223,7 @@ module Tawb
                      object["id"]?.try(&.as_s?) || object["contextId"]?.try(&.as_s?) ||
                        object["context"]?.try(&.as_s?)
                    end
-      context_id ? FirefoxDriver::Frame.new(page.protocol, context_id, page) : page
+      context_id ? page.frame_for(context_id) : page
     end
 
     # -----------------------------------------------------------------------
@@ -1235,12 +1234,14 @@ module Tawb
     # so there is no place to keep — is decided by whoever asked for it.
     # -----------------------------------------------------------------------
 
-    def tabs : Array(FirefoxDriver::Page)
-      driver = @driver || return [] of FirefoxDriver::Page
-      driver.list_pages.reject(&.closed?)
+    def tabs : Array(Engine::Page)
+      driver = @driver || return [] of Engine::Page
+      # Each engine answers with its own kind of page; the list a reader
+      # holds is of pages, whichever engine is behind them.
+      driver.list_pages.reject(&.closed?).map(&.as(Engine::Page))
     end
 
-    def tab_label(page : FirefoxDriver::Page) : String
+    def tab_label(page : Engine::Page) : String
       title = page.title.gsub(/\s+/, " ").strip
       value = title.empty? ? page.url : title
       value = "untitled" if value.empty?
@@ -1251,18 +1252,18 @@ module Tawb
 
     # A background document reports itself hidden, which asks the same
     # question on every browser without needing a protocol feature of its own.
-    def foreground?(page : FirefoxDriver::Page) : Bool
+    def foreground?(page : Engine::Page) : Bool
       page.foreground?
     end
 
-    def where(page : FirefoxDriver::Page? = @page) : TabPosition
+    def where(page : Engine::Page? = @page) : TabPosition
       all = tabs
       position = page ? (all.index(page) || -1) + 1 : 0
       TabPosition.new(position, all.size)
     end
 
     # The tab > or < would move to, or nil when there is only one.
-    def next_tab(direction : Int32) : FirefoxDriver::Page?
+    def next_tab(direction : Int32) : Engine::Page?
       all = tabs
       return nil if all.size < 2
       current = @page.try { |page| all.index(page) } || -1
@@ -1271,7 +1272,7 @@ module Tawb
     end
 
     # Closing repeatedly walks forward rather than doubling back.
-    def tab_after(page : FirefoxDriver::Page) : FirefoxDriver::Page?
+    def tab_after(page : Engine::Page) : Engine::Page?
       all = tabs
       return nil if all.size < 2
       index = all.index(page) || -1
@@ -1280,9 +1281,13 @@ module Tawb
 
     # Take a tab as ours. The process-wide claim moves with us, so another
     # reader avoids this one and is free to use the tab we left.
-    def adopt_tab(page : FirefoxDriver::Page) : String?
-      target_id = @driver.try(&.target_id_for(page))
-      if target_id && (port = @browser_port)
+    def adopt_tab(page : Engine::Page) : String?
+      # A tab's own name is the name a claim is made of, and both engines
+      # hand it straight back: a BiDi browsing context and a CDP target are
+      # each stable for the life of the tab and mean the same thing in every
+      # reader process.
+      target_id = page.tab_id
+      if (port = @browser_port)
         Session.claim_tab(port, target_id)
       end
       # Intercept only this tab's chooser. Taking one from somebody else's tab
@@ -1294,12 +1299,12 @@ module Tawb
       target_id
     end
 
-    def new_tab : FirefoxDriver::Page
+    def new_tab : Engine::Page
       driver = @driver || raise IO::Error.new("this core has no browser")
-      driver.create_page
+      driver.create_page.as(Engine::Page)
     end
 
-    def close_tab(page : FirefoxDriver::Page) : Nil
+    def close_tab(page : Engine::Page) : Nil
       page.close
     end
 
@@ -1458,7 +1463,7 @@ module Tawb
 
     # The entries of a native select, read from the element while its browser
     # popup remains closed.
-    def options_for(item : JSON::Any, page : FirefoxDriver::Page? = @page) : JSON::Any?
+    def options_for(item : JSON::Any, page : Engine::Page? = @page) : JSON::Any?
       handle = handle_for(item, page)
       begin
         answer = handle.evaluate(<<-'JS')
@@ -1482,7 +1487,7 @@ module Tawb
     end
 
     def choose_option(item : JSON::Any, index : Int32,
-                      page : FirefoxDriver::Page? = @page) : JSON::Any
+                      page : Engine::Page? = @page) : JSON::Any
       target = page || raise IO::Error.new("this core has no page")
       handle = handle_for(item, target)
       begin
@@ -1499,7 +1504,7 @@ module Tawb
                               "reason" => JSON::Any.new("not a select")}) if key.raw.nil?
         return JSON::Any.new({"changed" => JSON::Any.new(false),
                               "reason" => JSON::Any.new("already chosen")}) if key.as_s == "already"
-        FirefoxDriver::Keyboard.new(target.protocol, target.context_id).press(key.as_s)
+        target.keyboard.press(key.as_s)
         JSON::Any.new({"changed" => JSON::Any.new(true)})
       ensure
         handle.dispose rescue nil
@@ -1507,7 +1512,7 @@ module Tawb
     end
 
     def field_for_typing(item : JSON::Any,
-                         page : FirefoxDriver::Page? = @page) : JSON::Any?
+                         page : Engine::Page? = @page) : JSON::Any?
       handle = handle_for(item, page)
       editable = handle.evaluate(<<-'JS').as_bool? || false
         (el) => {
@@ -1553,7 +1558,7 @@ module Tawb
     # -----------------------------------------------------------------------
 
     def describe_place_element(item : JSON::Any,
-                               page : FirefoxDriver::Page? = @page) : JSON::Any?
+                               page : Engine::Page? = @page) : JSON::Any?
       handle = handle_for(item, page)
       described = Actions.describe_element(handle)
       if described.nil?
