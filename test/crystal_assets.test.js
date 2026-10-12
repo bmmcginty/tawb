@@ -10,6 +10,7 @@ const { clickThrough, prepareRealClick, submitsAutofilled } = require('../src/cl
 const { sliderStateOf } = require('../src/core');
 const { sliderGeometry } = require('../src/driver_firefox');
 const { sliderTrack } = require('../src/driver_chromium');
+const chromiumLibrary = require('../src/library_chromium');
 const { OBSERVER_SCRIPT, DRAIN_SCRIPT, PULSE_SCRIPT } = require('../src/live');
 const { CLEAR_SCRIPT, PIERCE_PARENT_SCRIPT, libraryParentScript } = require('../src/firefox');
 const { describeElement, locateElement } = require('../src/place');
@@ -54,6 +55,38 @@ const assets = {
   },
   'slider_track.js': {
     source: 'src/driver_chromium.js sliderTrack', value: sliderTrack.toString(),
+  },
+  'chromium_bookmarks.js': {
+    source: 'src/library_chromium.js readBookmarks',
+    value: chromiumLibrary.READERS.bookmarks.toString(),
+  },
+  'chromium_history.js': {
+    source: 'src/library_chromium.js readHistory',
+    value: chromiumLibrary.READERS.history.toString(),
+  },
+  'chromium_downloads.js': {
+    source: 'src/library_chromium.js readDownloads',
+    value: chromiumLibrary.READERS.downloads.toString(),
+  },
+  'chromium_save_bookmark.js': {
+    source: 'src/library_chromium.js saveBookmark',
+    value: chromiumLibrary.saveBookmark.toString(),
+  },
+  'chromium_remove_bookmark.js': {
+    source: 'src/library_chromium.js removeBookmark',
+    value: chromiumLibrary.removeBookmark.toString(),
+  },
+  'chromium_ready_bookmarks.js': {
+    source: 'src/library_chromium.js READY.bookmarks',
+    value: chromiumLibrary.READY.bookmarks.toString(),
+  },
+  'chromium_ready_history.js': {
+    source: 'src/library_chromium.js READY.history',
+    value: chromiumLibrary.READY.history.toString(),
+  },
+  'chromium_ready_downloads.js': {
+    source: 'src/library_chromium.js READY.downloads',
+    value: chromiumLibrary.READY.downloads.toString(),
   },
 };
 

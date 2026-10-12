@@ -22,6 +22,7 @@ require "./keyboard"
 require "./keys"
 require "./layout"
 require "./library"
+require "./library_chromium"
 require "./live"
 require "./log"
 require "./lynx_actions"
@@ -514,6 +515,8 @@ module Tawb
         cdp_tabs_scenario(payload)
       when "cdp.frames_scenario"
         cdp_frames_scenario(payload)
+      when "cdp.library_scenario"
+        cdp_library_scenario(payload)
       when "dump.resolve_target"
         object = payload.as_h
         existing = object["existing"].as_a.map(&.as_s).to_set
@@ -3515,6 +3518,54 @@ module Tawb
         session.close_page(page) rescue nil
         session.close
       end
+    end
+
+    # Chromium's own bookmarks and history, against a real browser: a page
+    # filed, the lists read back, the bookmark removed. Only the parts that
+    # hold still are reported — a timestamp and a bookmark id are the
+    # browser's own and differ between two runs of the same thing.
+    private def self.cdp_library_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      session = Cdp::BrowserSession.new(object["endpoint"].as_s)
+      url = object["url"].as_s
+      title = object["title"].as_s
+      begin
+        saved = ChromiumLibrary.save(session, url, title)
+        again = ChromiumLibrary.save(session, url, title)
+        bookmarks = ChromiumLibrary.read(session, "bookmarks")
+        history = ChromiumLibrary.read(session, "history")
+        # A fresh profile has no downloads, and the answer is then an empty
+        # list rather than a refusal — which is still worth asking for: the
+        # page has to open, its module has to import, and its handler has to
+        # answer, or this raises.
+        downloads = ChromiumLibrary.read(session, "downloads")
+        mine = bookmarks.select { |entry| entry.as_h["url"]?.try(&.as_s?) == url }
+        removed = mine.first?.try { |entry| ChromiumLibrary.remove(session, entry) }
+        after = ChromiumLibrary.read(session, "bookmarks")
+        JSON::Any.new({
+          "saved"     => library_entry_json(saved),
+          "again"     => library_entry_json(again),
+          "bookmarks" => JSON::Any.new(mine.map { |entry| library_entry_json(entry) }),
+          "history"   => JSON::Any.new(history
+            .select { |entry| entry.as_h["url"]?.try(&.as_s?) == url }
+            .map { |entry| library_entry_json(entry) }),
+          "downloads" => JSON::Any.new(downloads.size.to_i64),
+          "removed" => JSON::Any.new(removed.try(&.as_h?).try(&.["removed"]?.try(&.as_bool?)) || false),
+          "left"    => JSON::Any.new(after.count { |entry| entry.as_h["url"]?.try(&.as_s?) == url }.to_i64),
+        })
+      ensure
+        session.close
+      end
+    end
+
+    # One library answer, with only the parts that mean the same thing twice.
+    private def self.library_entry_json(entry : JSON::Any) : JSON::Any
+      object = entry.as_h? || {} of String => JSON::Any
+      kept = {} of String => JSON::Any
+      ["title", "url", "folder", "existed"].each do |name|
+        kept[name] = object[name] if object.has_key?(name)
+      end
+      JSON::Any.new(kept)
     end
 
     private def self.firefox_launch_scenario(payload : JSON::Any) : JSON::Any

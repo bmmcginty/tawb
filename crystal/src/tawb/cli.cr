@@ -7,6 +7,7 @@ require "./frames"
 require "./interactive"
 require "./layout"
 require "./lynx_display"
+require "./library_chromium"
 require "./lynx_settings"
 require "./lynx_state"
 require "./log"
@@ -52,9 +53,9 @@ module Tawb
 
     The native Crystal reader reads pages interactively through Firefox and
     Chromium, in this interface or Lynx's, and writes dumps through either.
-    On Chromium the browser's own bookmarks, history and downloads, and the
-    password prompt a 401 raises, are not yet available. The edb front end
-    and the standalone keyboard wizard are not yet available at all.
+    On Chromium the password prompt a 401 raises is not yet available. The
+    edb front end and the standalone keyboard wizard are not yet available
+    at all.
     TEXT
 
     def self.run(argv : Array(String) = ARGV, env : Hash(String, String) = ENV.to_h) : Nil
@@ -171,13 +172,18 @@ module Tawb
         # The views the backslash cycle offers: what the native extraction
         # can actually build, which today is AX alone.
         state.sources = Core::EXTRACTABLE_SOURCES.dup
-        # The browser's own bookmarks, history and downloads come from the
-        # privileged agent installed while Firefox starts. Chromium answers
-        # for its own through pages of its own (chrome://bookmarks and the
-        # rest), which is a separate port; until then those screens say they
-        # have nothing rather than showing another browser's.
-        if library_port = opened.library_port
-          state.browser_library = Interactive::LibraryBinding.new(library_port)
+        # The browser's own bookmarks, history and downloads. Firefox answers
+        # through the privileged agent installed while it starts; Chromium
+        # answers through pages of its own. Each engine is asked the way that
+        # engine can be asked, and the reader's screens cannot tell which
+        # answered.
+        case session = browser
+        when Cdp::BrowserSession
+          state.browser_library = Interactive::ChromiumLibraryBinding.new(session)
+        else
+          if library_port = opened.library_port
+            state.browser_library = Interactive::LibraryBinding.new(library_port)
+          end
         end
         state.rows = terminal_rows
         state.cols = terminal_columns

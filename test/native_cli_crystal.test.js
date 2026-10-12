@@ -19,7 +19,7 @@ test('the native CLI says which engines it reads interactively', {
   assert.doesNotMatch(help.stdout, /interactive reader is not ported/);
   assert.doesNotMatch(help.stdout, /Interactive Chromium .*not yet available/);
   // What is still missing on Chromium is named rather than discovered.
-  assert.match(help.stdout, /bookmarks, history and downloads/);
+  assert.match(help.stdout, /password prompt a 401 raises is not yet available/);
 });
 
 test('the native CLI still refuses what it cannot do', {

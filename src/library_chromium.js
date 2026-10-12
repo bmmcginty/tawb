@@ -285,4 +285,8 @@ async function removeChromiumBookmark(context, entry, { timeout = READY_TIMEOUT_
 
 module.exports = {
   readChromiumLibrary, saveChromiumBookmark, removeChromiumBookmark, PAGES,
+  // The page-side half, exported so the native runtime can embed the same
+  // functions (crystal/assets/chromium_*.js). These run in the WebUI page,
+  // not here, so they are sent as their own source under either runtime.
+  READERS, READY, saveBookmark, removeBookmark, READY_TIMEOUT_MS, POLL_MS,
 };

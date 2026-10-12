@@ -4,6 +4,7 @@ require "./core"
 require "./fields"
 require "./input"
 require "./library"
+require "./library_chromium"
 require "./reader"
 require "./reader_keys"
 require "./runtime"
@@ -260,6 +261,27 @@ module Tawb
           "kind" => JSON::Any.new("remove"),
           "bookmarkGuid" => entry.as_h["bookmarkGuid"]? || JSON::Any.new(""),
         }))
+      end
+    end
+
+    # The same three lists, asked of Chromium's own pages. The reader's
+    # screens cannot tell which browser answered; what differs is only where
+    # the answer comes from (ChromiumLibrary).
+    class ChromiumLibraryBinding
+      include Reader::LibraryEnv
+
+      def initialize(@session : Cdp::BrowserSession); end
+
+      def read(kind : String) : Array(JSON::Any)
+        ChromiumLibrary.read(@session, kind)
+      end
+
+      def save(url : String, title : String) : JSON::Any
+        ChromiumLibrary.save(@session, url, title)
+      end
+
+      def delete(entry : JSON::Any) : Nil
+        ChromiumLibrary.remove(@session, entry)
       end
     end
 

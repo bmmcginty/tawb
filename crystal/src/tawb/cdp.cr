@@ -1,4 +1,5 @@
 require "json"
+require "uri"
 require "./address"
 require "./actions"
 require "./core"
@@ -95,6 +96,12 @@ module Tawb
 
       def initialize(@endpoint : String)
         @pages = {} of String => Page
+        # Tabs this session opened to ask the browser something, which are
+        # not the reader's tabs and are kept out of their list.
+        @internal = Set(String).new
+        @browser_socket = nil.as(String?)
+        @browser_channel = nil.as(Transport::Channel?)
+        @browser_next_id = 0_i64
       end
 
       # The tabs the browser has open, in the order it lists them.
@@ -113,7 +120,9 @@ module Tawb
           next nil unless object["type"]?.try(&.as_s?) == "page"
           socket = object["webSocketDebuggerUrl"]?.try(&.as_s?)
           next nil unless socket
-          {id: object["id"].as_s, socket: socket,
+          target_id = object["id"].as_s
+          next nil if @internal.includes?(target_id)
+          {id: target_id, socket: socket,
            url: object["url"]?.try(&.as_s?) || "about:blank"}
         end
         open_ids = tabs.map { |tab| tab[:id] }.to_set
@@ -150,6 +159,65 @@ module Tawb
         page
       end
 
+      # A tab of our own, for asking the browser something only one of its
+      # own pages can answer.
+      #
+      # It is created in the background so the browser does not move to it,
+      # and its target is marked before the tab is listed anywhere — which is
+      # soon enough, because the reader's tab list is built from list_pages
+      # and that leaves a marked target out. So the reader is never told a
+      # tab opened, and never finds one in the list that was not theirs.
+      def create_internal_page : Page
+        target_id = browser_command("Target.createTarget", {
+          "url"        => JSON::Any.new("about:blank"),
+          "background" => JSON::Any.new(true),
+        }).as_h["result"].as_h["targetId"].as_s
+        @internal << target_id
+        socket = "#{websocket_base}/devtools/page/#{target_id}"
+        page = Page.new(@endpoint, Target.new(target_id, socket),
+          Transport::WebSocket.new(socket))
+        @pages[target_id] = page
+        page
+      end
+
+      # One command to the browser itself rather than to a tab. The browser's
+      # own socket is not at a fixed path — it carries a per-launch token —
+      # so /json/version is where the browser says where to find it.
+      private def browser_command(method : String,
+                                  params = {} of String => JSON::Any) : JSON::Any
+        socket = @browser_socket ||= begin
+          version = JSON.parse(Transport.http(@endpoint, "GET", "/json/version")).as_h
+          url = version["webSocketDebuggerUrl"]?.try(&.as_s?) ||
+                raise IO::Error.new("the browser named no WebSocket to talk on")
+          # The url names whatever host the browser thinks it is on; the port
+          # is the part that matters and the host we asked is the host we can
+          # reach.
+          "#{websocket_base}#{URI.parse(url).path}"
+        end
+        channel = @browser_channel ||= Transport::WebSocket.new(socket)
+        @browser_next_id += 1
+        wanted = @browser_next_id
+        channel.send({
+          "id"     => JSON::Any.new(wanted),
+          "method" => JSON::Any.new(method),
+          "params" => JSON::Any.new(params),
+        }.to_json)
+        loop do
+          message = JSON.parse(channel.receive)
+          object = message.as_h
+          next unless object["id"]?.try(&.as_i64?) == wanted
+          if error = object["error"]?
+            raise IO::Error.new("CDP #{method} failed: #{error.to_json}")
+          end
+          return message
+        end
+      end
+
+      private def websocket_base : String
+        uri = URI.parse(@endpoint)
+        "ws://#{uri.host}:#{uri.port}"
+      end
+
       # A CDP target id is stable for the life of a tab and means the same
       # thing in every reader process, which is exactly what a claim on a tab
       # needs from a tab's name.
@@ -159,6 +227,7 @@ module Tawb
 
       def close_page(page : Page) : Nil
         @pages.delete(page.target.id)
+        @internal.delete(page.target.id)
         page.close
       end
 
@@ -166,8 +235,15 @@ module Tawb
       # somebody else's to stop: it was launched before this session and a
       # kept one outlives it.
       def close : Nil
-        @pages.each_value { |page| page.detach }
+        # A tab opened to ask the browser something is ours, and goes with
+        # us; the reader's own tabs stay, and so does the browser.
+        @pages.each do |target_id, page|
+          @internal.includes?(target_id) ? (page.close rescue nil) : page.detach
+        end
         @pages.clear
+        @internal.clear
+        @browser_channel.try(&.close) rescue nil
+        @browser_channel = nil
       end
 
       # One connection per tab, kept, so that a tab listed twice is the same
@@ -1088,6 +1164,25 @@ module Tawb
           next unless node
           multiple = params["mode"]?.try(&.as_s?) == "selectMultiple"
           return FileChooser.new(self, node, multiple)
+        end
+      end
+
+      # Wait for the page to answer truthfully, asked again every
+      # `polling_ms`. A WebUI page's own script is a module it fetches after
+      # the document exists, so the document being there is not the page
+      # being there.
+      def wait_for_function(expression : String, timeout_ms : Int32 = 15_000,
+                            polling_ms : Int32 = 100) : Bool
+        deadline = Time.instant + timeout_ms.milliseconds
+        loop do
+          answered = begin
+            evaluate(expression).as_bool? || false
+          rescue
+            false
+          end
+          return true if answered
+          return false if Time.instant >= deadline
+          sleep polling_ms.milliseconds
         end
       end
 
