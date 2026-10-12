@@ -964,11 +964,23 @@ module Tawb
     def activate(item : JSON::Any, page : FirefoxDriver::Page? = @page) : JSON::Any
       acting = page || raise IO::Error.new("this core has no page")
       object = item.as_h
+      if object["nativeControl"]?
+        pressed = native_control(item, acting, "tweb.nativeControl")
+        return JSON::Any.new({
+          "how" => JSON::Any.new("native-control"),
+          "status" => pressed ? JSON::Any.new(nil) : JSON::Any.new(
+            "The browser's #{object["name"]?.try(&.as_s?) || "media"} control is no longer visible."),
+        })
+      end
       held = object["pressFrame"]? ? nil : handle_for(item, acting)
       Actions.activate_item(acting.protocol, acting.context_id, item, held)
     end
 
     def focus_control(item : JSON::Any, page : FirefoxDriver::Page? = @page) : Bool
+      if item.as_h["nativeControl"]?
+        acting = page || raise IO::Error.new("this core has no page")
+        return native_control(item, acting, "tweb.focusNativeControl")
+      end
       handle = handle_for(item, page)
       Actions.focus_control(handle)
       true
@@ -979,6 +991,11 @@ module Tawb
     def adjust_control(item : JSON::Any, key : String,
                        page : FirefoxDriver::Page? = @page) : JSON::Any
       acting = page || raise IO::Error.new("this core has no page")
+      if item.as_h["nativeControl"]?
+        FirefoxDriver::Keyboard.new(acting.protocol, acting.context_id).press(key)
+        return JSON::Any.new({"changed" => JSON::Any.new(true),
+                              "fallback" => JSON::Any.new(false)})
+      end
       handle = handle_for(item, acting)
       role = item.as_h["role"]?.try(&.as_s?)
       keyboard = FirefoxDriver::Keyboard.new(acting.protocol, handle.context_id)
@@ -1170,10 +1187,26 @@ module Tawb
 
     def real_click(item : JSON::Any, page : FirefoxDriver::Page? = @page) : JSON::Any
       acting = page || raise IO::Error.new("this core has no page")
+      if item.as_h["nativeControl"]?
+        pressed = native_control(item, acting, "tweb.nativeControl")
+        return JSON::Any.new({"ok" => JSON::Any.new(pressed),
+          "reason" => pressed ? JSON::Any.new(nil) : JSON::Any.new(
+            "the browser's #{item.as_h["name"]?.try(&.as_s?) || "media"} control is no longer visible")})
+      end
       handle = handle_for(item, acting)
       Actions.real_click(acting.protocol, handle.context_id, handle)
     ensure
       handle.try(&.dispose)
+    end
+
+    private def native_control(item : JSON::Any, page : FirefoxDriver::Page,
+                               symbol : String) : Bool
+      object = item.as_h
+      token = object["nativeControl"]? || return false
+      scope = item_scope(object["frame"]?, page)
+      scope.evaluate("(token) => { const press = window[Symbol.for('#{symbol}')]; return typeof press === 'function' && press(token.media, token.index); }", token).as_bool? || false
+    rescue
+      false
     end
 
     private def item_scope(frame : JSON::Any?, page : FirefoxDriver::Page) : FirefoxDriver::Frame | FirefoxDriver::Page
