@@ -2105,6 +2105,15 @@ The browser differentials (`test/browser/crystal_*.test.js`,
 a real accessibility tree extracts to, what a real field reads back, what a
 real mutation observer reports. They run one at a time.
 
+`test/browser/crystal_interactive.test.js` is the end of that line: both
+readers in a tmux pane, each started for itself and launching its own
+Firefox, compared on the rendered screen and on the terminal cursor — which
+is what a screen reader follows — and then on whether a launched browser goes
+when the reader does and a kept one stays. A tmux pane is the smallest thing
+that is a terminal, and the pane is the only channel; nothing about either
+reader's internals is read. It is also what found the detached-spawn
+difference that `crystal/src/tawb/detach.cr` exists to settle.
+
 ## If this is ever rewritten or embedded elsewhere
 
 [`PORTING.md`](PORTING.md) is the seam: which ~970 lines must stay JavaScript
