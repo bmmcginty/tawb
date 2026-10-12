@@ -59,6 +59,110 @@ module Tawb
       raise IO::Error.new(text.lines.first? || text)
     end
 
+    # The browser, as a tab inventory (src/cdp_browser.js
+    # CdpBrowserContext).
+    #
+    # Chromium's HTTP endpoint is what lists and creates targets, and each
+    # tab gets a protocol connection of its own. The JavaScript original
+    # multiplexes one connection because it listens across every target at
+    # once; a reader here acts on one tab at a time, and the tab it acts on
+    # is the tab it is connected to.
+    class BrowserSession
+      getter endpoint : String
+
+      def initialize(@endpoint : String)
+        @pages = {} of String => Page
+      end
+
+      # The tabs the browser has open, in the order it lists them.
+      #
+      # Only tabs: a listing also carries extension background pages, the
+      # browser's own interface windows and service workers, and none of
+      # those is something a reader can read. And only tabs that will accept
+      # a connection — a target listed while it is still being created, or
+      # one that goes between the listing and the connection, is not in the
+      # list rather than being the reason there is no list. That is what the
+      # JavaScript original's own listing means by a wired page.
+      def list_pages : Array(Page)
+        listed = JSON.parse(Transport.http(@endpoint, "GET", "/json/list")).as_a
+        tabs = listed.compact_map do |entry|
+          object = entry.as_h
+          next nil unless object["type"]?.try(&.as_s?) == "page"
+          socket = object["webSocketDebuggerUrl"]?.try(&.as_s?)
+          next nil unless socket
+          {id: object["id"].as_s, socket: socket,
+           url: object["url"]?.try(&.as_s?) || "about:blank"}
+        end
+        open_ids = tabs.map { |tab| tab[:id] }.to_set
+
+        # A tab that has gone takes its connection with it.
+        @pages.each do |target_id, page|
+          page.detach unless open_ids.includes?(target_id)
+        end
+        @pages.select! { |target_id, _page| open_ids.includes?(target_id) }
+
+        # First-seen order, so that stepping between tabs does not depend on
+        # which one the browser was last looking at: Chromium lists the most
+        # recently used first, and a list that reorders itself under the
+        # reader is not a list they can step through.
+        by_id = tabs.to_h { |tab| {tab[:id], tab} }
+        ordered = @pages.keys.compact_map { |target_id| by_id[target_id]? }
+        ordered += tabs.reject { |tab| @pages.has_key?(tab[:id]) }
+        ordered.compact_map do |tab|
+          begin
+            page_for(tab[:id], tab[:socket], tab[:url])
+          rescue
+            nil
+          end
+        end
+      end
+
+      def existing_page : Page
+        list_pages.first? || raise IO::Error.new("Chromium exposed no tab to read")
+      end
+
+      def create_page : Page
+        page = Page.new(@endpoint)
+        @pages[page.target.id] = page
+        page
+      end
+
+      # A CDP target id is stable for the life of a tab and means the same
+      # thing in every reader process, which is exactly what a claim on a tab
+      # needs from a tab's name.
+      def target_id_for(page : Page) : String
+        page.target.id
+      end
+
+      def close_page(page : Page) : Nil
+        @pages.delete(page.target.id)
+        page.close
+      end
+
+      # Let go of every tab this session connected to. The browser itself is
+      # somebody else's to stop: it was launched before this session and a
+      # kept one outlives it.
+      def close : Nil
+        @pages.each_value { |page| page.detach }
+        @pages.clear
+      end
+
+      # One connection per tab, kept, so that a tab listed twice is the same
+      # page object both times — which is what the reader's own tab list and
+      # its claims are compared by.
+      private def page_for(target_id : String, socket : String, url : String) : Page
+        if page = @pages[target_id]?
+          page.set_url(url)
+          return page
+        end
+        page = Page.new(@endpoint, Target.new(target_id, socket),
+          Transport::WebSocket.new(socket))
+        page.set_url(url)
+        @pages[target_id] = page
+        page
+      end
+    end
+
     # A value living in the page, held by reference (src/cdp_page.js
     # CdpHandle). The handle is the called function's first argument, as
     # Playwright has it rather than as CDP has it, so the page-side assets
@@ -599,10 +703,18 @@ module Tawb
       end
 
       def close : Nil
+        @closed = true
         @socket.close
         Transport.http(@endpoint, "GET", "/json/close/#{@target.id}")
       rescue
         @socket.close rescue nil
+      end
+
+      # Let go of the connection without closing the tab: the tab belongs to
+      # the browser, and a reader leaving is not a reason to take it away.
+      def detach : Nil
+        @socket.close
+      rescue
       end
 
       def close_browser : Nil

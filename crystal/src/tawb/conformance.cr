@@ -510,6 +510,8 @@ module Tawb
         sent ? JSON::Any.new(pressed) : JSON::Any.new(nil)
       when "cdp.scenario"
         cdp_scenario(payload)
+      when "cdp.tabs_scenario"
+        cdp_tabs_scenario(payload)
       when "dump.resolve_target"
         object = payload.as_h
         existing = object["existing"].as_a.map(&.as_s).to_set
@@ -3439,6 +3441,41 @@ module Tawb
         end
       end
       JSON::Any.new(observations)
+    end
+
+    # The tab inventory against a real Chromium: what the browser lists, what
+    # a new tab adds, and that a closed one goes. The listing is the browser's
+    # own, so this needs a browser; the JavaScript original answers the same
+    # questions through its own driver.
+    private def self.cdp_tabs_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      session = Cdp::BrowserSession.new(object["endpoint"].as_s)
+      opened = nil.as(Cdp::Page?)
+      begin
+        before = session.list_pages
+        opened = session.create_page
+        opened.not_nil!.goto(object["url"].as_s, "domcontentloaded")
+        after = session.list_pages
+        title = opened.not_nil!.title
+        target = session.target_id_for(opened.not_nil!)
+        session.close_page(opened.not_nil!)
+        opened = nil
+        # A tab the browser has closed leaves the listing, which is how the
+        # reader's own tab list is kept honest.
+        remaining = session.list_pages
+        JSON::Any.new({
+          "before"    => JSON::Any.new(before.size.to_i64),
+          "after"     => JSON::Any.new(after.size.to_i64),
+          "remaining" => JSON::Any.new(remaining.size.to_i64),
+          "title"     => JSON::Any.new(title),
+          "url"       => JSON::Any.new(after.map { |page| JSON::Any.new(page.url) }),
+          "targeted"  => JSON::Any.new(after.any? { |page| session.target_id_for(page) == target }),
+          "gone"      => JSON::Any.new(remaining.none? { |page| session.target_id_for(page) == target }),
+        })
+      ensure
+        opened.try(&.close) rescue nil
+        session.close
+      end
     end
 
     private def self.firefox_launch_scenario(payload : JSON::Any) : JSON::Any
