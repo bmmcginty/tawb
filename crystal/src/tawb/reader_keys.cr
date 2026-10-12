@@ -2468,10 +2468,10 @@ module Tawb
     # The browse map
     #
     # One dispatch for everything reading does: quit, go somewhere, move,
-    # toggle, refresh, and press what the cursor is standing on. What it
-    # cannot do yet is the work of the pieces that are still
-    # JavaScript-only: the native dialogs and the keyboard wizard's takeover
-    # of the screen. Those actions are noted where they would go.
+    # toggle, refresh, and press what the cursor is standing on. All of it is
+    # here now; the one key that answers nothing is the browser's own
+    # windows, which this build deliberately does without — see
+    # "browser-question" below for why.
     # ------------------------------------------------------------------
 
     # Asking first: Lynx tells quitting apart from aborting. QUIT asks,
@@ -3198,9 +3198,17 @@ module Tawb
         return nil
       end
 
-      # The browser's own questions are answered by the native-dialog
-      # support, which is a decision the project has not made yet.
+      # The browser's own windows — an extension's consent prompt, and
+      # whatever else is drawn outside a document — are read through the
+      # desktop's accessibility bus. This build deliberately does without
+      # it: it would put a D-Bus and a runtime dependency on an otherwise
+      # static reader, and the two prompts that matter most, a password
+      # challenge and a file chooser, are taken over through the browser's
+      # own protocol instead. So there is never a pending dialog here, and
+      # saying so is better than a key that does nothing.
       if action == "browser-question"
+        Reader.set_status(output, state, page.url,
+          "This build does not read the browser's own windows.")
         return nil
       end
 
