@@ -1285,7 +1285,20 @@ function readerImplementations(index, keysModule) {
       core,
       // The activation path logs against the driver; a scripted state still
       // carries the name it would have in the real loop.
-      driver: spec.driver ?? { name: 'scripted' },
+      driver: spec.driver ?? {
+        name: 'scripted',
+        async readLibrary(kind) {
+          if (spec.browserLibrary?.failure) throw new Error(spec.browserLibrary.failure);
+          return spec.browserLibrary?.[kind] ?? [];
+        },
+        async saveBookmark(entry) {
+          if (spec.browserLibrary?.saveFailure) throw new Error(spec.browserLibrary.saveFailure);
+          return entry;
+        },
+        async deleteBookmark() {
+          if (spec.browserLibrary?.deleteFailure) throw new Error(spec.browserLibrary.deleteFailure);
+        },
+      },
       keys: spec.keys ? buildKeys(spec.keys) : null,
       typing: spec.typing ? {
         item: spec.typing.item, text: spec.typing.text ?? '',
@@ -1705,8 +1718,26 @@ function readerImplementations(index, keysModule) {
       const atCalls = [];
       const state = buildJsState(args.state, atCalls);
       let pageUrl = args.page?.url ?? '';
-      let page = { url: () => pageUrl, title: async () => (args.page?.title ?? ''),
-        evaluate: async () => { throw new Error('the page cannot be asked'); },
+      const pageHistory = args.page?.history ?? [];
+      let pageHistoryIndex = args.page?.historyIndex ?? 0;
+      let page = { url: () => pageUrl,
+        title: async () => (pageHistory[pageHistoryIndex]?.title ?? args.page?.title ?? ''),
+        evaluate: async (fn, arg) => {
+          const source = String(fn);
+          if (source.includes('history.go')) {
+            const target = pageHistoryIndex + arg;
+            if (target >= 0 && target < pageHistory.length) {
+              pageHistoryIndex = target;
+              pageUrl = pageHistory[target].url;
+              state.core.blocks = pageHistory[target].blocks ?? [];
+            }
+            return undefined;
+          }
+          if (source.includes('currentEntry')) return pageHistory.length ? String(pageHistoryIndex) : null;
+          if (source.includes('location.href')) return pageUrl;
+          if (source.includes('readyState')) return 'complete';
+          throw new Error('the page cannot be asked');
+        },
         waitForLoadState: async () => {},
         async goto(url) {
           if (args.page?.gotoFault) throw new Error(args.page.gotoFault);
@@ -1745,7 +1776,9 @@ function readerImplementations(index, keysModule) {
           current = [];
           const entry = {};
           let value;
-          if (action.op === 'refresh') {
+          if (action.op === 'libraryKey') {
+            value = await index.handleLibraryKey(action.chunk, state, page) ?? null;
+          } else if (action.op === 'refresh') {
             await index.refresh(state, page, { resetCursor: !!action.resetCursor,
               anchor: action.anchor ?? null });
             value = undefined;

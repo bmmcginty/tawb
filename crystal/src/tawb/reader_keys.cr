@@ -6,6 +6,7 @@ require "./lynx_actions"
 require "./keys"
 require "./input"
 require "./interfaces"
+require "./library"
 require "./auth"
 require "./unicode_escape"
 
@@ -1943,6 +1944,266 @@ module Tawb
     end
 
     # ------------------------------------------------------------------
+    # Page history
+    # ------------------------------------------------------------------
+
+    private def self.remember_history_place(state : Reader::State,
+                                            page : Reader::PageEnv) : Nil
+      state.credentials.try(&.reconsider)
+      state.history_places[page.history_identity] = JSON::Any.new({
+        "cursor" => JSON::Any.new(state.cursor.to_i64),
+        "col" => JSON::Any.new(state.col.to_i64),
+        "scroll" => JSON::Any.new(state.scroll.to_i64),
+      })
+    end
+
+    def self.move_in_history(output : Screen::Output, state : Reader::State,
+                             page : Reader::PageEnv, direction : Int32) : Nil
+      verb = direction < 0 ? "back" : "forward"
+      set_live_value(state, "refreshing", JSON::Any.new(true))
+      begin
+        remember_history_place(state, page)
+        unless page.history_go(direction)
+          Reader.set_status(output, state, page.url, "No page to go #{verb} to.")
+          return
+        end
+        identity = page.history_identity
+        Reader.refresh(state, page, true)
+        if saved = state.history_places[identity]?
+          place = saved.as_h
+          state.cursor = Math.min(Math.max((place["cursor"]?.try(&.as_i64?) || 0).to_i32, 0),
+            Math.max(state.lines.size - 1, 0))
+          state.col = (place["col"]?.try(&.as_i64?) || 0).to_i32
+          state.scroll = (place["scroll"]?.try(&.as_i64?) || 0).to_i32
+          Reader.clamp_col(state)
+          Reader.clamp_scroll(state)
+        end
+        set_live_value(state, "href", JSON::Any.new(page.url))
+        set_live_value(state, "navigated", JSON::Any.new(false))
+        Reader.render(output, state, page.url, true)
+        Reader.set_status(output, state, page.url, "Went #{verb} to #{page.url}")
+      rescue error
+        reason = (error.message || error.to_s).lines.first? || error.to_s
+        Reader.set_status(output, state, page.url, "Could not go #{verb}: #{reason}")
+      ensure
+        set_live_value(state, "refreshing", JSON::Any.new(false))
+      end
+    end
+
+    # ------------------------------------------------------------------
+    # Browser libraries
+    # ------------------------------------------------------------------
+
+    def self.show_library(output : Screen::Output, state : Reader::State,
+                          page : Reader::PageEnv, filter : String) : Nil
+      library = state.library || return
+      object = library.as_h
+      object["filter"] = JSON::Any.new(filter)
+      rows = object["rows"].as_a.select do |row|
+        Library.matches?(row.as_h["text"].as_s, filter)
+      end
+      object["blocks"] = JSON::Any.new(rows.map do |row|
+        JSON::Any.new({"text" => row.as_h["text"],
+                       "entry" => row.as_h["entry"]? || JSON::Any.new(nil)})
+      end)
+      state.cursor = 0
+      state.col = 0
+      state.scroll = 0
+      Reader.relayout(state)
+      Reader.render(output, state, page.url, true)
+      if rows.empty?
+        Reader.set_status(output, state, page.url,
+          filter.empty? ? "No entries." : "No entries match \"#{filter}\".")
+      end
+    end
+
+    def self.open_library(output : Screen::Output, state : Reader::State,
+                          page : Reader::PageEnv, kind : String) : Nil
+      provider = state.browser_library
+      label = Library::KIND_LABELS[kind]? || kind
+      unless provider
+        Reader.set_status(output, state, page.url,
+          "This Firefox has no library agent endpoint; restart it through tawb to read #{label.downcase}.")
+        return
+      end
+      Reader.set_status(output, state, page.url, "Reading #{label.downcase}…")
+      begin
+        entries = provider.read(kind)
+      rescue error
+        reason = (error.message || error.to_s).lines.first? || error.to_s
+        Reader.set_status(output, state, page.url,
+          "Could not read #{label.downcase}: #{reason}")
+        return
+      end
+      rows = entries.map do |entry|
+        JSON::Any.new({"text" => JSON::Any.new(Library.entry_line(kind, entry)),
+                       "entry" => entry})
+      end
+      state.library = JSON::Any.new({
+        "kind" => JSON::Any.new(kind), "label" => JSON::Any.new(label),
+        "filter" => JSON::Any.new(""), "rows" => JSON::Any.new(rows),
+        "blocks" => JSON::Any.new([] of JSON::Any),
+        "place" => JSON::Any.new({
+          "cursor" => JSON::Any.new(state.cursor.to_i64), "col" => JSON::Any.new(state.col.to_i64),
+          "scroll" => JSON::Any.new(state.scroll.to_i64), "title" => JSON::Any.new(state.title),
+        }),
+      })
+      set_live_value(state, "refreshing", JSON::Any.new(true))
+      state.mode = "library"
+      state.title = "#{label} — #{entries.size}"
+      show_library(output, state, page, "")
+    end
+
+    def self.close_library(output : Screen::Output, state : Reader::State,
+                           page : Reader::PageEnv, note : String? = nil) : Nil
+      library = state.library || return
+      place = library.as_h["place"].as_h
+      state.library = nil
+      state.mode = "browse"
+      set_live_value(state, "refreshing", JSON::Any.new(false))
+      state.title = place["title"].as_s
+      Reader.relayout(state)
+      state.cursor = Math.min((place["cursor"]?.try(&.as_i64?) || 0).to_i32,
+        Math.max(state.lines.size - 1, 0))
+      state.col = (place["col"]?.try(&.as_i64?) || 0).to_i32
+      state.scroll = (place["scroll"]?.try(&.as_i64?) || 0).to_i32
+      Reader.clamp_col(state); Reader.clamp_scroll(state)
+      Reader.render(output, state, page.url, true)
+      Reader.set_status(output, state, page.url, note) if note
+    end
+
+    private def self.ask_bookmark_name(output : Screen::Output, state : Reader::State,
+                                       page : Reader::PageEnv, keyboard : Keyboard?,
+                                       initial : String) : String?
+      return nil unless keyboard
+      state.core.mark_input
+      previous_mode = state.mode
+      state.mode = "line"
+      state.line_prompt = Reader::LinePrompt.new("Bookmark", Reader::Buffer.new(initial, initial.size))
+      token = keyboard.claim
+      Reader.draw_hint(output, state, true)
+      Reader.draw_line_prompt(output, state)
+      begin
+        loop do
+          key = keyboard.next_key(token)
+          return nil if key.is_a?(Input::Eof)
+          chunk = key.as(String)
+          return nil if key_is(chunk, "Escape", state)
+          return state.line_prompt.not_nil!.buffer.text if chunk == "\r" || chunk == "\n"
+          buffer = state.line_prompt.not_nil!.buffer
+          if editing = Edit.edit_action(chunk, keymap_for(state))
+            edited = Edit::Buffer.new(buffer.text, buffer.caret)
+            Edit.apply_buffer_edit(edited, editing)
+            buffer.text = edited.text; buffer.caret = edited.caret
+          elsif !chunk.starts_with?(ESC) && chunk >= " "
+            buffer.text = buffer.text[0, buffer.caret] + chunk + buffer.text[buffer.caret..]
+            buffer.caret += chunk.size
+          end
+          Reader.draw_line_prompt(output, state)
+        end
+      ensure
+        keyboard.release(token)
+        state.line_prompt = nil
+        state.mode = previous_mode
+        Reader.draw_hint(output, state, true)
+      end
+    end
+
+    def self.bookmark_page(output : Screen::Output, state : Reader::State,
+                           page : Reader::PageEnv, keyboard : Keyboard?) : Nil
+      provider = state.browser_library
+      unless provider
+        Reader.set_status(output, state, page.url,
+          "This Firefox has no library agent endpoint; restart it through tawb to add bookmarks.")
+        return
+      end
+      if page.url.empty? || page.url.downcase == "about:blank"
+        Reader.set_status(output, state, page.url, "There is no page here to bookmark.")
+        return
+      end
+      suggested = state.title.strip
+      suggested = page.url if suggested.empty?
+      name = ask_bookmark_name(output, state, page, keyboard, suggested)
+      unless name
+        Reader.set_status(output, state, page.url, "Not bookmarked.")
+        return
+      end
+      begin
+        saved = provider.save(page.url, name.strip.empty? ? suggested : name.strip).as_h
+        title = saved["title"]?.try(&.as_s?) || suggested
+        folder = saved["folder"]?.try(&.as_s?)
+        where = folder && !folder.empty? ? " in #{folder}" : ""
+        Reader.set_status(output, state, page.url, saved["existed"]?.try(&.as_bool?) ?
+          "Already bookmarked as \"#{title}\"#{where} — not filed again." :
+          "Bookmarked \"#{title}\"#{where}.")
+      rescue error
+        Reader.set_status(output, state, page.url,
+          "Could not bookmark it: #{(error.message || error.to_s).lines.first?}")
+      end
+    end
+
+    def self.handle_library_key(output : Screen::Output, state : Reader::State,
+                                page : Reader::PageEnv, keyboard : Keyboard?, chunk : String) : String?
+      state.core.mark_input
+      library = state.library
+      unless library
+        state.mode = "browse"
+        return nil
+      end
+      object = library.as_h
+      label = object["label"].as_s
+      if key_is(chunk, "Escape", state)
+        close_library(output, state, page, "Closed #{label.downcase}.")
+        return nil
+      end
+      action = keymap_for(state).action_for(chunk)
+      return "quit" if action == "quit" || action == "abort"
+      last = state.lines.size - 1
+      if key_is(chunk, "ArrowDown", state)
+        Reader.move_selection(output, state, page.url, Math.min(state.cursor + 1, last)); return nil
+      elsif key_is(chunk, "ArrowUp", state)
+        Reader.move_selection(output, state, page.url, Math.max(state.cursor - 1, 0)); return nil
+      elsif key_is(chunk, "PageDown", state)
+        Reader.move_screen(output, state, 1, page.url); return nil
+      elsif key_is(chunk, "PageUp", state)
+        Reader.move_screen(output, state, -1, page.url); return nil
+      end
+      if (chunk == "\r" || chunk == "\n")
+        entry = Reader.current_block(state).try(&.as_h).try(&.["entry"]?)
+        url = entry.try(&.as_h?).try(&.["url"]?).try(&.as_s?)
+        unless url && !url.empty?
+          Reader.set_status(output, state, page.url, "Move to an entry first."); return nil
+        end
+        close_library(output, state, page)
+        load_address(output, state, page, keyboard, url)
+        return nil
+      end
+      if object["kind"].as_s == "bookmarks" && action == "delete-bookmark"
+        entry = Reader.current_block(state).try(&.as_h).try(&.["entry"]?)
+        unless entry
+          Reader.set_status(output, state, page.url, "Move to a bookmark first."); return nil
+        end
+        if ask_yes_no(output, state, keyboard,
+             "Remove bookmark \"#{entry.as_h["title"]?.try(&.as_s?) || entry.as_h["url"]?.try(&.as_s?)}\"?")
+          state.browser_library.try(&.delete(entry))
+          object["rows"].as_a.reject! { |row| row.as_h["entry"]? == entry }
+          show_library(output, state, page, object["filter"].as_s)
+          Reader.set_status(output, state, page.url, "Removed bookmark.")
+        else
+          Reader.set_status(output, state, page.url, "Bookmark not removed.")
+        end
+        return nil
+      end
+      filter = object["filter"].as_s
+      if key_is(chunk, "Backspace", state)
+        show_library(output, state, page, filter.empty? ? filter : filter[0, filter.size - 1])
+      elsif !chunk.starts_with?(ESC) && chunk >= " "
+        show_library(output, state, page, filter + chunk)
+      end
+      nil
+    end
+
+    # ------------------------------------------------------------------
     # Tabs
     #
     # A tab switch replaces the whole document the buffer describes, so it
@@ -2494,19 +2755,24 @@ module Tawb
         return nil
       end
 
-      # The history traversal helpers are still JavaScript-only; back and
-      # forward arrive with them.
       if action == "history-back" || action == "history-forward"
+        move_in_history(output, state, page, action == "history-back" ? -1 : 1)
         return nil
       end
 
-      # The browser's own lists — bookmarks, history, downloads, the link
-      # lists, the document info — are the library integration, ported with
-      # the bookmarks and history work.
-      if action == "bookmarks" || action == "add-bookmark" ||
-         action == "visited-links" || action == "session-history" ||
-         action == "delete-bookmark" || action == "history" ||
-         action == "downloads" || action == "list-links" ||
+      if action == "bookmarks" || action == "history" || action == "downloads"
+        open_library(output, state, page, action.not_nil!)
+        return nil
+      end
+      if action == "add-bookmark"
+        bookmark_page(output, state, page, keyboard)
+        return nil
+      end
+      # Session lists, reference lists and document information use the same
+      # library screen; their row producers are connected with the remaining
+      # Lynx host-screen work.
+      if action == "visited-links" || action == "session-history" ||
+         action == "delete-bookmark" || action == "list-links" ||
          action == "list-addresses" || action == "document-info"
         return nil
       end

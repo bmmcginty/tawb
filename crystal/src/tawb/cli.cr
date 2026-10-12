@@ -167,6 +167,9 @@ module Tawb
         state.short_links = options["shortLinks"].as_bool
         state.escape_unicode = options["escapeUnicode"].as_bool
         state.search = options["search"].as_s
+        library_port = launched.try(&.library_port) ||
+          Endpoint.read_record(profile).try(&.["libraryPort"]?.try(&.as_i?).try(&.to_i32))
+        state.browser_library = Interactive::LibraryBinding.new(library_port) if library_port
         state.rows = terminal_rows
         state.cols = terminal_columns
         state.keys = if state.interface == "lynx"
@@ -216,6 +219,8 @@ module Tawb
           break if chunk == ReaderKeys::ALWAYS_QUIT
           current = tabs.current_page
           verdict = case state.mode
+                    when "library"
+                      ReaderKeys.handle_library_key(terminal, state, current, keyboard, chunk)
                     when "choose"
                       ReaderKeys.handle_choose_key(terminal, state, current, chunk); nil
                     when "type"

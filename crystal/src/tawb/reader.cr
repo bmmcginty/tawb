@@ -160,6 +160,8 @@ module Tawb
       abstract def stop_loading : Nil
       # Read the same address again, with or without the cache.
       abstract def reload(ignore_cache : Bool) : Nil
+      abstract def history_identity : String
+      abstract def history_go(direction : Int32) : Bool
     end
 
     # Tab ownership sits beside the page interface rather than in the key
@@ -175,6 +177,12 @@ module Tawb
       abstract def close_tab(page : PageEnv) : Nil
       abstract def tab_position(page : PageEnv) : NamedTuple(position: Int32, of: Int32)
       abstract def tab_label(page : PageEnv) : String
+    end
+
+    module LibraryEnv
+      abstract def read(kind : String) : Array(JSON::Any)
+      abstract def save(url : String, title : String) : JSON::Any
+      abstract def delete(entry : JSON::Any) : Nil
     end
 
     module CredentialEnv
@@ -715,6 +723,8 @@ module Tawb
       property core : CoreEnv
       property tabs : TabEnv?
       property credentials : CredentialEnv?
+      property browser_library : LibraryEnv?
+      property history_places : Hash(String, JSON::Any)
       property keys : Keys::Keymap?
       property typing : Typing?
       property address : AddressBar?
@@ -764,6 +774,8 @@ module Tawb
         @core = CoreState.new
         @tabs = nil
         @credentials = nil
+        @browser_library = nil
+        @history_places = {} of String => JSON::Any
         @keys = nil
         @typing = nil
         @address = nil

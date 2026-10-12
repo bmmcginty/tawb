@@ -3,6 +3,7 @@ require "uri"
 require "./core"
 require "./fields"
 require "./input"
+require "./library"
 require "./reader"
 require "./reader_keys"
 require "./runtime"
@@ -28,6 +29,24 @@ module Tawb
       def goto(url : String) : Nil; @raw.goto(url); end
       def stop_loading : Nil; @raw.stop_loading; end
       def reload(ignore_cache : Bool) : Nil; @raw.reload(ignore_cache: ignore_cache); end
+      def history_identity : String
+        key = @raw.evaluate("() => globalThis.navigation?.currentEntry?.key || null").as_s?
+        key ? "entry:#{key}" : "url:#{url}"
+      rescue
+        "url:#{url}"
+      end
+      def history_go(direction : Int32) : Bool
+        before = history_identity
+        @raw.evaluate("(delta) => window.history.go(delta)", JSON::Any.new(direction.to_i64))
+        deadline = Time.instant + 1500.milliseconds
+        while Time.instant < deadline
+          sleep 50.milliseconds
+          current = @raw.evaluate("() => location.href").as_s? || @raw.url
+          @raw.set_url(current)
+          return true if history_identity != before
+        end
+        false
+      end
       def goto_blank : Nil; @raw.goto("about:blank", "domcontentloaded"); end
       def close : Nil; @raw.close; end
     end
@@ -211,6 +230,29 @@ module Tawb
         end
       end
       private def unwrap(page : Reader::PageEnv) : FirefoxDriver::Page; page.as(Page).raw; end
+    end
+
+    class LibraryBinding
+      include Reader::LibraryEnv
+      def initialize(@port : Int32); end
+      def read(kind : String) : Array(JSON::Any)
+        answer = FirefoxAgent.ask(@port, JSON::Any.new({
+          "kind" => JSON::Any.new(kind), "max" => JSON::Any.new(Library::MAX_ENTRIES.to_i64),
+        }))
+        Library.order_entries(kind, answer.as_a)
+      end
+      def save(url : String, title : String) : JSON::Any
+        FirefoxAgent.ask(@port, JSON::Any.new({
+          "kind" => JSON::Any.new("save"), "url" => JSON::Any.new(url),
+          "title" => JSON::Any.new(title),
+        }))
+      end
+      def delete(entry : JSON::Any) : Nil
+        FirefoxAgent.ask(@port, JSON::Any.new({
+          "kind" => JSON::Any.new("remove"),
+          "bookmarkGuid" => entry.as_h["bookmarkGuid"]? || JSON::Any.new(""),
+        }))
+      end
     end
 
     class CredentialBinding

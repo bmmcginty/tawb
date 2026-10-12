@@ -1529,6 +1529,9 @@ module Tawb
       property goto_hang : Bool
       property reload_fault : String?
       property blocks : Array(JSON::Any)?
+      property history : Array(JSON::Any)
+      property history_index : Int32
+      property history_changed : Proc(Array(JSON::Any), Nil)?
 
       def initialize(@url : String, @title : String, @fail_press = false)
         @presses = [] of String
@@ -1536,6 +1539,9 @@ module Tawb
         @goto_hang = false
         @reload_fault = nil
         @blocks = nil
+        @history = [] of JSON::Any
+        @history_index = 0
+        @history_changed = nil
       end
 
       def url : String
@@ -1565,6 +1571,41 @@ module Tawb
 
       def reload(ignore_cache : Bool) : Nil
         raise IO::Error.new(@reload_fault.not_nil!) if @reload_fault
+      end
+
+      def history_identity : String
+        @history.empty? ? "url:#{@url}" : "entry:#{@history_index}"
+      end
+
+      def history_go(direction : Int32) : Bool
+        return false if @history.empty?
+        target = @history_index + direction
+        return false unless target.in?(0...@history.size)
+        @history_index = target
+        entry = @history[target].as_h
+        @url = entry["url"].as_s
+        @title = entry["title"]?.try(&.as_s?) || ""
+        blocks = entry["blocks"]?.try(&.as_a?) || [] of JSON::Any
+        @history_changed.try(&.call(blocks))
+        true
+      end
+    end
+
+    private class ScriptedBrowserLibrary
+      include Reader::LibraryEnv
+      def initialize(@spec : Hash(String, JSON::Any)); end
+      def read(kind : String) : Array(JSON::Any)
+        if failure = @spec["failure"]?.try(&.as_s?)
+          raise IO::Error.new(failure)
+        end
+        @spec[kind]?.try(&.as_a?) || [] of JSON::Any
+      end
+      def save(url : String, title : String) : JSON::Any
+        raise IO::Error.new(@spec["saveFailure"].as_s) if @spec["saveFailure"]?
+        JSON::Any.new({"url" => JSON::Any.new(url), "title" => JSON::Any.new(title)})
+      end
+      def delete(entry : JSON::Any) : Nil
+        raise IO::Error.new(@spec["deleteFailure"].as_s) if @spec["deleteFailure"]?
       end
     end
 
@@ -1663,6 +1704,13 @@ module Tawb
         page.goto_fault = page_spec["gotoFault"]?.try(&.as_s?)
         page.goto_hang = page_spec["gotoHang"]?.try(&.as_bool?) || false
         page.reload_fault = page_spec["reloadFault"]?.try(&.as_s?)
+        if history = page_spec["history"]?.try(&.as_a?)
+          page.history = history
+          page.history_index = (page_spec["historyIndex"]?.try(&.as_i64?) || 0).to_i32
+          page.history_changed = ->(blocks : Array(JSON::Any)) do
+            state.core.as(Reader::CoreState).rescan_blocks = blocks
+          end
+        end
       end
       if core_spec = object["state"].as_h["core"]?.try(&.as_h?)
         if tab_specs = core_spec["tabs"]?.try(&.as_a?)
@@ -1872,6 +1920,9 @@ module Tawb
       end
       state.files = scripted_value(object, "files")
       state.library = object["library"]?
+      if provider = object["browserLibrary"]?.try(&.as_h?)
+        state.browser_library = ScriptedBrowserLibrary.new(provider)
+      end
       state.dialog = object["dialog"]?
       state.options = object["options"]?
       state.controlling = scripted_value(object, "controlling")
@@ -2116,6 +2167,18 @@ module Tawb
         end
         ReaderKeys.handle_address_key(output, state, page.not_nil!, keyboard,
           action["chunk"].as_s)
+      when "libraryKey"
+        return JSON::Any.new(nil) unless page
+        keyboard = nil
+        if keys = action["keys"]?.try(&.as_a?)
+          keyboard = ScriptedKeyboard.new(keys.map do |key|
+            text = key.as_s
+            text == "<eof>" ? Input::EOF.as(Input::Key) : text.as(Input::Key)
+          end)
+        end
+        verdict = ReaderKeys.handle_library_key(output, state, page.not_nil!, keyboard,
+          action["chunk"].as_s)
+        return verdict ? JSON::Any.new(verdict) : JSON::Any.new(nil)
       when "browseKey"
         return JSON::Any.new(nil) unless page
         keyboard = nil
