@@ -2091,6 +2091,107 @@ function editImplementations(edit, keys) {
   return implementations;
 }
 
+// The D-Bus client, as the differential sees it.
+//
+// Marshalling is compared as bytes rather than as behaviour. Two
+// implementations that both decode their own output can both be wrong in the
+// same place and never find out, so each one's hex is handed to the other's
+// decoder and the two encoders are required to produce the same bytes.
+function dbusImplementations(javascript) {
+  const implementations = [{
+    name: 'JavaScript',
+    splitSignature: javascript.splitSignature,
+    typeLength: javascript.typeLength,
+    parseAddress: javascript.parseAddress,
+    encode(message) { return javascript.encodeMessage(message).toString('hex'); },
+    decode(hex) { return dbusMessageShape(javascript.decodeMessage(Buffer.from(hex, 'hex'))); },
+    messageLength(hex) { return javascript.messageLength(Buffer.from(hex, 'hex')); },
+    clientScenario(socket, steps) { return dbusClientScenario(javascript, socket, steps); },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    splitSignature(signature) { return call('dbus.split_signature', { signature }); },
+    typeLength(signature, at = 0) { return call('dbus.type_length', { signature, at }); },
+    parseAddress(address) { return call('dbus.parse_address', { address }); },
+    encode(message) { return call('dbus.encode_message', { message }); },
+    decode(hex) { return call('dbus.decode_message', { hex }); },
+    messageLength(hex) { return call('dbus.message_length', { hex }); },
+    clientScenario(socket, steps) { return callAsync('dbus.client_scenario', { socket, steps }); },
+  });
+  return implementations;
+}
+
+// One decoded message, as the two implementations have to agree on it. The
+// JavaScript decoder answers a plain object whose numbers are numbers; the
+// Crystal decoder answers the same field names through JSON, so the shapes are
+// brought together here rather than in each test.
+function dbusMessageShape(message) {
+  return {
+    type: message.type,
+    flags: message.flags,
+    serial: message.serial,
+    bodyLength: message.bodyLength,
+    signature: message.signature,
+    body: message.body.map(dbusValueShape),
+    path: message.path,
+    iface: message.iface,
+    member: message.member,
+    destination: message.destination,
+    sender: message.sender,
+    errorName: message.errorName,
+    replySerial: message.replySerial,
+  };
+}
+
+function dbusValueShape(value) {
+  if (Array.isArray(value)) return value.map(dbusValueShape);
+  if (typeof value === 'bigint') return Number(value);
+  return value;
+}
+
+// The JavaScript client walked through the same steps the Crystal conformance
+// scenario walks, so that a refusal is compared as a refusal rather than as a
+// thrown test.
+async function dbusClientScenario(javascript, socket, steps) {
+  const bus = await javascript.connect(`unix:path=${socket}`);
+  const results = [];
+  try {
+    for (const step of steps) {
+      try {
+        if (step.type === 'call') {
+          const body = await bus.call({
+            destination: step.destination,
+            path: step.path,
+            iface: step.iface,
+            member: step.member,
+            signature: step.signature || '',
+            body: step.body || [],
+            timeout: step.timeout || 5000,
+          });
+          results.push({ ok: true, body: body.map(dbusValueShape) });
+        } else if (step.type === 'request_name') {
+          const outcome = await bus.requestName(step.name, step.flags || 0);
+          results.push({ ok: true, outcome });
+        } else if (step.type === 'process_id') {
+          const pid = await bus.processIdOf(step.name);
+          results.push({ ok: true, pid });
+        } else if (step.type === 'close') {
+          bus.close();
+          results.push({ ok: true });
+        } else {
+          throw new Error(`unknown D-Bus scenario step ${step.type}`);
+        }
+      } catch (error) {
+        results.push({ ok: false, name: error.dbusName ?? null, error: String(error.message || '') });
+      }
+    }
+  } finally {
+    bus.close();
+  }
+  return { name: bus.name, results };
+}
+
 function endpointImplementations(javascript) {
   const implementations = [{
     name: 'JavaScript',
@@ -3020,7 +3121,7 @@ function unicodeImplementations(javascript) {
 module.exports = {
   call, callAsync, addressImplementations, cdpImplementations, ariaImplementations, bidiImplementations,
   blockImplementations, coreImplementations, coreTabImplementations,
-  dumpImplementations, editImplementations,
+  dbusImplementations, dumpImplementations, editImplementations,
   endpointImplementations,
   firefoxAgentImplementations,
   firefoxAutomationImplementations, firefoxHandleImplementations, firefoxLaunchImplementations,

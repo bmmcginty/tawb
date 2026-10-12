@@ -6,6 +6,7 @@ require "./auth"
 require "./blocks"
 require "./bidi"
 require "./core"
+require "./dbus"
 require "./key_wizard"
 require "./edit"
 require "./remap"
@@ -531,6 +532,22 @@ module Tawb
         JSON::Any.new(Dump.format_ax_blocks(
           object["blocks"].as_a, object["escape_unicode"]?.try(&.as_bool?) || false
         ))
+      when "dbus.split_signature"
+        JSON::Any.new(Dbus.split_signature(payload.as_h["signature"].as_s).map { |type| JSON::Any.new(type) })
+      when "dbus.type_length"
+        object = payload.as_h
+        JSON::Any.new(Dbus.type_length(object["signature"].as_s, object["at"]?.try(&.as_i?) || 0).to_i64)
+      when "dbus.parse_address"
+        JSON::Any.new(Dbus.parse_address(payload.as_h["address"]?.try(&.as_s?)))
+      when "dbus.encode_message"
+        JSON::Any.new(dbus_encode(payload.as_h["message"].as_h).hexstring)
+      when "dbus.decode_message"
+        dbus_message_json(Dbus.decode_message(payload.as_h["hex"].as_s.hexbytes))
+      when "dbus.message_length"
+        length = Dbus.message_length(payload.as_h["hex"].as_s.hexbytes)
+        length ? JSON::Any.new(length.to_i64) : JSON::Any.new(nil)
+      when "dbus.client_scenario"
+        dbus_client_scenario(payload)
       when "endpoint.free_port"
         JSON::Any.new(Endpoint.free_port.to_i64)
       when "endpoint.port_of"
@@ -4167,6 +4184,143 @@ module Tawb
         "readers"  => JSON::Any.new(readers.map { |reader| JSON::Any.new(reader.messages) }),
         "timeline" => JSON::Any.new(timeline),
         "reasons"  => JSON::Any.new(reasons.map { |reason| JSON::Any.new(reason) }),
+      })
+    end
+
+
+    # A D-Bus argument as the test wrote it in JSON. A JSON object with both a
+    # "signature" and a "value" is a variant, because a variant is the one
+    # D-Bus value that carries a type of its own.
+    private def self.dbus_argument(json : JSON::Any) : Dbus::Argument
+      if object = json.as_h?
+        if object.has_key?("signature") && object.has_key?("value")
+          return Dbus::Variant.new(object["signature"].as_s, dbus_argument(object["value"]))
+        end
+        raise ArgumentError.new("a D-Bus argument object must be a variant")
+      end
+      if array = json.as_a?
+        built = [] of Dbus::Argument
+        array.each { |each| built << dbus_argument(each) }
+        return built
+      end
+      case raw = json.raw
+      when Nil    then nil
+      when Bool   then raw
+      when String then raw
+      when Int64  then raw
+      when Float64 then raw
+      else             raise ArgumentError.new("cannot use #{raw.class} as a D-Bus argument")
+      end
+    end
+
+    private def self.dbus_arguments(json : Array(JSON::Any)) : Array(Dbus::Argument)
+      built = [] of Dbus::Argument
+      json.each { |each| built << dbus_argument(each) }
+      built
+    end
+
+    private def self.dbus_value_json(value : Dbus::Value) : JSON::Any
+      case value
+      when Bool    then JSON::Any.new(value)
+      when String  then JSON::Any.new(value)
+      when Float64 then JSON::Any.new(value)
+      when UInt64  then JSON::Any.new(value.to_i64)
+      when Int      then JSON::Any.new(value.to_i64)
+      when Array    then JSON::Any.new(value.map { |each| dbus_value_json(each) })
+      else               JSON::Any.new(nil)
+      end
+    end
+
+    private def self.dbus_body_json(body : Array(Dbus::Value)) : JSON::Any
+      JSON::Any.new(body.map { |each| dbus_value_json(each) })
+    end
+
+    private def self.dbus_encode(message : Hash(String, JSON::Any)) : Bytes
+      Dbus.encode_message(
+        type: message["type"]?.try(&.as_i?) || Dbus::MESSAGE_METHOD_CALL,
+        flags: message["flags"]?.try(&.as_i?) || 0,
+        serial: (message["serial"]?.try(&.as_i?) || 1).to_u32,
+        path: message["path"]?.try(&.as_s?),
+        iface: message["iface"]?.try(&.as_s?),
+        member: message["member"]?.try(&.as_s?),
+        destination: message["destination"]?.try(&.as_s?),
+        error_name: message["errorName"]?.try(&.as_s?),
+        reply_serial: message["replySerial"]?.try(&.as_i?).try(&.to_u32),
+        signature: message["signature"]?.try(&.as_s?) || "",
+        body: dbus_arguments(message["body"]?.try(&.as_a?) || [] of JSON::Any),
+      )
+    end
+
+    private def self.dbus_message_json(message : Dbus::Message) : JSON::Any
+      reply_serial = message.reply_serial
+      JSON::Any.new({
+        "type"         => JSON::Any.new(message.type.to_i64),
+        "flags"        => JSON::Any.new(message.flags.to_i64),
+        "serial"       => JSON::Any.new(message.serial.to_i64),
+        "bodyLength"   => JSON::Any.new(message.body_length.to_i64),
+        "signature"    => JSON::Any.new(message.signature),
+        "body"         => dbus_body_json(message.body),
+        "path"         => JSON::Any.new(message.path),
+        "iface"        => JSON::Any.new(message.iface),
+        "member"       => JSON::Any.new(message.member),
+        "destination"  => JSON::Any.new(message.destination),
+        "sender"       => JSON::Any.new(message.sender),
+        "errorName"    => JSON::Any.new(message.error_name),
+        "replySerial"  => reply_serial ? JSON::Any.new(reply_serial.to_i64) : JSON::Any.new(nil),
+      })
+    end
+
+    # The client, driven against a bus the test is running. Each step answers
+    # either what the bus returned or what the bus refused with, so a refusal
+    # is part of the comparison rather than the end of the scenario.
+    private def self.dbus_client_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      connection = Dbus.connect("unix:path=#{object["socket"].as_s}")
+      results = [] of JSON::Any
+      begin
+        (object["steps"]?.try(&.as_a?) || [] of JSON::Any).each do |raw|
+          step = raw.as_h
+          begin
+            case step["type"].as_s
+            when "call"
+              body = connection.call(
+                destination: step["destination"]?.try(&.as_s?),
+                path: step["path"]?.try(&.as_s?),
+                iface: step["iface"]?.try(&.as_s?),
+                member: step["member"]?.try(&.as_s?),
+                signature: step["signature"]?.try(&.as_s?) || "",
+                body: dbus_arguments(step["body"]?.try(&.as_a?) || [] of JSON::Any),
+                timeout: (step["timeout"]?.try(&.as_i?) || 5000).milliseconds,
+              )
+              results << JSON::Any.new({"ok" => JSON::Any.new(true), "body" => dbus_body_json(body)})
+            when "request_name"
+              outcome = connection.request_name(
+                step["name"].as_s, (step["flags"]?.try(&.as_i?) || 0).to_u32
+              )
+              results << JSON::Any.new({"ok" => JSON::Any.new(true), "outcome" => JSON::Any.new(outcome.to_i64)})
+            when "process_id"
+              pid = connection.process_id_of(step["name"].as_s)
+              results << JSON::Any.new({"ok" => JSON::Any.new(true), "pid" => JSON::Any.new(pid.to_i64)})
+            when "close"
+              connection.close
+              results << JSON::Any.new({"ok" => JSON::Any.new(true)})
+            else
+              raise ArgumentError.new("unknown D-Bus scenario step #{step["type"]}")
+            end
+          rescue error : Dbus::Error
+            results << JSON::Any.new({
+              "ok"    => JSON::Any.new(false),
+              "name"  => JSON::Any.new(error.dbus_name),
+              "error" => JSON::Any.new(error.message || ""),
+            })
+          end
+        end
+      ensure
+        connection.close
+      end
+      JSON::Any.new({
+        "name"    => JSON::Any.new(connection.name),
+        "results" => JSON::Any.new(results),
       })
     end
 
