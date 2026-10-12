@@ -184,8 +184,9 @@ module Tawb
             state.browser_library = Interactive::LibraryBinding.new(library_port)
           end
         end
-        state.rows = terminal_rows
-        state.cols = terminal_columns
+        size = Runtime.terminal_size
+        state.rows = size[:rows]
+        state.cols = size[:cols]
         state.keys = if state.interface == "lynx"
                        LynxState.lynx_keymap_for(options["lynxReimport"].as_bool,
                          options["lynxExecutable"].as_s, options["lynxConfig"].as_s?)
@@ -241,6 +242,19 @@ module Tawb
         Reader.render(terminal, state, tabs.current_page.url, true)
         core.attach_live rescue nil
 
+        # A window that changed shape: the lines were wrapped to the old
+        # width and the rows counted to the old height, so neither describes
+        # what is on screen now. The wizard and the options screen draw their
+        # own rows, so they are left to redraw themselves.
+        Signal::WINCH.trap do
+          resized = Runtime.terminal_size
+          state.rows = resized[:rows]
+          state.cols = resized[:cols]
+          unless state.mode == "keyboard" || state.mode == "options"
+            Reader.redraw_after_resize(terminal, state, tabs.current_page.url) rescue nil
+          end
+        end
+
         loop do
           key = reader.not_nil!.next
           break if key.is_a?(Input::Eof)
@@ -275,6 +289,7 @@ module Tawb
           break if verdict == "quit"
         end
       ensure
+        Signal::WINCH.reset rescue nil
         reader.try(&.close)
         terminal.restore
         if options["closeInitialTabOnExit"].as_bool && !adopted && page
@@ -382,14 +397,6 @@ module Tawb
       port = uri.port
       raise ArgumentError.new("--connect needs a port or WebSocket URL, not #{connect}") unless port
       "ws://127.0.0.1:#{port}/session"
-    end
-
-    private def self.terminal_rows : Int32
-      ENV["LINES"]?.try(&.to_i32?) || 24
-    end
-
-    private def self.terminal_columns : Int32
-      ENV["COLUMNS"]?.try(&.to_i32?) || 80
     end
 
     private def self.run_dump(options : Hash(String, JSON::Any)) : Nil
