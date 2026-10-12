@@ -1883,6 +1883,7 @@ iframes have been the usual culprit.
 
 ```
 npm test                              # about two seconds, no browser
+tools/test_crystal.sh                 # the same cases against the Crystal port too
 npm run test:browser                  # a real browser and a real page (two at a time)
 xvfb-run -a npm run test:browser      # with no display of your own
 TWEB_TEST_BROWSER=firefox npm run test:browser
@@ -2020,6 +2021,89 @@ reading is offered back by name on the page that says what happened.
 What does not survive the trip: live updating and immediate announcements.
 edbrowse has no way to be told anything by an idle buffer, so `rf` is the
 whole story.
+
+## The native Crystal port
+
+`crystal/` is a second implementation of everything on the terminal side of
+the browser, built so a release can be copied to a Linux machine with no Node
+and no runtime to extract. `tools/build_crystal.sh` writes
+`dist/tawb-crystal` and refuses an output with an ELF interpreter or any
+`DT_NEEDED` entry, because a static executable that quietly acquired a
+dynamic dependency is not the thing being shipped.
+
+What the native reader does today: it reads pages interactively through
+Firefox, in the ordinary interface and in the Lynx one, and it writes
+`--dump` output through Firefox and through Chromium. What it does not do
+yet: interactive Chromium (`crystal/src/tawb/cdp.cr` is the dumping client
+only), the edb front end, and the standalone `--keyboard` wizard. The
+packaged `tawb` command is still the Node one; `resume2.md` carries the
+remaining list.
+
+Only the AX view is extracted natively (`Core::EXTRACTABLE_SOURCES`), so the
+reader is offered a cycle of one view. A view the native extraction cannot
+build is refused with its reason on the status row, rather than answering AX
+blocks under another view's label. The place-keeping either side of a switch
+is ported and tested, so the three remaining extractors are the only thing in
+the way.
+
+### What stays JavaScript
+
+The code that runs *inside the page* cannot be ported, only carried: an
+extractor, a click, or a field read is a function the browser evaluates.
+Those live in `crystal/assets/` as text, generated from their JavaScript
+originals by `tools/update_crystal_assets.js`, and
+`test/crystal_assets.test.js` fails when an asset drifts from the function it
+was generated from. Both runtimes therefore put the same bytes in front of
+the page. Adding one means adding it to the generator and to that test, in
+the same shape — a generated-from header line, then the function source.
+
+`Actions.asset_source` strips the header for the wire; `Fields` and `Core`
+read the file whole. `{{ read_file(...) }}` embeds it at compile time, so the
+executable carries no asset files of its own.
+
+### The conformance protocol
+
+The native modules are not tested on their own. `dist/tawb-crystal
+--conformance <operation>` reads one JSON payload on standard input and
+writes one `{ok, value}` answer, and `test/crystal_impl.js` wraps each
+operation as a second implementation of the module the JavaScript tests
+already drive. A ported test file states its assertions once; the ordinary
+`npm test` runs them against JavaScript, and `tools/test_crystal.sh` runs the
+same cases against both and then asserts that the two answered identically.
+The shipping implementation stays the reference while the port grows.
+
+`Tawb::Conformance.dispatch` is the operation table. Most operations are a
+scripted scenario: a list of steps in, a list of observations out, with the
+JavaScript side running the same steps in process. `reader.draw` is the
+largest — a reader state, a scripted page, a scripted core
+(`Reader::CoreState`, which answers what a rescan finds, where an anchor
+restores to, what an activation changed) and a list of per-keystroke
+operations. Everything the reader cannot answer for itself is an interface
+the loop binds to the real browser and the harness binds to a script:
+`Reader::PageEnv`, `CoreEnv`, `TabEnv`, `LibraryEnv`, `CredentialEnv`, and
+`Place::Elements`.
+
+Adding a ported module is therefore four pieces: the Crystal module, a
+conformance operation for it, an implementation pair in
+`test/crystal_impl.js`, and a test file that runs its script through both and
+compares. Where a scripted answer has to stand in for the page — the element
+a place was taken on, the field being typed into — the scripted side must
+count the same things the real one does, or the differential compares two
+different questions.
+
+### Running it
+
+```
+tools/build_crystal.sh                  # dist/tawb-crystal
+tools/test_crystal.sh                   # every ported specification, both runtimes
+tools/test_crystal.sh test/place_crystal.test.js
+tools/test_crystal_browser.sh           # the differentials that need a real browser
+```
+
+The browser differentials (`test/browser/crystal_*.test.js`,
+`test/browser/live_crystal.test.js`) are the ones no script can settle: what
+a real accessibility tree extracts to, what a real field reads back, what a
+real mutation observer reports. They run one at a time.
 
 ## If this is ever rewritten or embedded elsewhere
 
