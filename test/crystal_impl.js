@@ -2091,6 +2091,206 @@ function editImplementations(edit, keys) {
   return implementations;
 }
 
+// Somewhere for the browser to describe its own windows to, as the
+// differential sees it.
+//
+// The bus has to stay up between the questions asked of it, so the whole run
+// is one scenario rather than one call per question: a conformance call is one
+// process, and a bus that ended with the call could not be asked anything.
+function a11yBusImplementations(javascript) {
+  const implementations = [{
+    name: 'JavaScript',
+    sessionBusAddress(env) { return withEnv(env, () => javascript.sessionBusAddress()); },
+    privateBusConfig: javascript.privateBusConfig,
+    busScenario(steps) { return a11yBusScenario(javascript, steps); },
+    openScenario(env, mode) { return a11yOpenScenario(javascript, env, mode); },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    sessionBusAddress(env) { return callAsync('a11y.session_bus_address', {}, { env }); },
+    privateBusConfig(socketPath) { return call('a11y.private_bus_config', { socketPath }); },
+    busScenario(steps) { return callAsync('a11y.bus_scenario', { steps }, { timeoutMs: 30000 }); },
+    openScenario(env, mode) {
+      return callAsync('a11y.open_scenario', { mode }, { env, timeoutMs: 30000 });
+    },
+  });
+  return implementations;
+}
+
+// An environment set only for the duration of one JavaScript call, because the
+// Crystal side is handed the same variables as a child process environment and
+// the two have to be asked the same question.
+function withEnv(env, fn) {
+  const before = {};
+  for (const [key, value] of Object.entries(env || {})) {
+    before[key] = process.env[key];
+    if (value === null) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    return fn();
+  } finally {
+    for (const [key, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function a11yBusScenario(javascript, steps) {
+  const fs = require('node:fs');
+  const { connect } = require('../src/dbus');
+  const results = [];
+  let started = null;
+  let server = null;
+  let client = null;
+  const clientFor = async () => {
+    if (!client) client = await connect(started.address);
+    return client;
+  };
+  try {
+    for (const step of steps) {
+      try {
+        if (step.type === 'start') {
+          started = await javascript.startSessionBus();
+          results.push({
+            address: started.address,
+            socketExists: fs.existsSync(started.socketPath),
+            configExists: fs.existsSync(`${started.socketPath}.conf`),
+            config: fs.readFileSync(`${started.socketPath}.conf`, 'utf8'),
+          });
+        } else if (step.type === 'activatable') {
+          if (!started) throw new Error('no bus has been started');
+          const [names] = await (await clientFor()).call({
+            destination: 'org.freedesktop.DBus',
+            path: '/org/freedesktop/DBus',
+            iface: 'org.freedesktop.DBus',
+            member: 'ListActivatableNames',
+          });
+          results.push(names);
+        } else if (step.type === 'serve') {
+          if (!started) throw new Error('no bus has been started');
+          server = await connect(started.address);
+          const outcome = await server.requestName(javascript.A11Y_NAME);
+          if (outcome === 1) javascript.serveAccessibilityBus(server, started.address);
+          results.push(outcome);
+        } else if (step.type === 'ask_address') {
+          const [address] = await (await clientFor()).call({
+            destination: javascript.A11Y_NAME,
+            path: '/org/a11y/bus',
+            iface: 'org.a11y.Bus',
+            member: 'GetAddress',
+            timeout: 4000,
+          });
+          results.push(address);
+        } else if (step.type === 'ask_property') {
+          const [value] = await (await clientFor()).call({
+            destination: javascript.A11Y_NAME,
+            path: '/org/a11y/bus',
+            iface: 'org.freedesktop.DBus.Properties',
+            member: 'Get',
+            signature: 'ss',
+            body: [step.interface || 'org.a11y.Status', step.property],
+            timeout: 4000,
+          });
+          results.push(value);
+        } else if (step.type === 'set_property') {
+          const answered = await (await clientFor()).call({
+            destination: javascript.A11Y_NAME,
+            path: '/org/a11y/bus',
+            iface: 'org.freedesktop.DBus.Properties',
+            member: 'Set',
+            signature: 'ssv',
+            body: ['org.a11y.Status', step.property, { signature: 'b', value: true }],
+            timeout: 4000,
+          });
+          results.push(answered[0] === undefined ? '' : answered[0]);
+        } else if (step.type === 'ask_unknown') {
+          const answered = await (await clientFor()).call({
+            destination: javascript.A11Y_NAME,
+            path: '/org/a11y/bus',
+            iface: 'org.a11y.Bus',
+            member: 'SomethingElse',
+            timeout: 4000,
+          });
+          results.push(answered[0] === undefined ? '' : answered[0]);
+        } else if (step.type === 'stop') {
+          if (!started) throw new Error('no bus has been started');
+          if (client) { client.close(); client = null; }
+          if (server) { server.close(); server = null; }
+          started.child.kill('SIGTERM');
+          const socketPath = started.socketPath;
+          const removed = await new Promise((resolve) => {
+            const deadline = Date.now() + 5000;
+            const look = () => {
+              if (!fs.existsSync(socketPath) && !fs.existsSync(`${socketPath}.conf`)) resolve(true);
+              else if (Date.now() >= deadline) resolve(false);
+              else setTimeout(look, 20);
+            };
+            look();
+          });
+          results.push(removed);
+          started = null;
+        } else {
+          throw new Error(`unknown accessibility bus scenario step ${step.type}`);
+        }
+      } catch (error) {
+        results.push({ error: String(error.message || error) });
+      }
+    }
+  } finally {
+    if (client) client.close();
+    if (server) server.close();
+    if (started) {
+      try { started.child.kill('SIGTERM'); } catch { /* already gone */ }
+      const fsLocal = require('node:fs');
+      fsLocal.rmSync(started.socketPath, { force: true });
+      fsLocal.rmSync(`${started.socketPath}.conf`, { force: true });
+    }
+  }
+  return { results };
+}
+
+async function a11yOpenScenario(javascript, env, mode) {
+  const { connect } = require('../src/dbus');
+  const before = {};
+  for (const [key, value] of Object.entries(env || {})) {
+    before[key] = process.env[key];
+    if (value === null) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    const bus = await javascript.openAccessibilityBus();
+    const answer = {
+      available: bus.available,
+      address: bus.address,
+      env: bus.env,
+      owned: bus.owned,
+      pid: bus.pid,
+      reason: bus.reason,
+      reachableAfter: false,
+    };
+    if (mode === 'leave_running') {
+      await bus.leaveRunning();
+      if (bus.address) {
+        try {
+          (await connect(bus.address)).close();
+          answer.reachableAfter = true;
+        } catch { answer.reachableAfter = false; }
+      }
+    } else {
+      await bus.close();
+    }
+    return answer;
+  } finally {
+    for (const [key, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 // Reading a browser's own windows, as the differential sees it.
 //
 // Both implementations are pointed at one accessibility bus served over a real
@@ -3226,7 +3426,8 @@ function unicodeImplementations(javascript) {
 module.exports = {
   call, callAsync, addressImplementations, cdpImplementations, ariaImplementations, bidiImplementations,
   blockImplementations, coreImplementations, coreTabImplementations,
-  atspiImplementations, dbusImplementations, dumpImplementations, editImplementations,
+  a11yBusImplementations, atspiImplementations, dbusImplementations,
+  dumpImplementations, editImplementations,
   endpointImplementations,
   firefoxAgentImplementations,
   firefoxAutomationImplementations, firefoxHandleImplementations, firefoxLaunchImplementations,

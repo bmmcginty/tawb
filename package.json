@@ -1,7 +1,7 @@
 {
   "name": "tawb",
-  "version": "1.0.1",
-  "description": "",
+  "version": "1.1.1",
+  "description": "the linear web in your terminal",
   "main": "src/index.js",
   "bin": {
     "tawb": "src/index.js"

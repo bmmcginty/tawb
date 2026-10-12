@@ -2,6 +2,7 @@ require "json"
 require "./actions"
 require "./address"
 require "./aria"
+require "./a11y_bus"
 require "./atspi"
 require "./auth"
 require "./blocks"
@@ -533,6 +534,15 @@ module Tawb
         JSON::Any.new(Dump.format_ax_blocks(
           object["blocks"].as_a, object["escape_unicode"]?.try(&.as_bool?) || false
         ))
+      when "a11y.session_bus_address"
+        address = A11yBus.session_bus_address
+        address ? JSON::Any.new(address) : JSON::Any.new(nil)
+      when "a11y.private_bus_config"
+        JSON::Any.new(A11yBus.private_bus_config(payload.as_h["socketPath"].as_s))
+      when "a11y.bus_scenario"
+        a11y_bus_scenario(payload)
+      when "a11y.open_scenario"
+        a11y_open_scenario(payload)
       when "atspi.process_group_of"
         group = Atspi.process_group_of(payload.as_h["pid"].as_i.to_i64)
         group ? JSON::Any.new(group) : JSON::Any.new(nil)
@@ -4430,6 +4440,170 @@ module Tawb
         accessibility.close
       end
       JSON::Any.new({"results" => JSON::Any.new(results)})
+    end
+
+
+    # The private session bus and the accessibility service served on top of
+    # it, driven step by step. One scenario rather than one call per question,
+    # because the bus has to stay up between the questions and a conformance
+    # call is one process.
+    private def self.a11y_bus_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      results = [] of JSON::Any
+      started = nil.as(A11yBus::StartedBus?)
+      server = nil.as(Dbus::Connection?)
+      client = nil.as(Dbus::Connection?)
+      begin
+        (object["steps"]?.try(&.as_a?) || [] of JSON::Any).each do |raw|
+          step = raw.as_h
+          begin
+            case step["type"].as_s
+            when "start"
+              started = A11yBus.start_session_bus
+              bus = started.not_nil!
+              results << JSON::Any.new({
+                "address"      => JSON::Any.new(bus.address),
+                "socketExists" => JSON::Any.new(File.exists?(bus.socket_path)),
+                "configExists" => JSON::Any.new(File.exists?("#{bus.socket_path}.conf")),
+                "config"       => JSON::Any.new(File.read("#{bus.socket_path}.conf")),
+              })
+            when "activatable"
+              bus = started || raise ArgumentError.new("no bus has been started")
+              client = Dbus.connect(bus.address) if client.nil?
+              answered = client.not_nil!.call(
+                destination: "org.freedesktop.DBus",
+                path: "/org/freedesktop/DBus",
+                iface: "org.freedesktop.DBus",
+                member: "ListActivatableNames",
+              )[0]?
+              names = [] of JSON::Any
+              if answered.is_a?(Array)
+                answered.each { |name| names << JSON::Any.new(name.as?(String) || "") }
+              end
+              results << JSON::Any.new(names)
+            when "serve"
+              bus = started || raise ArgumentError.new("no bus has been started")
+              server = Dbus.connect(bus.address)
+              outcome = server.not_nil!.request_name(A11yBus::A11Y_NAME)
+              A11yBus.serve_accessibility_bus(server.not_nil!, bus.address) if outcome == 1
+              results << JSON::Any.new(outcome.to_i64)
+            when "ask_address", "ask_property", "ask_unknown", "set_property"
+              bus = started || raise ArgumentError.new("no bus has been started")
+              client = Dbus.connect(bus.address) if client.nil?
+              asking = client.not_nil!
+              answered = case step["type"].as_s
+                         when "ask_address"
+                           asking.call(
+                             destination: A11yBus::A11Y_NAME, path: A11yBus::A11Y_PATH,
+                             iface: A11yBus::A11Y_INTERFACE, member: "GetAddress",
+                             timeout: 4.seconds,
+                           )[0]?
+                         when "ask_property"
+                           asking.call(
+                             destination: A11yBus::A11Y_NAME, path: A11yBus::A11Y_PATH,
+                             iface: A11yBus::PROPERTIES, member: "Get", signature: "ss",
+                             body: [
+                               (step["interface"]?.try(&.as_s?) || A11yBus::STATUS_INTERFACE).as(Dbus::Argument),
+                               step["property"].as_s.as(Dbus::Argument),
+                             ],
+                             timeout: 4.seconds,
+                           )[0]?
+                         when "set_property"
+                           asking.call(
+                             destination: A11yBus::A11Y_NAME, path: A11yBus::A11Y_PATH,
+                             iface: A11yBus::PROPERTIES, member: "Set", signature: "ssv",
+                             body: [
+                               A11yBus::STATUS_INTERFACE.as(Dbus::Argument),
+                               step["property"].as_s.as(Dbus::Argument),
+                               Dbus::Variant.new("b", true).as(Dbus::Argument),
+                             ],
+                             timeout: 4.seconds,
+                           )[0]?
+                         else
+                           asking.call(
+                             destination: A11yBus::A11Y_NAME, path: A11yBus::A11Y_PATH,
+                             iface: A11yBus::A11Y_INTERFACE, member: "SomethingElse",
+                             timeout: 4.seconds,
+                           )[0]?
+                         end
+              results << dbus_value_json(answered.nil? ? "" : answered)
+            when "stop"
+              bus = started || raise ArgumentError.new("no bus has been started")
+              client.try(&.close)
+              server.try(&.close)
+              bus.process.terminate rescue nil
+              bus.process.wait rescue nil
+              # The daemon removes nothing on the way out, so whoever started
+              # the daemon removes the socket and the configuration. Reported
+              # rather than assumed, because a file left behind is the failure.
+              deadline = Time.instant + 5.seconds
+              removed = false
+              while Time.instant < deadline
+                unless File.exists?(bus.socket_path) || File.exists?("#{bus.socket_path}.conf")
+                  removed = true
+                  break
+                end
+                sleep 20.milliseconds
+              end
+              results << JSON::Any.new(removed)
+              started = nil
+              server = nil
+              client = nil
+            else
+              raise ArgumentError.new("unknown accessibility bus scenario step #{step["type"]}")
+            end
+          rescue error
+            results << JSON::Any.new({"error" => JSON::Any.new(error.message || error.class.name)})
+          end
+        end
+      ensure
+        client.try(&.close)
+        server.try(&.close)
+        if leftover = started
+          leftover.process.terminate rescue nil
+          File.delete?(leftover.socket_path)
+          File.delete?("#{leftover.socket_path}.conf")
+        end
+      end
+      JSON::Any.new({"results" => JSON::Any.new(results)})
+    end
+
+    # `A11yBus.open` end to end, including what a kept browser is left with.
+    # `mode` is what the reader would do on the way out: "close" takes the bus
+    # down, "leave_running" hands the bus to a browser that outlives the reader.
+    private def self.a11y_open_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      opened = A11yBus.open
+      env = {} of String => JSON::Any
+      opened.env.each { |key, value| env[key] = JSON::Any.new(value) }
+      answer = {
+        "available" => JSON::Any.new(opened.available?),
+        "address"   => JSON::Any.new(opened.address),
+        "env"       => JSON::Any.new(env),
+        "owned"     => JSON::Any.new(opened.owned?),
+        "pid"       => (pid = opened.pid) ? JSON::Any.new(pid) : JSON::Any.new(nil),
+        "reason"    => JSON::Any.new(opened.reason),
+      }
+      if object["mode"]?.try(&.as_s?) == "leave_running"
+        opened.leave_running
+        # The service connection belonged to this reader, but the bus itself is
+        # still where a kept browser expects the bus to be.
+        reachable = if address = opened.address
+                      begin
+                        Dbus.connect(address).close
+                        true
+                      rescue
+                        false
+                      end
+                    else
+                      false
+                    end
+        answer["reachableAfter"] = JSON::Any.new(reachable)
+      else
+        opened.close
+        answer["reachableAfter"] = JSON::Any.new(false)
+      end
+      JSON::Any.new(answer)
     end
 
     private def self.reader_index(step : Hash(String, JSON::Any)) : Int32

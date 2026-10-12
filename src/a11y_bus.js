@@ -341,4 +341,9 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
 
 module.exports = {
   openAccessibilityBus, sessionBusAddress, startSessionBus, serveAccessibilityBus, A11Y_NAME,
+  // Exported for the Crystal differential, which has to compare the
+  // configuration the two implementations write rather than only the bus that
+  // comes up on it: the absence of <servicedir> is the whole reason the
+  // configuration is written by hand.
+  privateBusConfig,
 };
