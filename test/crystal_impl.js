@@ -2091,6 +2091,111 @@ function editImplementations(edit, keys) {
   return implementations;
 }
 
+// Reading a browser's own windows, as the differential sees it.
+//
+// Both implementations are pointed at one accessibility bus served over a real
+// socket (see `atspi_bus.js`), and both walk the same steps. The JavaScript
+// client is driven here rather than in the test so that the two sides answer in
+// the same shape: a control carries its states whether or not the walk filled
+// them in, because the Crystal port gives every control the same fields and
+// JavaScript leaves the ones it did not ask about undefined.
+function atspiImplementations(javascript) {
+  const implementations = [{
+    name: 'JavaScript',
+    processGroupOf(pid) { return javascript.processGroupOf(pid); },
+    scenario(socket, steps) { return atspiScenario(javascript, socket, steps); },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    processGroupOf(pid) { return call('atspi.process_group_of', { pid }); },
+    scenario(socket, steps) { return callAsync('atspi.scenario', { socket, steps }); },
+  });
+  return implementations;
+}
+
+function atspiControlShape(control) {
+  return {
+    bus: control.bus,
+    path: control.path,
+    role: control.role,
+    name: control.name,
+    value: control.value ?? '',
+    checked: control.checked === true,
+    focused: control.focused === true,
+    isDefault: control.isDefault === true,
+  };
+}
+
+function atspiReadingShape(reading) {
+  return {
+    role: reading.role,
+    name: reading.name,
+    lines: reading.lines,
+    buttons: reading.buttons.map(atspiControlShape),
+    toggles: reading.toggles.map(atspiControlShape),
+    fields: reading.fields.map(atspiControlShape),
+    truncated: reading.truncated,
+  };
+}
+
+async function atspiScenario(javascript, socket, steps) {
+  const a11y = await javascript.openAccessibility({ address: `unix:path=${socket}` });
+  const results = [];
+  let application = null;
+  let topLevels = [];
+  let reading = null;
+  try {
+    for (const step of steps) {
+      try {
+        if (step.type === 'connections') {
+          results.push(await a11y.connections());
+        } else if (step.type === 'applications') {
+          results.push((await a11y.applications()).map(atspiControlShape));
+        } else if (step.type === 'application_for') {
+          application = await a11y.applicationFor({
+            pid: step.pid ?? null,
+            names: step.names || [],
+          });
+          results.push(application ? atspiControlShape(application) : null);
+        } else if (step.type === 'top_levels') {
+          if (!application) throw new Error('no application has been found yet');
+          topLevels = await a11y.topLevels(application);
+          results.push(topLevels.map(atspiControlShape));
+        } else if (step.type === 'read') {
+          const target = topLevels[step.index];
+          if (!target) throw new Error(`no top level at ${step.index}`);
+          const options = {};
+          if (step.maxDepth !== undefined) options.maxDepth = step.maxDepth;
+          if (step.maxNodes !== undefined) options.maxNodes = step.maxNodes;
+          reading = await a11y.read(target, options);
+          results.push(atspiReadingShape(reading));
+        } else if (step.type === 'states') {
+          const states = await a11y.statesOf({ bus: step.bus, path: step.path });
+          results.push({
+            checked: states.checked, focused: states.focused, isDefault: states.isDefault,
+          });
+        } else if (step.type === 'press') {
+          if (!reading) throw new Error('nothing has been read yet');
+          const control = [...reading.buttons, ...reading.toggles]
+            .find((each) => each.name === step.name);
+          if (!control) throw new Error(`no control named ${step.name}`);
+          results.push(await a11y.press(control));
+        } else if (step.type === 'press_path') {
+          results.push(await a11y.press({ bus: step.bus, path: step.path }));
+        } else {
+          throw new Error(`unknown AT-SPI scenario step ${step.type}`);
+        }
+      } catch (error) {
+        results.push({ error: String(error.message || error) });
+      }
+    }
+  } finally {
+    a11y.close();
+  }
+  return { results };
+}
+
 // The D-Bus client, as the differential sees it.
 //
 // Marshalling is compared as bytes rather than as behaviour. Two
@@ -3121,7 +3226,7 @@ function unicodeImplementations(javascript) {
 module.exports = {
   call, callAsync, addressImplementations, cdpImplementations, ariaImplementations, bidiImplementations,
   blockImplementations, coreImplementations, coreTabImplementations,
-  dbusImplementations, dumpImplementations, editImplementations,
+  atspiImplementations, dbusImplementations, dumpImplementations, editImplementations,
   endpointImplementations,
   firefoxAgentImplementations,
   firefoxAutomationImplementations, firefoxHandleImplementations, firefoxLaunchImplementations,

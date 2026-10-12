@@ -2,6 +2,7 @@ require "json"
 require "./actions"
 require "./address"
 require "./aria"
+require "./atspi"
 require "./auth"
 require "./blocks"
 require "./bidi"
@@ -532,6 +533,11 @@ module Tawb
         JSON::Any.new(Dump.format_ax_blocks(
           object["blocks"].as_a, object["escape_unicode"]?.try(&.as_bool?) || false
         ))
+      when "atspi.process_group_of"
+        group = Atspi.process_group_of(payload.as_h["pid"].as_i.to_i64)
+        group ? JSON::Any.new(group) : JSON::Any.new(nil)
+      when "atspi.scenario"
+        atspi_scenario(payload)
       when "dbus.split_signature"
         JSON::Any.new(Dbus.split_signature(payload.as_h["signature"].as_s).map { |type| JSON::Any.new(type) })
       when "dbus.type_length"
@@ -4322,6 +4328,108 @@ module Tawb
         "name"    => JSON::Any.new(connection.name),
         "results" => JSON::Any.new(results),
       })
+    end
+
+
+    private def self.atspi_described_json(described : Atspi::Described) : JSON::Any
+      JSON::Any.new({
+        "bus"       => JSON::Any.new(described.bus),
+        "path"      => JSON::Any.new(described.path),
+        "role"      => JSON::Any.new(described.role),
+        "name"      => JSON::Any.new(described.name),
+        "value"     => JSON::Any.new(described.value),
+        "checked"   => JSON::Any.new(described.checked),
+        "focused"   => JSON::Any.new(described.focused),
+        "isDefault" => JSON::Any.new(described.is_default),
+      })
+    end
+
+    private def self.atspi_reading_json(reading : Atspi::Reading) : JSON::Any
+      JSON::Any.new({
+        "role"      => JSON::Any.new(reading.role),
+        "name"      => JSON::Any.new(reading.name),
+        "lines"     => JSON::Any.new(reading.lines.map { |line| JSON::Any.new(line) }),
+        "buttons"   => JSON::Any.new(reading.buttons.map { |each| atspi_described_json(each) }),
+        "toggles"   => JSON::Any.new(reading.toggles.map { |each| atspi_described_json(each) }),
+        "fields"    => JSON::Any.new(reading.fields.map { |each| atspi_described_json(each) }),
+        "truncated" => JSON::Any.new(reading.truncated),
+      })
+    end
+
+    # Reading a browser's own windows, driven against an accessibility bus the
+    # test is serving. The scenario carries the application, the top levels and
+    # the last reading between steps, because that is the order a reader asks
+    # in: find the browser, list what the browser has open, read the dialog,
+    # press the dialog's button.
+    private def self.atspi_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      accessibility = Atspi.open(address: "unix:path=#{object["socket"].as_s}")
+      results = [] of JSON::Any
+      application = nil.as(Atspi::Described?)
+      top_levels = [] of Atspi::Described
+      reading = nil.as(Atspi::Reading?)
+      begin
+        (object["steps"]?.try(&.as_a?) || [] of JSON::Any).each do |raw|
+          step = raw.as_h
+          begin
+            case step["type"].as_s
+            when "connections"
+              results << JSON::Any.new(accessibility.connections.map { |name| JSON::Any.new(name) })
+            when "applications"
+              found = accessibility.applications
+              results << JSON::Any.new(found.map { |each| atspi_described_json(each) })
+            when "application_for"
+              application = accessibility.application_for(
+                pid: step["pid"]?.try(&.as_i?).try(&.to_i64),
+                names: (step["names"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s),
+              )
+              found = application
+              results << (found ? atspi_described_json(found) : JSON::Any.new(nil))
+            when "top_levels"
+              found = application || raise ArgumentError.new("no application has been found yet")
+              top_levels = accessibility.top_levels(found)
+              results << JSON::Any.new(top_levels.map { |each| atspi_described_json(each) })
+            when "read"
+              target = top_levels[step["index"].as_i]? ||
+                       raise ArgumentError.new("no top level at #{step["index"]}")
+              reading = accessibility.read(
+                target,
+                max_depth: step["maxDepth"]?.try(&.as_i?) || Atspi::MAX_DEPTH,
+                max_nodes: step["maxNodes"]?.try(&.as_i?) || Atspi::MAX_NODES,
+              )
+              results << atspi_reading_json(reading.not_nil!)
+            when "states"
+              states = accessibility.states_of(
+                Atspi::Node.new(step["bus"].as_s, step["path"].as_s)
+              )
+              results << JSON::Any.new({
+                "checked"   => JSON::Any.new(states.checked),
+                "focused"   => JSON::Any.new(states.focused),
+                "isDefault" => JSON::Any.new(states.is_default),
+              })
+            when "press"
+              wanted = step["name"].as_s
+              held = reading || raise ArgumentError.new("nothing has been read yet")
+              control = (held.buttons + held.toggles).find { |each| each.name == wanted } ||
+                        raise ArgumentError.new("no control named #{wanted}")
+              results << JSON::Any.new(accessibility.press(control.node))
+            when "press_path"
+              results << JSON::Any.new(accessibility.press(
+                Atspi::Node.new(step["bus"].as_s, step["path"].as_s)
+              ))
+            else
+              raise ArgumentError.new("unknown AT-SPI scenario step #{step["type"]}")
+            end
+          rescue error
+            results << JSON::Any.new({
+              "error" => JSON::Any.new(error.message || error.class.name),
+            })
+          end
+        end
+      ensure
+        accessibility.close
+      end
+      JSON::Any.new({"results" => JSON::Any.new(results)})
     end
 
     private def self.reader_index(step : Hash(String, JSON::Any)) : Int32
