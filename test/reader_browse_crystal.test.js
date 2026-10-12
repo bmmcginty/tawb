@@ -395,3 +395,119 @@ test('enter activates what the cursor stands on', { skip: needsCrystal }, async 
   assert.equal(result.state.statusMsg, 'Activated: Second — no visible change.');
   assert.deepEqual(result.state.activated, [{ role: 'button', name: 'Second' }]);
 });
+
+// Switching views is the one place the reader's position cannot be carried
+// across as a line number: each view describes the same document in its own
+// line list. The place is taken as an element before the switch and looked
+// for again afterwards.
+
+const AX_VIEW = [
+  { text: 'Top story', item: { name: 'Top story', axIndex: 0 } },
+  { text: 'A paragraph that runs on', item: { name: '', role: 'text' } },
+  { text: 'Second story', item: { name: 'Second story', axIndex: 2 } },
+];
+const PAGE_VIEW = [
+  { text: 'Top story', item: { name: 'Top story', renderIndex: 1 } },
+  { text: 'Article', item: { name: 'Article', renderIndex: 3 } },
+  { text: 'A paragraph that runs on', item: { name: '', role: 'text' } },
+  { text: 'Second story', item: { name: 'Second story', renderIndex: 8 } },
+];
+const SOURCE_VIEW = [
+  { text: '<html>', item: { name: 'html', domIndex: 0 } },
+  { text: '<article>', item: { name: 'article', domIndex: 3 } },
+  { text: 'Second story', item: { name: 'a', domIndex: 8 } },
+];
+
+test('cycling views keeps the place by element', { skip: needsCrystal }, async () => {
+  const state = stateFor(AX_VIEW, {
+    cursor: 2, sources: ['ax', 'render'], keys: bound('cycle-view', '\\'),
+  }, {
+    sourceBlocks: { render: PAGE_VIEW },
+    placeElement: { label: 'Second story', ordinal: 9, total: 40 },
+    placeLocation: { index: 8, exact: true },
+  });
+  const result = await runBoth('cycle', state, [
+    { op: 'browseKey', chunk: '\\' },
+  ], { url: PAGE_URL });
+  assert.equal(result.state.source, 'render');
+  assert.equal(result.state.statusMsg, 'PAGE view.');
+  assert.equal(result.state.cursor, 3, 'the PAGE line the same element produced');
+  assert.deepEqual(result.state.placeDescribed, [{ name: 'Second story', axIndex: 2 }]);
+  assert.deepEqual(result.state.placeArrays, ['tweb.render'],
+    'the view being entered is asked about its own node array');
+  assert.equal(result.state.placeReleases, 1, 'the held element is let go of once');
+});
+
+test('the source toggle goes to SOURCE and back to the view it left',
+  { skip: needsCrystal }, async () => {
+    // The source toggle is a Lynx command: the ordinary interface leaves the
+    // letter it sits on to Lynx, so only the Lynx keymap offers it.
+    const state = stateFor(AX_VIEW, {
+      ...LYNX, cursor: 2, sources: ['ax', 'render', 'source'],
+    }, {
+      sourceBlocks: { source: SOURCE_VIEW, ax: AX_VIEW },
+      placeElement: { label: 'Second story', ordinal: 9, total: 40 },
+    });
+    const toSource = await runBoth('to source', state, [
+      { op: 'browseKey', chunk: '\\' },
+    ], { url: PAGE_URL });
+    assert.equal(toSource.state.source, 'source');
+    assert.equal(toSource.state.presentationSource, 'ax',
+      'the view being left is the one the toggle comes back to');
+    assert.equal(toSource.state.statusMsg, 'SOURCE view.');
+    assert.equal(toSource.state.cursor, 2, 'the markup line whose text is the same');
+
+    const andBack = await runBoth('and back', {
+      ...state, cursor: 2, presentationSource: 'ax',
+      core: { ...state.core, source: 'source', blocks: SOURCE_VIEW },
+    }, [
+      { op: 'browseKey', chunk: '\\' },
+    ], { url: PAGE_URL });
+    assert.equal(andBack.state.source, 'ax');
+    assert.equal(andBack.state.statusMsg, 'AX view.');
+  });
+
+test('a place the new view cannot match is said to be the nearest one',
+  { skip: needsCrystal }, async () => {
+    // The reader was on prose, and the view being entered has neither the
+    // element nor that exact text: what it does have is the label, which is
+    // a guess and is reported as one.
+    const state = stateFor(AX_VIEW, {
+      cursor: 1, sources: ['ax', 'source'], keys: bound('cycle-view', '\\'),
+    }, {
+      sourceBlocks: { source: SOURCE_VIEW },
+      placeElement: { label: 'Second story', ordinal: 9, total: 40 },
+    });
+    const result = await runBoth('nearest', state, [
+      { op: 'browseKey', chunk: '\\' },
+    ], { url: PAGE_URL });
+    assert.equal(result.state.source, 'source');
+    assert.equal(result.state.statusMsg, 'SOURCE view — nearest place.');
+  });
+
+// A view the native extraction cannot build is a Crystal-only case: every
+// view's extractor is available to the JavaScript original, so there is
+// nothing to difference against. The reader must keep the view they had.
+test('a view that cannot be built leaves the reader the view they had',
+  { skip: needsCrystal }, async () => {
+    const crystal = implementations.find((entry) => entry.name === 'Crystal');
+    const state = stateFor(AX_VIEW, {
+      cursor: 2, sources: ['ax', 'render'], keys: bound('cycle-view', '\\'),
+    }, {
+      rescanFailure: {
+        sources: ['render'],
+        message: 'native interactive extraction for render is not ported',
+      },
+      placeElement: { label: 'Second story', ordinal: 9, total: 40 },
+      placeLocation: { index: 8, exact: true },
+    });
+    const result = crystal.draw(JSON.parse(JSON.stringify({
+      state, actions: [{ op: 'browseKey', chunk: '\\' }], page: { url: PAGE_URL },
+    })));
+    assert.equal(result.state.source, 'ax', 'the view that refused is given back');
+    assert.equal(result.state.statusMsg,
+      'Could not show that view: native interactive extraction for render is not ported');
+    assert.equal(result.state.lines.length, AX_VIEW.length,
+      'the buffer the reader was reading is still there');
+    assert.equal(result.state.placeReleases, 1, 'the held element is still let go of');
+  });

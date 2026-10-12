@@ -1,5 +1,6 @@
-# The native port of the line-space half of src/place.js: keeping the
-# reader's place when the view changes, worked out over the wrapped lines.
+# The native port of src/place.js: keeping the reader's place when the view
+# changes, worked out over the wrapped lines and over the element each line
+# came from.
 #
 # The four views describe the same page in four completely different line
 # lists — 135 lines of accessibility tree against 1500 of markup on the same
@@ -16,16 +17,16 @@
 # What all four views do have in common is the element each line came from.
 # Their extractors stash those elements page-side because that is how a line
 # is activated later; AX and INSPECT share the accessibility extractor's
-# references. So a place is an element, not a line — and the element half of
-# src/place.js (capturePlace, restorePlace, and the in-page describeElement /
-# locateElement) needs the element-handle layer and stays with the JavaScript
-# original for now. What lives here is the line-space policy both halves
-# stand on: where a block's lines begin, where a line's blocks sit, and how
-# to land the cursor on text again when an element match was only ever a
-# guess.
+# references. So a place is an element, not a line.
 #
-# Two things the element half leans on, restated because they shape this
-# file too:
+# The element half lives here as `capture_place`, `locate_by_element` and
+# `restore_place`. The element handles those three work through do not: the
+# page-side scripts are `Actions::DESCRIBE_ELEMENT` and
+# `Actions::LOCATE_ELEMENT`, and the holding of one element across a view
+# switch belongs to whatever implements `Place::Elements` — the real core
+# against a browser, a scripted one under the conformance harness.
+#
+# Two things the element half leans on:
 #
 #   Prose has no element of its own in most views — it is a text node, and
 #   the views number elements. The nearest element above the cursor is used
@@ -83,8 +84,33 @@ module Tawb
     # again: the text, the column within it, whether the reader was on the
     # element itself, and — when the page could describe the element — its
     # label and its position in document order.
+    #
+    # `source` is the view the place was taken in, `held` says whether an
+    # element is being held for it, and `frame` is the frame the held element
+    # belongs to. A block of the view being entered only answers for a held
+    # element when the two agree about the frame.
     record Kept, text : String, col : Int32, on_element : Bool, label : String,
-      ordinal : Int64?, total : Int64?, ratio : Float64
+      ordinal : Int64?, total : Int64?, ratio : Float64,
+      source : String = "", held : Bool = false, frame : JSON::Any? = nil
+
+    # The page side of a place: the element the reader was standing on, held
+    # from the capture until the restore is over. One element is held at a
+    # time, exactly as the typing field's is.
+    module Elements
+      # Resolve the element this item came from, hold it, and answer what the
+      # page says about it: {"label", "ordinal", "total"}. Nil when the item
+      # carries no reference, when the page will not describe it, or when the
+      # resolution fails — nothing is held in any of those cases, and the
+      # text fallbacks are what the restore then has to work with.
+      abstract def describe_place_element(item : JSON::Any) : JSON::Any?
+      # Which entry of `array_name` the held element is now:
+      # {"index", "exact"}. Nil when nothing is held, when the view has no
+      # such node array, or when neither the element nor anything above it in
+      # document order appears in that array.
+      abstract def locate_place_element(array_name : String) : JSON::Any?
+      # Let go of the held element. Called once per capture that held one.
+      abstract def release_place_element : Nil
+    end
 
     # Where a text search left the cursor: the line and column, and whether
     # the answer was the reader's own line or merely the same words.
@@ -180,6 +206,49 @@ module Tawb
         i -= 1
       end
       nil
+    end
+
+    # What the reader is reading, taken before the view changes. The text and
+    # the column within it are always there; an element is held as well
+    # whenever the cursor's own block, or the nearest element-bearing block
+    # above it, resolves to one the page will describe.
+    def self.capture_place(view : View, elements : Elements) : Kept?
+      return nil unless view.lines[view.cursor]?
+
+      block_index = block_index_at_line(view, view.cursor, view.col)
+      # A line that names no block at all answers -1, and a negative index
+      # counts from the end of a Crystal array where JavaScript's answers
+      # undefined. Nothing is the right answer here.
+      block = block_index >= 0 ? view.blocks[block_index]? : nil
+      position = position_of_block(view, block_index)
+      text = block ? block.text : ""
+      col = Math.max(0, view.col - (position ? position.col : 0))
+      ratio = view.lines.empty? ? 0.0 : view.cursor / view.lines.size
+      without_element = Kept.new(text: text, col: col, on_element: false,
+        label: "", ordinal: nil, total: nil, ratio: ratio, source: view.source,
+        held: false, frame: nil)
+
+      anchor = anchor_block(view, block_index)
+      return without_element unless anchor
+
+      described = begin
+        elements.describe_place_element(anchor.item)
+      rescue
+        # No reference to be had. The text fallbacks still apply.
+        nil
+      end
+      return without_element unless described && !described.raw.nil?
+
+      object = described.as_h
+      frame = anchor.item.as_h?.try(&.["frame"]?)
+      Kept.new(
+        text: text, col: col,
+        on_element: !!block.try { |current| anchor.same?(current) },
+        label: string(object, "label"),
+        ordinal: object["ordinal"]?.try(&.as_i64?),
+        total: object["total"]?.try(&.as_i64?),
+        ratio: ratio, source: view.source, held: true,
+        frame: frame && !frame.raw.nil? ? frame : nil)
     end
 
     # The line nearest `estimate` that satisfies `test`. Nearest, not first:
@@ -306,6 +375,69 @@ module Tawb
         return land_estimate(view, estimate)
       end
       nil
+    end
+
+    # The held element, found again in the view being entered: ask the page
+    # which entry of this view's node array the element is now, then find the
+    # block of this view carrying that entry and land on it.
+    def self.locate_by_element(view : View, elements : Elements,
+                               place : Kept) : String?
+      return nil unless place.held
+      array_name = NODE_ARRAY[view.source]? || return nil
+      key = INDEX_KEY[view.source]? || return nil
+
+      found = elements.locate_place_element(array_name)
+      return nil unless found && !found.raw.nil?
+      object = found.as_h
+      index = object["index"]?.try(&.as_i64?) || return nil
+      exact = object["exact"]?.try(&.as_bool?) || false
+
+      wanted_frame = place.frame
+      block_index = view.blocks.index do |candidate|
+        item = candidate.item.as_h?
+        next false unless item
+        next false unless item[key]?.try(&.as_i64?) == index
+        frame = item["frame"]?
+        next true if wanted_frame.nil? || frame.nil? || frame.raw.nil?
+        frame == wanted_frame
+      end
+      return nil unless block_index
+
+      land_on(view, block_index, place, exact)
+    end
+
+    # Moves the cursor to wherever the captured place now is. Answers
+    # "exact" when the element itself was found, "near" when it was located
+    # by its surroundings or by text, and nil when the view has nothing to
+    # match — in which case the caller keeps whatever fallback it had.
+    #
+    # An element match that had to settle for an ancestor, or for whatever
+    # sits above the element in document order, is only a guess at where the
+    # reader was. A line whose text is exactly what they were reading is not,
+    # so that line wins — but only when the text match is exact. Anything
+    # less and the element's own neighbourhood is the better answer.
+    def self.restore_place(view : View, elements : Elements,
+                           place : Kept?) : String?
+      return nil unless place
+      quality = nil.as(String?)
+      begin
+        quality = locate_by_element(view, elements, place)
+        if quality != "exact"
+          from_element = {cursor: view.cursor, col: view.col}
+          by_text = locate_by_text(view, place)
+          if by_text != "exact" && quality
+            view.cursor = from_element[:cursor]
+            view.col = from_element[:col]
+          elsif by_text
+            quality = by_text
+          end
+        end
+      rescue
+        quality = nil
+      ensure
+        elements.release_place_element if place.held
+      end
+      quality
     end
 
     private def self.land_line(view : View, position : Position, col : Int32, quality : String) : String

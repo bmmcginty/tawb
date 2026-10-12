@@ -1791,6 +1791,9 @@ module Tawb
           core["popupAt"]?.try(&.as_i64?) || -1_i64)
         scripted = state.core.as(Reader::CoreState)
         scripted.rescan_blocks = core["rescanBlocks"]?.try(&.as_a?)
+        if failure = scripted_value(core, "rescanFailure")
+          scripted.rescan_failure = failure
+        end
         scripted.rescan_cost = (core["rescanCost"]?.try(&.as_i64?) || 0_i64)
         scripted.anchor_json = core["anchor"]?
         scripted.restore_block = (core["restoreBlock"]?.try(&.as_i64?) || -1).to_i32
@@ -1859,7 +1862,26 @@ module Tawb
         end
         scripted.change_index = (core["changeIndex"]?.try(&.as_i64?) || -1).to_i32
         scripted.driver_name = core["driverName"]?.try(&.as_s?) || "scripted"
+        # The place keeper's page side: what the capture is told about the
+        # element, where the restore is told the element now is, and the
+        # blocks each view's own extractor would answer with.
+        if described = scripted_value(core, "placeElement")
+          scripted.place_element = described
+        end
+        if located = scripted_value(core, "placeLocation")
+          scripted.place_location = located
+        end
+        scripted.place_refuses = core["placeRefuses"]?.try(&.as_bool?) || false
+        if per_view = core["sourceBlocks"]?.try(&.as_h?)
+          per_view.each do |view, blocks|
+            scripted.source_blocks[view] = blocks.as_a? || [] of JSON::Any
+          end
+        end
       end
+      if views = object["sources"]?.try(&.as_a?)
+        state.sources = views.map { |view| view.as_s }
+      end
+      state.presentation_source = object["presentationSource"]?.try(&.as_s?)
       if keys = object["keys"]?
         state.keys = build_keymap(keys)
       end
@@ -2295,28 +2317,7 @@ module Tawb
     end
 
     private def self.reader_lines_json(lines : Array(Reader::Line)) : JSON::Any
-      JSON::Any.new(lines.map do |line|
-        entry = {
-          "text"          => JSON::Any.new(line.text),
-          "blockIndex"    => JSON::Any.new(line.block_index.to_i64),
-          "continuation"  => JSON::Any.new(line.continuation),
-          "displayNumber" => line.display_number || JSON::Any.new(nil),
-          "displayIndent" => JSON::Any.new(line.display_indent.to_i64),
-          "displayPrefix" => JSON::Any.new(line.display_prefix),
-          "displaySuffix" => JSON::Any.new(line.display_suffix),
-        } of String => JSON::Any
-        if spans = line.spans
-          entry["spans"] = JSON::Any.new(spans.map do |span|
-            JSON::Any.new({
-              "start"         => JSON::Any.new(span.start.to_i64),
-              "end"           => JSON::Any.new(span.finish.to_i64),
-              "blockIndex"    => JSON::Any.new(span.block_index.to_i64),
-              "displayNumber" => span.display_number || JSON::Any.new(nil),
-            })
-          end)
-        end
-        JSON::Any.new(entry)
-      end)
+      JSON::Any.new(lines.map { |line| Reader.line_json(line) })
     end
 
     private def self.reader_state_json(state : Reader::State) : JSON::Any
@@ -2393,6 +2394,11 @@ module Tawb
         "typingReleased" => JSON::Any.new(scripted.typing_released),
         "inputMarks" => JSON::Any.new(scripted.input_marks.to_i64),
         "atCalls"    => JSON::Any.new(scripted.at_calls.map { |call| JSON::Any.new(call) }),
+        "source"     => JSON::Any.new(state.core.source),
+        "presentationSource" => JSON::Any.new(state.presentation_source),
+        "placeDescribed" => JSON::Any.new(scripted.place_described),
+        "placeArrays" => JSON::Any.new(scripted.place_arrays.map { |name| JSON::Any.new(name) }),
+        "placeReleases" => JSON::Any.new(scripted.place_releases.to_i64),
       })
     end
 
@@ -3049,7 +3055,76 @@ module Tawb
         ordinal: object["ordinal"]?.try(&.as_i64?),
         total: object["total"]?.try(&.as_i64?),
         ratio: object["ratio"]?.try(&.as_f?) || 0.0,
+        source: object["source"]?.try(&.as_s?) || "",
+        held: object["held"]?.try(&.as_bool?) || false,
+        frame: scripted_value(object, "frame"),
       )
+    end
+
+    # The page side of a place, scripted: the description a capture is told
+    # about the element, the location a restore is told the element is at
+    # now, and a count of the releases. The JavaScript differential drives
+    # the same answers through a stand-in element handle, so what is being
+    # compared is the orchestration either side of the page — which fallback
+    # wins, and when the element's own neighbourhood beats a text match.
+    private class ScriptedElements
+      include Place::Elements
+
+      property description : JSON::Any?
+      property location : JSON::Any?
+      property refuses : Bool
+      getter described : Array(JSON::Any)
+      getter arrays : Array(String)
+      getter releases : Int32
+
+      def initialize
+        @description = nil
+        @location = nil
+        @refuses = false
+        @described = [] of JSON::Any
+        @arrays = [] of String
+        @releases = 0
+      end
+
+      # The real core resolves the element, holds it, and disposes of the
+      # handle it could not describe. Counting that disposal as a release
+      # keeps the release count meaning the same thing on both sides.
+      def describe_place_element(item : JSON::Any) : JSON::Any?
+        @described << item
+        raise IO::Error.new("this line carries no element reference") if @refuses
+        described = @description
+        unless described && !described.raw.nil?
+          @releases += 1
+          return nil
+        end
+        described
+      end
+
+      def locate_place_element(array_name : String) : JSON::Any?
+        @arrays << array_name
+        found = @location
+        found && !found.raw.nil? ? found : nil
+      end
+
+      def release_place_element : Nil
+        @releases += 1
+      end
+    end
+
+    private def self.place_kept_json(place : Place::Kept?) : JSON::Any
+      return JSON::Any.new(nil) unless place
+      JSON::Any.new({
+        "source"    => JSON::Any.new(place.source),
+        "text"      => JSON::Any.new(place.text),
+        "col"       => JSON::Any.new(place.col.to_i64),
+        "ratio"     => JSON::Any.new(place.ratio),
+        "onElement" => JSON::Any.new(place.on_element),
+        "label"     => JSON::Any.new(place.label),
+        "ordinal"   => place.ordinal ? JSON::Any.new(place.ordinal.not_nil!) : JSON::Any.new(nil),
+        "total"     => place.total ? JSON::Any.new(place.total.not_nil!) : JSON::Any.new(nil),
+        "held"      => JSON::Any.new(place.held),
+        "frame"     => place.frame || JSON::Any.new(nil),
+      })
     end
 
     private def self.place_position_json(position : Place::Position) : JSON::Any
@@ -3068,10 +3143,34 @@ module Tawb
     private def self.place_scenario(payload : JSON::Any) : JSON::Any
       object = payload.as_h
       view = nil.as(Place::View?)
+      elements = ScriptedElements.new
+      captured = nil.as(Place::Kept?)
       observations = [] of JSON::Any
       object["script"].as_a.each do |step_value|
         step = step_value.as_h
         case step["op"].as_s
+        when "elements"
+          elements.description = scripted_value(step, "description")
+          elements.location = scripted_value(step, "location")
+          elements.refuses = step["refuses"]?.try(&.as_bool?) || false
+          observations.push JSON::Any.new(nil)
+        when "capture_place"
+          captured = Place.capture_place(view.not_nil!, elements)
+          observations.push place_kept_json(captured)
+        when "restore_place"
+          place = step["place"]? ? place_kept(step["place"]) : captured
+          observations.push JSON::Any.new(
+            Place.restore_place(view.not_nil!, elements, place))
+        when "locate_by_element"
+          place = step["place"]? ? place_kept(step["place"]) : captured
+          quality = place ? Place.locate_by_element(view.not_nil!, elements, place) : nil
+          observations.push JSON::Any.new(quality)
+        when "elements_seen"
+          observations.push JSON::Any.new({
+            "described" => JSON::Any.new(elements.described),
+            "arrays"    => JSON::Any.new(elements.arrays.map { |name| JSON::Any.new(name) }),
+            "releases"  => JSON::Any.new(elements.releases.to_i64),
+          })
         when "state"
           blocks = step["blocks"].as_a.map do |entry|
             entry_object = entry.as_h

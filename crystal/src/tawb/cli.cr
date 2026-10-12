@@ -167,6 +167,9 @@ module Tawb
         state.short_links = options["shortLinks"].as_bool
         state.escape_unicode = options["escapeUnicode"].as_bool
         state.search = options["search"].as_s
+        # The views the backslash cycle offers: what the native extraction
+        # can actually build, which today is AX alone.
+        state.sources = Core::EXTRACTABLE_SOURCES.dup
         library_port = launched.try(&.library_port) ||
           Endpoint.read_record(profile).try(&.["libraryPort"]?.try(&.as_i?).try(&.to_i32))
         state.browser_library = Interactive::LibraryBinding.new(library_port) if library_port

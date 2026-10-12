@@ -4,6 +4,7 @@ require "./unicode_escape"
 require "./lynx_display"
 require "./lynx_session"
 require "./layout"
+require "./place"
 
 module Tawb
   # The terminal drawing of src/index.js: the three banner rows, the reading
@@ -204,7 +205,15 @@ module Tawb
     # conformance harness binds it to a scripted one, and the handlers
     # cannot tell the difference — which is the point.
     module CoreEnv
+      # The element a place was taken on is held by whatever implements this,
+      # because the view being entered can only be asked about the element
+      # once its own extraction has run. See Place.capture_place.
+      include Place::Elements
+
       abstract def source : String
+      # Switching views is the one thing that writes the core's view, and it
+      # writes it between the place capture and the rebuild.
+      abstract def source=(value : String) : Nil
       abstract def blocks : Array(JSON::Any)
       abstract def at(index : Int32) : Nil
       abstract def mark_input : Nil
@@ -348,7 +357,7 @@ module Tawb
         end
       end
 
-      property source : String
+      getter source : String
       property blocks : Array(JSON::Any)
       property popup : JSON::Any?
       property popup_at : Int64
@@ -359,6 +368,9 @@ module Tawb
       property followed_popups : Array(String?)
       # Scripted answers, for the conformance harness.
       property rescan_blocks : Array(JSON::Any)?
+      # A view whose extractor refuses: the switch must leave the reader the
+      # view they already had rather than an empty buffer.
+      property rescan_failure : JSON::Any?
       property rescan_cost : Int64
       property anchor_json : JSON::Any?
       property restore_block : Int32
@@ -395,6 +407,20 @@ module Tawb
       property change_targets : Array(JSON::Any)
       property change_index : Int32
       property driver_name : String
+      # The place keeper's page side, scripted: what a capture is told about
+      # the element, what a restore is told about where the element now is,
+      # and whether resolving the element fails outright. The items described
+      # and the arrays asked about are recorded, and so are the releases, so
+      # a test can say the held element was let go of exactly once.
+      property place_element : JSON::Any?
+      property place_location : JSON::Any?
+      property place_refuses : Bool
+      property place_described : Array(JSON::Any)
+      property place_arrays : Array(String)
+      property place_releases : Int32
+      # The blocks a rescan answers for each view, so a view switch under the
+      # harness rebuilds the buffer the way a different extractor would.
+      property source_blocks : Hash(String, Array(JSON::Any))
 
       def initialize(@source = "ax", @blocks = [] of JSON::Any,
                      @popup = nil, @popup_at = -1_i64)
@@ -404,6 +430,7 @@ module Tawb
         @attached_calls = [] of JSON::Any
         @followed_popups = [] of String?
         @rescan_blocks = nil
+        @rescan_failure = nil
         @rescan_cost = 0
         @anchor_json = nil
         @restore_block = -1
@@ -436,6 +463,42 @@ module Tawb
         @change_targets = [] of JSON::Any
         @change_index = -1
         @driver_name = "scripted"
+        @place_element = nil
+        @place_location = nil
+        @place_refuses = false
+        @place_described = [] of JSON::Any
+        @place_arrays = [] of String
+        @place_releases = 0
+        @source_blocks = {} of String => Array(JSON::Any)
+      end
+
+      # The real core resolves the element, holds it, and disposes of the
+      # handle it could not describe. The scripted one answers the same
+      # shapes and counts that disposal as a release, so the release count
+      # means the same thing on both sides of the differential.
+      def describe_place_element(item : JSON::Any) : JSON::Any?
+        @place_described << item
+        raise IO::Error.new("this line carries no element reference") if @place_refuses
+        described = @place_element
+        unless described && !described.raw.nil?
+          @place_releases += 1
+          return nil
+        end
+        described
+      end
+
+      def locate_place_element(array_name : String) : JSON::Any?
+        @place_arrays << array_name
+        found = @place_location
+        found && !found.raw.nil? ? found : nil
+      end
+
+      def release_place_element : Nil
+        @place_releases += 1
+      end
+
+      def source=(value : String) : Nil
+        @source = value
       end
 
       def at(index : Int32) : Nil
@@ -674,7 +737,19 @@ module Tawb
       end
 
       def rescan : Nil
-        if incoming = @rescan_blocks
+        if failure = @rescan_failure
+          if views = failure.as_h["sources"]?.try(&.as_a?)
+            if views.any? { |view| view.as_s == @source }
+              raise IO::Error.new(failure.as_h["message"]?.try(&.as_s?) ||
+                                  "native interactive extraction for #{@source} is not ported")
+            end
+          else
+            raise IO::Error.new(failure.as_h["message"]?.try(&.as_s?) || "the rescan failed")
+          end
+        end
+        if incoming = @source_blocks[@source]?
+          @blocks = incoming
+        elsif incoming = @rescan_blocks
           @blocks = incoming
         end
         @snapshot_cost = @rescan_cost
@@ -749,6 +824,14 @@ module Tawb
       # The search engine an address that is not an address is given to;
       # nil is the default one.
       property search : String?
+      # The views the reader can cycle through, in order. The cycle is what
+      # the core can actually extract: a view whose extractor is not
+      # available is not offered rather than answering another view's blocks
+      # under its label. See Core::EXTRACTABLE_SOURCES.
+      property sources : Array(String)
+      # The view the SOURCE toggle comes back to, remembered when that
+      # toggle leaves a presentation view for SOURCE.
+      property presentation_source : String?
       # A load-more is already asking the page for more; a second request
       # would fight the first one's rebuild.
       property loading_more : Bool
@@ -794,6 +877,8 @@ module Tawb
         @page_log = [] of JSON::Any
         @link_number = nil
         @search = nil
+        @sources = ["ax"]
+        @presentation_source = nil
         @loading_more = false
       end
     end
@@ -931,6 +1016,46 @@ module Tawb
     # to see through the wrapper.
     def self.present?(value : JSON::Any?) : Bool
       value ? !value.raw.is_a?(Nil) : false
+    end
+
+    # One display line as JSON: the shape the layout handed over, which is
+    # also the shape Place reads lines in and the shape the conformance
+    # boundary compares them in.
+    def self.line_json(line : Line) : JSON::Any
+      entry = {
+        "text"          => JSON::Any.new(line.text),
+        "blockIndex"    => JSON::Any.new(line.block_index.to_i64),
+        "continuation"  => JSON::Any.new(line.continuation),
+        "displayNumber" => line.display_number || JSON::Any.new(nil),
+        "displayIndent" => JSON::Any.new(line.display_indent.to_i64),
+        "displayPrefix" => JSON::Any.new(line.display_prefix),
+        "displaySuffix" => JSON::Any.new(line.display_suffix),
+      } of String => JSON::Any
+      if spans = line.spans
+        entry["spans"] = JSON::Any.new(spans.map do |span|
+          JSON::Any.new({
+            "start"         => JSON::Any.new(span.start.to_i64),
+            "end"           => JSON::Any.new(span.finish.to_i64),
+            "blockIndex"    => JSON::Any.new(span.block_index.to_i64),
+            "displayNumber" => span.display_number || JSON::Any.new(nil),
+          })
+        end)
+      end
+      JSON::Any.new(entry)
+    end
+
+    # What Place needs to describe or to find a place: the line list together
+    # with the blocks and the view those lines were numbered against. The
+    # core's view changes during a switch, so each end of the switch takes
+    # its own snapshot rather than reading through the core afterwards.
+    def self.view_of(state : State) : Place::View
+      blocks = state.core.blocks.map do |block|
+        object = block.as_h? || {} of String => JSON::Any
+        Core::Block.new(object["text"]?.try(&.as_s?) || "",
+          object["item"]? || JSON::Any.new(nil))
+      end
+      Place::View.new(state.lines.map { |line| line_json(line) }, blocks,
+        state.cursor, state.col, state.core.source)
     end
 
     def self.restore_anchor(state : State, saved : JSON::Any?) : Nil

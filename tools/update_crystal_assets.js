@@ -9,6 +9,7 @@ const { sliderStateOf } = require('../src/core');
 const { sliderGeometry } = require('../src/driver_firefox');
 const { OBSERVER_SCRIPT, DRAIN_SCRIPT, PULSE_SCRIPT } = require('../src/live');
 const { CLEAR_SCRIPT, PIERCE_PARENT_SCRIPT, libraryParentScript } = require('../src/firefox');
+const { describeElement, locateElement } = require('../src/place');
 
 const assets = {
   'extract_ax_items.js': {
@@ -39,6 +40,12 @@ const assets = {
   'restore_scroll.js': { source: 'src/core.js RESTORE_SCROLL', value: RESTORE_SCROLL.toString() },
   'text_at_fragment.js': {
     source: 'src/core.js TEXT_AT_FRAGMENT', value: TEXT_AT_FRAGMENT.toString(),
+  },
+  'describe_element.js': {
+    source: 'src/place.js describeElement', value: describeElement.toString(),
+  },
+  'locate_element.js': {
+    source: 'src/place.js locateElement', value: locateElement.toString(),
   },
 };
 

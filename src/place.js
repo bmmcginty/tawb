@@ -416,6 +416,9 @@ async function restorePlace(state, page, place) {
 
 module.exports = {
   capturePlace, restorePlace, exactBlockForElement, describeElement, locateElement, hasElement,
+  // Exported for the Crystal differential, which asks the element lookup
+  // the same questions on its own rather than only through restorePlace.
+  locateByElement,
   // The line-space policy, exported so the Crystal differential can drive
   // the same questions the reader asks; the functions themselves are
   // unchanged.

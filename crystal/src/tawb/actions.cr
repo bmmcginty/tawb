@@ -32,6 +32,36 @@ module Tawb
       {{ read_file("#{__DIR__}/../../assets/slider_geometry.js") }})
     FOCUS_CONTROL = "(el) => { el.focus(); return true; }"
     FOCUS_ELEMENT = "(el) => el.focus()"
+    # The page-side half of the place keeper's element search (src/place.js
+    # describeElement and locateElement). DESCRIBE_ELEMENT runs against the
+    # element the reader is standing on and answers a label and a position in
+    # document order. LOCATE_ELEMENT runs after the new view has been built
+    # and answers which entry of that view's node array the same element is
+    # now.
+    DESCRIBE_ELEMENT = asset_source(
+      {{ read_file("#{__DIR__}/../../assets/describe_element.js") }})
+    LOCATE_ELEMENT = asset_source(
+      {{ read_file("#{__DIR__}/../../assets/locate_element.js") }})
+
+    # What the page says about the element the reader is on:
+    # {"label", "ordinal", "total"}, or nil when the reference is not an
+    # element the page will describe.
+    def self.describe_element(handle : FirefoxDriver::Handle) : JSON::Any?
+      described = handle.evaluate(DESCRIBE_ELEMENT)
+      described.raw.nil? ? nil : described
+    end
+
+    # Which entry of `array_name` the held element is now:
+    # {"index", "exact"}, or nil when the element is not in that view's node
+    # array and nothing above it in document order is either. `array_name`
+    # travels as the second argument, which is the form locateElement's
+    # direct-handle branch takes: a handle nested inside an ordinary object
+    # cannot be serialised as a remote object reference.
+    def self.locate_element(handle : FirefoxDriver::Handle,
+                            array_name : String) : JSON::Any?
+      found = handle.evaluate(LOCATE_ELEMENT, JSON::Any.new(array_name))
+      found.raw.nil? ? nil : found
+    end
 
     # Activation through the element's own default action, aimed at the
     # deepest descendant covering its first line box: a handler bound below

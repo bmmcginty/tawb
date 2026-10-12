@@ -69,6 +69,11 @@ module Tawb
     # SOURCE keeps its own page-side node array and is activated through it,
     # rather than by matching role and name. INSPECT carries AX's own references.
     DOM_SOURCES = %w[source]
+    # The views the native extraction can build. AX is the one ported; the
+    # PAGE, INSPECT and SOURCE extractors remain separate release work, so
+    # they are not offered to the reader rather than silently answering AX
+    # under another view's label. See rescan().
+    EXTRACTABLE_SOURCES = ["ax"]
 
     # How far from the old position a re-anchor will look. A live update must
     # never relocate the reader across the page: past this, staying put is the
@@ -376,7 +381,7 @@ module Tawb
     # The buffer
     # -----------------------------------------------------------------------
 
-    getter source : String
+    property source : String
     property blocks : Array(Block)
     # Bumped whenever the block list is replaced wholesale. A front end that
     # holds its own copy — which every front end does, and a front end
@@ -420,6 +425,7 @@ module Tawb
       @live_watcher = Live::Watcher.new
       @chooser = nil
       @typing_handle = nil.as(FirefoxDriver::Handle?)
+      @place_handle = nil.as(FirefoxDriver::Handle?)
       @attached_files = {} of String => Hash(String, AttachedFile)
       # The popup the reader has open, if any, named by the id its control
       # points at. See relocate_popup().
@@ -503,7 +509,7 @@ module Tawb
     # returning AX under the wrong label.
     def rescan(page : FirefoxDriver::Page? = @page) : Array(Block)
       target = page || raise IO::Error.new("this core has no page")
-      unless @source == "ax"
+      unless EXTRACTABLE_SOURCES.includes?(@source)
         raise IO::Error.new("native interactive extraction for #{@source} is not ported")
       end
       started = Time.monotonic
@@ -1532,6 +1538,46 @@ module Tawb
     def release_typing_field : Nil
       handle = @typing_handle
       @typing_handle = nil
+      handle.try(&.dispose) rescue nil
+    end
+
+    # -----------------------------------------------------------------------
+    # The element a place was taken on
+    #
+    # A view switch rebuilds the block list from a different description of
+    # the same document, so the only thing that survives the crossing is the
+    # element itself. One element is held here between the capture and the
+    # restore, exactly as the typing field's is, because the view being
+    # entered has to be asked about the element after its own extraction has
+    # run. See Place.capture_place and Place.restore_place.
+    # -----------------------------------------------------------------------
+
+    def describe_place_element(item : JSON::Any,
+                               page : FirefoxDriver::Page? = @page) : JSON::Any?
+      handle = handle_for(item, page)
+      described = Actions.describe_element(handle)
+      if described.nil?
+        handle.dispose rescue nil
+        return nil
+      end
+      release_place_element
+      @place_handle = handle
+      described
+    rescue
+      handle.try(&.dispose) rescue nil
+      nil
+    end
+
+    def locate_place_element(array_name : String) : JSON::Any?
+      handle = @place_handle || return nil
+      Actions.locate_element(handle, array_name)
+    rescue
+      nil
+    end
+
+    def release_place_element : Nil
+      handle = @place_handle
+      @place_handle = nil
       handle.try(&.dispose) rescue nil
     end
 

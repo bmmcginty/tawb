@@ -2377,10 +2377,8 @@ module Tawb
     # One dispatch for everything reading does: quit, go somewhere, move,
     # toggle, refresh, and press what the cursor is standing on. What it
     # cannot do yet is the work of the pieces that are still
-    # JavaScript-only: switching views by element (the element-handle half
-    # of place.js), the history traversal, the browser's own lists, the
-    # native dialogs, and the keyboard wizard's takeover of the screen.
-    # Those actions are noted where they would go.
+    # JavaScript-only: the native dialogs and the keyboard wizard's takeover
+    # of the screen. Those actions are noted where they would go.
     # ------------------------------------------------------------------
 
     # Asking first: Lynx tells quitting apart from aborting. QUIT asks,
@@ -2433,6 +2431,78 @@ module Tawb
         Reader.set_status(output, state, page.url,
           "Could not reload the page: #{(err.message || err.to_s).lines.first?}")
       end
+    end
+
+    # ------------------------------------------------------------------
+    # Switching views
+    #
+    # The place is taken before the switch and put back after it, by element
+    # rather than by line number: the same page is 135 lines of
+    # accessibility tree and 1500 lines of markup, so nothing about a line
+    # number survives the crossing. Where the element cannot be matched the
+    # reader is told their place could not be kept rather than left to work
+    # out why they are somewhere else.
+    #
+    # `cycle-view` steps to the next view of state.sources. `source-view`
+    # toggles between SOURCE and the presentation view it was last left in.
+    def self.switch_view(output : Screen::Output, state : Reader::State,
+                         page : Reader::PageEnv, presentation : Bool) : Nil
+      cycle = state.sources
+      return if cycle.empty?
+
+      viewport_row = state.cursor - state.scroll
+      anchor = state.core.anchor
+      # The place describes lines in terms of the view they came from, which
+      # is the block list and view in effect — not the core, which has
+      # already moved on by the time the place is put back.
+      before = Reader.view_of(state)
+      place = Place.capture_place(before, state.core)
+
+      previous = state.core.source
+      state.core.source = if presentation
+                            if previous == "source"
+                              state.presentation_source || cycle[0]
+                            else
+                              state.presentation_source = previous
+                              cycle.includes?("source") ? "source" : previous
+                            end
+                          else
+                            at = cycle.index(previous) || -1
+                            cycle[(at + 1) % cycle.size]
+                          end
+
+      begin
+        Reader.refresh(state, page)
+      rescue error
+        # The view refused to build — its extractor is not available, or the
+        # page would not answer. The reader keeps the view they had.
+        state.core.source = previous
+        state.core.release_place_element
+        begin
+          Reader.refresh(state, page, false, anchor)
+        rescue
+          # The view that was already on screen cannot be rebuilt either;
+          # what is in the buffer is the best there is.
+        end
+        Reader.render(output, state, page.url, true)
+        reason = (error.message || error.to_s).lines.first? || error.to_s
+        Reader.set_status(output, state, page.url, "Could not show that view: #{reason}")
+        return
+      end
+
+      after = Reader.view_of(state)
+      kept = Place.restore_place(after, state.core, place)
+      state.cursor = after.cursor
+      state.col = after.col
+      Reader.restore_anchor(state, anchor) unless kept
+      Reader.clamp_col(state)
+      Reader.preserve_viewport_row(state, viewport_row)
+
+      Reader.render(output, state, page.url, false)
+      label = Reader::SOURCE_LABELS[state.core.source]? || state.core.source
+      exact = kept == "exact" || (place.nil? && kept.nil?)
+      Reader.set_status(output, state, page.url,
+        exact ? "#{label} view." : "#{label} view — nearest place.")
     end
 
     private def self.interrupt_loading(output : Screen::Output, state : Reader::State,
@@ -2782,10 +2852,8 @@ module Tawb
         return nil
       end
 
-      # Switching views keeps the reader's place by element, and the
-      # element-handle half of place.js is still JavaScript-only. Until it
-      # is ported, a view switch is not offered here.
       if action == "cycle-view" || action == "source-view"
+        switch_view(output, state, page, action == "source-view")
         return nil
       end
 

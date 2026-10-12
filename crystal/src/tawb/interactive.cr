@@ -62,6 +62,14 @@ module Tawb
       end
 
       def source : String; @core.source; end
+      def source=(value : String) : Nil; @core.source = value; end
+      def describe_place_element(item : JSON::Any) : JSON::Any?
+        @core.describe_place_element(item)
+      end
+      def locate_place_element(array_name : String) : JSON::Any?
+        @core.locate_place_element(array_name)
+      end
+      def release_place_element : Nil; @core.release_place_element; end
       def blocks : Array(JSON::Any)
         @core.blocks.map { |block| JSON::Any.new({"text" => JSON::Any.new(block.text), "item" => block.item}) }
       end

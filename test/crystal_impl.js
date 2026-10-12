@@ -1233,8 +1233,33 @@ function readerImplementations(index, keysModule) {
       async attachLive() { return { armed: true }; },
       async collectLive() {},
       async pulseLive() {},
+      // The place keeper's page side: the element a capture is told about,
+      // where a restore is told that element now is, and a count of the
+      // releases. The handle is a stand-in; nothing here touches a page.
+      placeDescribed: [],
+      placeArrays: [],
+      placeReleases: 0,
+      async handleFor(item) {
+        this.placeDescribed.push(item);
+        if (spec.core?.placeRefuses) throw new Error('this line carries no element reference');
+        const described = spec.core?.placeElement ?? null;
+        const location = spec.core?.placeLocation ?? null;
+        const host = this;
+        return {
+          async evaluate(fn, arg) {
+            if (arg === undefined) return described;
+            host.placeArrays.push(arg);
+            return location;
+          },
+          async dispose() { host.placeReleases += 1; },
+        };
+      },
       async rescan() {
-        if (spec.core?.rescanBlocks) this.blocks = spec.core.rescanBlocks;
+        // Each view has its own extractor, so a rescan after a view switch
+        // answers with that view's own blocks.
+        const perView = spec.core?.sourceBlocks?.[this.source];
+        if (perView) this.blocks = perView;
+        else if (spec.core?.rescanBlocks) this.blocks = spec.core.rescanBlocks;
         this.snapshotCostMs = spec.core?.rescanCost ?? 0;
       },
       anchor: () => (spec.core?.anchor ?? null),
@@ -1332,6 +1357,8 @@ function readerImplementations(index, keysModule) {
       chooser: spec.chooser ?? null,
       linkNumber: spec.linkNumber ?? null,
       search: spec.search ?? null,
+      sources: spec.sources ?? ['ax'],
+      lynxPresentationSource: spec.presentationSource ?? null,
     };
     return state;
   };
@@ -1575,6 +1602,11 @@ function readerImplementations(index, keysModule) {
     inputMarks: state.core.inputMarks ?? 0,
     typingReads: state.core.typingReads ?? 0,
     typingReleased: state.core.typingReleased ?? false,
+    source: state.core.source,
+    presentationSource: state.lynxPresentationSource ?? null,
+    placeDescribed: state.core.placeDescribed ?? [],
+    placeArrays: state.core.placeArrays ?? [],
+    placeReleases: state.core.placeReleases ?? 0,
   });
 
   const scriptedTabPage = (entry = {}) => {
@@ -2644,6 +2676,113 @@ function placeImplementations(place) {
   return implementations;
 }
 
+// The element half of the place keeper: what a capture holds, and which
+// fallback a restore settles on. The page itself is scripted — a stand-in
+// element handle answers describeElement and locateElement with whatever the
+// scenario set — so what the two runtimes are being compared on is the
+// orchestration either side of the page.
+function placeElementImplementations(place) {
+  const keptJson = (kept) => (kept ? {
+    source: kept.source,
+    text: kept.text,
+    col: kept.col,
+    ratio: kept.ratio,
+    onElement: !!kept.onElement,
+    label: kept.label,
+    ordinal: kept.ordinal === undefined ? null : kept.ordinal,
+    total: kept.total === undefined ? null : kept.total,
+    held: !!kept.handle,
+    frame: kept.frame === undefined ? null : kept.frame,
+  } : null);
+
+  const scenario = async (script) => {
+    let state = null;
+    let captured = null;
+    const elements = {
+      description: null, location: null, refuses: false,
+      described: [], arrays: [], releases: 0,
+    };
+    // The real core disposes of a handle it could not describe, so the
+    // stand-in counts that disposal too and the release count means the same
+    // thing on both sides of the differential.
+    const makeHandle = () => ({
+      async evaluate(fn, arg) {
+        if (arg === undefined) return elements.description;
+        elements.arrays.push(arg);
+        return elements.location;
+      },
+      async dispose() { elements.releases += 1; },
+    });
+    const resolveHandle = async (item) => {
+      elements.described.push(item);
+      if (elements.refuses) throw new Error('this line carries no element reference');
+      return makeHandle();
+    };
+    // A place handed in by the scenario rather than captured: the handle is
+    // what `held` means, so one is attached when the scenario says so.
+    const placeOf = (step) => {
+      if (!step.place) return captured;
+      return { ...step.place, handle: step.place.held ? makeHandle() : null };
+    };
+    const observations = [];
+    for (const step of script) {
+      switch (step.op) {
+        case 'state':
+          state = {
+            source: step.source,
+            cursor: step.cursor === undefined ? 0 : step.cursor,
+            col: step.col === undefined ? 0 : step.col,
+            blocks: step.blocks.map((block) => ({ text: block.text, item: block.item })),
+            lines: step.lines,
+          };
+          observations.push(null);
+          break;
+        case 'elements':
+          elements.description = step.description === undefined ? null : step.description;
+          elements.location = step.location === undefined ? null : step.location;
+          elements.refuses = !!step.refuses;
+          observations.push(null);
+          break;
+        case 'capture_place':
+          captured = await place.capturePlace(state, resolveHandle);
+          observations.push(keptJson(captured));
+          break;
+        case 'restore_place':
+          observations.push((await place.restorePlace(state, null, placeOf(step))) ?? null);
+          break;
+        case 'locate_by_element': {
+          const subject = placeOf(step);
+          observations.push(subject
+            ? ((await place.locateByElement(state, null, subject)) ?? null)
+            : null);
+          break;
+        }
+        case 'elements_seen':
+          observations.push({
+            described: elements.described,
+            arrays: elements.arrays,
+            releases: elements.releases,
+          });
+          break;
+        case 'cursor':
+          observations.push({ cursor: state.cursor, col: state.col });
+          break;
+        default:
+          throw new Error(`unknown place element scenario op ${step.op}`);
+      }
+    }
+    return observations;
+  };
+
+  const implementations = [{ name: 'JavaScript', scenario }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    async scenario(script) { return call('place.scenario', { script }); },
+  });
+  return implementations;
+}
+
 function readerCommands(root) {
   const commands = [{
     name: 'JavaScript', command: process.execPath, args: ['src/index.js'],
@@ -2697,5 +2836,5 @@ module.exports = {
   inputImplementations, interfaceImplementations, keyWizardImplementations, keymapImplementations, layoutImplementations,
   liveImplementations, liveRealImplementations, lynxActionsImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, lynxOptionsImplementations, lynxPagesImplementations, lynxStateImplementations, marionetteImplementations, optionImplementations,
-  placeImplementations, readerCommands, readerImplementations, screenImplementations, sessionImplementations, unicodeImplementations,
+  placeElementImplementations, placeImplementations, readerCommands, readerImplementations, screenImplementations, sessionImplementations, unicodeImplementations,
 };
