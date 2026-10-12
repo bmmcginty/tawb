@@ -7,6 +7,7 @@ require "./keys"
 require "./input"
 require "./interfaces"
 require "./library"
+require "./lynx_pages"
 require "./auth"
 require "./unicode_escape"
 
@@ -2017,6 +2018,68 @@ module Tawb
       end
     end
 
+    private def self.open_internal_rows(output : Screen::Output, state : Reader::State,
+                                        page : Reader::PageEnv, kind : String, label : String,
+                                        rows : Array(LynxPages::Row), empty : String? = nil) : Nil
+      if rows.empty? && empty
+        Reader.set_status(output, state, page.url, empty)
+        return
+      end
+      encoded = rows.map do |row|
+        JSON::Any.new({"text" => JSON::Any.new(row.text),
+                       "entry" => row.entry || JSON::Any.new(nil)})
+      end
+      state.library = JSON::Any.new({
+        "kind" => JSON::Any.new(kind), "label" => JSON::Any.new(label),
+        "filter" => JSON::Any.new(""), "rows" => JSON::Any.new(encoded),
+        "blocks" => JSON::Any.new([] of JSON::Any),
+        "place" => JSON::Any.new({
+          "cursor" => JSON::Any.new(state.cursor.to_i64), "col" => JSON::Any.new(state.col.to_i64),
+          "scroll" => JSON::Any.new(state.scroll.to_i64), "title" => JSON::Any.new(state.title),
+        }),
+      })
+      set_live_value(state, "refreshing", JSON::Any.new(true))
+      state.mode = "library"
+      state.title = "#{label} — #{rows.size}"
+      show_library(output, state, page, "")
+    end
+
+    def self.open_session_list(output : Screen::Output, state : Reader::State,
+                               page : Reader::PageEnv, visited : Bool) : Nil
+      if visited
+        open_internal_rows(output, state, page, "visited", "Links visited in this session",
+          LynxPages.visited_rows(state.visited_links), "No links followed in this session yet.")
+      else
+        open_internal_rows(output, state, page, "session", "Documents held in this session",
+          LynxPages.session_rows(state.page_log), "Nothing read in this session yet.")
+      end
+    end
+
+    def self.open_link_list(output : Screen::Output, state : Reader::State,
+                            page : Reader::PageEnv, addresses : Bool) : Nil
+      lines = state.lines.map do |line|
+        JSON::Any.new({"blockIndex" => JSON::Any.new(line.block_index.to_i64),
+                       "displayNumber" => line.display_number || JSON::Any.new(nil)})
+      end
+      preferences = state.keys.try(&.preferences) || {} of String => JSON::Any
+      numbered = preferences["numberLinks"]?.try(&.as_bool?) ||
+                 preferences["numberFields"]?.try(&.as_bool?) || false
+      rows = LynxPages.link_list_rows(state.core.blocks, lines, addresses, numbered)
+      if rows.empty?
+        Reader.set_status(output, state, page.url, "No references in this document.")
+        return
+      end
+      open_internal_rows(output, state, page, addresses ? "addresses" : "links",
+        addresses ? "Link addresses" : "References", rows)
+    end
+
+    def self.open_document_info(output : Screen::Output, state : Reader::State,
+                                page : Reader::PageEnv) : Nil
+      rows = LynxPages.document_info_rows(state.title, page.url, state.core.source,
+        state.lines.size.to_i64, Reader.item_under_cursor(state))
+      open_internal_rows(output, state, page, "info", "Information about current document", rows)
+    end
+
     def self.open_library(output : Screen::Output, state : Reader::State,
                           page : Reader::PageEnv, kind : String) : Nil
       provider = state.browser_library
@@ -2170,6 +2233,19 @@ module Tawb
       end
       if (chunk == "\r" || chunk == "\n")
         entry = Reader.current_block(state).try(&.as_h).try(&.["entry"]?)
+        if entry && (object["kind"].as_s == "links" || object["kind"].as_s == "addresses")
+          target = entry.as_h["block"]?
+          close_library(output, state, page)
+          index = target ? state.core.blocks.index(target) : nil
+          line = index ? Reader.line_for_block(state, index) : -1
+          if line < 0
+            Reader.set_status(output, state, page.url, "That reference is no longer on the page.")
+            return nil
+          end
+          Reader.move_selection(output, state, page.url, line)
+          activate_current(output, state, page, keyboard)
+          return nil
+        end
         url = entry.try(&.as_h?).try(&.["url"]?).try(&.as_s?)
         unless url && !url.empty?
           Reader.set_status(output, state, page.url, "Move to an entry first."); return nil
@@ -2768,12 +2844,23 @@ module Tawb
         bookmark_page(output, state, page, keyboard)
         return nil
       end
-      # Session lists, reference lists and document information use the same
-      # library screen; their row producers are connected with the remaining
-      # Lynx host-screen work.
-      if action == "visited-links" || action == "session-history" ||
-         action == "delete-bookmark" || action == "list-links" ||
-         action == "list-addresses" || action == "document-info"
+      if action == "visited-links" || action == "session-history"
+        open_session_list(output, state, page, action == "visited-links")
+        return nil
+      end
+      if action == "list-links" || action == "list-addresses"
+        open_link_list(output, state, page, action == "list-addresses")
+        return nil
+      end
+      if action == "document-info"
+        open_document_info(output, state, page)
+        return nil
+      end
+      # Outside the bookmarks screen this command explains where removal is
+      # available; inside, handle_library_key performs it.
+      if action == "delete-bookmark"
+        Reader.set_status(output, state, page.url,
+          "Open the bookmarks list with v, select a bookmark, then press r to remove it.")
         return nil
       end
 
