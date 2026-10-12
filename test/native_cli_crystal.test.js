@@ -9,18 +9,29 @@ const enabled = process.env.TAWB_TEST_CRYSTAL === '1';
 const binary = process.env.TAWB_CRYSTAL_BIN
   || path.join(__dirname, '..', 'dist', 'tawb-crystal');
 
-test('native CLI advertises interactive Firefox instead of the old porting guard', {
+test('the native CLI says which engines it reads interactively', {
   skip: enabled ? false : 'the Crystal runtime is not enabled',
 }, () => {
   const help = spawnSync(binary, ['--help'], { encoding: 'utf8' });
   assert.equal(help.status, 0, help.stderr);
-  assert.match(help.stdout, /supports interactive Firefox/);
+  assert.match(help.stdout, /interactively through Firefox and\s+Chromium/,
+    'both engines read interactively');
   assert.doesNotMatch(help.stdout, /interactive reader is not ported/);
+  assert.doesNotMatch(help.stdout, /Interactive Chromium .*not yet available/);
+  // What is still missing on Chromium is named rather than discovered.
+  assert.match(help.stdout, /bookmarks, history and downloads/);
+});
 
-  const unsupported = spawnSync(binary, ['--browser', 'chromium'], {
+test('the native CLI still refuses what it cannot do', {
+  skip: enabled ? false : 'the Crystal runtime is not enabled',
+}, () => {
+  const edb = spawnSync(binary, ['--front-end', 'edb'], {
     encoding: 'utf8', input: '',
   });
-  assert.equal(unsupported.status, 1);
-  assert.match(unsupported.stderr, /currently needs --browser firefox/);
-  assert.doesNotMatch(unsupported.stderr, /interactive reader is not ported/);
+  assert.equal(edb.status, 1);
+  assert.match(edb.stderr, /edb front end is not ported/);
+
+  const wizard = spawnSync(binary, ['--keyboard'], { encoding: 'utf8', input: '' });
+  assert.equal(wizard.status, 1);
+  assert.match(wizard.stderr, /keyboard wizard is not connected/);
 });

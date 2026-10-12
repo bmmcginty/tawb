@@ -50,9 +50,11 @@ module Tawb
     Other:
       -h, --help                    show this help and exit
 
-    The native Crystal reader supports interactive Firefox and default or
-    Lynx dumps with Firefox and Chromium. Interactive Chromium and edb are
-    not yet available.
+    The native Crystal reader reads pages interactively through Firefox and
+    Chromium, in this interface or Lynx's, and writes dumps through either.
+    On Chromium the browser's own bookmarks, history and downloads, and the
+    password prompt a 401 raises, are not yet available. The edb front end
+    and the standalone keyboard wizard are not yet available at all.
     TEXT
 
     def self.run(argv : Array(String) = ARGV, env : Hash(String, String) = ENV.to_h) : Nil
@@ -97,11 +99,17 @@ module Tawb
       exit 1
     end
 
+    # What a browser this reader is about to drive looks like once it is
+    # open: the session to act through, the address it is listening on, and
+    # the pieces of shutdown that are the engine's own.
+    private record OpenedBrowser,
+      browser : Engine::Session,
+      endpoint : String,
+      library_port : Int32?,
+      launched : FirefoxLaunch::Started?,
+      chromium : Browser::Session?
+
     private def self.run_interactive(options : Hash(String, JSON::Any), logger : Log) : Nil
-      unless options["engine"].as_s == "firefox"
-        raise ArgumentError.new(
-          "The native interactive reader currently needs --browser firefox; Chromium interactive support is not ported yet.")
-      end
       if options["frontEnd"].as_s == "edb"
         raise ArgumentError.new("The native edb front end is not ported yet")
       end
@@ -109,48 +117,41 @@ module Tawb
         raise ArgumentError.new("The standalone native keyboard wizard is not connected yet")
       end
 
-      profile = options["profile"].as_s? || FirefoxLaunch.default_profile
+      chromium = options["engine"].as_s != "firefox"
+      profile = options["profile"].as_s? ||
+                (chromium ? Browser.default_profile : FirefoxLaunch.default_profile)
       timeout = options["browserTimeoutMs"].as_i64? || 45_000_i64
       startup = StartupStatus.new(->(text : String) { STDOUT << text; STDOUT.flush; nil },
         LibC.isatty(STDOUT.fd) == 1)
-      startup.update("Starting Firefox…")
-      launched = nil.as(FirefoxLaunch::Started?)
-      endpoint = begin
-        if connected = options["connect"].as_s?
-          firefox_endpoint(connected)
-        else
-          launched = FirefoxLaunch.launch(profile, timeout)
-          launched.not_nil!.endpoint
-        end
-      rescue error
-        startup.finish
-        raise error
-      end
-      broker_url = begin
-        Broker.ensure(profile, endpoint)[:url]
-      rescue error
-        startup.finish
-        launched.try(&.close) unless options["keepBrowser"].as_bool
-        raise error
-      end
-      browser = FirefoxDriver::BrowserSession.new(broker_url)
+      opened = if chromium
+                 open_chromium(options, profile, timeout, startup)
+               else
+                 open_firefox(options, profile, timeout, startup)
+               end
+      browser = opened.browser
+      endpoint = opened.endpoint
+      launched = opened.launched
       terminal = Runtime::Terminal.new(STDOUT, STDIN.fd, options["altScreen"].as_bool)
       reader = nil.as(Input::KeyReader?)
-      page = nil.as(FirefoxDriver::Page?)
+      page = nil.as(Engine::Page?)
       adopted = false
       begin
         begin
-          browser.start
+          # Firefox announces navigation on the session; Chromium announces
+          # it on the tab, so there is nothing session-wide to subscribe to.
+          if browser.is_a?(FirefoxDriver::BrowserSession)
+            browser.start
+            browser.subscribe(FirefoxDriver::NAVIGATION_EVENTS)
+          end
         ensure
           startup.finish
         end
-        browser.subscribe(FirefoxDriver::NAVIGATION_EVENTS)
-        existing = browser.list_pages.reject(&.closed?)
+        existing = browser.list_pages.reject(&.closed?).map(&.as(Engine::Page))
         if options["connect"].as_s? && options["url"].as_s?.nil?
           page = existing.reverse.find { |candidate| candidate.url != "about:blank" }
           adopted = !page.nil?
         end
-        page ||= existing.first? || browser.create_page
+        page ||= existing.first? || browser.create_page.as(Engine::Page)
 
         layout = options["frontEnd"].as_s == "lynx"
         browser_port = URI.parse(endpoint).port.try(&.to_i32)
@@ -170,9 +171,14 @@ module Tawb
         # The views the backslash cycle offers: what the native extraction
         # can actually build, which today is AX alone.
         state.sources = Core::EXTRACTABLE_SOURCES.dup
-        library_port = launched.try(&.library_port) ||
-          Endpoint.read_record(profile).try(&.["libraryPort"]?.try(&.as_i?).try(&.to_i32))
-        state.browser_library = Interactive::LibraryBinding.new(library_port) if library_port
+        # The browser's own bookmarks, history and downloads come from the
+        # privileged agent installed while Firefox starts. Chromium answers
+        # for its own through pages of its own (chrome://bookmarks and the
+        # rest), which is a separate port; until then those screens say they
+        # have nothing rather than showing another browser's.
+        if library_port = opened.library_port
+          state.browser_library = Interactive::LibraryBinding.new(library_port)
+        end
         state.rows = terminal_rows
         state.cols = terminal_columns
         state.keys = if state.interface == "lynx"
@@ -204,9 +210,15 @@ module Tawb
             JSON::Any.new({"username" => JSON::Any.new(username),
                            "password" => split["password"]}))
         end
-        browser.attach_auth(->(challenge : JSON::Any, id : String, _page : FirefoxDriver::Page?) {
-          credentials.answer(challenge, id)
-        })
+        # The password prompt a 401 raises is drawn by browser chrome, so it
+        # can only be answered through an interception the engine offers.
+        # Firefox has an auth-only intercept; Chromium's goes through Fetch
+        # and pauses every request, which is a separate port.
+        if session = browser.as?(FirefoxDriver::BrowserSession)
+          session.attach_auth(->(challenge : JSON::Any, id : String, _page : FirefoxDriver::Page?) {
+            credentials.answer(challenge, id)
+          })
+        end
         unless adopted
           logger.timed("goto", {"url" => JSON::Any.new(target)}) { page.not_nil!.goto(target) }
         end
@@ -260,16 +272,94 @@ module Tawb
         if release_port = URI.parse(endpoint).port
           Session.release_tab(release_port.to_i32) rescue nil
         end
-        if options["keepBrowser"].as_bool || adopted
-          browser.protocol.command(Broker::RETAIN_SESSION) rescue nil
-          browser.close(false)
-        else
-          browser.close
+        keep = options["keepBrowser"].as_bool || adopted
+        case session = browser
+        when FirefoxDriver::BrowserSession
+          if keep
+            # The broker holds the BiDi session for the next reader, which is
+            # what keeps a kept browser usable rather than merely running.
+            session.protocol.command(Broker::RETAIN_SESSION) rescue nil
+            session.close(false)
+          else
+            session.close
+          end
+        when Cdp::BrowserSession
+          # A connection per tab, so letting go of them is all there is: the
+          # tabs stay, and so does the browser.
+          session.close
         end
         if started = launched
           started.close if started.owned? && !options["keepBrowser"].as_bool
         end
+        if browser_session = opened.chromium
+          browser_session.close if browser_session.owned? && !options["keepBrowser"].as_bool
+        end
       end
+    end
+
+    # Firefox, through the broker that holds its one session: every reader on
+    # this profile shares that session, so the browser is reached through the
+    # broker rather than directly.
+    private def self.open_firefox(options : Hash(String, JSON::Any), profile : String,
+                                  timeout : Int64, startup : StartupStatus) : OpenedBrowser
+      startup.update("Starting Firefox…")
+      launched = nil.as(FirefoxLaunch::Started?)
+      endpoint = begin
+        if connected = options["connect"].as_s?
+          firefox_endpoint(connected)
+        else
+          launched = FirefoxLaunch.launch(profile, timeout)
+          launched.not_nil!.endpoint
+        end
+      rescue error
+        startup.finish
+        raise error
+      end
+      broker_url = begin
+        Broker.ensure(profile, endpoint)[:url]
+      rescue error
+        startup.finish
+        launched.try(&.close) unless options["keepBrowser"].as_bool
+        raise error
+      end
+      library_port = launched.try(&.library_port) ||
+                     Endpoint.read_record(profile).try(&.["libraryPort"]?.try(&.as_i?).try(&.to_i32))
+      OpenedBrowser.new(
+        browser: FirefoxDriver::BrowserSession.new(broker_url),
+        endpoint: endpoint,
+        library_port: library_port,
+        launched: launched,
+        chromium: nil)
+    end
+
+    # Chromium, over its own HTTP endpoint. There is no broker: CDP gives
+    # each tab a connection of its own, so two readers on one browser do not
+    # share a session to hold open for each other.
+    private def self.open_chromium(options : Hash(String, JSON::Any), profile : String,
+                                   timeout : Int64, startup : StartupStatus) : OpenedBrowser
+      startup.update("Starting Chromium…")
+      session = begin
+        Browser.open(chromium_endpoint(options["connect"].as_s?), profile, timeout)
+      rescue error
+        startup.finish
+        raise error
+      end
+      OpenedBrowser.new(
+        browser: Cdp::BrowserSession.new(session.endpoint),
+        endpoint: session.endpoint,
+        library_port: nil,
+        launched: nil,
+        chromium: session)
+    end
+
+    # What --connect means to Chromium: an HTTP endpoint. A bare port is the
+    # ordinary way to say it, so a port becomes one.
+    private def self.chromium_endpoint(connect : String?) : String?
+      return nil unless connect
+      return connect if connect.starts_with?("http://") || connect.starts_with?("https://")
+      port = connect.to_i32?
+      raise ArgumentError.new("--connect needs a port or HTTP URL, not #{connect}") unless port
+      "http://127.0.0.1:#{port}"
     end
 
     private def self.firefox_endpoint(connect : String) : String

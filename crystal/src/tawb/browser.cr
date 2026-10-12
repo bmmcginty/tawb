@@ -126,7 +126,9 @@ module Tawb
       nil
     end
 
-    private def self.default_profile : String
+    # Where a Chromium profile lives when the reader was not told. Public
+    # because the interactive path needs the same answer the dump path gets.
+    def self.default_profile : String
       base = ENV["XDG_DATA_HOME"]? || File.join(Path.home, ".local", "share")
       File.join(base, "tawb", "profile")
     end

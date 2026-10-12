@@ -2032,12 +2032,22 @@ and no runtime to extract. `tools/build_crystal.sh` writes
 dynamic dependency is not the thing being shipped.
 
 What the native reader does today: it reads pages interactively through
-Firefox, in the ordinary interface and in the Lynx one, and it writes
-`--dump` output through Firefox and through Chromium. What it does not do
-yet: interactive Chromium (`crystal/src/tawb/cdp.cr` is the dumping client
-only), the edb front end, and the standalone `--keyboard` wizard. The
-packaged `tawb` command is still the Node one; `resume2.md` carries the
-remaining list.
+Firefox and through Chromium, in the ordinary interface and in the Lynx one,
+and it writes `--dump` output through either. What it does not do yet: the
+browser's own bookmarks, history and downloads on Chromium, the password
+prompt a 401 raises on Chromium, the edb front end, and the standalone
+`--keyboard` wizard. The packaged `tawb` command is still the Node one;
+`resume2.md` carries the remaining list.
+
+`crystal/src/tawb/engine.cr` is where the two engines meet. JavaScript gets
+that seam for nothing — a page is whatever answers `url()`, which is what
+`src/driver.js` says in prose — while a typed port has to name it, and names
+it as a union of the two engines' own types rather than as an interface they
+both include: an `Array(FirefoxDriver::Frame)` is not an array of an
+interface, so every method that answers with frames would have to build a
+different array than it has. The operations where the engines genuinely
+differ are not in the union at all; they live on the engine classes, exactly
+as `src/driver.js` has them.
 
 Only the AX view is extracted natively (`Core::EXTRACTABLE_SOURCES`), so the
 reader is offered a cycle of one view. A view the native extraction cannot

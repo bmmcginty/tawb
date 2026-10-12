@@ -191,61 +191,72 @@ function killProfile(profile) {
   }
 }
 
-test('both readers draw the same real page and move through it the same way',
-  { skip }, async () => {
-    const root = tempDir('tawb-interactive-');
-    const page = path.join(root, 'page.html');
-    fs.writeFileSync(page, PAGE);
-    const address = `file://${page}`;
-    const runtimes = [
-      { name: 'JavaScript', command: process.execPath, args: ['src/index.js'] },
-      { name: 'Crystal', command: BINARY, args: [] },
-    ];
-    const seen = [];
-    const profiles = [];
-    try {
-      for (const runtime of runtimes) {
-        const profile = path.join(root, runtime.name, 'profile');
-        profiles.push(profile);
-        const reader = new ReaderTty({
-          session: `tawb-interactive-${runtime.name.toLowerCase()}-${process.pid}`,
-          command: runtime.command,
-          args: [...runtime.args, '--browser', 'firefox', '--profile', profile,
-            '--no-alt-screen', address],
-          env: environment(root, runtime.name),
-        });
-        try {
-          await reader.start({ ready: 'Fixture heading' });
-          const first = reader.drawn();
-          await reader.press('Down');
-          await reader.press('Down');
-          const moved = reader.drawn();
-          const cursor = reader.cursor();
-          await reader.quit();
-          seen.push({ name: runtime.name, first, moved, cursor });
-        } finally {
-          reader.stop();
-        }
-        await waitForProfileToDrain(profile);
-      }
-
-      const [javascript, crystal] = seen;
-      assert.deepEqual(crystal.first, javascript.first,
-        'the first screen of a real page is the same in both runtimes');
-      assert.ok(javascript.first.some((row) => row.includes('# Fixture heading')),
-        'and it is the page, not an error');
-      assert.ok(javascript.first.some((row) => row.includes('{Docs link}')));
-      assert.ok(javascript.first.some((row) => row.includes('[Your name]')));
-      assert.deepEqual(crystal.moved, javascript.moved,
-        'and so is the screen two lines further down');
-      assert.deepEqual(crystal.cursor, javascript.cursor,
-        'with the terminal cursor left on the same line, which is what a '
-        + 'screen reader follows');
-    } finally {
-      for (const profile of profiles) killProfile(profile);
-      removeTempDir(root);
-    }
+// One reader's answers for one engine: the first screen, the screen two
+// lines further down, and where the terminal cursor was left.
+async function readingRun(root, engine, runtime, address) {
+  const name = `${runtime.name}-${engine}`;
+  const profile = path.join(root, name, 'profile');
+  const reader = new ReaderTty({
+    session: `tawb-interactive-${name.toLowerCase()}-${process.pid}`,
+    command: runtime.command,
+    args: [...runtime.args, '--browser', engine, '--profile', profile,
+      '--no-alt-screen', address],
+    env: environment(root, name),
   });
+  try {
+    await reader.start({ ready: 'Fixture heading' });
+    const first = reader.drawn();
+    await reader.press('Down');
+    await reader.press('Down');
+    const moved = reader.drawn();
+    const cursor = reader.cursor();
+    await reader.quit();
+    return { name: runtime.name, first, moved, cursor, profile };
+  } finally {
+    reader.stop();
+  }
+}
+
+const RUNTIMES = [
+  { name: 'JavaScript', command: process.execPath, args: ['src/index.js'] },
+  { name: 'Crystal', command: BINARY, args: [] },
+];
+
+for (const engine of ['firefox', 'chromium']) {
+  test(`both readers draw the same real page through ${engine} and move through it the same way`,
+    { skip }, async () => {
+      const root = tempDir(`tawb-interactive-${engine}-`);
+      const page = path.join(root, 'page.html');
+      fs.writeFileSync(page, PAGE);
+      const address = `file://${page}`;
+      const seen = [];
+      const profiles = [];
+      try {
+        for (const runtime of RUNTIMES) {
+          const run = await readingRun(root, engine, runtime, address);
+          profiles.push(run.profile);
+          seen.push(run);
+          await waitForProfileToDrain(run.profile);
+        }
+
+        const [javascript, crystal] = seen;
+        assert.deepEqual(crystal.first, javascript.first,
+          'the first screen of a real page is the same in both runtimes');
+        assert.ok(javascript.first.some((row) => row.includes('# Fixture heading')),
+          'and it is the page, not an error');
+        assert.ok(javascript.first.some((row) => row.includes('{Docs link}')));
+        assert.ok(javascript.first.some((row) => row.includes('[Your name]')));
+        assert.deepEqual(crystal.moved, javascript.moved,
+          'and so is the screen two lines further down');
+        assert.deepEqual(crystal.cursor, javascript.cursor,
+          'with the terminal cursor left on the same line, which is what a '
+          + 'screen reader follows');
+      } finally {
+        for (const profile of profiles) killProfile(profile);
+        removeTempDir(root);
+      }
+    });
+}
 
 test('the native reader closes the browser it launched, and keeps one it was told to keep',
   { skip }, async () => {
