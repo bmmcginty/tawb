@@ -2222,14 +2222,15 @@ module Tawb
       if caret = state.drawn.address_caret_col
         address_caret = JSON::Any.new(caret.to_i64)
       end
+      scripted = state.core.as(Reader::CoreState)
       JSON::Any.new({
         "mode"         => JSON::Any.new(state.mode),
         "title"        => JSON::Any.new(state.title),
         "popup"        => state.core.popup || JSON::Any.new(nil),
         "live"         => state.core.live || JSON::Any.new(nil),
         "chooser"      => state.core.chooser || JSON::Any.new(nil),
-        "attachments"  => JSON::Any.new(state.core.attached_calls),
-        "activated"    => JSON::Any.new(state.core.activated),
+        "attachments"  => JSON::Any.new(scripted.attached_calls),
+        "activated"    => JSON::Any.new(scripted.activated),
         "visitedLinks" => JSON::Any.new(state.visited_links),
         "pageLog"      => JSON::Any.new(state.page_log),
         "drawn"        => JSON::Any.new({
@@ -2255,10 +2256,10 @@ module Tawb
         "linkNumber" => link_number_json(state.link_number),
         "loadingMore" => JSON::Any.new(state.loading_more),
         "changeIndex" => JSON::Any.new(state.core.change_index.to_i64),
-        "typingReads" => JSON::Any.new(state.core.typed_field_reads.to_i64),
-        "typingReleased" => JSON::Any.new(state.core.typing_released),
-        "inputMarks" => JSON::Any.new(state.core.input_marks.to_i64),
-        "atCalls"    => JSON::Any.new(state.core.at_calls.map { |call| JSON::Any.new(call) }),
+        "typingReads" => JSON::Any.new(scripted.typed_field_reads.to_i64),
+        "typingReleased" => JSON::Any.new(scripted.typing_released),
+        "inputMarks" => JSON::Any.new(scripted.input_marks.to_i64),
+        "atCalls"    => JSON::Any.new(scripted.at_calls.map { |call| JSON::Any.new(call) }),
       })
     end
 

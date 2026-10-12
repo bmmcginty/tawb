@@ -55,6 +55,7 @@ require "./actions"
 require "./aria"
 require "./firefox_driver"
 require "./frames"
+require "./fields"
 require "./live"
 require "./remap"
 require "./session"
@@ -375,6 +376,7 @@ module Tawb
     # The buffer
     # -----------------------------------------------------------------------
 
+    getter source : String
     property blocks : Array(Block)
     # Bumped whenever the block list is replaced wholesale. A front end that
     # holds its own copy — which every front end does, and a front end
@@ -389,7 +391,7 @@ module Tawb
     getter cursor_block : Int32
     property exhausted : Exhausted?
     getter chooser : Chooser?
-    getter change_index : Int32
+    property change_index : Int32
     getter live : Live::State
     getter page : FirefoxDriver::Page?
     getter snapshot_cost_ms : Int64
@@ -417,6 +419,7 @@ module Tawb
       @snapshot_cost_ms = 0_i64
       @live_watcher = Live::Watcher.new
       @chooser = nil
+      @typing_handle = nil.as(FirefoxDriver::Handle?)
       @attached_files = {} of String => Hash(String, AttachedFile)
       # The popup the reader has open, if any, named by the id its control
       # points at. See relocate_popup().
@@ -1390,6 +1393,10 @@ module Tawb
     end
 
     # Where the open popup's entries begin, or -1.
+    def popup_controls : String?
+      @popup
+    end
+
     def popup_at : Int32
       id = @popup
       return -1 unless id && !id.empty?
@@ -1409,6 +1416,91 @@ module Tawb
     # buffer underneath the control, where they can be moved through and
     # filtered like anything else the reader can see.
     # -----------------------------------------------------------------------
+
+    # The entries of a native select, read from the element while its browser
+    # popup remains closed.
+    def options_for(item : JSON::Any, page : FirefoxDriver::Page? = @page) : JSON::Any?
+      handle = handle_for(item, page)
+      begin
+        answer = handle.evaluate(<<-'JS')
+          (el) => {
+            if (!el || el.tagName !== 'SELECT') return null;
+            return {
+              multiple: !!el.multiple,
+              selectedIndex: el.selectedIndex,
+              options: Array.from(el.options).map((option) => ({
+                text: (option.textContent || '').replace(/\s+/g, ' ').trim() || option.value,
+                disabled: !!option.disabled,
+                selected: !!option.selected,
+              })),
+            };
+          }
+          JS
+        answer.raw.nil? ? nil : answer
+      ensure
+        handle.dispose rescue nil
+      end
+    end
+
+    def choose_option(item : JSON::Any, index : Int32,
+                      page : FirefoxDriver::Page? = @page) : JSON::Any
+      target = page || raise IO::Error.new("this core has no page")
+      handle = handle_for(item, target)
+      begin
+        key = handle.evaluate(<<-'JS', JSON::Any.new(index.to_i64))
+          (el, target) => {
+            if (!el || el.tagName !== 'SELECT') return null;
+            el.focus();
+            if (el.selectedIndex === target) return 'already';
+            el.selectedIndex = target > 0 ? target - 1 : target + 1;
+            return target > 0 ? 'ArrowDown' : 'ArrowUp';
+          }
+          JS
+        return JSON::Any.new({"changed" => JSON::Any.new(false),
+                              "reason" => JSON::Any.new("not a select")}) if key.raw.nil?
+        return JSON::Any.new({"changed" => JSON::Any.new(false),
+                              "reason" => JSON::Any.new("already chosen")}) if key.as_s == "already"
+        FirefoxDriver::Keyboard.new(target.protocol, target.context_id).press(key.as_s)
+        JSON::Any.new({"changed" => JSON::Any.new(true)})
+      ensure
+        handle.dispose rescue nil
+      end
+    end
+
+    def field_for_typing(item : JSON::Any,
+                         page : FirefoxDriver::Page? = @page) : JSON::Any?
+      handle = handle_for(item, page)
+      editable = handle.evaluate(<<-'JS').as_bool? || false
+        (el) => {
+          const tag = el && el.tagName;
+          return !!el && !el.disabled && !el.readOnly &&
+            (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable);
+        }
+        JS
+      unless editable
+        handle.dispose rescue nil
+        return nil
+      end
+      handle.evaluate("(el) => el.focus()")
+      info = Fields.read_field_state(handle)
+      @typing_handle.try { |old| old.dispose rescue nil unless old.same?(handle) }
+      @typing_handle = handle
+      info
+    rescue error
+      handle.try(&.dispose) rescue nil
+      raise error
+    end
+
+    def read_typing_field : JSON::Any?
+      handle = @typing_handle || return nil
+      Fields.read_field_state(handle)
+    end
+
+    def release_typing_field : Nil
+      handle = @typing_handle
+      @typing_handle = nil
+      handle.try(&.dispose) rescue nil
+    end
 
     # Splice a dropdown's entries into the buffer under its control. They are
     # ordinary blocks from here on, so moving through them, wrapping them and
