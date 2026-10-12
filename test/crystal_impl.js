@@ -2790,20 +2790,54 @@ function placeElementImplementations(place) {
 // before the socket. Recording the traffic is therefore the whole of what
 // there is to compare, and it needs no browser to compare it.
 function cdpImplementations({ CdpPage }) {
-  const scenario = async (script, replies = {}) => {
+  const scenario = async (script, replies = {}, after = {}) => {
     const sent = [];
     const session = {
       sessionId: null,
       detached: false,
       async send(method, params = {}) {
         sent.push({ method, params, sessionId: null });
+        // The events the browser pushes once the command has been answered.
+        // A caller that armed its wait before sending is listening by now,
+        // which is the order a navigation's lifecycle depends on.
+        for (const event of after[method] || []) push(event.method, event.params);
         return replies[method] === undefined ? {} : replies[method];
       },
       on() {}, off() {},
     };
+    // The tab's session pushes events to whatever is listening, as the
+    // browser's own connection does.
+    const listeners = new Map();
+    session.on = (event, handler) => {
+      if (!listeners.has(event)) listeners.set(event, []);
+      listeners.get(event).push(handler);
+    };
+    session.off = (event, handler) => {
+      const list = listeners.get(event) || [];
+      const at = list.indexOf(handler);
+      if (at >= 0) list.splice(at, 1);
+    };
+    const push = (method, params) => {
+      for (const handler of [...(listeners.get(method) || [])]) handler(params);
+    };
     const page = new CdpPage({ closePage: async () => {} }, session, 'TARGET');
     page.mainFrameId = 'MAIN';
     page.ensureFrame('MAIN');
+    // The lifecycle bookkeeping the browser context wires up for the tab's
+    // own session (src/cdp_browser.js wireSession).
+    session.on('Page.lifecycleEvent', ({ frameId, name }) => {
+      if (frameId !== page.mainFrameId) return;
+      if (name === 'init') page.reached.clear();
+      else page.reached.add(name);
+    });
+    session.on('Page.frameNavigated', ({ frame }) => {
+      const known = page.ensureFrame(frame.id, frame.parentId || null);
+      known._url = frame.url || 'about:blank';
+    });
+    session.on('Page.navigatedWithinDocument', ({ frameId, url }) => {
+      const known = page.ensureFrame(frameId);
+      if (url) known._url = url;
+    });
     // The callers above this client pass JavaScript functions, which stringify
     // to their own source; a string means the bare expression form. The
     // Crystal port says which it is handing over instead of guessing, so the
@@ -2870,6 +2904,56 @@ function cdpImplementations({ CdpPage }) {
           await page.clickAt(step.x, step.y, session, step.modifiers ?? 0);
           observations.push(null);
           break;
+        case 'event':
+          push(step.event.method, step.event.params);
+          observations.push(null);
+          break;
+        case 'goto':
+          await page.goto(step.url, {
+            waitUntil: step.wait ?? 'load', timeout: step.timeout ?? 30000,
+          });
+          observations.push(page.url());
+          break;
+        case 'reload':
+          await page.reload({
+            ignoreCache: step.ignoreCache ?? false,
+            waitUntil: step.wait ?? 'load',
+            timeout: step.timeout ?? 30000,
+          });
+          observations.push(null);
+          break;
+        case 'stop_loading':
+          await page.stopLoading();
+          observations.push(null);
+          break;
+        case 'wait_for_load_state':
+          await page.waitForLoadState(step.state ?? 'load', { timeout: step.timeout ?? 15000 });
+          observations.push(true);
+          break;
+        case 'traverse_history': {
+          // The Crystal port answers whether there was anywhere to go; the
+          // JavaScript original says so by whether it moved.
+          const before = sent.length;
+          await page.goBack({ waitUntil: step.wait ?? 'load', timeout: step.timeout ?? 30000 });
+          observations.push(sent.slice(before)
+            .some((entry) => entry.method === 'Page.navigateToHistoryEntry'));
+          break;
+        }
+        case 'url':
+          observations.push(page.url());
+          break;
+        case 'title':
+          observations.push(await page.title());
+          break;
+        case 'seed_load_state': {
+          const ready = await page.mainFrame().evaluate(() => document.readyState).catch(() => null);
+          if (ready !== 'loading') {
+            page.reached.add('DOMContentLoaded');
+            if (ready !== 'interactive') page.reached.add('load');
+          }
+          observations.push(null);
+          break;
+        }
         case 'sent':
           observations.push(taken());
           break;
@@ -2884,8 +2968,8 @@ function cdpImplementations({ CdpPage }) {
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
   implementations.push({
     name: 'Crystal',
-    async scenario(script, replies = {}) {
-      return call('cdp.scenario', { script, replies });
+    async scenario(script, replies = {}, after = {}) {
+      return call('cdp.scenario', { script, replies, after });
     },
   });
   return implementations;

@@ -3266,15 +3266,25 @@ module Tawb
 
       getter sent : Array(JSON::Any)
       property replies : Hash(String, JSON::Any)
+      # The events the browser pushes once a command has been answered: a
+      # navigation's lifecycle arrives after Page.navigate returns, which is
+      # the order a caller that armed its wait first depends on.
+      property after : Hash(String, Array(JSON::Any))
 
       def initialize
         @sent = [] of JSON::Any
         @replies = {} of String => JSON::Any
+        @after = {} of String => Array(JSON::Any)
         @pending = [] of String
       end
 
       def forget : Nil
         @sent.clear
+      end
+
+      # An event the browser would have pushed, waiting to be read.
+      def queue(event : JSON::Any) : Nil
+        @pending << event.to_json
       end
 
       def send(text : String) : Nil
@@ -3289,6 +3299,7 @@ module Tawb
         } of String => JSON::Any
         answer["sessionId"] = object["sessionId"] if object["sessionId"]?
         @pending << JSON::Any.new(answer).to_json
+        @after[method]?.try(&.each { |event| queue(event) })
       end
 
       def receive : String
@@ -3324,13 +3335,15 @@ module Tawb
       if replies = object["replies"]?.try(&.as_h?)
         replies.each { |method, value| channel.replies[method] = value }
       end
+      if after = object["after"]?.try(&.as_h?)
+        after.each { |method, events| channel.after[method] = events.as_a }
+      end
       page = Cdp::Page.new("http://127.0.0.1:0",
         Cdp::Target.new("TARGET", "ws://127.0.0.1:0/devtools/page/TARGET"), channel)
       # Neither the domains the client enables when it opens nor the frame
       # tree it reads its main document's id from are what is being compared:
       # the JavaScript page is handed a session somebody else enabled them
       # on, and is told its main frame by the context that opened it.
-      page.main_frame_id
       channel.forget
 
       observations = [] of JSON::Any
@@ -3384,6 +3397,39 @@ module Tawb
         when "click_at"
           page.click_at(Core.js_number(step["x"]), Core.js_number(step["y"]),
             (step["modifiers"]?.try(&.as_i64?) || 0).to_i32)
+          observations.push JSON::Any.new(nil)
+        when "event"
+          # An event the browser would push, queued to be read the next time
+          # the client reads the socket.
+          channel.queue(step["event"])
+          observations.push JSON::Any.new(nil)
+        when "goto"
+          page.goto(step["url"].as_s, step["wait"]?.try(&.as_s?) || "load",
+            (step["timeout"]?.try(&.as_i64?) || 30000).to_i32)
+          observations.push JSON::Any.new(page.url)
+        when "reload"
+          page.reload(step["ignoreCache"]?.try(&.as_bool?) || false,
+            step["wait"]?.try(&.as_s?) || "load",
+            (step["timeout"]?.try(&.as_i64?) || 30000).to_i32)
+          observations.push JSON::Any.new(nil)
+        when "stop_loading"
+          page.stop_loading
+          observations.push JSON::Any.new(nil)
+        when "wait_for_load_state"
+          observations.push JSON::Any.new(page.wait_for_load_state(
+            step["state"]?.try(&.as_s?) || "load",
+            (step["timeout"]?.try(&.as_i64?) || 15000).to_i32))
+        when "traverse_history"
+          observations.push JSON::Any.new(page.traverse_history(
+            (step["direction"]?.try(&.as_i64?) || -1).to_i32,
+            step["wait"]?.try(&.as_s?) || "load",
+            (step["timeout"]?.try(&.as_i64?) || 30000).to_i32))
+        when "url"
+          observations.push JSON::Any.new(page.url)
+        when "title"
+          observations.push JSON::Any.new(page.title)
+        when "seed_load_state"
+          page.seed_load_state
           observations.push JSON::Any.new(nil)
         when "sent"
           observations.push cdp_sent_json(channel.sent)

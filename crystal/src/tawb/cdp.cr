@@ -12,6 +12,12 @@ module Tawb
 
     # How long a document is given to announce the context it runs in.
     CONTEXT_WAIT = 2.seconds
+    # The lifecycle names CDP uses for the states a caller asks about.
+    LIFECYCLE = {
+      "load"             => "load",
+      "domcontentloaded" => "DOMContentLoaded",
+      "networkidle"      => "networkIdle",
+    }
 
     record Target, id : String, web_socket_url : String
     record ShadowPair, host_id : Int64, root_id : Int64, kind : String
@@ -345,6 +351,12 @@ module Tawb
       @iframe_targets = Set(String).new
       @frame_sessions = {} of String => String
       @main_frame_id : String? = nil
+      @url = "about:blank"
+      @closed = false
+      @loading = false
+      # Which lifecycle names the current document has reached. A new
+      # document starts the count again; see note_event.
+      @reached = Set(String).new
 
       def initialize(@endpoint : String)
         body = Transport.http(@endpoint, "PUT", "/json/new?about%3Ablank")
@@ -364,23 +376,148 @@ module Tawb
       private def enable_domains : Nil
         command("Page.enable")
         command("Runtime.enable")
+        # What the document reaches, rather than only that it finished: the
+        # reader waits for DOMContentLoaded on a click that may navigate and
+        # for load on an address it typed.
+        command("Page.setLifecycleEventsEnabled", {"enabled" => JSON::Any.new(true)})
         command("Target.setDiscoverTargets", {
           "discover" => JSON::Any.new(true),
           "filter"   => JSON.parse(%([{"type":"iframe"}])),
         })
+        # Asked now rather than when something first needs it: every
+        # lifecycle and navigation event is read for whether it belongs to
+        # this tab's own document, and an event that arrives before the
+        # answer is known would be read as somebody else's.
+        main_frame_id
       end
 
-      def navigate(url : String) : Nil
-        # Page.enable can replay about:blank's completion while another
-        # command is in flight. It predates this navigation and must never
-        # satisfy the wait for the requested document.
-        @events.reject! { |event| event.as_h["method"]?.try(&.as_s?) == "Page.domContentEventFired" }
-        response = command("Page.navigate", {"url" => JSON::Any.new(url)})
-        result = response.as_h["result"].as_h
-        if error = result["errorText"]?.try(&.as_s?)
-          raise IO::Error.new("navigation to #{url} failed: #{error}") unless error.empty?
+      # ------------------------------------------------------------------
+      # Where this tab is, and whether it is still arriving
+      # ------------------------------------------------------------------
+
+      def url : String
+        @url
+      end
+
+      def set_url(url : String) : Nil
+        @url = url
+      end
+
+      def closed? : Bool
+        @closed
+      end
+
+      def title : String
+        evaluate("() => document.title").as_s? || ""
+      rescue
+        ""
+      end
+
+      # What the current document has already reached. Lifecycle events
+      # report only what happens from now on, and a tab is very often
+      # finished loading long before a reader arrives at it; without this,
+      # a wait for a `load` that happened yesterday would run to its whole
+      # timeout — and that wait is on the same path as every click. A
+      # document that cannot be asked counts as arrived, because waiting for
+      # something there is no way to observe is worse than not waiting.
+      def seed_load_state : Nil
+        ready = begin
+          evaluate("() => document.readyState").as_s?
+        rescue
+          nil
         end
-        wait_event("Page.domContentEventFired")
+        return if ready == "loading"
+        @reached << "DOMContentLoaded"
+        @reached << "load" unless ready == "interactive"
+      end
+
+      # Visit an address. The lifecycle the caller asked for is what is
+      # waited for; a fragment link commits no document and so has no
+      # lifecycle to wait for, which the absent loader says.
+      def goto(url : String, wait_until = "load", timeout_ms = 30000) : Nil
+        wanted = LIFECYCLE[wait_until]? || "load"
+        parameters = {"url" => JSON::Any.new(url)} of String => JSON::Any
+        parameters["frameId"] = JSON::Any.new(main_frame_id)
+        result = command("Page.navigate", parameters).as_h["result"].as_h
+        if error = result["errorText"]?.try(&.as_s?)
+          # An aborted navigation is what a download and a redirect to a
+          # handler both look like; the page the reader is on is unharmed.
+          raise IO::Error.new("#{url} could not be loaded: #{error}") unless
+            error.empty? || error == "net::ERR_ABORTED"
+        end
+        # The address is not taken from the request: a redirect means the
+        # document that commits is not the one that was asked for, and
+        # Page.frameNavigated is what says which one did. See note_event.
+        return if result["loaderId"]?.try(&.as_s?).nil?
+        @reached.clear
+        await_lifecycle(wanted, timeout_ms)
+      ensure
+        @loading = false
+      end
+
+      # The dump path's navigation: the document's own DOM, which is the
+      # readiness an extraction needs.
+      def navigate(url : String) : Nil
+        goto(url, "domcontentloaded")
+      end
+
+      def reload(ignore_cache = false, wait_until = "load", timeout_ms = 30000) : Nil
+        wanted = LIFECYCLE[wait_until]? || "load"
+        @reached.clear
+        command("Page.reload", {"ignoreCache" => JSON::Any.new(ignore_cache)})
+        await_lifecycle(wanted, timeout_ms)
+      ensure
+        @loading = false
+      end
+
+      def stop_loading : Nil
+        command("Page.stopLoading")
+      ensure
+        @loading = false
+      end
+
+      # Playwright's semantics, deliberately: a document that has already
+      # reached the state is not waited for. Callers race this against the
+      # action that might navigate, so making it wait for a navigation that
+      # never starts would put that wait on the price of every click.
+      def wait_for_load_state(state = "load", timeout_ms = 15000) : Bool
+        wanted = LIFECYCLE[state]? || "load"
+        return true if @reached.includes?(wanted)
+        await_lifecycle(wanted, timeout_ms)
+      end
+
+      # Step through this tab's own history. The entries are the browser's
+      # own list, so a step is a move to a named entry rather than a count.
+      def traverse_history(direction : Int32, wait_until = "load",
+                           timeout_ms = 30000) : Bool
+        history = command("Page.getNavigationHistory").as_h["result"].as_h
+        entries = history["entries"].as_a
+        at = (history["currentIndex"]?.try(&.as_i64?) || 0).to_i32
+        target = entries[at + direction]?
+        return false if target.nil? || at + direction < 0
+        wanted = LIFECYCLE[wait_until]? || "load"
+        @reached.clear
+        command("Page.navigateToHistoryEntry",
+          {"entryId" => target.as_h["id"]})
+        await_lifecycle(wanted, timeout_ms)
+        true
+      end
+
+      # Read events until this tab's own document reaches `name`. Only the
+      # tab's own: a frame reaching DOMContentLoaded says nothing about
+      # whether the page has.
+      private def await_lifecycle(name : String, timeout_ms : Int32) : Bool
+        return true if @reached.includes?(name)
+        deadline = Time.instant + timeout_ms.milliseconds
+        while Time.instant < deadline
+          begin
+            wait_event("Page.lifecycleEvent")
+          rescue
+            return @reached.includes?(name)
+          end
+          return true if @reached.includes?(name)
+        end
+        false
       end
 
       # Whether a document embedded in the top one is still a placeholder. A
@@ -796,6 +933,30 @@ module Tawb
           @contexts.reject! { |_frame, context| context[0] == id }
         when "Runtime.executionContextsCleared"
           @contexts.clear
+        when "Page.lifecycleEvent"
+          parameters = object["params"].as_h
+          if parameters["frameId"]?.try(&.as_s?) == @main_frame_id
+            name = parameters["name"]?.try(&.as_s?) || ""
+            # A new document starts the count again; anything else it reaches
+            # is something a wait can stop waiting for.
+            if name == "init"
+              @reached.clear
+              @loading = true
+            else
+              @reached << name
+              @loading = false if name == "load"
+            end
+          end
+        when "Page.frameNavigated"
+          frame = object["params"].as_h["frame"].as_h
+          if frame["id"]?.try(&.as_s?) == @main_frame_id
+            @url = frame["url"]?.try(&.as_s?) || @url
+          end
+        when "Page.navigatedWithinDocument"
+          parameters = object["params"].as_h
+          if parameters["frameId"]?.try(&.as_s?) == @main_frame_id
+            @url = parameters["url"]?.try(&.as_s?) || @url
+          end
         end
       end
 

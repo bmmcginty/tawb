@@ -41,6 +41,41 @@ const replies = {
   'DOM.getContentQuads': QUADS,
 };
 
+// The lifecycle a document reaches, as the browser announces it.
+const lifecycle = (name, frameId = 'MAIN') => ({
+  method: 'Page.lifecycleEvent', params: { frameId, name },
+});
+
+// Per-script replies and pushed events, where a script needs the browser to
+// answer something of its own.
+const navigation = {
+  replies: {
+    ...{},
+    'Page.getFrameTree': { frameTree: { frame: { id: 'MAIN' } } },
+    'Page.navigate': { loaderId: 'LOADER-1' },
+    'Runtime.callFunctionOn': { result: { value: 'complete' } },
+    'Page.getNavigationHistory': {
+      currentIndex: 2,
+      entries: [
+        { id: 11, url: 'https://example.test/one' },
+        { id: 12, url: 'https://example.test/two' },
+        { id: 13, url: 'https://example.test/three' },
+      ],
+    },
+  },
+  // A document commits — which is what says where the tab actually ended up,
+  // a redirect included — and then reaches its lifecycle.
+  after: {
+    'Page.navigate': [
+      { method: 'Page.frameNavigated',
+        params: { frame: { id: 'MAIN', url: 'https://example.test/landed' } } },
+      lifecycle('load'),
+    ],
+    'Page.reload': [lifecycle('load')],
+    'Page.navigateToHistoryEntry': [lifecycle('load')],
+  },
+};
+
 const scripts = {
   'an evaluation runs in the document that announced a context': [
     CONTEXT,
@@ -121,11 +156,48 @@ const scripts = {
   ],
 };
 
+// Navigation is scripted separately because the browser has to answer for
+// itself: a loader id for the document that committed, and the lifecycle it
+// then reaches.
+const navigationScripts = {
+  'an address is navigated to and waited for': [
+    CONTEXT,
+    { op: 'goto', url: 'https://example.test/page' },
+    { op: 'sent' },
+  ],
+
+  'the document is asked for again, with and without the cache': [
+    CONTEXT,
+    { op: 'reload' },
+    { op: 'sent' },
+    { op: 'reload', ignoreCache: true },
+    { op: 'sent' },
+    { op: 'stop_loading' },
+    { op: 'sent' },
+  ],
+
+  'a state the document has already reached is not waited for': [
+    CONTEXT,
+    { op: 'seed_load_state' },
+    { op: 'sent' },
+    { op: 'wait_for_load_state' },
+    { op: 'sent' },
+  ],
+
+  'going back is a move to the browser\'s own previous entry': [
+    CONTEXT,
+    { op: 'traverse_history', direction: -1 },
+    { op: 'sent' },
+  ],
+};
+
 const implementations = cdpImplementations({ CdpPage });
 
 for (const implementation of implementations) {
   const check = (name, fn) => test(`${implementation.name}: ${name}`, fn);
   const run = (name) => implementation.scenario(scripts[name], replies);
+  const navigate = (name) => implementation.scenario(
+    navigationScripts[name], navigation.replies, navigation.after);
 
   check('an evaluation names its context and its function', async () => {
     const seen = await run('an evaluation runs in the document that announced a context');
@@ -242,6 +314,46 @@ for (const implementation of implementations) {
     assert.deepEqual(seen[3], [], 'and nothing was sent for either');
   });
 
+  check('an address names the document it is replacing', async () => {
+    const seen = await navigate('an address is navigated to and waited for');
+    assert.equal(seen[1], 'https://example.test/landed',
+      'the address that committed, not the one that was asked for');
+    assert.deepEqual(seen[2], [{
+      method: 'Page.navigate',
+      sessionId: null,
+      params: { url: 'https://example.test/page', frameId: 'MAIN' },
+    }]);
+  });
+
+  check('a reload says whether the cache may answer', async () => {
+    const seen = await navigate('the document is asked for again, with and without the cache');
+    assert.deepEqual(seen[2], [{
+      method: 'Page.reload', sessionId: null, params: { ignoreCache: false },
+    }]);
+    assert.deepEqual(seen[4], [{
+      method: 'Page.reload', sessionId: null, params: { ignoreCache: true },
+    }]);
+    assert.deepEqual(seen[6], [{
+      method: 'Page.stopLoading', sessionId: null, params: {},
+    }]);
+  });
+
+  check('a document that has arrived is not waited for', async () => {
+    const seen = await navigate('a state the document has already reached is not waited for');
+    assert.deepEqual(seen[2].map((entry) => entry.method), ['Runtime.callFunctionOn'],
+      'the readyState is asked once, when the tab is taken up');
+    assert.equal(seen[3], true);
+    assert.deepEqual(seen[4], [], 'and nothing is sent to wait for a load that happened');
+  });
+
+  check('going back names the entry rather than a count', async () => {
+    const seen = await navigate('going back is a move to the browser\'s own previous entry');
+    assert.equal(seen[1], true);
+    assert.deepEqual(seen[2].map((entry) => entry.method),
+      ['Page.getNavigationHistory', 'Page.navigateToHistoryEntry']);
+    assert.deepEqual(seen[2][1].params, { entryId: 12 });
+  });
+
   check('a point is clicked in whole pixels', async () => {
     const seen = await run('a click at a point in the viewport');
     const events = seen[2];
@@ -256,6 +368,13 @@ if (implementations.length > 1) {
     test(`both runtimes agree: ${name}`, async () => {
       assert.deepEqual(await crystal.scenario(script, replies),
         await javascript.scenario(script, replies));
+    });
+  }
+  for (const [name, script] of Object.entries(navigationScripts)) {
+    test(`both runtimes agree: ${name}`, async () => {
+      assert.deepEqual(
+        await crystal.scenario(script, navigation.replies, navigation.after),
+        await javascript.scenario(script, navigation.replies, navigation.after));
     });
   }
 }
