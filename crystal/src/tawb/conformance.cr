@@ -517,6 +517,8 @@ module Tawb
         cdp_frames_scenario(payload)
       when "cdp.library_scenario"
         cdp_library_scenario(payload)
+      when "core.view_blocks"
+        core_view_blocks(payload)
       when "dump.resolve_target"
         object = payload.as_h
         existing = object["existing"].as_a.map(&.as_s).to_set
@@ -3566,6 +3568,70 @@ module Tawb
         kept[name] = object[name] if object.has_key?(name)
       end
       JSON::Any.new(kept)
+    end
+
+    # One page read in one view, against a real browser. The four views are
+    # four completely different descriptions of the same document, and what
+    # each of them says is the extraction's whole answer — so the blocks
+    # themselves are what is compared, text and role and element index.
+    private def self.core_view_blocks(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      source = object["source"].as_s
+      chromium = object["engine"]?.try(&.as_s?) != "firefox"
+      session = nil.as(Engine::Session?)
+      page = nil.as(Engine::Page?)
+      begin
+        if chromium
+          opened = Cdp::BrowserSession.new(object["endpoint"].as_s)
+          session = opened
+          page = opened.create_page
+        else
+          # Firefox allows one protocol session per browser, and a kept
+          # browser's belongs to the broker holding it. A second reader
+          # reaches that browser the way every reader does: through the
+          # broker, which is what the broker is for.
+          profile = object["profile"].as_s
+          started = FirefoxLaunch.launch(profile)
+          opened = FirefoxDriver::BrowserSession.new(
+            Broker.ensure(profile, started.endpoint)[:url])
+          session = opened
+          opened.start
+          page = opened.create_page
+        end
+        acting = page.not_nil!
+        acting.goto(object["url"].as_s, "domcontentloaded")
+        Dump.settle_embedded_frames(acting)
+        core = Core.new(source: source, page: acting)
+        blocks = core.rescan
+        JSON::Any.new(blocks.map do |block|
+          item = block.item.as_h? || {} of String => JSON::Any
+          entry = {
+            "text" => JSON::Any.new(block.text),
+            "role" => item["role"]? || JSON::Any.new(nil),
+            "name" => item["name"]? || JSON::Any.new(nil),
+          } of String => JSON::Any
+          # The element each line came from, where the view numbers them. The
+          # number is the view's own and means the same thing in both
+          # runtimes; the frame it belongs to is a protocol handle and does
+          # not, so only whether there is one is reported.
+          entry["index"] = item["renderIndex"]? || item["domIndex"]? ||
+                           item["axIndex"]? || JSON::Any.new(nil)
+          entry["framed"] = JSON::Any.new(!(item["frame"]?.nil? || item["frame"]?.try(&.raw).nil?))
+          JSON::Any.new(entry)
+        end)
+      ensure
+        page.try { |held| held.close rescue nil }
+        session.try do |held|
+          case held
+          when FirefoxDriver::BrowserSession
+            # The broker keeps the browser's session for whoever comes next.
+            held.protocol.command(Broker::RETAIN_SESSION) rescue nil
+            held.close(false) rescue nil
+          when Cdp::BrowserSession
+            held.close rescue nil
+          end
+        end
+      end
     end
 
     private def self.firefox_launch_scenario(payload : JSON::Any) : JSON::Any

@@ -1191,7 +1191,10 @@ module Tawb
         given.empty? || given == "about:blank"
       end
 
-      def accessibility_documents(layout = false) : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))
+      # The documents of this tab and how they nest, in the shape the frame
+      # assembler reads. The accessibility extraction answers this alongside
+      # its items; the views that walk the page themselves ask for it alone.
+      def frame_tree : JSON::Any
         # Discovery events can still be in flight when the top document's DOM
         # event arrives. The listing is a synchronous census and closes that
         # race without recursively auto-attaching to renderer workers.
@@ -1202,9 +1205,10 @@ module Tawb
         end
         tree = command("Page.getFrameTree").as_h["result"].as_h["frameTree"]
         known_frames = frame_ids(tree).to_set
-        # A tab session may omit an OOPIF from Page.getFrameTree. Its target
-        # still has a frame tree of its own; add that root to the parent list
-        # so the renderer can place it after the corresponding iframe marker.
+        # A tab session may omit an out-of-process document from its own
+        # tree. That target still has a tree of its own; adding its root to
+        # the parent's children is what lets the assembler place it after the
+        # corresponding iframe marker.
         children = tree.as_h["childFrames"]?.try(&.as_a?)
         unless children
           children = [] of JSON::Any
@@ -1216,7 +1220,11 @@ module Tawb
           child_tree = command("Page.getFrameTree", session_id: session_id).as_h["result"].as_h["frameTree"]
           children << child_tree
         end
+        tree
+      end
 
+      def accessibility_documents(layout = false) : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))
+        tree = frame_tree
         documents = {} of String => Array(JSON::Any)
         frame_ids(tree).each_with_index do |frame_id, index|
           context = @contexts[frame_id]?

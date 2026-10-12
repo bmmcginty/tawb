@@ -2048,12 +2048,13 @@ different array than it has. The operations where the engines genuinely
 differ are not in the union at all; they live on the engine classes, exactly
 as `src/driver.js` has them.
 
-Only the AX view is extracted natively (`Core::EXTRACTABLE_SOURCES`), so the
-reader is offered a cycle of one view. A view the native extraction cannot
-build is refused with its reason on the status row, rather than answering AX
-blocks under another view's label. The place-keeping either side of a switch
-is ported and tested, so the three remaining extractors are the only thing in
-the way.
+All four views are extracted natively. AX and INSPECT share the accessibility
+extraction — INSPECT is derived from the exact items AX uses rather than
+walking a second tree and trying to align the two afterwards — while PAGE and
+SOURCE are page-side walks carried over as assets, with `views.cr` holding
+the small half that turns their entries into blocks. The place-keeping either
+side of a switch is ported too, so `\` cycles all four and keeps the reader
+where they were.
 
 ### What stays JavaScript
 

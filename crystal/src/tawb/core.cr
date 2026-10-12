@@ -58,6 +58,7 @@ require "./frames"
 require "./fields"
 require "./live"
 require "./remap"
+require "./views"
 require "./session"
 
 module Tawb
@@ -69,11 +70,9 @@ module Tawb
     # SOURCE keeps its own page-side node array and is activated through it,
     # rather than by matching role and name. INSPECT carries AX's own references.
     DOM_SOURCES = %w[source]
-    # The views the native extraction can build. AX is the one ported; the
-    # PAGE, INSPECT and SOURCE extractors remain separate release work, so
-    # they are not offered to the reader rather than silently answering AX
-    # under another view's label. See rescan().
-    EXTRACTABLE_SOURCES = ["ax"]
+    # The views the native extraction can build, which is all four of them.
+    # See rescan().
+    EXTRACTABLE_SOURCES = ALL_SOURCES
 
     # How far from the old position a re-anchor will look. A live update must
     # never relocate the reader across the page: past this, staying put is the
@@ -503,18 +502,21 @@ module Tawb
       })
     end
 
-    # Read the current native Firefox document into a fresh block buffer. AX
-    # is the extraction currently available to the interactive native core;
-    # other view extractors remain separate release work rather than silently
-    # returning AX under the wrong label.
+    # Read the current document into a fresh block buffer, in whichever view
+    # is in effect.
+    #
+    # AX and INSPECT share the accessibility extraction: INSPECT is derived
+    # from the exact items AX uses rather than walking a second tree and
+    # trying to align the two afterwards. PAGE and SOURCE walk the page
+    # themselves, each document in turn, and are assembled into the same
+    # nesting by the frame walk.
     def rescan(page : Engine::Page? = @page) : Array(Block)
       target = page || raise IO::Error.new("this core has no page")
       unless EXTRACTABLE_SOURCES.includes?(@source)
         raise IO::Error.new("native interactive extraction for #{@source} is not ported")
       end
       started = Time.monotonic
-      tree, documents = target.accessibility_documents(@layout)
-      built = Frames.build(tree, documents)
+      built = snapshot_blocks(target)
       @blocks = built.map do |entry|
         object = entry.as_h
         Block.new(object["text"]?.try(&.as_s?) || "",
@@ -531,6 +533,44 @@ module Tawb
       @snapshot_cost_ms = (Time.monotonic - started).total_milliseconds.to_i64
       @live.snapshot_cost_ms = @snapshot_cost_ms
       @blocks
+    end
+
+    # The blocks of every document in this tab, in the view in effect.
+    private def snapshot_blocks(target : Engine::Page) : Array(JSON::Any)
+      case @source
+      when "ax", "inspect"
+        tree, documents = target.accessibility_documents(@layout)
+        return Frames.build(tree, documents) if @source == "ax"
+        Frames.assemble(tree) do |frame_id|
+          InspectHtml.blocks(documents[frame_id]? || [] of JSON::Any, frame_id)
+        end
+      else
+        tree = target.frame_tree
+        # One document per frame, asked of that document. A frame that
+        # navigated or detached between the tree and the question contributes
+        # nothing rather than failing the snapshot.
+        Frames.assemble(tree) do |frame_id|
+          entries = begin
+            scope = frame_id == target.document_id ? target : target.frame_for(frame_id)
+            if @source == "render"
+              scope.evaluate(RenderHtml::EXTRACT_VISIBLE,
+                JSON::Any.new({"layout" => JSON::Any.new(@layout)})).as_a?
+            else
+              scope.evaluate(SourceHtml::EXTRACT_SOURCE).as_a?
+            end
+          rescue
+            nil
+          end
+          entries ||= [] of JSON::Any
+          if @source == "render"
+            # SOURCE stays unfolded on purpose: it shows structure, where
+            # separator folding would be a lie.
+            Blocks.fold(RenderHtml.blocks(entries, frame_id))
+          else
+            SourceHtml.blocks(entries, frame_id)
+          end
+        end
+      end
     end
 
     # Re-read, re-anchor without proportional guesses, and remember all new

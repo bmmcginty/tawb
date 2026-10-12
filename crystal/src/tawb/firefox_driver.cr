@@ -983,6 +983,19 @@ module Tawb
         Bidi.from_remote(result["result"]?).as_h?
       end
 
+      # The documents of this tab and how they nest, in the shape the frame
+      # assembler reads: {"frame" => {"id", "url"}, "childFrames" => [...]}.
+      # The accessibility extraction answers this alongside its items; the
+      # views that walk the page themselves ask for it on its own.
+      def frame_tree : JSON::Any
+        result = @protocol.command("browsingContext.getTree", {
+          "root" => JSON::Any.new(@context_id),
+        }).as_h
+        context = result["contexts"].as_a.first? ||
+                  raise IO::Error.new("Firefox exposed no tree for browsing context #{@context_id}")
+        frame_tree(context)
+      end
+
       def accessibility_documents(layout = false) : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))
         result = @protocol.command("browsingContext.getTree", {
           "root" => JSON::Any.new(@context_id),

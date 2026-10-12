@@ -9,6 +9,8 @@ const { sliderStateOf } = require('../src/core');
 const { sliderGeometry } = require('../src/driver_firefox');
 const { sliderTrack } = require('../src/driver_chromium');
 const chromiumLibrary = require('../src/library_chromium');
+const { extractVisible } = require('../src/render_html');
+const { extractSource } = require('../src/source_html');
 const { OBSERVER_SCRIPT, DRAIN_SCRIPT, PULSE_SCRIPT } = require('../src/live');
 const { CLEAR_SCRIPT, PIERCE_PARENT_SCRIPT, libraryParentScript } = require('../src/firefox');
 const { describeElement, locateElement } = require('../src/place');
@@ -83,6 +85,12 @@ const assets = {
   'chromium_ready_downloads.js': {
     source: 'src/library_chromium.js READY.downloads',
     value: chromiumLibrary.READY.downloads.toString(),
+  },
+  'extract_visible.js': {
+    source: 'src/render_html.js extractVisible', value: extractVisible.toString(),
+  },
+  'extract_source.js': {
+    source: 'src/source_html.js extractSource', value: extractSource.toString(),
   },
 };
 
