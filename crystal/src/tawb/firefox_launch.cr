@@ -1,18 +1,15 @@
 require "json"
+require "./detach"
 require "./endpoint"
 require "./marionette"
 
 module Tawb
   module FirefoxLaunch
-    lib ProcessGroup
-      fun setpgid(pid : LibC::PidT, pgid : LibC::PidT) : LibC::Int
-    end
-
     CANDIDATES = {"firefox", "firefox-esr", "librewolf"}
 
     def self.find_firefox(path = ENV["PATH"]? || "") : NamedTuple(executable: String, name: String)?
       CANDIDATES.each do |name|
-        if executable = which(name, path)
+        if executable = Detach.which(name, path)
           return {executable: executable, name: name}
         end
       end
@@ -58,14 +55,14 @@ module Tawb
         process = @process
         return unless process
         if @grouped
-          # The browser was made its own process group when it was spawned, so
-          # the signalled group takes the wrapper (xvfb-run) and every browser
-          # process with it — the territory JavaScript's detached spawn and
+          # The browser leads a process group of its own, so the signalled
+          # group takes the wrapper (xvfb-run) and every browser process with
+          # it — the territory JavaScript's detached spawn and
           # killProcessGroup cover.
           LibC.kill(-process.pid, LibC::SIGTERM)
         end
-        # The group is won or lost in the race between this process's setpgid
-        # and the child's exec, so the outcome is not assumed: everything
+        # Where setsid was not available the group is won or lost in a race
+        # with the child's exec, so the outcome is not assumed: everything
         # still descended from the browser we started is signalled too. A
         # wrapper that dies alone orphans the browser, which then holds the
         # profile and refuses the next launch.
@@ -132,7 +129,7 @@ module Tawb
       ]
       command = found[:executable]
       unless display && !display.empty?
-        xvfb = which("xvfb-run", path) || raise IO::Error.new(
+        xvfb = Detach.which("xvfb-run", path) || raise IO::Error.new(
           "No DISPLAY is set and xvfb-run was not found. A browser with a display is required " +
           "(headless browsers fail bot checks that a real one passes). Install xvfb, or run " +
           "inside a graphical session."
@@ -141,14 +138,13 @@ module Tawb
         arguments = [xvfb_display_option(xvfb), "-s", "-screen 0 1280x1024x24", found[:executable]] + arguments
       end
 
-      process = Process.new(command, arguments,
-        input: Process::Redirect::Close,
-        output: Process::Redirect::Close,
-        error: Process::Redirect::Close)
-      # Detached from this reader's process group, so a terminal's Ctrl+C
-      # spares a browser somebody may be reading, and so close can take the
-      # browser's whole group down with the wrapper that started it.
-      grouped = ProcessGroup.setpgid(process.pid, process.pid) == 0
+      # Detached into a session of its own, so a terminal's Ctrl+C and a
+      # terminal closing both spare a browser somebody may be reading, and so
+      # close can take the browser's whole group down with the wrapper that
+      # started it. See Detach.
+      spawned = Detach.spawn(command, arguments, path)
+      process = spawned.process
+      grouped = spawned.grouped
       deadline = Time.instant + timeout_ms.milliseconds
       unless Endpoint.wait(port, deadline)
         process.terminate rescue nil
@@ -245,15 +241,6 @@ module Tawb
         "once yourself — which lets Firefox #{installed} keep the profile, and can lose what " +
         "Firefox #{wrote_it_last} saved in it."
       )
-    end
-
-    private def self.which(command : String, path : String) : String?
-      path.split(':').each do |directory|
-        candidate = File.join(directory, command)
-        info = File.info?(candidate)
-        return candidate if info && info.file? && File::Info.executable?(candidate)
-      end
-      nil
     end
 
     private def self.snap_package_name(executable : String?) : String?

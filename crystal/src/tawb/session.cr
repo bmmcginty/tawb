@@ -40,8 +40,8 @@ module Tawb
     # ours, which still counts as running — only ESRCH means it is gone.
     #
     # This is src/proc.js's processAlive. It lives here, as the same file's
-    # killProcessGroup lives in firefox_launch.cr and Broker carries its own
-    # copy, until a second consumer calls for a proc.cr of its own.
+    # killProcessGroup lives in firefox_launch.cr and its detached spawn in
+    # detach.cr, until a second consumer calls for a proc.cr of its own.
     private def self.process_alive?(pid : Int64) : Bool
       return false unless pid.in?(1..Int32::MAX)
       LibC.kill(pid.to_i32, 0) == 0 || Errno.value == Errno::EPERM

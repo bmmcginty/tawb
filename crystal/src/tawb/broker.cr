@@ -1,14 +1,12 @@
 require "json"
 require "mutex"
 require "socket"
+require "./detach"
 require "./endpoint"
 require "./transport"
 
 module Tawb
   module Broker
-    lib ProcessGroup
-      fun setpgid(pid : LibC::PidT, pgid : LibC::PidT) : LibC::Int
-    end
 
     GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
@@ -140,12 +138,11 @@ module Tawb
              "upstream" => JSON::Any.new(endpoint),
              "at"       => JSON::Any.new(Time.utc.to_unix_ms),
            })
-          child = Process.new(executable, [INTERNAL_BROKER_ARG, endpoint, fresh.to_s, profile_dir],
-            input: Process::Redirect::Close, output: Process::Redirect::Close,
-            error: Process::Redirect::Close)
-          # Detached from this reader's process group: a terminal's Ctrl+C
-          # ends the reader, not the broker holding the browser's session.
-          ProcessGroup.setpgid(child.pid, child.pid)
+          # Detached into a session of its own: a terminal's Ctrl+C, and the
+          # terminal closing, end the reader rather than the broker holding
+          # the browser's session. See Detach.
+          child = Detach.spawn(executable,
+            [INTERNAL_BROKER_ARG, endpoint, fresh.to_s, profile_dir]).process
           if Endpoint.wait(fresh, Time.instant + 15.seconds)
             write_record(profile_dir, {
               "pid"      => JSON::Any.new(child.pid.to_i64),
