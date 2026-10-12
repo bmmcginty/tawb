@@ -213,6 +213,17 @@ module Tawb
       private def unwrap(page : Reader::PageEnv) : FirefoxDriver::Page; page.as(Page).raw; end
     end
 
+    class CredentialBinding
+      include Reader::CredentialEnv
+      def initialize(@credentials : Auth::Credentials); end
+      def remember(url : String, username : String, password : String) : Nil
+        @credentials.remember(JSON::Any.new({"url" => JSON::Any.new(url)}),
+          JSON::Any.new({"username" => JSON::Any.new(username),
+                         "password" => JSON::Any.new(password)}))
+      end
+      def reconsider : Nil; @credentials.reconsider; end
+    end
+
     class Keyboard
       include ReaderKeys::Keyboard
       def initialize(@reader : Input::KeyReader); end

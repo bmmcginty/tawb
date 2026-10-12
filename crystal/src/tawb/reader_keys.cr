@@ -1840,6 +1840,7 @@ module Tawb
       # The page-history place the JavaScript original remembers here is
       # ported with the history traversal helpers.
       Reader.set_status(output, state, page.url, "Loading #{url} — Esc: stop.")
+      state.credentials.try(&.reconsider)
       went = navigate_interruptibly(output, state, page, keyboard, url)
       if went[:cancelled]
         Reader.render(output, state, page.url, force: true)
@@ -1906,9 +1907,13 @@ module Tawb
         # https://user:password@host is deprecated for subresources in
         # Chrome and interrupted by a confirmation of its own in Firefox, so
         # the pair is taken out here and used to answer the challenge
-        # instead. The credentials store that remembers it is ported with
-        # the browser-authentication work.
+        # instead. The session-only credentials store remembers it for the
+        # challenge without leaving the password in browser history.
         credentials = Auth.split_credentials(resolved["url"].as_s)
+        if username = credentials["username"].as_s?
+          state.credentials.try(&.remember(credentials["url"].as_s, username,
+            credentials["password"].as_s? || ""))
+        end
         # Say that a search happened. A reader who typed a host name with a
         # typo in it is otherwise handed a results page with no account of
         # why.

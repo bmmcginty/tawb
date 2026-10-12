@@ -59,44 +59,57 @@ module Tawb
 
       def initialize(url : String)
         @socket = Transport::WebSocket.new(url)
+        @mutex = Mutex.new
+        @write_mutex = Mutex.new
+        @waiters = {} of Int64 => Channel(JSON::Any)
+        @event_ready = Channel(Nil).new(1)
+        @closed = false
+        spawn { read_loop }
       end
 
+      # One fiber owns socket reads. Commands, auth handling, navigation waits,
+      # and live collection may all be active together; routing replies by id
+      # is what keeps an event consumer from stealing a command's answer.
       def command(method : String, params = {} of String => JSON::Any) : JSON::Any
-        @next_id += 1
-        wanted = @next_id
-        @socket.send({
-          "id"     => JSON::Any.new(wanted),
-          "method" => JSON::Any.new(method),
-          "params" => JSON::Any.new(params),
-        }.to_json)
-        loop do
-          message = JSON.parse(@socket.receive)
-          object = message.as_h
-          unless object["id"]?
-            @events << message
-            next
-          end
-          next unless object["id"].as_i64 == wanted
-          if object["type"]?.try(&.as_s?) == "error"
-            name = object["error"]?.try(&.as_s?) || "BiDi error"
-            detail = object["message"]?.try(&.as_s?) || ""
-            raise IO::Error.new(detail.empty? ? name : "#{name}: #{detail}")
-          end
-          return object["result"]? || JSON::Any.new(nil)
+        response = Channel(JSON::Any).new(1)
+        wanted = @mutex.synchronize do
+          raise IO::Error.new("BiDi connection is closed") if @closed
+          @next_id += 1
+          @waiters[@next_id] = response
+          @next_id
         end
+        begin
+          @write_mutex.synchronize do
+            @socket.send({
+              "id"     => JSON::Any.new(wanted),
+              "method" => JSON::Any.new(method),
+              "params" => JSON::Any.new(params),
+            }.to_json)
+          end
+        rescue error
+          @mutex.synchronize { @waiters.delete(wanted) }
+          raise error
+        end
+        object = response.receive.as_h
+        if object["type"]?.try(&.as_s?) == "error"
+          name = object["error"]?.try(&.as_s?) || "BiDi error"
+          detail = object["message"]?.try(&.as_s?) || ""
+          raise IO::Error.new(detail.empty? ? name : "#{name}: #{detail}")
+        end
+        object["result"]? || JSON::Any.new(nil)
       end
 
       def next_event(method : String) : JSON::Any
-        if index = @events.index { |event| event.as_h["method"]?.try(&.as_s?) == method }
-          return @events.delete_at(index).as_h["params"]? || JSON::Any.new(nil)
-        end
         loop do
-          message = JSON.parse(@socket.receive)
-          object = message.as_h
-          if object["id"]?.nil? && object["method"]?.try(&.as_s?) == method
-            return object["params"]? || JSON::Any.new(nil)
+          found = @mutex.synchronize do
+            if index = @events.index { |event| event.as_h["method"]?.try(&.as_s?) == method }
+              @events.delete_at(index).as_h["params"]? || JSON::Any.new(nil)
+            elsif @closed
+              raise IO::Error.new("BiDi connection is closed")
+            end
           end
-          @events << message if object["id"]?.nil?
+          return found.not_nil! if found
+          @event_ready.receive
         end
       end
 
@@ -106,25 +119,12 @@ module Tawb
       # nothing. A load-state wait polls this rather than blocking on an
       # event the protocol never promised to send.
       def poll_any(methods : Array(String)) : Tuple(String, JSON::Any)?
-        if index = @events.index { |event| methods.includes?(event.as_h["method"]?.try(&.as_s?) || "") }
-          event = @events.delete_at(index).as_h
-          return {event["method"].as_s, event["params"]? || JSON::Any.new(nil)}
+        @mutex.synchronize do
+          if index = @events.index { |event| methods.includes?(event.as_h["method"]?.try(&.as_s?) || "") }
+            event = @events.delete_at(index).as_h
+            return {event["method"].as_s, event["params"]? || JSON::Any.new(nil)}
+          end
         end
-        previous = @socket.read_timeout
-        @socket.read_timeout = 20.milliseconds
-        message = begin
-          JSON.parse(@socket.receive)
-        rescue ex : IO::TimeoutError
-          return nil
-        ensure
-          @socket.read_timeout = previous
-        end
-        object = message.as_h
-        method = object["method"]?.try(&.as_s?)
-        if object["id"]?.nil? && method && methods.includes?(method)
-          return {method, object["params"]? || JSON::Any.new(nil)}
-        end
-        @events << message if object["id"]?.nil?
         nil
       end
 
@@ -133,17 +133,55 @@ module Tawb
       # driver tolerates it: the page goes quiet rather than the reader.
       def subscribe(events : Array(String)) : Nil
         names = events.map { |event| JSON::Any.new(event) }
-        @socket.send({
-          "id"     => JSON::Any.new(@next_id += 1),
-          "method" => JSON::Any.new("session.subscribe"),
-          "params" => JSON::Any.new({"events" => JSON::Any.new(names)}),
-        }.to_json)
+        command("session.subscribe", {"events" => JSON::Any.new(names)})
       rescue
         nil
       end
 
       def close : Nil
+        @mutex.synchronize { @closed = true }
         @socket.close
+        wake_closed
+      rescue
+        wake_closed
+      end
+
+      private def read_loop : Nil
+        loop do
+          message = JSON.parse(@socket.receive)
+          object = message.as_h
+          if id = object["id"]?.try(&.as_i64?)
+            waiter = @mutex.synchronize { @waiters.delete(id) }
+            waiter.try(&.send(message))
+          else
+            @mutex.synchronize { @events << message }
+            select
+            when @event_ready.send(nil)
+            else
+            end
+          end
+        end
+      rescue
+        @mutex.synchronize { @closed = true }
+        wake_closed
+      end
+
+      private def wake_closed : Nil
+        failed = JSON::Any.new({
+          "type" => JSON::Any.new("error"),
+          "error" => JSON::Any.new("connection closed"),
+          "message" => JSON::Any.new("BiDi connection is closed"),
+        })
+        waiters = @mutex.synchronize do
+          found = @waiters.values
+          @waiters.clear
+          found
+        end
+        waiters.each { |waiter| waiter.send(failed) rescue nil }
+        select
+        when @event_ready.send(nil)
+        else
+        end
       end
     end
   end

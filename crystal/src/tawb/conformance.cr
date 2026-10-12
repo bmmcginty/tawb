@@ -2,6 +2,7 @@ require "json"
 require "./actions"
 require "./address"
 require "./aria"
+require "./auth"
 require "./blocks"
 require "./bidi"
 require "./core"
@@ -105,6 +106,44 @@ module Tawb
         unsupported: (object["unsupported"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s),
         preferences: preferences,
       )
+    end
+
+    private def self.auth_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      answers = (object["answers"]?.try(&.as_a?) || [] of JSON::Any).dup
+      asks = [] of JSON::Any
+      logs = [] of JSON::Any
+      credentials = Auth::Credentials.new(
+        ->(challenge : JSON::Any, refused : Bool, attempt : Int32) do
+          asks << JSON::Any.new({"challenge" => challenge,
+                                 "refused" => JSON::Any.new(refused),
+                                 "attempt" => JSON::Any.new(attempt.to_i64)})
+          answer = answers.shift? || JSON::Any.new(nil)
+          answer.raw.nil? ? nil : answer
+        end,
+        ->(event : String, fields : Hash(String, JSON::Any)) do
+          logs << JSON::Any.new({"event" => JSON::Any.new(event),
+                                 "fields" => JSON::Any.new(fields)})
+          nil
+        end)
+      observations = [] of JSON::Any
+      object["script"].as_a.each do |entry|
+        step = entry.as_h
+        case step["op"].as_s
+        when "remember"
+          observations << JSON::Any.new(credentials.remember(step["challenge"], step["credentials"]))
+        when "forget"
+          credentials.forget(step["challenge"]); observations << JSON::Any.new(nil)
+        when "reconsider"
+          credentials.reconsider; observations << JSON::Any.new(nil)
+        when "answer"
+          answer = credentials.answer(step["challenge"], step["id"]?.try(&.as_s?),
+            step["now"]?.try(&.as_i64?) || 0_i64)
+          observations << (answer || JSON::Any.new(nil))
+        end
+      end
+      JSON::Any.new({"observations" => JSON::Any.new(observations),
+                     "asks" => JSON::Any.new(asks), "logs" => JSON::Any.new(logs)})
     end
 
     private def self.startup_scenario(payload : JSON::Any) : JSON::Any
@@ -353,6 +392,14 @@ module Tawb
         JSON::Any.new(Address.search_url(words, template))
       when "aria.render_line"
         JSON::Any.new(Aria.render_line(payload.as_h["item"]))
+      when "auth.normalise"
+        Auth.normalise_challenge(payload.as_h["challenge"]? || JSON::Any.new({} of String => JSON::Any))
+      when "auth.challenge_key"
+        JSON::Any.new(Auth.challenge_key(payload.as_h["challenge"]))
+      when "auth.origin_key"
+        JSON::Any.new(Auth.origin_key(payload.as_h["challenge"]))
+      when "auth.scenario"
+        auth_scenario(payload)
       when "bidi.from_remote"
         Bidi.from_remote(payload.as_h["value"]?)
       when "bidi.session_scenario"

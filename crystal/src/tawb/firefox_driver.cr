@@ -53,6 +53,55 @@ module Tawb
         })
       end
 
+      # Take Firefox's invisible HTTP-authentication prompt over and answer it
+      # with credentials supplied by the reader. The session dispatcher keeps
+      # this event loop independent from page commands on the same socket.
+      def attach_auth(handler : Proc(JSON::Any, String, Page?, JSON::Any?)) : Nil
+        @protocol.command("session.subscribe", {
+          "events" => JSON::Any.new([JSON::Any.new("network.authRequired")]),
+        }) rescue nil
+        @protocol.command("network.addIntercept", {
+          "phases" => JSON::Any.new([JSON::Any.new("authRequired")]),
+        })
+        spawn do
+          loop do
+            params = @protocol.next_event("network.authRequired").as_h
+            request = params["request"]?.try(&.as_h?) || {} of String => JSON::Any
+            response = params["response"]?.try(&.as_h?) || {} of String => JSON::Any
+            challenge = response["authChallenges"]?.try(&.as_a?).try(&.first?).try(&.as_h?) ||
+                        {} of String => JSON::Any
+            request_id = request["request"]?.try(&.as_s?) || next
+            raw = JSON::Any.new({
+              "source" => JSON::Any.new(response["status"]?.try(&.as_i64?) == 407 ? "proxy" : "server"),
+              "realm"  => JSON::Any.new(challenge["realm"]?.try(&.as_s?) || ""),
+              "scheme" => JSON::Any.new(challenge["scheme"]?.try(&.as_s?) || ""),
+              "url"    => JSON::Any.new(request["url"]?.try(&.as_s?) || ""),
+            })
+            context = params["context"]?.try(&.as_s?)
+            page = context ? @pages[context]? : nil
+            given = handler.call(raw, request_id, page) rescue nil
+            fields = given.try(&.as_h?)
+            command = if fields
+                        {
+                          "request" => JSON::Any.new(request_id),
+                          "action" => JSON::Any.new("provideCredentials"),
+                          "credentials" => JSON::Any.new({
+                            "type" => JSON::Any.new("password"),
+                            "username" => JSON::Any.new(fields["username"]?.try(&.as_s?) || ""),
+                            "password" => JSON::Any.new(fields["password"]?.try(&.as_s?) || ""),
+                          }),
+                        }
+                      else
+                        {"request" => JSON::Any.new(request_id),
+                         "action" => JSON::Any.new("cancel")}
+                      end
+            @protocol.command("network.continueWithAuth", command) rescue nil
+          end
+        rescue
+          # Session shutdown, or a browser that removed the intercept.
+        end
+      end
+
       # Every top-level browsing context is a tab. Keep one Page object per
       # context so the core can compare its current page by identity while a
       # fresh getTree answer updates the address behind that object.

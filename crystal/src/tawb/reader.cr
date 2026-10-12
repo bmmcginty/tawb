@@ -177,6 +177,11 @@ module Tawb
       abstract def tab_label(page : PageEnv) : String
     end
 
+    module CredentialEnv
+      abstract def remember(url : String, username : String, password : String) : Nil
+      abstract def reconsider : Nil
+    end
+
     # A page-touching operation outlived its budget. The core's own timeouts
     # raise this (the browser-side source of it is the same in JavaScript:
     # core.js's ActionTimeout). Activation says how long it gave the page
@@ -709,6 +714,7 @@ module Tawb
       property drawn : Drawn
       property core : CoreEnv
       property tabs : TabEnv?
+      property credentials : CredentialEnv?
       property keys : Keys::Keymap?
       property typing : Typing?
       property address : AddressBar?
@@ -757,6 +763,7 @@ module Tawb
         @drawn = Drawn.new
         @core = CoreState.new
         @tabs = nil
+        @credentials = nil
         @keys = nil
         @typing = nil
         @address = nil

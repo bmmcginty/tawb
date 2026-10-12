@@ -176,16 +176,35 @@ module Tawb
                        Keys::Keymap.new(profile: state.interface)
                      end
 
-        target = options["url"].as_s?.try do |typed|
+        resolved = options["url"].as_s?.try do |typed|
           Address.resolve(typed, options["search"].as_s)["url"].as_s?
         end || "https://www.google.com"
+        split = Auth.split_credentials(resolved)
+        target = split["url"].as_s
+
+        # Authentication can interrupt the first navigation, so the terminal
+        # and keyboard must belong to the reader before that navigation starts.
+        terminal.acquire
+        reader = Input::KeyReader.new(STDIN)
+        keyboard = Interactive::Keyboard.new(reader.not_nil!)
+        credentials = Auth::Credentials.new(
+          ->(challenge : JSON::Any, refused : Bool, _attempt : Int32) {
+            ReaderKeys.ask_for_password(terminal, state, keyboard, challenge, refused)
+          },
+          ->(event : String, fields : Hash(String, JSON::Any)) { logger.write(event, fields); nil })
+        state.credentials = Interactive::CredentialBinding.new(credentials)
+        if username = split["username"].as_s?
+          credentials.remember(JSON::Any.new({"url" => JSON::Any.new(target)}),
+            JSON::Any.new({"username" => JSON::Any.new(username),
+                           "password" => split["password"]}))
+        end
+        browser.attach_auth(->(challenge : JSON::Any, id : String, _page : FirefoxDriver::Page?) {
+          credentials.answer(challenge, id)
+        })
         unless adopted
           logger.timed("goto", {"url" => JSON::Any.new(target)}) { page.not_nil!.goto(target) }
         end
 
-        terminal.acquire
-        reader = Input::KeyReader.new(STDIN)
-        keyboard = Interactive::Keyboard.new(reader.not_nil!)
         Reader.refresh(state, tabs.current_page, true)
         Reader.render(terminal, state, tabs.current_page.url, true)
         core.attach_live rescue nil
