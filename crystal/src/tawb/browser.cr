@@ -1,6 +1,7 @@
 require "file_utils"
 require "json"
 require "socket"
+require "./detach"
 require "./transport"
 
 module Tawb
@@ -12,7 +13,8 @@ module Tawb
     class Session
       getter endpoint : String
 
-      def initialize(@endpoint : String, @process : Process? = nil, @owned = false, @profile_dir : String? = nil)
+      def initialize(@endpoint : String, @process : Process? = nil, @owned = false,
+                     @profile_dir : String? = nil, @grouped = false)
       end
 
       def owned? : Bool
@@ -22,6 +24,13 @@ module Tawb
       def close : Nil
         process = @process
         return unless process
+        if @grouped
+          # The browser leads a process group of its own, so the signalled
+          # group takes the wrapper (xvfb-run) and every browser process with
+          # it. Terminating the wrapper alone orphans the browser, which then
+          # holds the profile and refuses the next launch.
+          LibC.kill(-process.pid, LibC::SIGTERM)
+        end
         process.terminate
         process.wait
       rescue
@@ -53,16 +62,17 @@ module Tawb
       ]
       command = executable
       unless ENV["DISPLAY"]?
-        xvfb = which("xvfb-run") || raise IO::Error.new(
+        xvfb = Detach.which("xvfb-run") || raise IO::Error.new(
           "No DISPLAY is set and xvfb-run was not found. Install xvfb, or run inside a graphical session."
         )
         command = xvfb
         arguments = ["-a", "-s", "-screen 0 1280x1024x24", executable] + arguments
       end
-      process = Process.new(command, arguments,
-        input: Process::Redirect::Close,
-        output: Process::Redirect::Close,
-        error: Process::Redirect::Close)
+      # Detached into a session of its own, so a terminal's Ctrl+C and a
+      # terminal closing both spare a browser that was asked to be kept. See
+      # Detach.
+      spawned = Detach.spawn(command, arguments)
+      process = spawned.process
       endpoint = "http://127.0.0.1:#{port}"
       deadline = Time.instant + (timeout_ms || 25000).milliseconds
       last_error = nil
@@ -74,7 +84,8 @@ module Tawb
             "pid"       => JSON::Any.new(process.pid.to_i64),
             "startedAt" => JSON::Any.new(Time.utc.to_unix_ms),
           }.to_json)
-          return Session.new(endpoint, process, owned: true, profile_dir: profile_dir)
+          return Session.new(endpoint, process, owned: true, profile_dir: profile_dir,
+            grouped: spawned.grouped)
         rescue error
           last_error = error
           if Time.instant >= deadline
@@ -86,15 +97,6 @@ module Tawb
           sleep 200.milliseconds
         end
       end
-    end
-
-    def self.which(command : String) : String?
-      (ENV["PATH"]? || "").split(':').each do |directory|
-        candidate = File.join(directory, command)
-        info = File.info?(candidate)
-        return candidate if info && info.file? && File::Info.executable?(candidate)
-      end
-      nil
     end
 
     private def self.running_endpoint(profile_dir : String) : String?
@@ -118,7 +120,7 @@ module Tawb
 
     private def self.find_executable : String?
       CANDIDATES.each do |candidate|
-        found = which(candidate)
+        found = Detach.which(candidate)
         return found if found
       end
       nil
