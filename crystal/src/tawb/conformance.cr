@@ -508,6 +508,8 @@ module Tawb
         sent = Edit.send_field_edit(->(key : String) { pressed << JSON::Any.new(key); nil },
           payload.as_h["action"].as_s)
         sent ? JSON::Any.new(pressed) : JSON::Any.new(nil)
+      when "cdp.scenario"
+        cdp_scenario(payload)
       when "dump.resolve_target"
         object = payload.as_h
         existing = object["existing"].as_a.map(&.as_s).to_set
@@ -3243,6 +3245,151 @@ module Tawb
           })
         else
           raise ArgumentError.new("unknown place scenario op #{step["op"]}")
+        end
+      end
+      JSON::Any.new(observations)
+    end
+
+    # A CDP channel that records what was sent and answers from a script.
+    #
+    # Everything the interactive Chromium client decides — the shape of a
+    # callFunctionOn, the key events a keystroke becomes, the three mouse
+    # events a click is — is decided before the socket. Recording the traffic
+    # is therefore the whole of what there is to compare against the
+    # JavaScript original, and it needs no browser to compare it.
+    #
+    # Replies are looked up by method name. A method with no scripted reply
+    # answers an empty result, which is what the protocol does for a command
+    # that only does something.
+    private class RecordingChannel
+      include Transport::Channel
+
+      getter sent : Array(JSON::Any)
+      property replies : Hash(String, JSON::Any)
+
+      def initialize
+        @sent = [] of JSON::Any
+        @replies = {} of String => JSON::Any
+        @pending = [] of String
+      end
+
+      def forget : Nil
+        @sent.clear
+      end
+
+      def send(text : String) : Nil
+        request = JSON.parse(text)
+        @sent << request
+        object = request.as_h
+        method = object["method"].as_s
+        result = @replies[method]? || JSON::Any.new({} of String => JSON::Any)
+        answer = {
+          "id"     => object["id"],
+          "result" => result,
+        } of String => JSON::Any
+        answer["sessionId"] = object["sessionId"] if object["sessionId"]?
+        @pending << JSON::Any.new(answer).to_json
+      end
+
+      def receive : String
+        @pending.shift? || raise IO::EOFError.new("nothing was sent to answer")
+      end
+
+      def close : Nil
+      end
+    end
+
+    # The commands a scenario produced, with the volatile parts of a request
+    # left out: the id counter is the client's own bookkeeping rather than
+    # anything the page sees.
+    private def self.cdp_sent_json(sent : Array(JSON::Any)) : JSON::Any
+      JSON::Any.new(sent.map do |request|
+        object = request.as_h
+        entry = {
+          "method" => object["method"],
+          "params" => object["params"]? || JSON::Any.new({} of String => JSON::Any),
+        } of String => JSON::Any
+        entry["sessionId"] = object["sessionId"]? || JSON::Any.new(nil)
+        JSON::Any.new(entry)
+      end)
+    end
+
+    # A scripted pass over the interactive Chromium client: the traffic one
+    # evaluation, one keystroke, one click produces. The JavaScript original
+    # runs the same script in process against a recording session, so the two
+    # runtimes must put the same commands on the wire.
+    private def self.cdp_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      channel = RecordingChannel.new
+      if replies = object["replies"]?.try(&.as_h?)
+        replies.each { |method, value| channel.replies[method] = value }
+      end
+      page = Cdp::Page.new("http://127.0.0.1:0",
+        Cdp::Target.new("TARGET", "ws://127.0.0.1:0/devtools/page/TARGET"), channel)
+      # Neither the domains the client enables when it opens nor the frame
+      # tree it reads its main document's id from are what is being compared:
+      # the JavaScript page is handed a session somebody else enabled them
+      # on, and is told its main frame by the context that opened it.
+      page.main_frame_id
+      channel.forget
+
+      observations = [] of JSON::Any
+      held = nil.as(Cdp::Handle?)
+      object["script"].as_a.each do |step_value|
+        step = step_value.as_h
+        case step["op"].as_s
+        when "context"
+          # The context announcement a document makes, which is what every
+          # evaluation waits for.
+          page.note_event(JSON.parse(step["event"].to_json))
+          observations.push JSON::Any.new(nil)
+        when "evaluate"
+          observations.push page.evaluate(step["fn"].as_s, step["arg"]?,
+            step["expression"]?.try(&.as_bool?) || false)
+        when "evaluate_handle"
+          held.try(&.dispose)
+          held = page.evaluate_handle(step["fn"].as_s, step["arg"]?,
+            step["expression"]?.try(&.as_bool?) || false)
+          observations.push JSON::Any.new(held.not_nil!.object_id)
+        when "handle_evaluate"
+          observations.push held.not_nil!.evaluate(step["fn"].as_s, step["arg"]?,
+            step["expression"]?.try(&.as_bool?) || false)
+        when "handle_click_box"
+          box = held.not_nil!.click_box
+          observations.push(box ? JSON::Any.new({
+            "x"      => JSON::Any.new(box.x),
+            "y"      => JSON::Any.new(box.y),
+            "width"  => JSON::Any.new(box.width),
+            "height" => JSON::Any.new(box.height),
+          }) : JSON::Any.new(nil))
+        when "handle_click"
+          held.not_nil!.click((step["modifiers"]?.try(&.as_i64?) || 0).to_i32)
+          observations.push JSON::Any.new(nil)
+        when "handle_hover"
+          held.not_nil!.hover
+          observations.push JSON::Any.new(nil)
+        when "handle_dispose"
+          held.not_nil!.dispose
+          observations.push JSON::Any.new(nil)
+        when "type"
+          page.keyboard.type(step["text"].as_s)
+          observations.push JSON::Any.new(nil)
+        when "press"
+          begin
+            page.keyboard.press(step["key"].as_s)
+            observations.push JSON::Any.new(nil)
+          rescue error
+            observations.push JSON::Any.new(error.message || error.to_s)
+          end
+        when "click_at"
+          page.click_at(Core.js_number(step["x"]), Core.js_number(step["y"]),
+            (step["modifiers"]?.try(&.as_i64?) || 0).to_i32)
+          observations.push JSON::Any.new(nil)
+        when "sent"
+          observations.push cdp_sent_json(channel.sent)
+          channel.forget
+        else
+          raise ArgumentError.new("unknown cdp scenario op #{step["op"]}")
         end
       end
       JSON::Any.new(observations)

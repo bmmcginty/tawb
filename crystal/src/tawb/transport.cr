@@ -71,7 +71,19 @@ module Tawb
       bytes
     end
 
+    # The two directions a protocol client needs, and nothing else. A real
+    # WebSocket is one of these; so is a recorded one, which is what lets the
+    # CDP and BiDi clients be differenced against their JavaScript originals
+    # without a browser in the room.
+    module Channel
+      abstract def send(text : String) : Nil
+      abstract def receive : String
+      abstract def close : Nil
+    end
+
     class WebSocket
+      include Channel
+
       def initialize(url : String, read_timeout : Time::Span? = 30.seconds)
         target = Transport.parse_url(url, "ws")
         @socket = TCPSocket.new(target.host, target.port)

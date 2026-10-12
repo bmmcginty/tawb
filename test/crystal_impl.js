@@ -2783,6 +2783,114 @@ function placeElementImplementations(place) {
   return implementations;
 }
 
+// The interactive Chromium client, differenced on the traffic it produces.
+//
+// Everything this client decides — the shape of a callFunctionOn, the key
+// events a keystroke becomes, the three mouse events a click is — is decided
+// before the socket. Recording the traffic is therefore the whole of what
+// there is to compare, and it needs no browser to compare it.
+function cdpImplementations({ CdpPage }) {
+  const scenario = async (script, replies = {}) => {
+    const sent = [];
+    const session = {
+      sessionId: null,
+      detached: false,
+      async send(method, params = {}) {
+        sent.push({ method, params, sessionId: null });
+        return replies[method] === undefined ? {} : replies[method];
+      },
+      on() {}, off() {},
+    };
+    const page = new CdpPage({ closePage: async () => {} }, session, 'TARGET');
+    page.mainFrameId = 'MAIN';
+    page.ensureFrame('MAIN');
+    // The callers above this client pass JavaScript functions, which stringify
+    // to their own source; a string means the bare expression form. The
+    // Crystal port says which it is handing over instead of guessing, so the
+    // script does the same and the two declarations come out identical.
+    const code = (step) => (step.expression ? step.fn : new Function(`return ${step.fn}`)());
+    const forget = () => { sent.length = 0; };
+    const taken = () => {
+      const seen = sent.map((entry) => ({ ...entry }));
+      forget();
+      return seen;
+    };
+
+    const observations = [];
+    let held = null;
+    for (const step of script) {
+      switch (step.op) {
+        case 'context':
+          page.noteContext(session, step.event.params.context);
+          observations.push(null);
+          break;
+        case 'evaluate':
+          observations.push(await page.evaluate(code(step), step.arg) ?? null);
+          break;
+        case 'evaluate_handle':
+          if (held) await held.dispose();
+          held = await page.evaluateHandle(code(step), step.arg);
+          observations.push(held.objectId);
+          break;
+        case 'handle_evaluate':
+          observations.push(await held.evaluate(code(step), step.arg) ?? null);
+          break;
+        case 'handle_click_box': {
+          const box = await held.clickBox();
+          observations.push(box
+            ? { x: box.x, y: box.y, width: box.width, height: box.height }
+            : null);
+          break;
+        }
+        case 'handle_click':
+          await held.click(step.modifiers ?? 0);
+          observations.push(null);
+          break;
+        case 'handle_hover':
+          await held.hover();
+          observations.push(null);
+          break;
+        case 'handle_dispose':
+          await held.dispose();
+          observations.push(null);
+          break;
+        case 'type':
+          await page.keyboard.type(step.text);
+          observations.push(null);
+          break;
+        case 'press':
+          try {
+            await page.keyboard.press(step.key);
+            observations.push(null);
+          } catch (error) {
+            observations.push(String(error.message));
+          }
+          break;
+        case 'click_at':
+          await page.clickAt(step.x, step.y, session, step.modifiers ?? 0);
+          observations.push(null);
+          break;
+        case 'sent':
+          observations.push(taken());
+          break;
+        default:
+          throw new Error(`unknown cdp scenario op ${step.op}`);
+      }
+    }
+    return observations;
+  };
+
+  const implementations = [{ name: 'JavaScript', scenario }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    async scenario(script, replies = {}) {
+      return call('cdp.scenario', { script, replies });
+    },
+  });
+  return implementations;
+}
+
 function readerCommands(root) {
   const commands = [{
     name: 'JavaScript', command: process.execPath, args: ['src/index.js'],
@@ -2826,7 +2934,7 @@ function unicodeImplementations(javascript) {
 }
 
 module.exports = {
-  call, callAsync, addressImplementations, ariaImplementations, bidiImplementations,
+  call, callAsync, addressImplementations, cdpImplementations, ariaImplementations, bidiImplementations,
   blockImplementations, coreImplementations, coreTabImplementations,
   dumpImplementations, editImplementations,
   endpointImplementations,
