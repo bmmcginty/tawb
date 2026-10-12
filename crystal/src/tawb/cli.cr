@@ -53,8 +53,8 @@ module Tawb
 
     The native Crystal reader reads pages interactively through Firefox and
     Chromium, in this interface or Lynx's, and writes dumps through either.
-    The edb front end and the standalone keyboard wizard are not yet
-    available on either engine.
+    The edb front end is not part of the static reader; it stays with the
+    Node program, which brings edbrowse's own screen with it.
     TEXT
 
     def self.run(argv : Array(String) = ARGV, env : Hash(String, String) = ENV.to_h) : Nil
@@ -88,6 +88,18 @@ module Tawb
         end
         return
       end
+      # The keyboard screen is a flag on a reader front end rather than a
+      # front end of its own, and it needs no browser: it edits the key file
+      # and nothing else.
+      if options["keyboard"].as_bool
+        begin
+          run_keyboard_wizard(options)
+          logger.write("exit")
+        ensure
+          logger.close
+        end
+        return
+      end
       begin
         run_interactive(options, logger)
         logger.write("exit")
@@ -111,10 +123,8 @@ module Tawb
 
     private def self.run_interactive(options : Hash(String, JSON::Any), logger : Log) : Nil
       if options["frontEnd"].as_s == "edb"
-        raise ArgumentError.new("The native edb front end is not ported yet")
-      end
-      if options["keyboard"].as_bool
-        raise ArgumentError.new("The standalone native keyboard wizard is not connected yet")
+        raise ArgumentError.new(
+          "--front-end edb is not part of the static reader; run the Node program for it")
       end
 
       chromium = options["engine"].as_s != "firefox"
@@ -323,6 +333,28 @@ module Tawb
         if browser_session = opened.chromium
           browser_session.close if browser_session.owned? && !options["keepBrowser"].as_bool
         end
+      end
+    end
+
+    # The keyboard screen, standing alone. There is no session screen to draw
+    # on, so the wizard takes the one the session would have: the alternate
+    # screen unless the reader said otherwise.
+    private def self.run_keyboard_wizard(options : Hash(String, JSON::Any)) : Nil
+      keymap = if options["frontEnd"].as_s == "lynx"
+                 LynxState.lynx_keymap_for(options["lynxReimport"].as_bool,
+                   options["lynxExecutable"].as_s, options["lynxConfig"].as_s?)
+               else
+                 Keys::Keymap.new(profile: options["frontEnd"].as_s)
+               end
+      terminal = Runtime::Terminal.new(STDOUT, STDIN.fd, options["altScreen"].as_bool)
+      reader = Input::KeyReader.new(STDIN)
+      begin
+        terminal.acquire
+        KeyWizard.run(Runtime::WizardScreen.new(terminal), keymap,
+          Runtime::WizardKeys.new(reader), options["altScreen"].as_bool)
+      ensure
+        reader.close
+        terminal.restore
       end
     end
 

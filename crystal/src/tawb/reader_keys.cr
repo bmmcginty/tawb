@@ -3,6 +3,7 @@ require "./reader"
 require "./edit"
 require "./quicknav"
 require "./lynx_actions"
+require "./key_wizard"
 require "./keys"
 require "./input"
 require "./interfaces"
@@ -1937,6 +1938,98 @@ module Tawb
     end
 
     # ------------------------------------------------------------------
+    # The keyboard screen
+    #
+    # Opened from the reader, it draws on the screen this session already has
+    # rather than taking one of its own — so there is nothing to save or
+    # restore around it, and whatever it leaves behind has to be replaced by
+    # the page afterwards.
+    # ------------------------------------------------------------------
+
+    # The reader's screen, as the wizard draws on it. The size is the
+    # reader's own, because a window that changed shape while the wizard had
+    # the screen is the wizard's redraw to make and not the page's.
+    private class WizardScreen
+      include KeyWizard::Output
+
+      def initialize(@output : Screen::Output, @state : Reader::State)
+      end
+
+      def write(text : String) : Nil
+        @output.write(text)
+      end
+
+      def rows : Int32
+        @state.rows
+      end
+
+      def columns : Int32
+        @state.cols
+      end
+
+      # A resize is the reading loop's to notice; while the wizard has the
+      # screen the loop leaves it alone, so there is nothing to hand on.
+      def on_resize(handler : Proc(Nil)) : Nil
+      end
+
+      def off_resize(handler : Proc(Nil)) : Nil
+      end
+    end
+
+    # The reader's keyboard, as the wizard reads it: the claim is held for as
+    # long as the wizard has the screen, so nothing else can take a key from
+    # under it.
+    private class WizardKeys
+      include KeyWizard::KeySource
+
+      @token : Input::Token
+
+      def initialize(@keyboard : Keyboard)
+        @token = @keyboard.claim
+      end
+
+      def next_key : String?
+        key = @keyboard.next_key(@token)
+        key.is_a?(Input::Eof) ? nil : key.as(String)
+      end
+
+      def close : Nil
+        @keyboard.release(@token)
+      end
+    end
+
+    def self.run_keyboard_wizard(output : Screen::Output, state : Reader::State,
+                                 page : Reader::PageEnv, keyboard : Keyboard?) : Nil
+      keys = state.keys
+      unless keys && keyboard
+        Reader.set_status(output, state, page.url,
+          "There is no keymap to edit in this session.")
+        return
+      end
+      source = WizardKeys.new(keyboard)
+      state.mode = "keyboard"
+      # The live ticker must not paint while the wizard has the screen.
+      set_live_value(state, "refreshing", JSON::Any.new(true))
+      saved = begin
+        KeyWizard.run(WizardScreen.new(output, state), keys, source, false)
+      ensure
+        source.close
+        set_live_value(state, "refreshing", JSON::Any.new(false))
+        state.mode = "browse"
+      end
+      # A resize during the wizard changed the geometry, and either way the
+      # rows it wrote are not the page. Clearing first is what the options
+      # screen does for the same reason: a forced render alone leaves the
+      # address row untouched when its text did not change, and never writes
+      # the blank row under the hint.
+      Reader.relayout(state)
+      output.write("\e[2J")
+      Reader.render(output, state, page.url, true)
+      Reader.set_status(output, state, page.url,
+        saved ? "Keyboard bindings saved." : "Keyboard bindings unchanged.")
+    end
+
+    # ------------------------------------------------------------------
     # Page history
     #
     # Each history entry keeps the terminal position it was left at, so Back
@@ -2823,6 +2916,7 @@ module Tawb
       # The keyboard wizard takes the screen over; it arrives with the loop
       # that owns the terminal.
       if action == "keyboard-wizard"
+        run_keyboard_wizard(output, state, page, keyboard)
         return nil
       end
 

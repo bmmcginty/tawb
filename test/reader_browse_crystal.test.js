@@ -511,3 +511,22 @@ test('a view that cannot be built leaves the reader the view they had',
       'the buffer the reader was reading is still there');
     assert.equal(result.state.placeReleases, 1, 'the held element is still let go of');
   });
+
+// The keyboard screen draws on the screen this session already has, so what
+// it leaves behind has to be replaced by the page. The wizard's own drawing
+// is differenced in test/key_wizard_crystal.test.js; what is differenced here
+// is the takeover: the mode while it has the screen, and the page coming back
+// afterwards.
+test('the keyboard screen takes the reader\'s screen and gives it back',
+  { skip: needsCrystal }, async () => {
+    const state = stateFor(BUTTONS, { keys: bound('keyboard-wizard', 'w') });
+    // Escape leaves the wizard, and "n" answers its save question — so the
+    // bindings go back as they were and no key file is written.
+    const result = await runBoth('wizard', state, [
+      { op: 'browseKey', chunk: 'w', keys: ['\x1b', 'n'] },
+    ], { url: PAGE_URL });
+    assert.equal(result.state.mode, 'browse', 'the page has the screen again');
+    assert.equal(result.state.statusMsg, 'Keyboard bindings unchanged.');
+    assert.equal(result.state.live.refreshing, false,
+      'and the live ticker is let go of again');
+  });
