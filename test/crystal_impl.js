@@ -2364,6 +2364,236 @@ async function nativeScenario({ nativePrompt, atspi }, socket, steps) {
   return { results };
 }
 
+// The edbrowse server, as the differential sees it.
+//
+// Two halves. The html the server writes needs no browser at all, so that
+// half is compared as strings. The http contract does need one, so both
+// servers are given a browser written in the same payload and asked the same
+// requests; what is compared is the response and what the browser was asked
+// to do while answering.
+function edbImplementations(javascript) {
+  const implementations = [{
+    name: 'JavaScript',
+    escapeHtml: javascript.escapeHtml,
+    openBar(action, back, value) {
+      return javascript.openBar(action, { back, value });
+    },
+    tokensToHtml(extracted, base, tab, within) {
+      return javascript.tokensToHtml(extracted, new javascript.Registry(), base, tab, within);
+    },
+    linesToHtml(title, base, heading, lines, here) {
+      return javascript.linesToHtml(title, base, heading, lines, here);
+    },
+    normaliseTarget(text) {
+      const target = javascript.normaliseTarget(text);
+      return {
+        url: target.url ?? null,
+        search: target.search ?? null,
+        error: target.error ?? null,
+      };
+    },
+    explain: javascript.explain,
+    routesScenario(spec) { return edbRoutesScenario(javascript, spec); },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    escapeHtml(text) { return call('edb.escape_html', { text }); },
+    openBar(action, back, value) { return call('edb.open_bar', { action, back, value }); },
+    tokensToHtml(extracted, base, tab, within) {
+      return call('edb.tokens_to_html', { extracted, base, tab, within: within ?? null });
+    },
+    linesToHtml(title, base, heading, lines, here) {
+      return call('edb.lines_to_html', { title, base, heading, lines, here });
+    },
+    normaliseTarget(text) { return call('edb.normalise_target', { text }); },
+    explain(message) { return call('edb.explain', { message }); },
+    routesScenario(spec) {
+      return callAsync('edb.routes_scenario', spec, { timeoutMs: 120000 });
+    },
+  });
+  return implementations;
+}
+
+// One document written in the payload: the tokens the page's walk would
+// answer with, and the frames inside it. The JavaScript server reaches a page
+// through `evaluate`, naming the function it wants to run, so the stub answers
+// by name — which also makes the list of what the server asks of a page
+// something that has to keep working rather than prose that can go out of
+// date.
+function edbStubDocument(spec, record) {
+  const frames = (spec.frames ?? []).map((child) => edbStubDocument(child, record));
+  const hidden = (spec.hidden ?? []).map((child) => edbStubDocument(child, record));
+  const mine = { applied: [], activated: [], entered: [], frames: [], hidden: [] };
+  record.push(mine);
+  mine.frames = frames.map((child) => child.record);
+  mine.hidden = hidden.map((child) => child.record);
+
+  const frame = {
+    record: mine,
+    url: () => spec.url ?? '',
+    async evaluate(fn, arg) {
+      switch (fn && fn.name) {
+        case 'extractForEdbrowse':
+          if (spec.unread) throw new Error('the document cannot be read');
+          return { url: spec.url ?? '', title: spec.title ?? 'stub', tokens: spec.tokens ?? [] };
+        case 'resolveDescriptor':
+          return { how: 'path' };
+        case 'applyFieldValues':
+          for (const entry of arg) {
+            mine.applied.push({ path: entry.path, tag: entry.tag, value: entry.value });
+          }
+          return { applied: arg.length, missed: [] };
+        case '':
+        case undefined:
+          // An inline arrow: focusing whatever resolveDescriptor left behind.
+          return null;
+        default:
+          throw new Error(`the stub page was asked to run ${fn.name}, which it does not know about`);
+      }
+    },
+    async evaluateHandle() {
+      // Whatever `resolveDescriptor` left behind, ready to be pressed. Which
+      // of the two presses is being made is visible here and nowhere else:
+      // the default action evaluates `clickThrough` on the element, and a
+      // real click evaluates `prepareRealClick` first to find out whether a
+      // pointer can reach it. A refusal is part of the contract — the reader
+      // has to be told why nothing happened — so the payload can ask for one.
+      return {
+        evaluate: async (fn) => {
+          const name = fn && fn.name;
+          if (name === 'prepareRealClick') {
+            mine.activated.push({ real: true });
+            return spec.activateRefuses
+              ? { ok: false, reason: 'is not in the page' }
+              : { ok: true, x: 1, y: 1, placed: 'center' };
+          }
+          if (name === 'clickThrough') {
+            mine.activated.push({ real: false });
+            return { ok: true };
+          }
+          return { ok: true };
+        },
+      };
+    },
+    // The frames the markup mentions are found through the elements that
+    // host them; every frame, mentioned or not, is asked of the browser.
+    // The difference between the two lists is what the markup never
+    // mentioned — an <iframe> inside a closed shadow root, which
+    // querySelectorAll cannot see at all.
+    $$: async () => frames.map((child) => ({
+      contentFrame: async () => child.frame,
+      dispose: async () => {},
+    })),
+    childFrames: () => [...frames, ...hidden].map((child) => child.frame),
+    // A real click waits for the document it is aimed at, and the document
+    // aimed at is a frame when the element lives in one.
+    waitForLoadState: async () => {},
+  };
+  return { frame, record: mine, spec };
+}
+
+function edbStubTab(spec, record) {
+  const document = edbStubDocument(spec, record);
+  const tabRecord = {
+    gotos: [], closed: false, backs: 0, armed: false, document: document.record,
+  };
+  const page = {
+    url: () => spec.url ?? '',
+    title: async () => spec.pageTitle ?? 'stub page',
+    isClosed: () => tabRecord.closed,
+    mainFrame: () => document.frame,
+    frames: () => [document.frame],
+    evaluate: (fn, arg) => {
+      // Back is evaluated in the page rather than asked of the session,
+      // because the page's own history object is the one both engines already
+      // reach and it is the same history a back button moves through. It
+      // arrives here as an inline arrow, and so does the focus the submit
+      // path asks for, so the two are told apart by what they say.
+      if (fn && !fn.name && String(fn).includes('history.back')) {
+        tabRecord.backs += 1;
+        return Promise.resolve(null);
+      }
+      return document.frame.evaluate(fn, arg);
+    },
+    evaluateHandle: (...args) => document.frame.evaluateHandle(...args),
+    goto: async (to) => { tabRecord.gotos.push(to); },
+    waitForLoadState: async () => {},
+    close: async () => { tabRecord.closed = true; },
+    keyboard: { press: async () => { document.record.entered.push({ pressed: 'Enter' }); } },
+    // The reader's four line lists are differenced where they are built, in
+    // `crystal_views.test.js`; here what matters is that the route serves
+    // them. So the stub has none, and both implementations answer with an
+    // empty list.
+
+    setDefaultTimeout: () => {},
+    setDefaultNavigationTimeout: () => {},
+    context: () => ({}),
+    record: tabRecord,
+    views: spec.views ?? {},
+    activateRefuses: !!spec.activateRefuses,
+  };
+  document.frame.page = () => page;
+  return page;
+}
+
+async function edbRoutesScenario(javascript, spec) {
+  const http = require('node:http');
+  const documents = [];
+  const pages = (spec.browser.tabs ?? []).map((tab) => edbStubTab(tab, documents));
+  const driver = {
+    name: 'stub',
+    alive: () => spec.browser.alive !== false,
+    listTabs: () => pages,
+    newTab: async () => {
+      const page = edbStubTab({ url: 'about:blank', tokens: spec.browser.newTabTokens ?? [] },
+        documents);
+      pages.push(page);
+      return page;
+    },
+    targetIdFor: async () => null,
+    realClick: async () => {},
+    close: async () => {},
+    attachAuth: async () => true,
+    armAuth: async (page) => { page.record.armed = true; return true; },
+  };
+  const server = await javascript.startEdbServer({
+    driver, port: 0, token: spec.token ?? 'testtoken',
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  const answers = [];
+  try {
+    for (const request of spec.requests ?? []) {
+      // eslint-disable-next-line no-await-in-loop
+      const response = await fetch(base + request.path, {
+        method: request.method ?? 'GET',
+        redirect: 'manual',
+        ...(request.body
+          ? {
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(request.body).toString(),
+          }
+          : {}),
+      });
+      answers.push({
+        status: response.status,
+        location: response.headers.get('location') ?? null,
+        cache: response.headers.get('cache-control') ?? null,
+        type: response.headers.get('content-type') ?? null,
+        // eslint-disable-next-line no-await-in-loop
+        body: await response.text(),
+      });
+    }
+  } finally {
+    await server.close().catch(() => {});
+  }
+  void http;
+  return {
+    answers,
+    browser: pages.map((page) => page.record),
+  };
+}
+
 // Somewhere for the browser to describe its own windows to, as the
 // differential sees it.
 //
@@ -3699,7 +3929,7 @@ function unicodeImplementations(javascript) {
 module.exports = {
   call, callAsync, addressImplementations, cdpImplementations, ariaImplementations, bidiImplementations,
   blockImplementations, coreImplementations, coreTabImplementations,
-  a11yBusImplementations, atspiImplementations, dbusImplementations,
+  a11yBusImplementations, atspiImplementations, dbusImplementations, edbImplementations,
   nativePromptImplementations,
   dumpImplementations, editImplementations,
   endpointImplementations,

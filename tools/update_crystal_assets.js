@@ -14,6 +14,7 @@ const { extractSource } = require('../src/source_html');
 const { OBSERVER_SCRIPT, DRAIN_SCRIPT, PULSE_SCRIPT } = require('../src/live');
 const { CLEAR_SCRIPT, PIERCE_PARENT_SCRIPT, libraryParentScript } = require('../src/firefox');
 const { describeElement, locateElement } = require('../src/place');
+const { extractForEdbrowse, resolveDescriptor, applyFieldValues } = require('../src/edb_page');
 
 const assets = {
   'extract_ax_items.js': {
@@ -91,6 +92,15 @@ const assets = {
   },
   'extract_source.js': {
     source: 'src/source_html.js extractSource', value: extractSource.toString(),
+  },
+  'edb_extract.js': {
+    source: 'src/edb_page.js extractForEdbrowse', value: extractForEdbrowse.toString(),
+  },
+  'edb_resolve.js': {
+    source: 'src/edb_page.js resolveDescriptor', value: resolveDescriptor.toString(),
+  },
+  'edb_apply.js': {
+    source: 'src/edb_page.js applyFieldValues', value: applyFieldValues.toString(),
   },
 };
 

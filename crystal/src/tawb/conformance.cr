@@ -14,6 +14,7 @@ require "./edit"
 require "./remap"
 require "./broker"
 require "./dump"
+require "./edb_server"
 require "./endpoint"
 require "./fields"
 require "./firefox_agent"
@@ -581,6 +582,39 @@ module Tawb
         length ? JSON::Any.new(length.to_i64) : JSON::Any.new(nil)
       when "dbus.client_scenario"
         dbus_client_scenario(payload)
+      when "edb.escape_html"
+        return JSON::Any.new(Edb.escape_html(payload.as_h["text"].as_s))
+      when "edb.open_bar"
+        object = payload.as_h
+        return JSON::Any.new(Edb.open_bar(
+          object["action"]?.try(&.as_s?) || "../open",
+          object["back"]?.try(&.as_bool?) || false,
+          object["value"]?.try(&.as_s?) || ""))
+      when "edb.tokens_to_html"
+        object = payload.as_h
+        registry = Edb::Registry.new
+        return JSON::Any.new(Edb.tokens_to_html(
+          object["extracted"], registry,
+          object["base"]?.try(&.as_s?) || "BASE",
+          (object["tab"]?.try(&.as_i?) || 1).to_i32,
+          object["within"]?.try(&.as_i?).try(&.to_i32)))
+      when "edb.lines_to_html"
+        object = payload.as_h
+        return JSON::Any.new(Edb.lines_to_html(
+          object["title"].as_s, object["base"].as_s, object["heading"].as_s,
+          object["lines"].as_a.map(&.as_s),
+          object["here"]?.try(&.as_s?) || ""))
+      when "edb.normalise_target"
+        target = Edb.normalise_target(payload.as_h["text"]?.try(&.as_s?))
+        return JSON::Any.new({
+          "url"    => JSON::Any.new(target.url),
+          "search" => JSON::Any.new(target.search),
+          "error"  => JSON::Any.new(target.error),
+        })
+      when "edb.explain"
+        return JSON::Any.new(Edb.explain(payload.as_h["message"].as_s))
+      when "edb.routes_scenario"
+        return edb_routes_scenario(payload)
       when "endpoint.free_port"
         JSON::Any.new(Endpoint.free_port.to_i64)
       when "endpoint.port_of"
@@ -4894,6 +4928,268 @@ module Tawb
         accessibility.close
       end
       JSON::Any.new({"results" => JSON::Any.new(results)})
+    end
+
+
+    # ------------------------------------------------------------------
+    # The edbrowse server, driven against a browser written in the payload
+    # ------------------------------------------------------------------
+
+    # One document, as the payload describes it: the tokens the page's walk
+    # would answer with, and the frames inside it.
+    private class ScriptedDocument
+      include Edb::DocumentEnv
+
+      getter applied : Array(Edb::FieldEntry)
+      getter activated : Array(JSON::Any)
+      getter entered : Array(JSON::Any)
+
+      # Annotated, because a document holds documents and the compiler cannot
+      # infer the type of a block that builds the class being defined.
+      @ordered : Array(ScriptedDocument)
+      @hidden : Array(ScriptedDocument)
+
+      def initialize(@payload : Hash(String, JSON::Any))
+        @applied = [] of Edb::FieldEntry
+        @activated = [] of JSON::Any
+        @entered = [] of JSON::Any
+        @ordered = [] of ScriptedDocument
+        @hidden = [] of ScriptedDocument
+        (@payload["frames"]?.try(&.as_a?) || [] of JSON::Any).each do |raw|
+          @ordered << ScriptedDocument.new(raw.as_h)
+        end
+        (@payload["hidden"]?.try(&.as_a?) || [] of JSON::Any).each do |raw|
+          @hidden << ScriptedDocument.new(raw.as_h)
+        end
+      end
+
+      def url : String
+        @payload["url"]?.try(&.as_s?) || ""
+      end
+
+      def extract : JSON::Any
+        raise Exception.new("the document cannot be read") if @payload["unread"]?.try(&.as_bool?)
+        JSON::Any.new({
+          "url"    => JSON::Any.new(url),
+          "title"  => JSON::Any.new(@payload["title"]?.try(&.as_s?) || "stub"),
+          "tokens" => @payload["tokens"]? || JSON::Any.new([] of JSON::Any),
+        })
+      end
+
+      def ordered_frames : Array(Edb::DocumentEnv)
+        @ordered.map(&.as(Edb::DocumentEnv))
+      end
+
+      def hidden_frames : Array(Edb::DocumentEnv)
+        @hidden.map(&.as(Edb::DocumentEnv))
+      end
+
+      def apply_fields(entries : Array(Edb::FieldEntry)) : Edb::Applied
+        @applied.concat(entries)
+        Edb::Applied.new(entries.size, [] of String)
+      end
+
+      def activate(desc : JSON::Any, real : Bool) : Edb::Outcome
+        # Recorded as which of the two presses it was, because that is the
+        # only part the JavaScript stub can also see: the default action
+        # evaluates `clickThrough` on the element and a real click evaluates
+        # `prepareRealClick` first. Which element was pressed is implied by
+        # which document recorded the press.
+        @activated << JSON::Any.new({"real" => JSON::Any.new(real)})
+        if real && @payload["activateRefuses"]?.try(&.as_bool?)
+          # The same sentence the real binding builds from what
+          # `prepare_real_click.js` answered, because the reader has to be
+          # told why nothing happened.
+          return Edb::Outcome.new(false, why: "a real click cannot reach it: it is not in the page")
+        end
+        Edb::Outcome.new(true, how: "path")
+      end
+
+      def press_enter(desc : JSON::Any) : Bool
+        # Recorded as the press rather than as the element, because Enter goes
+        # through the browser's own keyboard and the element is only focused
+        # first: which field received it is implied by the field the reader
+        # was filling.
+        @entered << JSON::Any.new({"pressed" => JSON::Any.new("Enter")})
+        true
+      end
+
+      # What this document and every document inside it was asked to do, so a
+      # scenario can be compared on the browser's side as well as the
+      # reader's.
+      def record : JSON::Any
+        JSON::Any.new({
+          "applied"   => JSON::Any.new(@applied.map do |entry|
+            JSON::Any.new({
+              "path"  => JSON::Any.new(entry.path),
+              "tag"   => JSON::Any.new(entry.tag),
+              "value" => JSON::Any.new(entry.value),
+            })
+          end),
+          "activated" => JSON::Any.new(@activated),
+          "entered"   => JSON::Any.new(@entered),
+          "frames"    => JSON::Any.new(@ordered.map(&.record)),
+          "hidden"    => JSON::Any.new(@hidden.map(&.record)),
+        })
+      end
+    end
+
+    private class ScriptedTab
+      include Edb::TabEnv
+
+      getter document : Edb::DocumentEnv
+      getter gotos : Array(String)
+      getter? closed : Bool
+      getter backs : Int32
+      getter arms : Int32
+
+      def initialize(@payload : Hash(String, JSON::Any))
+        @scripted = ScriptedDocument.new(@payload)
+        @document = @scripted
+        @gotos = [] of String
+        @closed = false
+        @backs = 0
+        @arms = 0
+      end
+
+      def url : String
+        @scripted.url
+      end
+
+      def title : String
+        @payload["pageTitle"]?.try(&.as_s?) || "stub page"
+      end
+
+      def goto(url : String) : Nil
+        @gotos << url
+      end
+
+      def back : Nil
+        @backs += 1
+      end
+
+      def close : Nil
+        @closed = true
+      end
+
+      def sync_url : Nil
+      end
+
+      def view(kind : String) : Array(String)
+        views = @payload["views"]?.try(&.as_h?) || {} of String => JSON::Any
+        (views[kind]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s)
+      end
+
+      def arm_auth : Nil
+        @arms += 1
+      end
+
+      def record : JSON::Any
+        JSON::Any.new({
+          "gotos"    => JSON::Any.new(@gotos.map { |url| JSON::Any.new(url) }),
+          "closed"   => JSON::Any.new(@closed),
+          "backs"    => JSON::Any.new(@backs.to_i64),
+          "armed"    => JSON::Any.new(@arms > 0),
+          "document" => @scripted.record,
+        })
+      end
+    end
+
+    private class ScriptedBrowser
+      include Edb::BrowserEnv
+
+      getter tabs : Array(Edb::TabEnv)
+      getter scripted : Array(ScriptedTab)
+
+      def initialize(@payload : Hash(String, JSON::Any))
+        @scripted = (@payload["tabs"]?.try(&.as_a?) || [] of JSON::Any)
+          .map { |raw| ScriptedTab.new(raw.as_h) }
+        @tabs = @scripted.map(&.as(Edb::TabEnv))
+      end
+
+      def name : String
+        "stub"
+      end
+
+      def alive? : Bool
+        @payload["alive"]?.try(&.as_bool?) != false
+      end
+
+      def new_tab : Edb::TabEnv
+        fresh = ScriptedTab.new({
+          "url"    => JSON::Any.new("about:blank"),
+          "tokens" => @payload["newTabTokens"]? || JSON::Any.new([] of JSON::Any),
+        })
+        @scripted << fresh
+        @tabs << fresh
+        fresh
+      end
+
+      def attach_auth(&answer : (JSON::Any, String, Edb::TabEnv?) -> JSON::Any?) : Nil
+      end
+
+      def close : Nil
+      end
+
+      def record : JSON::Any
+        JSON::Any.new(@scripted.map(&.record))
+      end
+    end
+
+    # Both servers answer the same requests, so what is compared is the
+    # response — status, the redirect's destination, the cache headers, the
+    # body — and what the browser was asked to do while answering.
+    private def self.edb_routes_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      browser = ScriptedBrowser.new(object["browser"].as_h)
+      token = object["token"]?.try(&.as_s?) || "testtoken"
+      server = Edb::Server.new(browser, port: 0, token: token)
+      spawn { server.listen }
+      # The listener is bound before `listen` is called, so a request cannot
+      # arrive at a closed port; the fiber only starts accepting.
+      answers = [] of JSON::Any
+      begin
+        (object["requests"]?.try(&.as_a?) || [] of JSON::Any).each do |raw|
+          request = raw.as_h
+          path = request["path"].as_s
+          method = request["method"]?.try(&.as_s?) || "GET"
+          body = request["body"]?.try(&.as_h?)
+          answers << edb_request(server.port, method, path, body)
+        end
+      ensure
+        server.close
+      end
+      JSON::Any.new({
+        "answers" => JSON::Any.new(answers),
+        "browser" => browser.record,
+      })
+    end
+
+    private def self.edb_request(port : Int32, method : String, path : String,
+                                 body : Hash(String, JSON::Any)?) : JSON::Any
+      client = HTTP::Client.new("127.0.0.1", port)
+      client.read_timeout = 30.seconds
+      begin
+        response = if body
+                     form = URI::Params.build do |params|
+                       body.each { |key, value| params.add(key, value.as_s? || value.to_s) }
+                     end
+                     client.post(path, HTTP::Headers{
+                       "content-type" => "application/x-www-form-urlencoded",
+                     }, form)
+                   else
+                     client.exec(method, path)
+                   end
+        JSON::Any.new({
+          "status"   => JSON::Any.new(response.status_code.to_i64),
+          "location" => JSON::Any.new(response.headers["location"]?),
+          "cache"    => JSON::Any.new(response.headers["cache-control"]?),
+          "type"     => JSON::Any.new(response.headers["content-type"]?),
+          "body"     => JSON::Any.new(response.body),
+        })
+      ensure
+        client.close
+      end
     end
 
     private def self.reader_index(step : Hash(String, JSON::Any)) : Int32
