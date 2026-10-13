@@ -195,6 +195,17 @@ class CdpBrowserContext {
     this.discoveredFrames.set(info.targetId, {
       ...(this.discoveredFrames.get(info.targetId) || {}), ...info,
     });
+    // Browser-level discovery reports each frame's document as a URL, and it
+    // reports a change when a cross-process frame commits one — including in
+    // the case the frame's own session cannot yet answer for it: a target
+    // attached between a frame's creation and its commit answers
+    // Page.getFrameTree with the empty document, and Chromium does not replay
+    // the navigation when Page.enable arrives afterwards. Recording the URL
+    // here means a reader that asks about the tab's frames while that
+    // attachment is still being wired sees the document the browser sees,
+    // not the empty one it replaced.
+    const frame = this.pageForFrame(info)?.frameById(info.targetId);
+    if (frame && info.url) frame._url = info.url;
     return this.attachDiscoveredFrames();
   }
 
@@ -220,7 +231,8 @@ class CdpBrowserContext {
         this.discoveredFrames.delete(targetId);
         continue;
       }
-      page.ensureFrame(targetId, info.parentFrameId || null);
+      const frame = page.ensureFrame(targetId, info.parentFrameId || null);
+      if (info.url) frame._url = info.url;
       const attaching = this.connection.attach(targetId)
         .then((session) => wireSession(this, page, session, { root: false }))
         // A short-lived frame can disappear between discovery and attachment.

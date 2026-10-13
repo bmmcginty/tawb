@@ -151,6 +151,38 @@ test('discovered iframe targets use the existing frame wiring without recursive 
   assert.equal(page.frameById('CHILD'), null, 'a detached OOPIF remained in the frame tree');
 });
 
+test('a frame discovered before its session can answer still reports its document', async () => {
+  const connection = fakeConnection();
+  const browser = await attachToBrowser(connection);
+  const context = browser.contexts()[0];
+  const page = await context.newPage();
+
+  // The target is announced before its document commits. The browser knows
+  // the frame's document, but the frame's own session describes the empty one
+  // it replaced — here, by having no frame tree to answer with at all, which
+  // is the shape a target attached between creation and commit presents.
+  page.session.emit('Page.frameAttached', { frameId: 'PARENT', parentFrameId: null });
+  const info = {
+    type: 'iframe', targetId: 'CHILD', parentFrameId: 'PARENT',
+    url: 'https://frame.test/initial',
+  };
+  connection.targetInfos.set('CHILD', info);
+  connection.browser.emit('Target.targetCreated', { targetInfo: info });
+  await context.attachDiscoveredFrames();
+
+  const frame = page.frameById('CHILD');
+  assert.ok(frame, 'the discovered frame was not added to the page');
+  assert.equal(frame.url(), 'https://frame.test/initial',
+    'the frame fell back to the empty document its session could not answer for');
+
+  // The commit arrives as a change on the same discovery stream.
+  const committed = { ...info, url: 'https://frame.test/committed' };
+  connection.targetInfos.set('CHILD', committed);
+  connection.browser.emit('Target.targetInfoChanged', { targetInfo: committed });
+  assert.equal(frame.url(), 'https://frame.test/committed',
+    'a committed document was not recorded from discovery');
+});
+
 test('discovery ignores workers rather than attaching and pausing them', async () => {
   const connection = fakeConnection();
   await attachToBrowser(connection);
