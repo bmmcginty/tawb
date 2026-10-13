@@ -10,6 +10,6 @@ export TAWB_TEST_CRYSTAL=1
 export TAWB_CRYSTAL_BIN="$BINARY"
 
 if [ "$#" -gt 0 ]; then
-  exec node --test "$@"
+  exec tools/run_isolated.sh node --test "$@"
 fi
-exec node --test test/*.test.js
+exec tools/run_isolated.sh node --test test/*.test.js
