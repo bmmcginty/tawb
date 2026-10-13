@@ -2,6 +2,7 @@ require "./blocks"
 require "./browser"
 require "./cdp"
 require "./dump"
+require "./edb"
 require "./firefox_dump"
 require "./frames"
 require "./interactive"
@@ -53,12 +54,20 @@ module Tawb
 
     The native Crystal reader reads pages interactively through Firefox and
     Chromium, in this interface or Lynx's, and writes dumps through either.
-    The edb front end is not part of the static reader; it stays with the
-    Node program, which brings edbrowse's own screen with it.
+    The edb front end hands the same browser to edbrowse over http, which
+    brings edbrowse's own screen and its editor with it; see `--front-end edb
+    --help`.
     TEXT
 
     def self.run(argv : Array(String) = ARGV, env : Hash(String, String) = ENV.to_h) : Nil
       Runtime.restore_invocation_directory(env["INIT_CWD"]?)
+      # The edbrowse front end takes its own options — a port to listen on,
+      # and none of the reader's screen settings — so it parses the command
+      # line itself rather than being handed the reader's answers. Which front
+      # end was asked for is the one thing both parses agree about.
+      if asked_for_edb?(argv, env)
+        return run_edb(argv, env)
+      end
       options = Options.parse_reader(argv, env)
       if options["help"].as_bool
         STDOUT << USAGE
@@ -375,6 +384,70 @@ module Tawb
             bus.close rescue nil
           end
         end
+      end
+    end
+
+    # Which front end `--front-end <name>` asked for, read off the command
+    # line before anything is parsed. The reader's parser rejects the edb
+    # front end's own options and the edb parser rejects the reader's, so
+    # which parser to use has to be decided first.
+    private def self.asked_for_edb?(argv : Array(String), env : Hash(String, String)) : Bool
+      return true if argv.includes?("edb") || argv.includes?("--front-end=edb")
+      named = front_end_argument(argv)
+      return named == "edb" if named
+      Options.front_end_name(env["TAWB_FRONT_END"]?) == "edb"
+    end
+
+    private def self.front_end_argument(argv : Array(String)) : String?
+      at = 0
+      while at < argv.size
+        value = argv[at]
+        return Options.front_end_name(argv[at + 1]?) if value == "--front-end"
+        if value.starts_with?("--front-end=")
+          return Options.front_end_name(value["--front-end=".size..])
+        end
+        at += 1
+      end
+      nil
+    end
+
+    # The front-end argument removed, in both spellings, so that the edb
+    # parser is handed only options it knows about. `tawb edb` is accepted as
+    # a bare word too, the way the Node program's own command is spelled.
+    private def self.without_front_end(argv : Array(String)) : Array(String)
+      kept = [] of String
+      at = 0
+      while at < argv.size
+        value = argv[at]
+        if value == "--front-end"
+          at += 2
+          next
+        end
+        if value == "--front-end=edb" || value == "edb"
+          at += 1
+          next
+        end
+        kept << value
+        at += 1
+      end
+      kept
+    end
+
+    # The edbrowse bridge: a browser, and an http origin that serves it. The
+    # settings file is read first, exactly as the reader reads it, so a
+    # `--front-end edb` in there brings its own browser options with it.
+    private def self.run_edb(argv : Array(String), env : Hash(String, String)) : Nil
+      options = Options.parse_edb(without_front_end(argv), env)
+      if options["help"].as_bool
+        STDOUT << Edb::USAGE
+        return
+      end
+      logger = Log.new
+      logger.enable(options["logDir"].as_s?) if options["log"].as_bool
+      begin
+        Edb.run(options, logger)
+      ensure
+        logger.close
       end
     end
 

@@ -1990,7 +1990,11 @@ npm run edb                       # or: npm run edb -- --browser firefox
 ```
 
 It prints a tab list address and writes `~/.local/share/tawb/edb.json`
-so the entry-point plugin can find it. **The edbrowse side of this — the
+so the entry-point plugin can find it. The native build serves the same
+thing: `tawb --front-end edb` (or `dist/tawb-crystal edb`) writes the same
+record, answers the same routes, and produces the same html —
+`test/edb_crystal.test.js` compares the html as strings and
+`test/edb_routes_crystal.test.js` compares the whole of every answer. **The edbrowse side of this — the
 plugin, the `.ebrc` shortcuts, two patches to edbrowse itself, and the
 long-form study `edb.txt` — is its own repository, at
 [`../edbrowse-plugin`](../edbrowse-plugin).** Install from there; what
@@ -2033,10 +2037,21 @@ dynamic dependency is not the thing being shipped.
 
 What the native reader does today: it reads pages interactively through
 Firefox and through Chromium, in the ordinary interface and in the Lynx one,
-it writes `--dump` output through either, and it edits its own key bindings
-with `--keyboard`. What it deliberately does not do: the edb front end, which
-stays with the Node program because edbrowse brings its own screen. The packaged `tawb` command is still the Node one;
+it writes `--dump` output through either, it edits its own key bindings with
+`--keyboard`, it reads and answers the browser's own windows over the
+accessibility bus, and it serves the same browser to edbrowse with
+`--front-end edb`. The packaged `tawb` command is still the Node one;
 `resume2.md` carries the remaining list.
+
+Two things in the native build are hand-written where the standard library
+would have done, and for the same reason the protocols are: a dependency the
+static build cannot have. `crystal/src/tawb/dbus.cr` speaks the D-Bus wire
+format over `UNIXSocket` rather than linking `libdbus`, and the edbrowse
+server answers http over `TCPServer` rather than through `HTTP::Server` —
+`require "http/server"` links libssl, libcrypto and libz, because an
+`HTTP::Server` can serve TLS, and `tools/build_crystal.sh` then refuses the
+output. The same goes for the request the route differential makes:
+`HTTP::Client` links the same three.
 
 `crystal/src/tawb/engine.cr` is where the two engines meet. JavaScript gets
 that seam for nothing — a page is whatever answers `url()`, which is what

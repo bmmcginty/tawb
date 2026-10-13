@@ -14,6 +14,7 @@ require "./edit"
 require "./remap"
 require "./broker"
 require "./dump"
+require "./edb"
 require "./edb_server"
 require "./endpoint"
 require "./fields"
@@ -5125,7 +5126,7 @@ module Tawb
         fresh
       end
 
-      def attach_auth(&answer : (JSON::Any, String, Edb::TabEnv?) -> JSON::Any?) : Nil
+      def attach_auth(asked : Edb::AuthAsk) : Nil
       end
 
       def close : Nil
@@ -5165,30 +5166,54 @@ module Tawb
       })
     end
 
+    # One request, written by hand for the same reason the server answers by
+    # hand: `HTTP::Client` links libssl, libcrypto and libz, and the static
+    # build does not have them. What a request needs is a line, two headers
+    # and a body.
     private def self.edb_request(port : Int32, method : String, path : String,
                                  body : Hash(String, JSON::Any)?) : JSON::Any
-      client = HTTP::Client.new("127.0.0.1", port)
-      client.read_timeout = 30.seconds
+      socket = TCPSocket.new("127.0.0.1", port)
+      socket.read_timeout = 30.seconds
       begin
-        response = if body
-                     form = URI::Params.build do |params|
-                       body.each { |key, value| params.add(key, value.as_s? || value.to_s) }
-                     end
-                     client.post(path, HTTP::Headers{
-                       "content-type" => "application/x-www-form-urlencoded",
-                     }, form)
+        form = body ? URI::Params.build do |params|
+          body.each { |key, value| params.add(key, value.as_s? || value.to_s) }
+        end : nil
+        socket << "#{form ? "POST" : method} #{path} HTTP/1.1\r\n"
+        socket << "host: 127.0.0.1:#{port}\r\nconnection: close\r\n"
+        if form
+          socket << "content-type: application/x-www-form-urlencoded\r\n"
+          socket << "content-length: #{form.bytesize}\r\n"
+        end
+        socket << "\r\n"
+        socket << form if form
+        socket.flush
+
+        status_line = socket.gets("\r\n", chomp: true) || ""
+        status = status_line.split(' ')[1]?.try(&.to_i?) || 0
+        headers = {} of String => String
+        loop do
+          header = socket.gets("\r\n", chomp: true)
+          break if header.nil? || header.empty?
+          name, _, value = header.partition(':')
+          headers[name.downcase] = value.strip
+        end
+        length = headers["content-length"]?.try(&.to_i?)
+        answered = if length
+                     buffer = Bytes.new(length)
+                     socket.read_fully(buffer)
+                     String.new(buffer)
                    else
-                     client.exec(method, path)
+                     socket.gets_to_end
                    end
         JSON::Any.new({
-          "status"   => JSON::Any.new(response.status_code.to_i64),
-          "location" => JSON::Any.new(response.headers["location"]?),
-          "cache"    => JSON::Any.new(response.headers["cache-control"]?),
-          "type"     => JSON::Any.new(response.headers["content-type"]?),
-          "body"     => JSON::Any.new(response.body),
+          "status"   => JSON::Any.new(status.to_i64),
+          "location" => JSON::Any.new(headers["location"]?),
+          "cache"    => JSON::Any.new(headers["cache-control"]?),
+          "type"     => JSON::Any.new(headers["content-type"]?),
+          "body"     => JSON::Any.new(answered),
         })
       ensure
-        client.close
+        socket.close rescue nil
       end
     end
 

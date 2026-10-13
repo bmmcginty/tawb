@@ -528,6 +528,20 @@ module Tawb
         @page.move_to(at.x, at.y)
       end
 
+      # The document inside this element, when this element is a frame. The
+      # protocol answers directly, which is the one place Chrome is kinder
+      # than BiDi: Firefox has to match the Nth frame element to the Nth child
+      # context by position (see `FirefoxDriver::FrameRef`).
+      def content_frame : Frame?
+        described = begin
+          @page.command("DOM.describeNode", {"objectId" => JSON::Any.new(@object_id)}, @session_id)
+        rescue
+          nil
+        end
+        frame_id = described.try(&.as_h["result"]?.try(&.as_h["node"]?.try(&.as_h["frameId"]?.try(&.as_s?))))
+        frame_id ? Frame.new(@page, frame_id) : nil
+      end
+
       def dispose : Nil
         return if @disposed
         @disposed = true
@@ -678,6 +692,15 @@ module Tawb
 
       def child_frames : Array(Frame)
         @page.child_frames_of(@frame_id)
+      end
+
+      # Run a page function with this document's closed shadow roots lent to
+      # it. See `Page#privileged_run` for why that is needed at all.
+      def pierce_and_run(expression : String) : JSON::Any?
+        context = @page.context_for(@frame_id)
+        @page.privileged_run(context[0], context[1], expression)
+      rescue
+        nil
       end
 
       # A real click at a point inside this document's own viewport, for a
@@ -1328,6 +1351,15 @@ module Tawb
         Frame.new(self, frame_id)
       end
 
+      # Run a page function with this document's closed shadow roots lent to
+      # it. See `privileged_run` for why that is needed at all.
+      def pierce_and_run(expression : String) : JSON::Any?
+        context = context_for(main_frame_id)
+        privileged_run(context[0], context[1], expression)
+      rescue
+        nil
+      end
+
       # ------------------------------------------------------------------
       # Files, and the dialog the browser would otherwise draw
       # ------------------------------------------------------------------
@@ -1615,7 +1647,8 @@ module Tawb
         items = result["result"].as_h["value"].as_a
         needs_privileged = items.empty? || has_media_controls?(context_id, session_id)
         return items unless needs_privileged
-        privileged_items(context_id, session_id, layout) || items
+        paired = layout ? EXTRACT_AX_WITH_PAIRS.sub("layout:false", "layout:true") : EXTRACT_AX_WITH_PAIRS
+        privileged_run(context_id, session_id, paired).try(&.as_a?) || items
       end
 
       private def has_media_controls?(context_id : Int64?, session_id : String?) : Bool
@@ -1630,7 +1663,24 @@ module Tawb
         false
       end
 
-      private def privileged_items(context_id : Int64?, session_id : String?, layout : Bool) : Array(JSON::Any)?
+      # Run a page function with the closed shadow roots this connection can
+      # see lent to it.
+      #
+      # Page script cannot reach a closed shadow root — that is what closed
+      # means — and a bot check is built out of them, so a walk that only ever
+      # looks at elements will be shown nothing at all where a challenge is
+      # standing. The protocol can see them: `DOM.getDocument` with
+      # `pierce` lists every root, and each host and root can be resolved into
+      # an object the page can hold. They are pushed into an array in the page
+      # and the function is called with that array as `this`, which is what
+      # `pairs: this` in the paired expression means.
+      #
+      # `expression` must be a complete call whose argument names `this` as
+      # the pairs — see `EXTRACT_AX_WITH_PAIRS` and `Edb::EXTRACT_WITH_PAIRS`.
+      # Answers nil when there is nothing closed to lend or the attempt
+      # failed, which leaves the caller holding the ordinary extraction.
+      def privileged_run(context_id : Int64?, session_id : String?,
+                         expression : String) : JSON::Any?
         document = command("DOM.getDocument", {
           "depth"  => JSON::Any.new(-1_i64),
           "pierce" => JSON::Any.new(true),
@@ -1670,16 +1720,15 @@ module Tawb
             # A node can disappear between the pierced listing and resolve.
           end
           return nil if registered == 0
-          paired_expression = layout ? EXTRACT_AX_WITH_PAIRS.sub("layout:false", "layout:true") : EXTRACT_AX_WITH_PAIRS
           answer = command("Runtime.callFunctionOn", {
             "objectId"            => JSON::Any.new(basket),
-            "functionDeclaration" => JSON::Any.new("function () { return #{paired_expression}; }"),
+            "functionDeclaration" => JSON::Any.new("function () { return #{expression}; }"),
             "returnByValue"       => JSON::Any.new(true),
           }, session_id).as_h["result"].as_h
           if exception = answer["exceptionDetails"]?
-            raise IO::Error.new("privileged accessibility extraction failed: #{exception.to_json}")
+            raise IO::Error.new("privileged extraction failed: #{exception.to_json}")
           end
-          answer["result"].as_h["value"].as_a
+          answer["result"].as_h["value"]
         ensure
           command("Runtime.releaseObject", {"objectId" => JSON::Any.new(basket)}, session_id) rescue nil
         end

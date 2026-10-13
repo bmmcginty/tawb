@@ -352,6 +352,16 @@ module Tawb
         Bidi.from_remote(result["result"]?)
       end
 
+      # Nothing to lend. Firefox's closed shadow roots are reached from inside
+      # the page, by the privileged parent script that installs
+      # `window[Symbol.for('tweb.pierce')]` — so a page function that wants
+      # them asks for them itself through its own `pierce` option, and there
+      # is no second, privileged way to run it. See
+      # `Marionette::PIERCE_PARENT_SCRIPT`.
+      def pierce_and_run(expression : String) : JSON::Any?
+        nil
+      end
+
       # An element, held across calls: resultOwnership root is what makes the
       # protocol keep it alive for the next round trip.
       def evaluate_handle(fn : String, arg : JSON::Any? = nil, expression = false) : Handle
@@ -674,6 +684,16 @@ module Tawb
         Frame.new(@protocol, @context_id, self, @url).evaluate(fn, arg, expression)
       end
 
+      # Nothing to lend. Firefox's closed shadow roots are reached from inside
+      # the page, by the privileged parent script that installs
+      # `window[Symbol.for('tweb.pierce')]` — so a page function that wants
+      # them asks for them itself through its own `pierce` option, and there
+      # is no second, privileged way to run it. See
+      # `Marionette::PIERCE_PARENT_SCRIPT`.
+      def pierce_and_run(expression : String) : JSON::Any?
+        nil
+      end
+
       def evaluate_handle(fn : String, arg : JSON::Any? = nil, expression = false) : Handle
         Frame.new(@protocol, @context_id, self, @url).evaluate_handle(fn, arg, expression)
       end
@@ -816,6 +836,11 @@ module Tawb
           return true
         end
         false
+      end
+
+      # This tab's own top document, which is a document like any other.
+      def main_frame : Frame
+        Frame.new(@protocol, @context_id, self, @url)
       end
 
       # Every document below this tab, including the top one. Live updates use

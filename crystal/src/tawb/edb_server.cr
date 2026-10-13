@@ -1,5 +1,5 @@
-require "http/server"
 require "json"
+require "socket"
 require "uri"
 require "./address"
 require "./auth"
@@ -122,12 +122,21 @@ module Tawb
       abstract def arm_auth : Nil
     end
 
+    # What the server does with a password challenge the browser hands over:
+    # the challenge, the identity of the request that raised it, and the tab
+    # it arrived on, answering with credentials or nil.
+    #
+    # A proc rather than a block, because a captured block whose argument is a
+    # module type crashes the Crystal 1.21 compiler when a proc literal reads
+    # it ("Missing hash key: __arg33").
+    alias AuthAsk = Proc(JSON::Any, String, TabEnv?, JSON::Any?)
+
     module BrowserEnv
       abstract def name : String
       abstract def alive? : Bool
       abstract def tabs : Array(TabEnv)
       abstract def new_tab : TabEnv
-      abstract def attach_auth(&answer : (JSON::Any, String, TabEnv?) -> JSON::Any?) : Nil
+      abstract def attach_auth(asked : AuthAsk) : Nil
       abstract def close : Nil
     end
 
@@ -574,7 +583,73 @@ module Tawb
 
     # ------------------------------------------------------------------
     # The server
+    #
+    # http, written here rather than taken from the standard library, for the
+    # same reason `cdp.cr`, `bidi.cr` and `dbus.cr` are hand-written — and for
+    # one more that is not a preference. `require "http/server"` links libssl,
+    # libcrypto and libz, because an `HTTP::Server` can serve TLS; this server
+    # answers on the loopback address and never will. Those three libraries
+    # are what the static build does not have, so taking the standard server
+    # would cost the one property the whole Crystal port exists for.
+    #
+    # What is needed is small: a request line, the headers, a body whose
+    # length a header gives, and a response. No keep-alive, no chunking, no
+    # TLS. edbrowse asks one thing at a time and closes.
     # ------------------------------------------------------------------
+
+    # One request, as this server needs it.
+    record Request, method : String, target : String, body : String
+
+    # One answer. Built whole and then written, so a handler that fails
+    # part-way through cannot leave half a page on the socket.
+    class Response
+      property status : Int32
+      property headers : Hash(String, String)
+      property body : String
+
+      def initialize(@status : Int32 = 200, @body : String = "",
+                     @headers : Hash(String, String) = {} of String => String)
+      end
+
+      REASONS = {200 => "OK", 302 => "Found", 400 => "Bad Request",
+                 404 => "Not Found", 500 => "Internal Server Error"}
+
+      def write_to(socket : IO) : Nil
+        bytes = @body.to_slice
+        socket << "HTTP/1.1 #{@status} #{REASONS[@status]? || "OK"}\r\n"
+        @headers.each { |name, value| socket << "#{name}: #{value}\r\n" }
+        socket << "content-length: #{bytes.size}\r\n"
+        socket << "connection: close\r\n\r\n"
+        socket.write(bytes)
+        socket.flush
+      end
+    end
+
+    # The request on a socket, or nil when the socket said nothing a request
+    # could be read from.
+    def self.read_request(socket : IO) : Request?
+      line = socket.gets("\r\n", chomp: true)
+      return nil if line.nil? || line.empty?
+      parts = line.split(' ')
+      return nil if parts.size < 2
+      length = 0
+      loop do
+        header = socket.gets("\r\n", chomp: true)
+        break if header.nil? || header.empty?
+        name, _, value = header.partition(':')
+        length = value.strip.to_i? || 0 if name.downcase == "content-length"
+      end
+      body = if length > 0
+               buffer = Bytes.new(length)
+               socket.read_fully(buffer)
+               String.new(buffer)
+             else
+               ""
+             end
+      Request.new(parts[0], parts[1], body)
+    rescue
+      nil
+    end
 
     # What a walk of one document produced, with the frames inside it spliced
     # in where they sit.
@@ -622,10 +697,9 @@ module Tawb
           ->(event : String, fields : Hash(String, JSON::Any)) { @log.try(&.write(event, fields)); nil })
         @waiting = {} of Int32 => JSON::Any
         @starting = false
-        @server = HTTP::Server.new do |context|
-          serve(context)
-        end
-        @port = @server.bind_tcp(HOST, port).port
+        @listener = TCPServer.new(HOST, port)
+        @port = @listener.local_address.port
+        @closed = false
         attach_auth(browser)
       end
 
@@ -649,12 +723,33 @@ module Tawb
         "http://#{HOST}:#{@port}#{tab_url(number)}"
       end
 
+      # One fiber per connection, so a request that is waiting on the browser
+      # does not hold up the next one — the same interleaving the JavaScript
+      # original gets from its event loop.
       def listen : Nil
-        @server.listen
+        loop do
+          socket = @listener.accept?
+          break if socket.nil?
+          spawn { serve_connection(socket) }
+        end
+      rescue
+        # The listener was closed under us, which is how stopping works.
       end
 
       def close : Nil
-        @server.close
+        return if @closed
+        @closed = true
+        @listener.close rescue nil
+      end
+
+      private def serve_connection(socket : TCPSocket) : Nil
+        socket.sync = false
+        request = Edb.read_request(socket)
+        serve(request).write_to(socket) if request
+      rescue
+        # A client that hung up mid-request has nothing to be told.
+      ensure
+        socket.close rescue nil
       end
 
       private def open_url(target : String, number : Int32? = nil) : String
@@ -667,22 +762,31 @@ module Tawb
       end
 
       private def attach_auth(active : BrowserEnv) : Nil
-        active.attach_auth do |raw, id, tab|
-          answer = @credentials.answer(raw, id)
-          if answer.nil?
-            challenge = Auth.normalise_challenge(raw)
-            number = tab ? @tabs.number_for(tab) : nil
-            @waiting[number] = challenge if number
-            @log.try(&.write("edb.auth.asked", {
-              "tab"    => number ? JSON::Any.new(number.to_i64) : JSON::Any.new(nil),
-              "origin" => challenge.as_h["origin"]? || JSON::Any.new(nil),
-              "realm"  => challenge.as_h["realm"]? || JSON::Any.new(nil),
-            }))
-          end
-          answer
-        end
+        active.attach_auth(->(raw : JSON::Any, id : String, tab : TabEnv?) : JSON::Any? {
+          asked_for_password(raw, id, tab)
+        })
       rescue
         # A session with no password intercept to arm.
+      end
+
+      # The reader is in edbrowse, waiting on the response to the very request
+      # that raised the challenge, so there is nobody to ask while the
+      # challenge is up. A challenge with no known password is therefore
+      # cancelled — which loads the 401's own body rather than hanging — and
+      # remembered against the tab, and the tab's next page is a form asking
+      # for it.
+      private def asked_for_password(raw : JSON::Any, id : String, tab : TabEnv?) : JSON::Any?
+        answer = @credentials.answer(raw, id)
+        return answer unless answer.nil?
+        challenge = Auth.normalise_challenge(raw)
+        number = tab ? @tabs.number_for(tab) : nil
+        @waiting[number] = challenge if number
+        @log.try(&.write("edb.auth.asked", {
+          "tab"    => number ? JSON::Any.new(number.to_i64) : JSON::Any.new(nil),
+          "origin" => challenge.as_h["origin"]? || JSON::Any.new(nil),
+          "realm"  => challenge.as_h["realm"]? || JSON::Any.new(nil),
+        }))
+        nil
       end
 
       # A browser is the reader's to close, and they do — the window goes
@@ -923,22 +1027,20 @@ module Tawb
       # Answering
       # ----------------------------------------------------------------
 
-      private def send_html(context : HTTP::Server::Context, status : Int32, body : String) : Nil
-        response = context.response
-        response.status_code = status
-        response.headers["content-type"] = "text/html; charset=utf-8"
-        # edbrowse caches, and rf would hand back the render before last.
-        response.headers["cache-control"] = "no-cache, no-store"
-        response.headers["pragma"] = "no-cache"
-        response.print(body)
+      private def send_html(status : Int32, body : String) : Response
+        Response.new(status, body, {
+          "content-type" => "text/html; charset=utf-8",
+          # edbrowse caches, and rf would hand back the render before last.
+          "cache-control" => "no-cache, no-store",
+          "pragma"        => "no-cache",
+        })
       end
 
-      private def redirect(context : HTTP::Server::Context, to : String) : Nil
-        response = context.response
-        response.status_code = 302
-        response.headers["location"] = to
-        response.headers["cache-control"] = "no-cache, no-store"
-        response.print("")
+      private def redirect(to : String) : Response
+        Response.new(302, "", {
+          "location"      => to,
+          "cache-control" => "no-cache, no-store",
+        })
       end
 
       # Pages of this program's own — the tab list, and everything tweb has to
@@ -949,8 +1051,8 @@ module Tawb
       # And a <base>, because the entry-point plugin can land the reader here
       # directly (`b tweb://tabs`), and then the buffer's own filename is a
       # tweb:// url that no relative link on this page resolves against.
-      private def ours(context : HTTP::Server::Context, title : String, body : String) : Nil
-        send_html(context, 200, String.build do |html|
+      private def ours(title : String, body : String) : Response
+        send_html(200, String.build do |html|
           html << %(<html><head><title>#{Edb.escape_html(title)}</title>)
           html << %(<base href="http://#{HOST}:#{@port}/t/#{@token}/"></head>
 )
@@ -966,8 +1068,7 @@ module Tawb
       # A tab number that names nothing: closed by the reader, or lost with
       # the browser it lived in. Either way the useful answer is the page the
       # number held.
-      private def gone_tab(context : HTTP::Server::Context, number : Int32,
-                           restarted : Bool = false) : Nil
+      private def gone_tab(number : Int32, restarted : Bool = false) : Response
         last = @tabs.last_url(number)
         said = restarted ?
           "The browser closed while you were reading it, and tweb has started another." :
@@ -976,22 +1077,22 @@ module Tawb
         if last
           links.unshift(%(<a href="#{open_url(last)}">open #{Edb.escape_html(last)} again</a>))
         end
-        ours(context, "that tab is gone", "<p>#{said}</p>\n<p>#{links.join(" — ")}</p>")
+        ours("that tab is gone", "<p>#{said}</p>\n<p>#{links.join(" — ")}</p>")
       end
 
       # What the reader typed, turned into a page. `existing` is the tab they
       # were reading; without one, a new tab. The answers are the same either
       # way, and so is the redirect: back to a tab's own address, so the
       # buffer never holds the request that got there.
-      private def open_typed(context : HTTP::Server::Context, typed : String?,
-                             existing : NamedTuple(tab: TabEnv, number: Int32)? = nil) : Nil
+      private def open_typed(typed : String?,
+                             existing : NamedTuple(tab: TabEnv, number: Int32)? = nil) : Response
         target = Edb.normalise_target(typed)
         if error = target.error
-          return send_html(context, 400,
+          return send_html(400,
             "<html><body><p>tweb: #{Edb.escape_html(error)}</p></body></html>")
         end
         if words = target.search
-          return ours(context, "not an address",
+          return ours("not an address",
             "<p>#{Edb.escape_html(words)} is not a url — it has no host in it.</p>\n" +
             %(<p><a href="#{open_url(Address.search_url(words), existing.try(&.[:number]))}">) +
             %(search the web for it</a> — <a href="/t/#{@token}/tabs">the tabs</a></p>))
@@ -1015,16 +1116,15 @@ module Tawb
           "url"    => JSON::Any.new(wanted[0, Math.min(wanted.size, 120)]),
           "reused" => JSON::Any.new(!existing.nil?),
         }))
-        redirect(context, tab_url(number))
+        redirect(tab_url(number))
       end
 
       # The form. Plain enough for edbrowse to fill in with i= and submit, and
       # a POST because a password in a query string would be written into the
       # buffer's own filename and into this server's request handling.
-      private def sign_in(context : HTTP::Server::Context, number : Int32,
-                          challenge : JSON::Any) : Nil
+      private def sign_in(number : Int32, challenge : JSON::Any) : Response
         asked = Reader.describe_challenge(challenge)
-        ours(context, "a password is wanted",
+        ours("a password is wanted",
           "<p>#{Edb.escape_html(asked)} wants a password.</p>\n" +
           %(<form method="post" action="#{number}/auth">\n) +
           %(<p>User <input type="text" name="user"></p>\n) +
@@ -1035,15 +1135,14 @@ module Tawb
           %( — <a href="/t/#{@token}/tabs">the tabs</a></p>))
       end
 
-      private def render(context : HTTP::Server::Context, number : Int32, base : String,
-                         show : Bool = false) : Nil
+      private def render(number : Int32, base : String, show : Bool = false) : Response
         tab = @tabs.page(number)
-        return gone_tab(context, number) unless tab
+        return gone_tab(number) unless tab
         # A challenge nobody has answered stands in front of the page the
         # challenge belongs to, until the reader answers the challenge or asks
         # to see what the server sent.
         if @waiting.has_key?(number)
-          return sign_in(context, number, @waiting[number]) unless show
+          return sign_in(number, @waiting[number]) unless show
           @waiting.delete(number)
         end
         begin
@@ -1060,7 +1159,7 @@ module Tawb
           "frames" => JSON::Any.new(walked.frames.to_i64),
           "bytes"  => JSON::Any.new(html.bytesize.to_i64),
         }))
-        send_html(context, 200, html)
+        send_html(200, html)
       end
 
       HEADINGS = {
@@ -1070,10 +1169,9 @@ module Tawb
         "source"  => "Markup",
       }
 
-      private def render_view(context : HTTP::Server::Context, number : Int32,
-                              view : String, base : String) : Nil
+      private def render_view(number : Int32, view : String, base : String) : Response
         tab = @tabs.page(number)
-        return gone_tab(context, number) unless tab
+        return gone_tab(number) unless tab
         lines = tab.view(view)
         heading = HEADINGS[view]? || view
         @log.try(&.write("edb.view", {
@@ -1081,14 +1179,13 @@ module Tawb
           "view"   => JSON::Any.new(view),
           "blocks" => JSON::Any.new(lines.size.to_i64),
         }))
-        send_html(context, 200, Edb.lines_to_html(
+        send_html(200, Edb.lines_to_html(
           "#{heading} — tab #{number}", base, heading, lines, tab.url))
       end
 
-      private def typed_address(context : HTTP::Server::Context, query : URI::Params) : String?
-        if context.request.method == "POST"
-          body = context.request.body.try(&.gets_to_end) || ""
-          URI::Params.parse(body)["url"]?
+      private def typed_address(request : Request, query : URI::Params) : String?
+        if request.method == "POST"
+          URI::Params.parse(request.body)["url"]?
         else
           query["url"]?
         end
@@ -1098,27 +1195,27 @@ module Tawb
       # Routing
       # ----------------------------------------------------------------
 
-      private def serve(context : HTTP::Server::Context) : Nil
-        route(context)
+      def serve(request : Request) : Response
+        route(request)
       rescue error
         message = error.message || error.class.name
         @log.try(&.write("edb.error", {
-          "url"   => JSON::Any.new(context.request.resource),
+          "url"   => JSON::Any.new(request.target),
           "error" => JSON::Any.new(message[0, Math.min(message.size, 200)]),
         }))
-        send_html(context, 500,
+        send_html(500,
           "<html><body><p>tweb: #{Edb.escape_html(Edb.explain(message))}</p>" +
           %(<p><a href="/t/#{@token}/tabs">the tabs</a></p></body></html>))
       end
 
-      private def route(context : HTTP::Server::Context) : Nil
-        uri = URI.parse(context.request.resource)
+      private def route(request : Request) : Response
+        uri = URI.parse(request.target)
         query = URI::Params.parse(uri.query || "")
         parts = (uri.path || "/").split('/').reject(&.empty?)
 
         # /t/<token>/...
         unless parts[0]? == "t" && parts[1]? == @token
-          return send_html(context, 404, "<html><body><p>tweb: no such page</p></body></html>")
+          return send_html(404, "<html><body><p>tweb: no such page</p></body></html>")
         end
         rest = parts[2..]
 
@@ -1136,7 +1233,7 @@ module Tawb
             %(<p><a href="#{entry[:number]}/">#{Edb.escape_html(shown)}</a>) +
               %( — <a href="#{entry[:number]}/close">close</a></p>)
           end
-          return ours(context, "tweb tabs",
+          return ours("tweb tabs",
             rows.empty? ? "<p>No tabs open.</p>" : rows.join('\n'))
         end
 
@@ -1144,30 +1241,30 @@ module Tawb
         # tab, then a redirect to it, so the buffer ends up holding the tab's
         # own address rather than the command that opened it.
         if rest[0] == "open"
-          return open_typed(context, typed_address(context, query))
+          return open_typed(typed_address(request, query))
         end
 
         number = rest[0].to_i?
         unless number
-          return send_html(context, 404, "<html><body><p>tweb: no such tab</p></body></html>")
+          return send_html(404, "<html><body><p>tweb: no such tab</p></body></html>")
         end
         tab = @tabs.page(number)
-        return gone_tab(context, number, restarted: restarted) unless tab
+        return gone_tab(number, restarted: restarted) unless tab
         base = "http://#{HOST}:#{@port}#{tab_url(number)}"
         what = rest[1]? || ""
 
-        return render(context, number, base, show: query.has_key?("show")) if what.empty?
+        return render(number, base, show: query.has_key?("show")) if what.empty?
 
         # The answer to the sign-in form: remember the password for that realm
         # and go back for the page, which now loads without anybody being
         # asked anything.
         if what == "auth"
           challenge = @waiting[number]?
-          return redirect(context, tab_url(number)) unless challenge
-          fields = URI::Params.parse(context.request.body.try(&.gets_to_end) || "")
+          return redirect(tab_url(number)) unless challenge
+          fields = URI::Params.parse(request.body)
           user = fields["user"]? || ""
           @waiting.delete(number)
-          return redirect(context, "#{tab_url(number)}?show=1") if user.empty?
+          return redirect("#{tab_url(number)}?show=1") if user.empty?
           @credentials.remember(challenge, JSON::Any.new({
             "username" => JSON::Any.new(user),
             "password" => JSON::Any.new(fields["password"]? || ""),
@@ -1187,11 +1284,11 @@ module Tawb
           end
           sleep @settle
           tab.sync_url
-          return redirect(context, tab_url(number))
+          return redirect(tab_url(number))
         end
 
         if what.in?("ax", "render", "inspect", "source")
-          return render_view(context, number, what, base)
+          return render_view(number, what, base)
         end
 
         # The address bar on a tab's own page goes to that tab. Opening a new
@@ -1200,7 +1297,7 @@ module Tawb
         # then type an address and be somewhere else entirely, with a back
         # button pointing into a history they had not walked.
         if what == "open"
-          return open_typed(context, typed_address(context, query),
+          return open_typed(typed_address(request, query),
             {tab: tab, number: number})
         end
 
@@ -1222,7 +1319,7 @@ module Tawb
             "moved" => JSON::Any.new(now != before),
             "url"   => JSON::Any.new(now[0, Math.min(now.size, 120)]),
           }))
-          return redirect(context, tab_url(number))
+          return redirect(tab_url(number))
         end
 
         if what == "close"
@@ -1230,14 +1327,14 @@ module Tawb
             tab.close
           rescue
           end
-          return redirect(context, "/t/#{@token}/tabs")
+          return redirect("/t/#{@token}/tabs")
         end
 
-        return submit(context, tab, number, rest) if what == "submit"
-        return press(context, tab, number, what, rest) if what.matches?(/^e\d+$/)
-        return frame_page(context, tab, number, what, base) if what.matches?(/^f\d+$/)
+        return submit(request, tab, number, rest) if what == "submit"
+        return press(tab, number, what, rest) if what.matches?(/^e\d+$/)
+        return frame_page(tab, number, what, base) if what.matches?(/^f\d+$/)
 
-        send_html(context, 404, "<html><body><p>tweb: no such page</p></body></html>")
+        send_html(404, "<html><body><p>tweb: no such page</p></body></html>")
       end
 
       # submit/e<id>
@@ -1247,17 +1344,17 @@ module Tawb
       # input and change handlers run, and only then press the button — as a
       # person would press it, because a submit is exactly where sites ask
       # whether a person is present.
-      private def submit(context : HTTP::Server::Context, tab : TabEnv, number : Int32,
-                         rest : Array(String)) : Nil
+      private def submit(request : Request, tab : TabEnv, number : Int32,
+                         rest : Array(String)) : Response
         target_id = (rest[2]? || "").lchop("e").to_i?
         registry = @tabs.registry(number)
         target = target_id ? registry.get(target_id) : nil
         unless target
-          return ours(context, "stale",
+          return ours("stale",
             "<p>That form is from an older version of this page. Type rf.</p>")
         end
 
-        fields = URI::Params.parse(context.request.body.try(&.gets_to_end) || "")
+        fields = URI::Params.parse(request.body)
         entries = [] of FieldEntry
         pressed = nil.as(Record?)
         fields.each do |name, value|
@@ -1278,7 +1375,7 @@ module Tawb
         end
 
         where = document_of(tab, registry, target.within)
-        return ours(context, "gone", "<p>That frame is not there any more.</p>") unless where
+        return ours("gone", "<p>That frame is not there any more.</p>") unless where
 
         before = tab.url
         applied = entries.empty? ? Applied.new(0, [] of String) : where.apply_fields(entries)
@@ -1288,7 +1385,7 @@ module Tawb
           result = where.activate(control.desc, true)
           how = result.ok ? "clicked" : "refused"
           unless result.ok
-            return ours(context, "cannot", "<p>#{Edb.escape_html(result.why)}</p>" +
+            return ours("cannot", "<p>#{Edb.escape_html(result.why)}</p>" +
               %(<p><a href="#{tab_url(number)}">back to the page</a></p>))
           end
         else
@@ -1322,16 +1419,16 @@ module Tawb
           "how"       => JSON::Any.new(how),
           "navigated" => JSON::Any.new(navigated),
         }))
-        redirect(context, navigated ? tab_url(number) : back_to(number, target.within))
+        redirect(navigated ? tab_url(number) : back_to(number, target.within))
       end
 
       # e<id> and e<id>/click
-      private def press(context : HTTP::Server::Context, tab : TabEnv, number : Int32,
-                        what : String, rest : Array(String)) : Nil
+      private def press(tab : TabEnv, number : Int32,
+                        what : String, rest : Array(String)) : Response
         registry = @tabs.registry(number)
         record = what[1..].to_i?.try { |id| registry.get(id) }
         unless record
-          return ours(context, "stale",
+          return ours("stale",
             "<p>That link is from an older version of this page. Type rf.</p>")
         end
 
@@ -1341,14 +1438,14 @@ module Tawb
         # path there.
         where = document_of(tab, registry, record.within)
         unless where
-          return ours(context, "gone", "<p>That frame is not there any more.</p>")
+          return ours("gone", "<p>That frame is not there any more.</p>")
         end
 
         real = rest[2]? == "click"
         before = tab.url
         result = where.activate(record.desc, real)
         unless result.ok
-          return ours(context, "cannot", "<p>#{Edb.escape_html(result.why)}</p>" +
+          return ours("cannot", "<p>#{Edb.escape_html(result.why)}</p>" +
             %(<p><a href="#{back_to(number, record.within)}">back to the page</a></p>))
         end
         # A real click is the one used on the things that take a moment to
@@ -1367,30 +1464,30 @@ module Tawb
         # somewhere — a bot check that clears takes its own frame with it, and
         # sending the reader back to a frame that no longer exists would tell
         # them it had failed when it had just worked.
-        redirect(context, navigated ? tab_url(number) : back_to(number, record.within))
+        redirect(navigated ? tab_url(number) : back_to(number, record.within))
       end
 
       # f<id>: a frame, rendered as its own page
-      private def frame_page(context : HTTP::Server::Context, tab : TabEnv, number : Int32,
-                             what : String, base : String) : Nil
+      private def frame_page(tab : TabEnv, number : Int32,
+                             what : String, base : String) : Response
         registry = @tabs.registry(number)
         id = what[1..].to_i?
         record = id ? registry.get(id) : nil
         unless record
-          return ours(context, "stale",
+          return ours("stale",
             "<p>That frame is from an older version of this page. Type rf.</p>")
         end
         parent = document_of(tab, registry, record.within)
         frame = parent ? frame_for(parent, record.desc) : nil
         unless frame
-          return ours(context, "gone", "<p>That frame is not there any more.</p>")
+          return ours("gone", "<p>That frame is not there any more.</p>")
         end
         # Everything on this page belongs to that frame, and the page's ids
         # have to say so or acting on one would look in the wrong document.
         # The same walk runs here, so a frame read on its own page has its own
         # frames spliced into it.
         walked = read_tree(frame, registry, within: id)
-        send_html(context, 200,
+        send_html(200,
           Edb.tokens_to_html(walked.to_json_any, registry, base, number, id))
       end
     end

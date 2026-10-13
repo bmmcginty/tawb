@@ -56,10 +56,10 @@ Chrome DevTools Protocol or WebDriver BiDi.
 A native Crystal implementation is being developed so a future release can be
 copied to a Linux machine without installing Node or extracting another runtime.
 It reads pages interactively through Firefox and Chromium, in the ordinary and
-the Lynx interface, produces `--dump` output through either, and edits its own
-key bindings with `--keyboard`. The edb front end is not part of it — that one
-stays with the Node program, which brings edbrowse's own screen with it — and
-the packaged `tawb` command is still the Node one.
+the Lynx interface, produces `--dump` output through either, edits its own key
+bindings with `--keyboard`, reads and answers the browser's own windows over
+the accessibility bus, and serves the same browser to edbrowse with
+`--front-end edb`. The packaged `tawb` command is still the Node one.
 
 Build it with Crystal 1.21 or newer:
 

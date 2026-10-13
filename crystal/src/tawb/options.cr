@@ -95,10 +95,13 @@ module Tawb
     end
 
     def self.parse_edb(argv : Array(String), env : Hash(String, String)) : Hash(String, JSON::Any)
-      values, _url = parse_command_line(argv, BROWSER.merge(EDB).merge(HELP))
+      values, url = parse_command_line(argv, BROWSER.merge(EDB).merge(HELP))
       shared(values, env).merge({
         "port" => json(port_number(string(values, "port"))),
         "help" => json(boolean(values, "help", false)),
+        # The address to open on the way up, which the bridge turns into a
+        # tab and prints the address of.
+        "url"  => json(url),
       })
     end
 
