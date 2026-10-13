@@ -56,6 +56,7 @@ require "./aria"
 require "./firefox_driver"
 require "./frames"
 require "./fields"
+require "./focus"
 require "./live"
 require "./remap"
 require "./views"
@@ -425,6 +426,9 @@ module Tawb
       @chooser = nil
       @typing_handle = nil.as(Engine::Handle?)
       @place_handle = nil.as(Engine::Handle?)
+      # The focus an activation moved, held between the activation and the
+      # reader deciding whether to follow it.
+      @activation_focused = nil.as(Focus::Focused?)
       @attached_files = {} of String => Hash(String, AttachedFile)
       # The popup the reader has open, if any, named by the id its control
       # points at. See relocate_popup().
@@ -1255,15 +1259,18 @@ module Tawb
     end
 
     private def item_scope(frame : JSON::Any?, page : Engine::Page) : Engine::Scope
-      return page unless frame
-      context_id = if value = frame.as_s?
-                     value
-                   else
-                     object = frame.as_h? || return page
-                     object["id"]?.try(&.as_s?) || object["contextId"]?.try(&.as_s?) ||
-                       object["context"]?.try(&.as_s?)
-                   end
+      context_id = frame_context_id(frame)
       context_id ? page.frame_for(context_id) : page
+    end
+
+    # Which document an item says it came from. A frame travels as its context
+    # id, spelled three ways depending on which extraction produced the item.
+    private def frame_context_id(frame : JSON::Any?) : String?
+      return nil unless frame
+      return frame.as_s? if frame.as_s?
+      object = frame.as_h? || return nil
+      object["id"]?.try(&.as_s?) || object["contextId"]?.try(&.as_s?) ||
+        object["context"]?.try(&.as_s?)
     end
 
     # -----------------------------------------------------------------------
@@ -1598,6 +1605,91 @@ module Tawb
     # entered has to be asked about the element after its own extraction has
     # run. See Place.capture_place and Place.restore_place.
     # -----------------------------------------------------------------------
+
+    # -----------------------------------------------------------------------
+    # The focus an activation moved
+    #
+    # A page can implement a skip link without a real fragment target: the
+    # page's click handler calls focus() on the destination instead. The URL
+    # then says nothing happened, while a graphical browser follows the new
+    # focus. See `focus.cr` for the observation; the handle it answers with is
+    # held here, because this is what owns handles.
+    # -----------------------------------------------------------------------
+
+    # Armed against the element Enter is about to activate.
+    def watch_activation_focus(item : JSON::Any,
+                               page : Engine::Page? = @page) : Focus::Tracker?
+      acting = page || return nil
+      scope = item_scope(item.as_h["frame"]?, acting)
+      handle = handle_for(item, acting)
+      begin
+        Focus.arm(scope, handle)
+      ensure
+        handle.dispose rescue nil
+      end
+    rescue
+      nil
+    end
+
+    # An activation raised before anything was pressed: the observation is
+    # cancelled, not followed.
+    def cancel_activation_focus(tracker : Focus::Tracker?) : Nil
+      Focus.cancel(tracker)
+    end
+
+    # What focus the activation moved, resolved once and kept until the reader
+    # decides to follow it or — after a navigation — to let it go.
+    def activation_focus(tracker : Focus::Tracker?) : Focus::Focused?
+      found = Focus.focused_by(tracker)
+      @activation_focused = found if found
+      found
+    end
+
+    # The focused destination, as an exact block in the current view. Focus is
+    # the page's explicit keyboard destination; guessing at a nearby line would
+    # turn that useful signal into an unexplained jump.
+    def focus_destination_block(focused : Focus::Focused? = nil) : Int32
+      watched = focused || @activation_focused
+      @activation_focused = nil
+      return -1 unless watched
+      begin
+        exact_block_for_element(watched)
+      ensure
+        watched.handle.dispose rescue nil
+      end
+    end
+
+    # A navigation happened: the watched destination can only be disposed of,
+    # never followed. A handle belongs to the old document after that and
+    # cannot be a destination in the new one.
+    def drop_focus_destination(focused : Focus::Focused? = nil) : Nil
+      watched = focused || @activation_focused
+      @activation_focused = nil
+      watched.try(&.handle.dispose) rescue nil
+    end
+
+    private def exact_block_for_element(watched : Focus::Focused) : Int32
+      array_name = Place::NODE_ARRAY[@source]? || return -1
+      key = Place::INDEX_KEY[@source]? || return -1
+      found = Actions.locate_element(watched.handle, array_name) || return -1
+      object = found.as_h
+      return -1 unless object["exact"]?.try(&.as_bool?)
+      index = object["index"]?.try(&.as_i64?) || return -1
+      # The element was located in one document, and the same index in another
+      # document's node array means a different element.
+      expected = watched.scope.is_a?(Engine::Frame) ? watched.scope.document_id : nil
+      at = @blocks.index do |block|
+        item = block.item.as_h?
+        next false unless item
+        next false unless item[key]?.try(&.as_i64?) == index
+        next true if expected.nil?
+        held = frame_context_id(item["frame"]?)
+        held.nil? || held == expected
+      end
+      at ? at.to_i32 : -1
+    rescue
+      -1
+    end
 
     def describe_place_element(item : JSON::Any,
                                page : Engine::Page? = @page) : JSON::Any?

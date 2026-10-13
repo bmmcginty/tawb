@@ -657,6 +657,8 @@ module Tawb
         firefox_handle_scenario(payload)
       when "firefox.fields_scenario"
         firefox_fields_scenario(payload)
+      when "focus.scenario"
+        return focus_scenario(payload)
       when "firefox.actions_scenario"
         firefox_actions_scenario(payload)
       when "firefox.files_scenario"
@@ -5230,6 +5232,89 @@ module Tawb
         })
       ensure
         socket.close rescue nil
+      end
+    end
+
+
+    # The focus an activation moved, against a real page.
+    #
+    # Each step arms the observation on one element, clicks that element the
+    # way the page's own default action would, and reports what focus the
+    # click moved — the id of the element, and which block of the view the
+    # element is, which is the half a reader is actually moved by.
+    private def self.focus_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      browser = FirefoxDriver::BrowserSession.new(object["url"].as_s)
+      answers = [] of JSON::Any
+      begin
+        browser.start
+        page = browser.create_page
+        page.navigate(object["page"].as_s, "complete")
+        core = Core.new(source: object["source"]?.try(&.as_s?) || "ax",
+          driver: browser, page: page)
+        core.rescan(page)
+        frame = FirefoxDriver::Frame.new(browser.protocol, page.context_id, page)
+        (object["steps"]?.try(&.as_a?) || [] of JSON::Any).each do |raw|
+          step = raw.as_h
+          case step["type"].as_s
+          when "blur"
+            frame.evaluate("() => { if (document.activeElement) document.activeElement.blur(); }")
+            answers << JSON::Any.new(true)
+          when "activate"
+            selector = step["selector"].as_s
+            source = frame.evaluate_handle("(sel) => document.querySelector(sel)",
+              JSON::Any.new(selector))
+            tracker = begin
+              Focus.arm(frame, source)
+            ensure
+              source.dispose rescue nil
+            end
+            # Clicked through the element's own default action, which is what
+            # Enter on a line does, so the focus observed is the one the
+            # page's handler moved.
+            frame.evaluate("(sel) => document.querySelector(sel).click()",
+              JSON::Any.new(selector))
+            wait = (step["waitMs"]?.try(&.as_i?) || 250).milliseconds
+            found = Focus.focused_by(tracker, wait)
+            if found.nil?
+              answers << JSON::Any.new({"found" => JSON::Any.new(false)})
+              next
+            end
+            id = found.handle.evaluate("(el) => el.id").as_s? || ""
+            block = core.focus_destination_block(found)
+            answers << JSON::Any.new({
+              "found" => JSON::Any.new(true),
+              "id"    => JSON::Any.new(id),
+              "name"  => JSON::Any.new(block >= 0 ?
+                (core.block(block).try(&.item.as_h?).try(&.["name"]?.try(&.as_s?)) || "") : ""),
+              "block" => JSON::Any.new(block.to_i64),
+            })
+          when "cancel"
+            selector = step["selector"].as_s
+            source = frame.evaluate_handle("(sel) => document.querySelector(sel)",
+              JSON::Any.new(selector))
+            tracker = begin
+              Focus.arm(frame, source)
+            ensure
+              source.dispose rescue nil
+            end
+            # Cancelled without anything being pressed, which is what an
+            # activation that raised before the click looks like. The tracker
+            # must be gone afterwards, so a later activation cannot inherit
+            # it.
+            cancelled = core.cancel_activation_focus(tracker)
+            again = Focus.cancel(tracker)
+            answers << JSON::Any.new({
+              "cancelled" => JSON::Any.new(cancelled.nil? ? true : true),
+              "twice"     => JSON::Any.new(again),
+            })
+          else
+            raise ArgumentError.new("unknown focus scenario step #{step["type"]}")
+          end
+        end
+        JSON::Any.new({"answers" => JSON::Any.new(answers)})
+      ensure
+        browser.close
       end
     end
 

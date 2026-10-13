@@ -57,9 +57,11 @@ module Tawb
       include Reader::CoreEnv
       getter core : Core
       @live : Hash(String, JSON::Any)
+      @focus_tracker : Focus::Tracker?
 
       def initialize(@core)
         @live = live_json
+        @focus_tracker = nil
         @activation_watch = nil.as(JSON::Any?)
       end
 
@@ -135,14 +137,34 @@ module Tawb
       def close_chooser : Nil; @core.close_chooser; end
       def show_chooser(filter : String) : Int32; @core.show_chooser(filter); end
 
-      # Focus-following is best effort until the browser-side tracker is
-      # promoted into the native handle layer. Returning nil preserves the
-      # activated document without guessing at a destination.
-      def watch_activation_focus(item : JSON::Any) : JSON::Any?; nil; end
-      def cancel_activation_focus(watch : JSON::Any) : Nil; end
-      def activation_focus(watch : JSON::Any) : JSON::Any?; nil; end
-      def focus_destination_block(focused : JSON::Any) : Int32; -1; end
-      def drop_focus_destination(focused : JSON::Any) : Nil; end
+      # The focus an activation moved. The tracker and the handle it answers
+      # with are the core's, and neither is a thing JSON can carry, so what
+      # crosses this seam is only whether there is one — which is all the
+      # reader's own half needs to know. See `focus.cr`.
+      def watch_activation_focus(item : JSON::Any) : JSON::Any?
+        tracker = @core.watch_activation_focus(item) || return nil
+        @focus_tracker = tracker
+        JSON::Any.new({"token" => JSON::Any.new(tracker.token)})
+      end
+
+      def cancel_activation_focus(watch : JSON::Any) : Nil
+        @core.cancel_activation_focus(@focus_tracker)
+        @focus_tracker = nil
+      end
+
+      def activation_focus(watch : JSON::Any) : JSON::Any?
+        found = @core.activation_focus(@focus_tracker)
+        @focus_tracker = nil
+        found ? JSON::Any.new({"found" => JSON::Any.new(true)}) : nil
+      end
+
+      def focus_destination_block(focused : JSON::Any) : Int32
+        @core.focus_destination_block
+      end
+
+      def drop_focus_destination(focused : JSON::Any) : Nil
+        @core.drop_focus_destination
+      end
 
       def read_typing_field : JSON::Any?; @core.read_typing_field; end
       def release_typing_field : Nil; @core.release_typing_field; end

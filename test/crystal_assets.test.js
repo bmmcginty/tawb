@@ -17,6 +17,9 @@ const { OBSERVER_SCRIPT, DRAIN_SCRIPT, PULSE_SCRIPT } = require('../src/live');
 const { CLEAR_SCRIPT, PIERCE_PARENT_SCRIPT, libraryParentScript } = require('../src/firefox');
 const { describeElement, locateElement } = require('../src/place');
 const { extractForEdbrowse, resolveDescriptor, applyFieldValues } = require('../src/edb_page');
+const {
+  armFocusTracker, focusTrackerHasTarget, takeFocusTrackerTarget, clearFocusTracker,
+} = require('../src/focus');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -105,6 +108,18 @@ const assets = {
   },
   'edb_apply.js': {
     source: 'src/edb_page.js applyFieldValues', value: applyFieldValues.toString(),
+  },
+  'focus_arm.js': {
+    source: 'src/focus.js armFocusTracker', value: armFocusTracker.toString(),
+  },
+  'focus_has_target.js': {
+    source: 'src/focus.js focusTrackerHasTarget', value: focusTrackerHasTarget.toString(),
+  },
+  'focus_take_target.js': {
+    source: 'src/focus.js takeFocusTrackerTarget', value: takeFocusTrackerTarget.toString(),
+  },
+  'focus_clear.js': {
+    source: 'src/focus.js clearFocusTracker', value: clearFocusTracker.toString(),
   },
 };
 
