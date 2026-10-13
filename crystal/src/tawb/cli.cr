@@ -71,15 +71,15 @@ module Tawb
       # line itself rather than being handed the reader's answers. Which front
       # end was asked for is the one thing both parses agree about.
       if asked_for_edb?(argv, env)
+        if argv.includes?("--keyboard") || argv.includes?("--dump")
+          raise ArgumentError.new("--front-end edb cannot be combined with --keyboard or --dump")
+        end
         return run_edb(argv, env)
       end
       options = Options.parse_reader(argv, env)
       if options["help"].as_bool
         STDOUT << USAGE
         return
-      end
-      if options["frontEnd"].as_s == "edb" && (options["keyboard"].as_bool || options["dump"].as_bool)
-        raise ArgumentError.new("--front-end edb cannot be combined with --keyboard or --dump")
       end
       if options["keyboard"].as_bool && options["dump"].as_bool
         raise ArgumentError.new("--keyboard cannot be combined with --dump")
@@ -149,11 +149,6 @@ module Tawb
       names : Array(String) = [] of String
 
     private def self.run_interactive(options : Hash(String, JSON::Any), logger : Log) : Nil
-      if options["frontEnd"].as_s == "edb"
-        raise ArgumentError.new(
-          "--front-end edb is not part of the static reader; run the Node program for it")
-      end
-
       chromium = options["engine"].as_s != "firefox"
       profile = options["profile"].as_s? ||
                 (chromium ? Browser.default_profile : FirefoxLaunch.default_profile)
