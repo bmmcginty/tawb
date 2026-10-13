@@ -312,6 +312,11 @@ module Tawb
           "patterns"           => JSON.parse(%([{"urlPattern":"*","requestStage":"Request"}])),
         })
         await_reply(reply)
+        # The watcher lives as long as the tab. A quiet page may make no
+        # requests for minutes; that silence must not abandon Fetch while it
+        # is still intercepting every later request. The bounded initial
+        # reply above retains the transport's ordinary command timeout.
+        channel.read_timeout = nil
         spawn { watch }
         true
       rescue
