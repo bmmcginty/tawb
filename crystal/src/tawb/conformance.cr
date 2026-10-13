@@ -38,6 +38,7 @@ require "./lynx_keymap"
 require "./lynx_number"
 require "./lynx_state"
 require "./marionette"
+require "./native_prompt"
 require "./options"
 require "./reader"
 require "./reader_keys"
@@ -534,6 +535,22 @@ module Tawb
         JSON::Any.new(Dump.format_ax_blocks(
           object["blocks"].as_a, object["escape_unicode"]?.try(&.as_bool?) || false
         ))
+      when "native.default_button"
+        buttons = (payload.as_h["buttons"].as_a).map do |raw|
+          button = raw.as_h
+          Atspi::Described.new(
+            bus: button["bus"]?.try(&.as_s?) || ":1.1",
+            path: button["path"]?.try(&.as_s?) || "/button",
+            role: button["role"]?.try(&.as_s?) || "push button",
+            name: button["name"].as_s,
+            focused: button["focused"]?.try(&.as_bool?) || false,
+            is_default: button["isDefault"]?.try(&.as_bool?) || false,
+          )
+        end
+        found = NativePrompt.default_button(buttons)
+        found ? JSON::Any.new(found.name) : JSON::Any.new(nil)
+      when "native.scenario"
+        native_scenario(payload)
       when "a11y.session_bus_address"
         address = A11yBus.session_bus_address
         address ? JSON::Any.new(address) : JSON::Any.new(nil)
@@ -4604,6 +4621,140 @@ module Tawb
         answer["reachableAfter"] = JSON::Any.new(false)
       end
       JSON::Any.new(answer)
+    end
+
+
+    # One question, as the differential compares it: what the dialog says,
+    # what the dialog offers, and which button the dialog itself has ready.
+    private def self.native_request_json(request : NativePrompt::Request) : JSON::Any
+      default = request.default_button
+      JSON::Any.new({
+        "role"          => JSON::Any.new(request.role),
+        "title"         => JSON::Any.new(request.title),
+        "lines"         => JSON::Any.new(request.lines.map { |line| JSON::Any.new(line) }),
+        "buttons"       => JSON::Any.new(request.buttons.map { |each| JSON::Any.new(each.name) }),
+        "toggles"       => JSON::Any.new(request.toggles.map { |each| JSON::Any.new(each.name) }),
+        "fields"        => JSON::Any.new(request.fields.map do |each|
+          JSON::Any.new("#{each.name}: #{each.value}")
+        end),
+        "defaultButton" => default ? JSON::Any.new(default.name) : JSON::Any.new(nil),
+      })
+    end
+
+    # Noticing that the browser has asked something, and answering it, driven
+    # against an accessibility bus the test is serving.
+    #
+    # The tree is changed through that bus's own control interface rather than
+    # on a clock, so the comparison is deterministic: a step adds the dialog,
+    # the next step waits for the watch to have offered it, and the step after
+    # that answers it. The one thing that cannot be driven is the watch holding
+    # the terminal — so "hold" makes the handler wait for a "release" step,
+    # which is exactly the state a reader in the middle of answering is in.
+    private def self.native_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      accessibility = Atspi.open(address: "unix:path=#{object["socket"].as_s}")
+      control = accessibility.connection
+      results = [] of JSON::Any
+      offered = [] of NativePrompt::Request
+      released = ::Channel(Nil).new
+      holding = false
+      throw_once = false
+      watch = nil.as(NativePrompt::Watch?)
+      begin
+        (object["steps"]?.try(&.as_a?) || [] of JSON::Any).each do |raw|
+          step = raw.as_h
+          begin
+            case step["type"].as_s
+            when "arm"
+              holding = step["hold"]?.try(&.as_bool?) || false
+              throw_once = step["throwFirst"]?.try(&.as_bool?) || false
+              application = accessibility.application_for(
+                pid: step["pid"]?.try(&.as_i?).try(&.to_i64),
+                names: (step["names"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s),
+              ) || raise ArgumentError.new("the browser is not describing its windows")
+              interval = (step["intervalMs"]?.try(&.as_i?) || 10).milliseconds
+              watch = NativePrompt::Watch.new(accessibility, application, interval) do |request|
+                if throw_once
+                  throw_once = false
+                  raise Exception.new("the terminal went away")
+                end
+                offered << request
+                released.receive if holding
+              end
+              results << JSON::Any.new(application.name)
+            when "set_tree"
+              control.call(
+                destination: "org.tawb.Control",
+                path: "/org/tawb/control",
+                iface: "org.tawb.Control",
+                member: "SetTree",
+                signature: "s",
+                body: [step["payload"].as_s.as(Dbus::Argument)],
+              )
+              results << JSON::Any.new(true)
+            when "await"
+              wanted = step["count"].as_i
+              deadline = Time.instant + (step["timeoutMs"]?.try(&.as_i?) || 3000).milliseconds
+              while offered.size < wanted && Time.instant < deadline
+                sleep 5.milliseconds
+              end
+              results << JSON::Any.new(offered.size.to_i64)
+            when "settle"
+              # A deliberate wait, for the one assertion that is about nothing
+              # happening: while the handler holds the terminal the watch
+              # cannot look again, so a dialog that arrives now must not be
+              # offered.
+              sleep (step["ms"]?.try(&.as_i?) || 60).milliseconds
+              results << JSON::Any.new(offered.size.to_i64)
+            when "release"
+              released.send(nil)
+              results << JSON::Any.new(true)
+            when "dialog"
+              request = offered[step["index"].as_i]? ||
+                        raise ArgumentError.new("no dialog at #{step["index"]}")
+              results << native_request_json(request)
+            when "press"
+              request = offered[step["index"].as_i]? ||
+                        raise ArgumentError.new("no dialog at #{step["index"]}")
+              wanted = step["name"].as_s
+              button = request.buttons.find { |each| each.name == wanted } ||
+                       raise ArgumentError.new("no button named #{wanted}")
+              results << JSON::Any.new(request.press(button))
+            when "toggle"
+              request = offered[step["index"].as_i]? ||
+                        raise ArgumentError.new("no dialog at #{step["index"]}")
+              wanted = step["name"].as_s
+              control_node = request.toggles.find { |each| each.name == wanted } ||
+                             raise ArgumentError.new("no option named #{wanted}")
+              answered = request.toggle(control_node)
+              results << (answered.nil? ? JSON::Any.new(nil) : JSON::Any.new(answered))
+            when "reread"
+              index = step["index"].as_i
+              request = offered[index]? || raise ArgumentError.new("no dialog at #{index}")
+              again = request.reread
+              offered[index] = again
+              results << native_request_json(again)
+            when "still_open"
+              request = offered[step["index"].as_i]? ||
+                        raise ArgumentError.new("no dialog at #{step["index"]}")
+              results << JSON::Any.new(request.still_open?)
+            when "stopped"
+              results << JSON::Any.new(watch.try(&.stopped?) || false)
+            when "stop"
+              watch.try(&.stop)
+              results << JSON::Any.new(true)
+            else
+              raise ArgumentError.new("unknown native prompt scenario step #{step["type"]}")
+            end
+          rescue error
+            results << JSON::Any.new({"error" => JSON::Any.new(error.message || error.class.name)})
+          end
+        end
+      ensure
+        watch.try(&.stop)
+        accessibility.close
+      end
+      JSON::Any.new({"results" => JSON::Any.new(results)})
     end
 
     private def self.reader_index(step : Hash(String, JSON::Any)) : Int32

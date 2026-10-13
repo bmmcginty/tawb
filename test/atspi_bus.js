@@ -76,6 +76,13 @@ function defaultTree() {
 const UNKNOWN_METHOD = 'org.freedesktop.DBus.Error.UnknownMethod';
 const FAILED = 'org.freedesktop.DBus.Error.Failed';
 
+// Not an AT-SPI interface. A client in another process changes this bus's tree
+// through it, which is what makes a watch testable at all: a watch is a thing
+// that reacts to a tree changing.
+const CONTROL_NAME = 'org.tawb.Control';
+const CONTROL_PATH = '/org/tawb/control';
+const CONTROL_INTERFACE = 'org.tawb.Control';
+
 // Serves one tree. `pids` is what the bus says owns each connection, `gone` is
 // the set of objects that have vanished entirely, and `childless` is the set
 // that still answer for themselves but refuse their children — which is what a
@@ -91,6 +98,11 @@ function serveTree({
 } = {}) {
   const pressed = [];
   const asked = [];
+  // The tree as it stands, which a client can replace through the control
+  // interface below. A watch is a thing that reacts to a tree changing, so a
+  // test of one has to be able to change the tree — and a test running in
+  // another process can only do that over the bus.
+  const state = { tree, gone, childless, fail: false };
 
   const answer = (message) => {
     const reply = (signature, body) => dbus.encodeMessage({
@@ -118,12 +130,33 @@ function serveTree({
       return reply('u', [pids[wanted]]);
     }
 
+    // The control interface, which is not AT-SPI and is not pretending to be.
+    // It exists so that a client in another process can change the tree it is
+    // watching, which is the only way to test a watch across a process
+    // boundary.
+    if (message.iface === CONTROL_INTERFACE) {
+      if (message.member === 'SetTree') {
+        const wanted = JSON.parse(message.body[0] || '{}');
+        if (wanted.tree) state.tree = wanted.tree;
+        if (wanted.gone) state.gone = new Set(wanted.gone);
+        if (wanted.childless) state.childless = new Set(wanted.childless);
+        if (wanted.fail !== undefined) state.fail = !!wanted.fail;
+        return reply('s', ['ok']);
+      }
+      if (message.member === 'Pressed') return reply('as', [pressed]);
+      return refuse(UNKNOWN_METHOD, `${message.member} is not a control member`);
+    }
+
+    // A browser that has quit, which is what a watch has to notice rather
+    // than keep asking about for ever.
+    if (state.fail) return refuse(FAILED, 'the browser has gone');
+
     const key = `${message.destination}|${message.path}`;
-    if (gone.has(key)) return refuse(FAILED, 'object gone');
-    const node = tree[key];
+    if (state.gone.has(key)) return refuse(FAILED, 'object gone');
+    const node = state.tree[key];
     if (!node) return refuse(FAILED, `no node at ${key}`);
     if (message.member === 'GetChildren') {
-      if (childless.has(key)) return refuse(FAILED, 'children gone');
+      if (state.childless.has(key)) return refuse(FAILED, 'children gone');
       return reply('a(so)', [node.children]);
     }
     if (message.member === 'GetRoleName') return reply('s', [node.role]);
@@ -134,6 +167,14 @@ function serveTree({
     if (message.member === 'GetState') return reply('au', [node.state || [0, 0]]);
     if (message.member === 'DoAction') {
       pressed.push(key);
+      // The browser owns a control's state, and pressing a check box is what
+      // changes it. A reader that assumed the press did what the press looks
+      // like it did would be wrong here as often as the browser refuses one.
+      if (node.role === 'check box' || node.role === 'check menu item') {
+        const words = node.state ? node.state.slice() : [0, 0];
+        words[0] ^= (1 << 4); // STATE_CHECKED
+        node.state = words;
+      }
       return reply('b', [node.press !== false]);
     }
     return refuse(UNKNOWN_METHOD, `${message.iface}.${message.member} is not here`);
@@ -173,9 +214,18 @@ function serveTree({
   });
 
   return new Promise((resolve) => server.listen(socketPath, () => resolve({
-    server, pressed, asked, tree,
+    server,
+    pressed,
+    asked,
+    state,
+    get tree() { return state.tree; },
+    // What a test in this process changes the tree with; a test in another
+    // process calls the control member over the bus instead.
+    setTree(wanted) { Object.assign(state, wanted); },
     close() { server.close(); },
   })));
 }
 
-module.exports = { serveTree, defaultTree, ROOT };
+module.exports = {
+  serveTree, defaultTree, ROOT, CONTROL_NAME, CONTROL_PATH, CONTROL_INTERFACE,
+};

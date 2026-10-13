@@ -2091,6 +2091,156 @@ function editImplementations(edit, keys) {
   return implementations;
 }
 
+// Noticing that the browser has asked something, and answering it, as the
+// differential sees it.
+//
+// A watch is a thing that reacts to a tree changing, so the tree is changed
+// through the test bus's own control interface rather than on a clock: a step
+// adds the dialog, the next step waits for the watch to have offered the
+// dialog, and the step after that answers it. The one state that cannot be
+// driven from outside is the watch holding the terminal, so "hold" makes the
+// handler wait for a "release" step — which is exactly the state a reader in
+// the middle of answering is in.
+function nativePromptImplementations({ nativePrompt, atspi }) {
+  const implementations = [{
+    name: 'JavaScript',
+    defaultButton(buttons) {
+      const found = nativePrompt.defaultButton(buttons);
+      return found ? found.name : null;
+    },
+    scenario(socket, steps) { return nativeScenario({ nativePrompt, atspi }, socket, steps); },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    defaultButton(buttons) { return call('native.default_button', { buttons }); },
+    scenario(socket, steps) {
+      return callAsync('native.scenario', { socket, steps }, { timeoutMs: 30000 });
+    },
+  });
+  return implementations;
+}
+
+function nativeRequestShape(request) {
+  return {
+    role: request.role,
+    title: request.title,
+    lines: request.lines,
+    buttons: request.buttons.map((button) => button.name),
+    toggles: request.toggles.map((toggle) => toggle.name),
+    fields: request.fields.map((field) => `${field.name}: ${field.value}`),
+    defaultButton: request.defaultButton ? request.defaultButton.name : null,
+  };
+}
+
+async function nativeScenario({ nativePrompt, atspi }, socket, steps) {
+  const a11y = await atspi.openAccessibility({ address: `unix:path=${socket}` });
+  const results = [];
+  const offered = [];
+  let watch = null;
+  let holding = false;
+  let throwOnce = false;
+  let release = null;
+  try {
+    for (const step of steps) {
+      try {
+        if (step.type === 'arm') {
+          holding = step.hold === true;
+          throwOnce = step.throwFirst === true;
+          const application = await a11y.applicationFor({
+            pid: step.pid ?? null,
+            names: step.names || [],
+          });
+          if (!application) throw new Error('the browser is not describing its windows');
+          watch = nativePrompt.watchNativeDialogs({
+            a11y,
+            application,
+            interval: step.intervalMs ?? 10,
+            onDialog: async (request) => {
+              if (throwOnce) {
+                throwOnce = false;
+                throw new Error('the terminal went away');
+              }
+              offered.push(request);
+              if (holding) await new Promise((resolve) => { release = resolve; });
+            },
+          });
+          results.push(application.name);
+        } else if (step.type === 'set_tree') {
+          await a11y.connection.call({
+            destination: 'org.tawb.Control',
+            path: '/org/tawb/control',
+            iface: 'org.tawb.Control',
+            member: 'SetTree',
+            signature: 's',
+            body: [step.payload],
+          });
+          results.push(true);
+        } else if (step.type === 'await') {
+          const deadline = Date.now() + (step.timeoutMs ?? 3000);
+          while (offered.length < step.count && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+          results.push(offered.length);
+        } else if (step.type === 'settle') {
+          // A deliberate wait, for the one assertion that is about nothing
+          // happening: while the handler holds the terminal the watch cannot
+          // look again, so a dialog that arrives now must not be offered.
+          await new Promise((resolve) => setTimeout(resolve, step.ms ?? 60));
+          results.push(offered.length);
+        } else if (step.type === 'release') {
+          if (release) { release(); release = null; }
+          results.push(true);
+        } else if (step.type === 'dialog') {
+          const request = offered[step.index];
+          if (!request) throw new Error(`no dialog at ${step.index}`);
+          results.push(nativeRequestShape(request));
+        } else if (step.type === 'press') {
+          const request = offered[step.index];
+          if (!request) throw new Error(`no dialog at ${step.index}`);
+          const button = request.buttons.find((each) => each.name === step.name);
+          if (!button) throw new Error(`no button named ${step.name}`);
+          results.push(await request.press(button));
+        } else if (step.type === 'toggle') {
+          const request = offered[step.index];
+          if (!request) throw new Error(`no dialog at ${step.index}`);
+          const control = request.toggles.find((each) => each.name === step.name);
+          if (!control) throw new Error(`no option named ${step.name}`);
+          results.push(await request.toggle(control));
+        } else if (step.type === 'reread') {
+          const request = offered[step.index];
+          if (!request) throw new Error(`no dialog at ${step.index}`);
+          const again = await request.reread();
+          offered[step.index] = again;
+          results.push(nativeRequestShape(again));
+        } else if (step.type === 'still_open') {
+          const request = offered[step.index];
+          if (!request) throw new Error(`no dialog at ${step.index}`);
+          results.push(await request.stillOpen());
+        } else if (step.type === 'stopped') {
+          // JavaScript's watch keeps the flag inside its closure, so what is
+          // compared is the only thing visible from outside either
+          // implementation: whether a dialog is still offered after the
+          // browser came back. See the test.
+          results.push(false);
+        } else if (step.type === 'stop') {
+          if (watch) watch.stop();
+          results.push(true);
+        } else {
+          throw new Error(`unknown native prompt scenario step ${step.type}`);
+        }
+      } catch (error) {
+        results.push({ error: String(error.message || error) });
+      }
+    }
+  } finally {
+    if (release) release();
+    if (watch) watch.stop();
+    a11y.close();
+  }
+  return { results };
+}
+
 // Somewhere for the browser to describe its own windows to, as the
 // differential sees it.
 //
@@ -3427,6 +3577,7 @@ module.exports = {
   call, callAsync, addressImplementations, cdpImplementations, ariaImplementations, bidiImplementations,
   blockImplementations, coreImplementations, coreTabImplementations,
   a11yBusImplementations, atspiImplementations, dbusImplementations,
+  nativePromptImplementations,
   dumpImplementations, editImplementations,
   endpointImplementations,
   firefoxAgentImplementations,
