@@ -122,6 +122,11 @@ module Tawb
     # and a pid is reused freely, so the group is only signalled when the
     # process still carries the profile directory it was started with on its
     # command line — which both the browser and the xvfb-run wrapping it do.
+    # Chromium rewrites its own command line into a space-joined process
+    # title, so the path is matched as a whole word of the raw text rather
+    # than as an exact argv member: NUL separators become spaces, and the
+    # path must end at one, which is what keeps a shorter profile's path
+    # from matching a longer one.
     def self.ours?(pid : Int64, profile_dir : String?) : Bool
       return false if profile_dir.nil? || profile_dir.empty?
       command = begin
@@ -129,8 +134,9 @@ module Tawb
       rescue
         return false # gone, not ours to read, or a platform without /proc
       end
-      arguments = command.split('\0')
-      arguments.includes?("--user-data-dir=#{profile_dir}") || arguments.includes?(profile_dir)
+      pattern = Regex.escape(profile_dir)
+      command.split('\0').join(' ').matches?(
+        /(?:^|\s)(?:--user-data-dir=)?#{pattern}(?:\s|$)/)
     end
 
     def self.record(pid : Int64?, port : Int32?, profile_dir : String?, engine : String?,

@@ -101,8 +101,14 @@ function stillOurBrowser(pid, profileDir) {
   } catch {
     return false; // gone, not ours to read, or a platform without /proc
   }
-  return cmdline.split('\0').includes(`--user-data-dir=${profileDir}`)
-    || cmdline.split('\0').includes(profileDir);
+  // Chromium rewrites its own command line into a space-joined process
+  // title, so the profile path is matched as a whole word of the raw text
+  // rather than as an exact argv member: NUL separators become spaces, and
+  // the path must end at one, which is what keeps a shorter profile's path
+  // from matching a longer one.
+  const text = cmdline.split('\0').join(' ');
+  const pattern = profileDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|\\s)(?:--user-data-dir=)?${pattern}(?:\\s|$)`).test(text);
 }
 
 function recordBrowser({
