@@ -964,8 +964,16 @@ module Tawb
     # copies, and on the whole list at once while one of the browser's own
     # lists is open the answer is that list, untransformed.
     def self.display_blocks(state : State) : Array(JSON::Any)
+      # Whether the page's own blocks are being shown, rather than one of the
+      # browser's own lists, is what `active_blocks` decides: it falls through
+      # to the core only when none of options, library and dialog is open.
+      # That is asked directly rather than by comparing the list it returned
+      # with `state.core.blocks`, because the interactive binding builds a
+      # fresh JSON list from the core on every call and the identity never
+      # held — so the Lynx vocabulary, numbering included, was never applied
+      # to a real page.
+      page_blocks = state.options.nil? && state.library.nil? && state.dialog.nil?
       blocks = active_blocks(state)
-      page_blocks = blocks.same?(state.core.blocks)
       if lynx_active?(state) && page_blocks
         preferences = state.keys.try(&.preferences) || {} of String => JSON::Any
         return LynxDisplay.blocks(blocks, preferences, state.escape_unicode)

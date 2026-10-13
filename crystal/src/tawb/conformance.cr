@@ -1856,6 +1856,16 @@ module Tawb
       })
     end
 
+    # The scripted core the interactive front end really has: its binding
+    # rebuilds the JSON block list on every read, so a check that compares a
+    # list with `state.core.blocks` by identity never matches. Used to keep
+    # that shape in the conformance harness.
+    class FreshBlocksCoreState < Reader::CoreState
+      def blocks : Array(JSON::Any)
+        super.dup
+      end
+    end
+
     private def self.reader_state(payload : JSON::Any) : Reader::State
       object = payload.as_h
       state = Reader::State.new
@@ -1901,11 +1911,20 @@ module Tawb
         state.drawn.status = drawn["status"]?.try(&.as_s?)
       end
       if core = object["core"]?.try(&.as_h?)
-        state.core = Reader::CoreState.new(
+        # The interactive front end wraps the core in a binding that builds a
+        # fresh JSON list on every `blocks` call, unlike this scripted core.
+        # `freshBlocks` asks for that shape, which is what makes the identity
+        # question in Reader.display_blocks testable.
+        fresh = core["freshBlocks"]?.try(&.as_bool?) == true
+        state.core = (fresh ? FreshBlocksCoreState.new(
           core["source"]?.try(&.as_s?) || "ax",
           core["blocks"]?.try(&.as_a?) || [] of JSON::Any,
           core["popup"]?,
-          core["popupAt"]?.try(&.as_i64?) || -1_i64)
+          core["popupAt"]?.try(&.as_i64?) || -1_i64) : Reader::CoreState.new(
+          core["source"]?.try(&.as_s?) || "ax",
+          core["blocks"]?.try(&.as_a?) || [] of JSON::Any,
+          core["popup"]?,
+          core["popupAt"]?.try(&.as_i64?) || -1_i64))
         scripted = state.core.as(Reader::CoreState)
         scripted.rescan_blocks = core["rescanBlocks"]?.try(&.as_a?)
         if failure = scripted_value(core, "rescanFailure")
