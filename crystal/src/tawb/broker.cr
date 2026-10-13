@@ -207,6 +207,7 @@ module Tawb
       end
 
       private def departing(reason : String) : Nil
+        File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] departing: #{reason}" }
         # The record goes first. A reader that arrives from here on starts a
         # broker of its own rather than joining one that is leaving — and the
         # gap between deciding to go and having gone is exactly when a reader
@@ -316,9 +317,15 @@ module Tawb
               second = read_byte
               final = first.bit(7) == 1
               opcode = first & 0x0f
-              length = (second & 0x7f).to_u64
-              length = read_u16.to_u64 if length == 126
-              length = read_u64 if length == 127
+              # The 7-bit length field names the extended forms at 126 and
+              # 127; a frame whose true length is exactly 127 arrives in the
+              # 16-bit form and its length must not be taken for the
+              # indicator again, or the mask is read as a 64-bit length.
+              case second & 0x7f
+              when 126 then length = read_u16.to_u64
+              when 127 then length = read_u64
+              else          length = (second & 0x7f).to_u64
+              end
               raise IO::Error.new("frame exceeds the broker's 64MiB limit") if length > 67_108_864
               mask = second.bit(7) == 1 ? read_exact(4) : nil
               payload = read_exact(length.to_i32)
@@ -338,8 +345,8 @@ module Tawb
                 end
               end
             end
-          rescue
-            # Every exit from the read loop is the peer going away.
+          rescue e
+            File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] peer died: #{e.class} #{e.message}" }
           ensure
             @socket.close rescue nil
             @on_close.call
@@ -552,6 +559,7 @@ module Tawb
       end
 
       private def client_left(client : Client) : Nil
+        File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] client_left" }
         was = @mutex.synchronize do
           present = @clients.includes?(client)
           @clients.delete(client)
@@ -578,6 +586,7 @@ module Tawb
       end
 
       private def from_client(client : Client, text : String) : Nil
+        File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] #{text[0, 100]}" }
         @mutex.synchronize { client.active_at = Time.instant }
         message = begin
           JSON.parse(text).as_h?
@@ -675,6 +684,7 @@ module Tawb
       end
 
       private def establish_upstream : Nil
+        File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] establish_upstream" }
         connected = begin
           Transport::WebSocket.new(@upstream_url, read_timeout: nil)
         rescue
@@ -687,11 +697,13 @@ module Tawb
         loop do
           from_upstream(socket.receive)
         end
-      rescue
+      rescue e
+        File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] upstream loop died: #{e.class} #{e.message}" }
         browser_gone
       end
 
       private def browser_gone : Nil
+        File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] browser_gone" }
         closed, peers = @mutex.synchronize do
           @upstream = nil
           @upstream_failed = true

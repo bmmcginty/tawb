@@ -122,9 +122,15 @@ module Tawb
           final = first.bit(7) == 1
           opcode = first & 0x0f
           masked = second.bit(7) == 1
-          length = (second & 0x7f).to_u64
-          length = read_u16.to_u64 if length == 126
-          length = read_u64 if length == 127
+          # The 7-bit length field names the extended forms at 126 and 127; a
+          # frame whose true length is exactly 127 arrives in the 16-bit form
+          # and its length must not be taken for the indicator again, or the
+          # mask is read as a 64-bit length.
+          case second & 0x7f
+          when 126 then length = read_u16.to_u64
+          when 127 then length = read_u64
+          else          length = (second & 0x7f).to_u64
+          end
           mask = masked ? read_exact(4) : nil
           payload = read_exact(length.to_i)
           if mask
