@@ -14,6 +14,7 @@ require "./lynx_state"
 require "./log"
 require "./options"
 require "./runtime"
+require "./settings"
 require "./startup"
 
 module Tawb
@@ -61,6 +62,10 @@ module Tawb
 
     def self.run(argv : Array(String) = ARGV, env : Hash(String, String) = ENV.to_h) : Nil
       Runtime.restore_invocation_directory(env["INIT_CWD"]?)
+      # Options a reader wrote down once come first, so anything typed on the
+      # command line wins — which is what a reader expects of a configuration
+      # file.
+      argv = Settings.read(env) + argv
       # The edbrowse front end takes its own options — a port to listen on,
       # and none of the reader's screen settings — so it parses the command
       # line itself rather than being handed the reader's answers. Which front

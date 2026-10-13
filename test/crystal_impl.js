@@ -3893,6 +3893,29 @@ function readerCommands(root) {
   return commands.map((entry) => ({ ...entry, cwd: root }));
 }
 
+// Options a reader wrote down once, as the differential sees them. The
+// quoting rules are the interesting half: they are a shell's, and a reader
+// who wrote `--search "https://example.com/?q=%s"` in the file is owed the
+// same argument either implementation reads it with.
+function settingsImplementations(javascript) {
+  const implementations = [{
+    name: 'JavaScript',
+    path(env, home) { return javascript.settingsPath(env, home); },
+    split(text) { return javascript.splitSettings(text); },
+    read(options) { return javascript.readSettings(options); },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    path(env, home) { return call('settings.path', { env, home }); },
+    split(text) { return call('settings.split', { text }); },
+    read({ env = {}, home = '', file = null } = {}) {
+      return call('settings.read', { env, home, file });
+    },
+  });
+  return implementations;
+}
+
 function optionImplementations(javascript) {
   const implementations = [{ name: 'JavaScript', ...javascript }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
@@ -3939,5 +3962,6 @@ module.exports = {
   inputImplementations, interfaceImplementations, keyWizardImplementations, keymapImplementations, layoutImplementations,
   liveImplementations, liveRealImplementations, lynxActionsImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, lynxOptionsImplementations, lynxPagesImplementations, lynxStateImplementations, marionetteImplementations, optionImplementations,
-  placeElementImplementations, placeImplementations, readerCommands, readerImplementations, screenImplementations, sessionImplementations, unicodeImplementations,
+  placeElementImplementations, placeImplementations, readerCommands, readerImplementations, screenImplementations, sessionImplementations,
+  settingsImplementations, unicodeImplementations,
 };

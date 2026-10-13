@@ -49,6 +49,7 @@ require "./startup"
 require "./quicknav"
 require "./place"
 require "./session"
+require "./settings"
 require "./screen"
 require "./transport"
 require "./unicode_escape"
@@ -616,6 +617,21 @@ module Tawb
         return JSON::Any.new(Edb.explain(payload.as_h["message"].as_s))
       when "edb.routes_scenario"
         return edb_routes_scenario(payload)
+      when "settings.path"
+        object = payload.as_h
+        return JSON::Any.new(Settings.path(
+          object["env"]?.try(&.as_h?).try(&.transform_values(&.as_s)) || {} of String => String,
+          object["home"]?.try(&.as_s?) || Path.home.to_s))
+      when "settings.split"
+        return JSON::Any.new(Settings.split(payload.as_h["text"].as_s)
+          .map { |value| JSON::Any.new(value) })
+      when "settings.read"
+        object = payload.as_h
+        return JSON::Any.new(Settings.read(
+          object["env"]?.try(&.as_h?).try(&.transform_values(&.as_s)) || {} of String => String,
+          object["home"]?.try(&.as_s?) || Path.home.to_s,
+          object["file"]?.try(&.as_s?)
+        ).map { |value| JSON::Any.new(value) })
       when "endpoint.free_port"
         JSON::Any.new(Endpoint.free_port.to_i64)
       when "endpoint.port_of"
