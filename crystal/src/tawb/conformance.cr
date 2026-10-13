@@ -4235,7 +4235,8 @@ module Tawb
             begin
               result = session.command(
                 action["method"].as_s,
-                action["params"]?.try(&.as_h) || {} of String => JSON::Any
+                action["params"]?.try(&.as_h) || {} of String => JSON::Any,
+                (action["timeoutMs"]?.try(&.as_i64?) || Bidi::DEFAULT_TIMEOUT_MS).to_i32
               )
               values << JSON::Any.new({"result" => result})
             rescue error

@@ -3,6 +3,8 @@ require "./transport"
 
 module Tawb
   module Bidi
+    DEFAULT_TIMEOUT_MS = 30_000
+
     def self.from_remote(value : JSON::Any?) : JSON::Any
       return JSON::Any.new(nil) unless value
       object = value.as_h?
@@ -58,7 +60,12 @@ module Tawb
       @events = [] of JSON::Any
 
       def initialize(url : String)
-        @socket = Transport::WebSocket.new(url)
+        # This is a session-lifetime connection. Silence means the reader is
+        # reading, not that Firefox has gone away; in particular, a terminal
+        # prompt or the keyboard wizard can legitimately leave BiDi idle for
+        # minutes. Bound each command below, as the JavaScript client does,
+        # rather than putting an idle timeout on the socket's read loop.
+        @socket = Transport::WebSocket.new(url, read_timeout: nil)
         @mutex = Mutex.new
         @write_mutex = Mutex.new
         @waiters = {} of Int64 => Channel(JSON::Any)
@@ -70,7 +77,8 @@ module Tawb
       # One fiber owns socket reads. Commands, auth handling, navigation waits,
       # and live collection may all be active together; routing replies by id
       # is what keeps an event consumer from stealing a command's answer.
-      def command(method : String, params = {} of String => JSON::Any) : JSON::Any
+      def command(method : String, params = {} of String => JSON::Any,
+                  timeout_ms : Int32 = DEFAULT_TIMEOUT_MS) : JSON::Any
         response = Channel(JSON::Any).new(1)
         wanted = @mutex.synchronize do
           raise IO::Error.new("BiDi connection is closed") if @closed
@@ -90,7 +98,15 @@ module Tawb
           @mutex.synchronize { @waiters.delete(wanted) }
           raise error
         end
-        object = response.receive.as_h
+        answer = select
+        when value = response.receive
+          value
+        when timeout(timeout_ms.milliseconds)
+          @mutex.synchronize { @waiters.delete(wanted) }
+          seconds = timeout_ms / 1000.0
+          raise IO::TimeoutError.new("#{method} did not answer within #{seconds}s")
+        end
+        object = answer.as_h
         if object["type"]?.try(&.as_s?) == "error"
           name = object["error"]?.try(&.as_s?) || "BiDi error"
           detail = object["message"]?.try(&.as_s?) || ""

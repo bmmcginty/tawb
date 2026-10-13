@@ -78,4 +78,18 @@ for (const implementation of bidiImplementations(javascript)) {
 
     assert.deepEqual(values, [{ error: 'invalid argument: bad context' }]);
   });
+
+  test(`${implementation.name}: an unanswered BiDi command times out without closing the session`, async () => {
+    const values = await withEndpoint((message, peer) => {
+      if (message.method === 'browsingContext.getTree') {
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result: { contexts: [] } }));
+      }
+    }, (url) => implementation.sessionScenario(url, [
+      { type: 'command', method: 'script.evaluate', timeoutMs: 50 },
+      { type: 'command', method: 'browsingContext.getTree' },
+    ]));
+
+    assert.match(values[0].error, /script\.evaluate did not answer within 0\.05s/);
+    assert.deepEqual(values[1], { result: { contexts: [] } });
+  });
 }

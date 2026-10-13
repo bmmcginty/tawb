@@ -122,7 +122,13 @@ function bidiImplementations(javascript) {
           values.push({ event: await nextEvent(action.method) });
         } else {
           try {
-            values.push({ result: await session.send(action.method, action.params || {}) });
+            values.push({
+              result: await session.send(
+                action.method,
+                action.params || {},
+                action.timeoutMs == null ? {} : { timeout: action.timeoutMs },
+              ),
+            });
           } catch (error) {
             values.push({ error: error.message });
           }
