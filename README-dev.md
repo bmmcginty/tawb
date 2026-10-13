@@ -2040,8 +2040,8 @@ Firefox and through Chromium, in the ordinary interface and in the Lynx one,
 it writes `--dump` output through either, it edits its own key bindings with
 `--keyboard`, it reads and answers the browser's own windows over the
 accessibility bus, and it serves the same browser to edbrowse with
-`--front-end edb`. The packaged `tawb` command is still the Node one;
-`resume2.md` carries the remaining list.
+`--front-end edb`. It is the packaged `tawb` command; the Node implementation
+remains in the tree as the differential reference.
 
 Two things in the native build are hand-written where the standard library
 would have done, and for the same reason the protocols are: a dependency the
@@ -2095,7 +2095,7 @@ operation as a second implementation of the module the JavaScript tests
 already drive. A ported test file states its assertions once; the ordinary
 `npm test` runs them against JavaScript, and `tools/test_crystal.sh` runs the
 same cases against both and then asserts that the two answered identically.
-The shipping implementation stays the reference while the port grows.
+The original Node implementation remains the independent reference.
 
 `Tawb::Conformance.dispatch` is the operation table. Most operations are a
 scripted scenario: a list of steps in, a list of observations out, with the

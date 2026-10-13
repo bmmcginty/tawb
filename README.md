@@ -38,30 +38,25 @@ not depend on that route alone.
 
 ## Requirements
 
-TAWB currently targets Linux. You need:
+TAWB currently targets Linux. To run it you need:
 
-- a current Node.js release and npm;
 - Chrome, Chromium, Firefox, Firefox ESR, or LibreWolf;
 - a terminal that reports its key sequences correctly through `$TERM`;
 - `xvfb-run` if no graphical `$DISPLAY` is available.
 
-On Debian and Ubuntu, `xvfb-run` is supplied by the `xvfb` package. Package
-names for Node.js and browsers vary by distribution.
+On Debian and Ubuntu, `xvfb-run` is supplied by the `xvfb` package. Browser
+package names vary by distribution. The packaged `tawb` command is a static
+executable and does not need Node.js or another language runtime.
 
-TAWB has no npm runtime dependencies. It controls the browser directly using
-Chrome DevTools Protocol or WebDriver BiDi.
+### Native static executable
 
-### Native static port
+The native Crystal implementation reads pages interactively through Firefox
+and Chromium, in the ordinary and the Lynx interface, produces `--dump` output
+through either, edits its own key bindings with `--keyboard`, reads and answers
+the browser's own windows over the accessibility bus, and serves the same
+browser to edbrowse with `--front-end edb`. It is the packaged `tawb` command.
 
-A native Crystal implementation is being developed so a future release can be
-copied to a Linux machine without installing Node or extracting another runtime.
-It reads pages interactively through Firefox and Chromium, in the ordinary and
-the Lynx interface, produces `--dump` output through either, edits its own key
-bindings with `--keyboard`, reads and answers the browser's own windows over
-the accessibility bus, and serves the same browser to edbrowse with
-`--front-end edb`. The packaged `tawb` command is still the Node one.
-
-Build it with Crystal 1.21 or newer:
+Building from source requires Crystal 1.21 or newer:
 
 ```sh
 tools/build_crystal.sh
@@ -93,9 +88,10 @@ tools/test_crystal_browser.sh
 Each ported test file contains one set of assertions. The ordinary test command
 runs those assertions against JavaScript; `tools/test_crystal.sh` adds the
 Crystal implementation to the same cases through a private JSON conformance
-protocol. This keeps the shipping implementation as the reference while the
-native port grows. The external Chrome, Chromium, Firefox, Firefox ESR, or
-LibreWolf browser remains intentionally outside the static executable.
+protocol. This keeps the original JavaScript implementation as an independent
+reference for the native command. The external Chrome, Chromium, Firefox,
+Firefox ESR, or LibreWolf browser remains intentionally outside the static
+executable.
 
 ## Quick start
 
@@ -104,7 +100,8 @@ Clone the repository and start with Chromium, the default engine:
 ```sh
 git clone https://github.com/bmmcginty/tawb.git
 cd tawb
-npm link
+tools/build_crystal.sh
+install -Dm755 dist/tawb-crystal ~/.local/bin/tawb
 cd /where/you/keep/files
 tawb https://example.com
 ```

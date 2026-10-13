@@ -9,6 +9,11 @@ const enabled = process.env.TAWB_TEST_CRYSTAL === '1';
 const binary = process.env.TAWB_CRYSTAL_BIN
   || path.join(__dirname, '..', 'dist', 'tawb-crystal');
 
+test('the packaged command is the native executable', () => {
+  const pkg = require('../package.json');
+  assert.equal(pkg.bin.tawb, 'dist/tawb-crystal');
+});
+
 test('the native CLI says which engines it reads interactively', {
   skip: enabled ? false : 'the Crystal runtime is not enabled',
 }, () => {
@@ -18,20 +23,20 @@ test('the native CLI says which engines it reads interactively', {
     'both engines read interactively');
   assert.doesNotMatch(help.stdout, /interactive reader is not ported/);
   assert.doesNotMatch(help.stdout, /not yet available/);
-  // What is deliberately not here says so, and says where it went.
-  assert.match(help.stdout, /edb front end is not part of the static reader/);
+  assert.match(help.stdout, /edb front end hands the same browser to edbrowse/);
 });
 
-test('the native CLI refuses the front end that is not part of it', {
+test('the native CLI includes the edbrowse front end', {
   skip: enabled ? false : 'the Crystal runtime is not enabled',
 }, () => {
-  const edb = spawnSync(binary, ['--front-end', 'edb'], {
-    encoding: 'utf8', input: '',
-  });
-  assert.equal(edb.status, 1);
-  assert.match(edb.stderr, /not part of the static reader/);
+  const edb = spawnSync(binary, ['--front-end', 'edb', '--help'], { encoding: 'utf8' });
+  assert.equal(edb.status, 0, edb.stderr);
+  assert.match(edb.stdout, /Usage: tawb --front-end edb/);
+});
 
-  // And the two flags that are each a whole run cannot be one run.
+test('the native CLI refuses two whole-run modes together', {
+  skip: enabled ? false : 'the Crystal runtime is not enabled',
+}, () => {
   const both = spawnSync(binary, ['--dump', '--keyboard'], {
     encoding: 'utf8', input: '',
   });
