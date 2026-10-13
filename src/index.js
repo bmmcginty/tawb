@@ -5304,6 +5304,10 @@ module.exports = {
   openVisitedLinks, openSessionHistory, openAddressList,
   noteVisitedLink, notePageVisit,
   closeLibrary, showLibrary, handleLibraryKey, handleOptionsKey,
+  // Exported for the Crystal differential, which drives the dialog screen
+  // through the same two entry points the watch and the browser-question key
+  // use.
+  answerNativeDialog, reopenPendingDialog, dialogBlocks, closeNativeDialog,
   handleChooseKey,
   askForLine, askYesNo, bookmarkPage, deleteLibraryBookmark,
   downloadCurrentLink, drawLinePrompt,

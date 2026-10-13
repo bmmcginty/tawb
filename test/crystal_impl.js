@@ -1114,6 +1114,50 @@ function liveRealImplementations(liveModule, driverModule) {
 // original and the Crystal port: a state, a page address, and the actions to
 // run in order against the same live state. What each action wrote to the
 // terminal — and what it refused to rewrite — is the behaviour under test.
+// The reader harness captures what the reader draws by replacing
+// `process.stdout.write`, which is one global for the whole process. Anything
+// else that writes while the replacement is in place is captured too, and the
+// test runner's own reporter is one such thing: a comparison that waits for
+// something real — the four hundred milliseconds a dialog press waits for the
+// browser to act — leaves a window wide enough for a line of "✔ test name" to
+// land in the middle of the drawn screen.
+//
+// So which writes belong to the drawing is decided by async context rather
+// than by time. An action runs inside `drawingStore`, and a write is the
+// reader's only when the write happens somewhere inside that run — which
+// includes everything the action awaits, because an async context follows a
+// promise and a timer. Every other write goes where it was going.
+const { AsyncLocalStorage } = require('node:async_hooks');
+
+const drawingStore = new AsyncLocalStorage();
+
+// Takes over `process.stdout.write` for the duration, answers with a function
+// that puts it back. The size of the terminal is part of what is taken over,
+// because the reader reads it from there.
+function captureDrawing(rows, cols) {
+  const saved = {
+    rows: process.stdout.rows,
+    cols: process.stdout.columns,
+    write: process.stdout.write,
+  };
+  const passThrough = saved.write.bind(process.stdout);
+  process.stdout.rows = rows;
+  process.stdout.columns = cols;
+  process.stdout.write = (chunk, ...rest) => {
+    const sink = drawingStore.getStore();
+    if (sink) {
+      sink.push(String(chunk));
+      return true;
+    }
+    return passThrough(chunk, ...rest);
+  };
+  return () => {
+    process.stdout.rows = saved.rows;
+    process.stdout.columns = saved.cols;
+    process.stdout.write = saved.write;
+  };
+}
+
 function readerImplementations(index, keysModule) {
   const coreModule = require('../src/core');
   // A keyboard for one prompt: queued keystrokes, and the race a pending
@@ -1710,24 +1754,13 @@ function readerImplementations(index, keysModule) {
       // parkCursor and set_status draw the address row from state.core.page,
       // exactly as the reading loop's own state does.
       state.core.page = page;
-      const savedWrite = process.stdout.write.bind(process.stdout);
-      const saved = {
-        rows: process.stdout.rows, cols: process.stdout.columns,
-        write: process.stdout.write,
-      };
-      process.stdout.rows = args.state.rows ?? 24;
-      process.stdout.columns = args.state.cols ?? 80;
+      const restore = captureDrawing(args.state.rows ?? 24, args.state.cols ?? 80);
       const results = [];
-      let current = null;
-      process.stdout.write = (chunk) => {
-        if (current) current.push(String(chunk));
-        return true;
-      };
       try {
         for (const action of args.actions ?? []) {
-          current = [];
+          const current = [];
           const entry = {};
-          const value = runReaderAction(action, state, page);
+          const value = drawingStore.run(current, () => runReaderAction(action, state, page));
           if (value !== undefined) {
             // Sparse arrays come back with nulls where the JavaScript
             // original has holes, which is the same answer over the wire.
@@ -1737,9 +1770,7 @@ function readerImplementations(index, keysModule) {
           results.push(entry);
         }
       } finally {
-        process.stdout.rows = saved.rows;
-        process.stdout.columns = saved.cols;
-        process.stdout.write = saved.write;
+        restore();
       }
       return {
         results,
@@ -1789,27 +1820,36 @@ function readerImplementations(index, keysModule) {
         } } };
       state.core.page = page;
       page = configureScriptedTabs(state, args.state) ?? page;
-      const savedWrite = process.stdout.write.bind(process.stdout);
-      const saved = {
-        rows: process.stdout.rows, cols: process.stdout.columns,
-        write: process.stdout.write,
-      };
-      process.stdout.rows = args.state.rows ?? 24;
-      process.stdout.columns = args.state.cols ?? 80;
+      const restore = captureDrawing(args.state.rows ?? 24, args.state.cols ?? 80);
       const results = [];
-      let current = null;
-      process.stdout.write = (chunk) => {
-        if (current) current.push(String(chunk));
-        return true;
-      };
       try {
         for (const action of args.actions ?? []) {
           page = state.core.page;
-          current = [];
+          const current = [];
           const entry = {};
           let value;
+          // Everything the action does, and everything the action waits for,
+          // runs inside this one store, which is how a write is told apart
+          // from the test runner's.
+          await drawingStore.run(current, async () => {
           if (action.op === 'libraryKey') {
             value = await index.handleLibraryKey(action.chunk, state, page) ?? null;
+          } else if (action.op === 'dialogBlocks') {
+            value = index.dialogBlocks(scriptedDialog(action.dialog)).map(dialogBlockShape);
+          } else if (action.op === 'answerDialog' || action.op === 'reopenDialog') {
+            state.keyReader = scriptedKeyReader(action.keys ?? []);
+            const dialog = scriptedDialog(action.dialog);
+            if (action.op === 'reopenDialog') {
+              state.pendingDialog = action.pending === false ? null : dialog;
+              await index.reopenPendingDialog(state, page);
+            } else {
+              await index.answerNativeDialog(state, dialog);
+            }
+            value = {
+              pressed: dialog.pressed,
+              toggled: dialog.toggled,
+              pending: !!state.pendingDialog,
+            };
           } else if (action.op === 'refresh') {
             await index.refresh(state, page, { resetCursor: !!action.resetCursor,
               anchor: action.anchor ?? null });
@@ -1903,6 +1943,7 @@ function readerImplementations(index, keysModule) {
           } else {
             value = runReaderAction(action, state, page);
           }
+          });
           if (value !== undefined) {
             entry.value = JSON.parse(JSON.stringify(value));
           }
@@ -1910,9 +1951,7 @@ function readerImplementations(index, keysModule) {
           results.push(entry);
         }
       } finally {
-        process.stdout.rows = saved.rows;
-        process.stdout.columns = saved.cols;
-        process.stdout.write = saved.write;
+        restore();
       }
       return {
         results,
@@ -2101,6 +2140,90 @@ function editImplementations(edit, keys) {
 // driven from outside is the watch holding the terminal, so "hold" makes the
 // handler wait for a "release" step — which is exactly the state a reader in
 // the middle of answering is in.
+// A question the browser is asking, written out in a payload instead of read
+// over the accessibility bus. What the browser does about a press is part of
+// the script: a press can be refused, and a dialog can stay up after a press
+// the browser declined.
+//
+// The shape is the one the real dialog has, because the dialog screen is what
+// is being compared and the screen does not know where its question came from.
+function scriptedDialog(payload) {
+  const checked = new Map(
+    (payload.toggles ?? []).map((toggle) => [toggle.name, toggle.checked === true]),
+  );
+  const pressed = [];
+  const toggled = [];
+  const refusedPresses = new Set(payload.pressRefuses ?? []);
+  const refusedToggles = new Set(payload.toggleRefuses ?? []);
+  let closed = false;
+  const build = (shape) => {
+    const dialog = {
+      pressed,
+      toggled,
+      role: shape.role ?? 'alert',
+      title: shape.title ?? '',
+      lines: shape.lines ?? [],
+      buttons: (shape.buttons ?? []).map((button) => ({
+        name: button.name,
+        focused: button.focused === true,
+        isDefault: button.isDefault === true,
+      })),
+      toggles: (shape.toggles ?? []).map((toggle) => ({
+        name: toggle.name,
+        checked: checked.get(toggle.name) === true,
+      })),
+      fields: (shape.fields ?? []).map((field) => ({
+        name: field.name ?? '', value: field.value ?? '',
+      })),
+      async press(button) {
+        if (refusedPresses.has(button.name)) throw new Error('the browser refused the press');
+        pressed.push(button.name);
+        // A press the browser acted on closes the dialog; a press it ignored
+        // leaves the dialog where it was, which is the case the reader has to
+        // be told about rather than congratulated on.
+        closed = payload.staysOpenAfterPress !== true;
+        return true;
+      },
+      async toggle(control) {
+        if (refusedToggles.has(control.name)) return null;
+        toggled.push(control.name);
+        checked.set(control.name, !(checked.get(control.name) === true));
+        return checked.get(control.name);
+      },
+      async reread() {
+        if (payload.rereadFails === true) throw new Error('the dialog cannot be read again');
+        return build(payload.reread ?? shape);
+      },
+      async stillOpen() {
+        if (closed) return false;
+        return payload.stillOpen !== false;
+      },
+    };
+    dialog.defaultButton = nativePromptModule().defaultButton(dialog.buttons);
+    return dialog;
+  };
+  return build(payload);
+}
+
+function nativePromptModule() {
+  // Required here rather than at the top of the file so that a test file which
+  // only uses the reader harness does not pull in the accessibility stack.
+  // eslint-disable-next-line global-require
+  return require('../src/native_prompt');
+}
+
+// One dialog block, as the two implementations have to agree on it. The
+// JavaScript blocks carry the control itself and the Crystal blocks carry the
+// control's index, so what is compared is the text and which kind of line it
+// is.
+function dialogBlockShape(block) {
+  return {
+    text: block.text,
+    button: block.button ? block.button.name : null,
+    toggle: block.toggle ? block.toggle.name : null,
+  };
+}
+
 function nativePromptImplementations({ nativePrompt, atspi }) {
   const implementations = [{
     name: 'JavaScript',

@@ -26,10 +26,15 @@ module Tawb
     # which is what a caller needs to know before signalling the group.
     record Spawned, process : Process, grouped : Bool
 
+    # `env` is added to what this process already has, which is what a browser
+    # needs: the accessibility bus is named in three variables and everything
+    # else about the environment has to come through unchanged.
     def self.spawn(command : String, arguments : Array(String),
-                   path : String = ENV["PATH"]? || "") : Spawned
+                   path : String = ENV["PATH"]? || "",
+                   env : Hash(String, String)? = nil) : Spawned
       if setsid = which("setsid", path)
         process = Process.new(setsid, [command] + arguments,
+          env: env,
           input: Process::Redirect::Close,
           output: Process::Redirect::Close,
           error: Process::Redirect::Close)
@@ -39,6 +44,7 @@ module Tawb
       end
 
       process = Process.new(command, arguments,
+        env: env,
         input: Process::Redirect::Close,
         output: Process::Redirect::Close,
         error: Process::Redirect::Close)

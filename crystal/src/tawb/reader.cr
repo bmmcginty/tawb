@@ -191,6 +191,60 @@ module Tawb
       abstract def reconsider : Nil
     end
 
+    # One control a dialog offers, flattened to what the reader needs of it:
+    # the name to show, and for an option whether the option is ticked. The
+    # three states travel together because which button the dialog itself has
+    # ready is read from them rather than assumed.
+    record DialogControl,
+      name : String,
+      checked : Bool = false,
+      focused : Bool = false,
+      is_default : Bool = false
+
+    # What a dialog is about where that lives in a control rather than in the
+    # dialog's words: the username and the already-masked password a "Save
+    # password?" prompt is offering to keep.
+    record DialogField, name : String, value : String
+
+    # A question the browser drew for itself, as the key handlers see it.
+    #
+    # The real one is a `NativePrompt::Request` over the accessibility bus;
+    # the conformance harness implements the same interface from its payload,
+    # and the handlers cannot tell the difference — which is the point.
+    #
+    # Controls are addressed by index rather than handed back, because the
+    # index is the one thing a scripted dialog and a real one can both mean
+    # the same by.
+    module DialogEnv
+      abstract def role : String
+      abstract def title : String
+      abstract def lines : Array(String)
+      abstract def buttons : Array(DialogControl)
+      abstract def toggles : Array(DialogControl)
+      abstract def fields : Array(DialogField)
+
+      # Press one of `buttons`, answering with whether the press went in.
+      abstract def press(index : Int32) : Bool
+
+      # Tick or untick one of `toggles`, answering with what the option is
+      # now according to the browser, or nil when the browser would not say.
+      abstract def toggle(index : Int32) : Bool?
+
+      # The same question, read again, or nil when it cannot be read.
+      abstract def reread : DialogEnv?
+
+      # Whether the browser is still asking.
+      abstract def still_open? : Bool
+    end
+
+    # Which button the dialog would press if the dialog were answered without
+    # being read. Chrome focuses Cancel on Chrome's install prompt and marks
+    # Cancel the default; the save-password prompt focuses Save. So the answer
+    # is read rather than invented, and it is reported rather than pressed.
+    def self.dialog_default_button(buttons : Array(DialogControl)) : DialogControl?
+      buttons.find(&.is_default) || buttons.find(&.focused)
+    end
+
     # A page-touching operation outlived its budget. The core's own timeouts
     # raise this (the browser-side source of it is the same in JavaScript:
     # core.js's ActionTimeout). Activation says how long it gave the page
@@ -809,6 +863,11 @@ module Tawb
       property files : JSON::Any?
       property library : JSON::Any?
       property dialog : JSON::Any?
+      # The question on screen, and the question the reader walked away from
+      # without answering. `dialog` holds what is drawn; these two hold what
+      # can still be done about it, which is not a thing JSON can carry.
+      property dialog_request : DialogEnv?
+      property pending_dialog : DialogEnv?
       property options : JSON::Any?
       # The slider the control mode is adjusting, and the dropdown whose
       # entries are on screen: each mode's own record of what it is acting on.
@@ -868,6 +927,8 @@ module Tawb
         @files = nil
         @library = nil
         @dialog = nil
+        @dialog_request = nil
+        @pending_dialog = nil
         @options = nil
         @controlling = nil
         @chooser = nil

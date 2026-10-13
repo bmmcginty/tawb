@@ -111,6 +111,12 @@ module Tawb
       exit 1
     end
 
+    # What the browser calls itself on the accessibility bus, which is the
+    # fallback for a browser reached with --connect: that browser was running
+    # before this reader existed, so there is no pid of this reader's to match.
+    CHROMIUM_NAMES = ["Chromium", "Chrome", "Google Chrome", "Chromium-browser"]
+    FIREFOX_NAMES  = ["Firefox", "Mozilla Firefox", "firefox"]
+
     # What a browser this reader is about to drive looks like once it is
     # open: the session to act through, the address it is listening on, and
     # the pieces of shutdown that are the engine's own.
@@ -119,7 +125,14 @@ module Tawb
       endpoint : String,
       library_port : Int32?,
       launched : FirefoxLaunch::Started?,
-      chromium : Browser::Session?
+      chromium : Browser::Session?,
+      # The accessibility bus this browser describes its own windows to, and
+      # the process that is this browser on it. Both nil for a machine with no
+      # D-Bus, which is an ordinary state of affairs rather than a failure:
+      # that reader never meets a native dialog and never notices.
+      a11y : A11yBus::Opened? = nil,
+      pid : Int64? = nil,
+      names : Array(String) = [] of String
 
     private def self.run_interactive(options : Hash(String, JSON::Any), logger : Log) : Nil
       if options["frontEnd"].as_s == "edb"
@@ -134,9 +147,9 @@ module Tawb
       startup = StartupStatus.new(->(text : String) { STDOUT << text; STDOUT.flush; nil },
         LibC.isatty(STDOUT.fd) == 1)
       opened = if chromium
-                 open_chromium(options, profile, timeout, startup)
+                 open_chromium(options, profile, timeout, startup, logger)
                else
-                 open_firefox(options, profile, timeout, startup)
+                 open_firefox(options, profile, timeout, startup, logger)
                end
       browser = opened.browser
       endpoint = opened.endpoint
@@ -252,6 +265,23 @@ module Tawb
         Reader.render(terminal, state, tabs.current_page.url, true)
         core.attach_live rescue nil
 
+        # Dialogs the browser draws for itself: an extension asking for
+        # consent, a file to be chosen, permission for something. Neither
+        # protocol has them; the browser's own accessibility interface does.
+        # The question goes on the terminal, the reader answers there, and the
+        # answer presses the dialog's own button — the same move the password
+        # prompt makes, for the same reason.
+        #
+        # Nothing is arranged if the browser cannot describe its windows. That
+        # is an ordinary state of affairs — a browser somebody else started, a
+        # machine with no D-Bus — and it costs a reader who never installs
+        # anything nothing at all.
+        native = NativePrompt.arm(bus: opened.a11y, pid: opened.pid,
+          names: opened.names, log: logger) do |request|
+          ReaderKeys.answer_native_dialog(terminal, state, tabs.current_page, keyboard,
+            Interactive::DialogBinding.new(request), logger)
+        end
+
         # A window that changed shape: the lines were wrapped to the old
         # width and the rows counted to the old height, so neither describes
         # what is on screen now. The wizard and the options screen draw their
@@ -300,6 +330,7 @@ module Tawb
         end
       ensure
         Signal::WINCH.reset rescue nil
+        native.try(&.stop) rescue nil
         reader.try(&.close)
         terminal.restore
         if options["closeInitialTabOnExit"].as_bool && !adopted && page
@@ -333,6 +364,17 @@ module Tawb
         if browser_session = opened.chromium
           browser_session.close if browser_session.owned? && !options["keepBrowser"].as_bool
         end
+        # A kept browser keeps the bus it was started with: the browser still
+        # has the address in its environment, and the reader that rejoins the
+        # browser reads native windows on the recorded address. A browser this
+        # reader is taking down takes the bus with it.
+        if bus = opened.a11y
+          if options["keepBrowser"].as_bool && bus.owned?
+            bus.leave_running rescue nil
+          else
+            bus.close rescue nil
+          end
+        end
       end
     end
 
@@ -362,14 +404,15 @@ module Tawb
     # this profile shares that session, so the browser is reached through the
     # broker rather than directly.
     private def self.open_firefox(options : Hash(String, JSON::Any), profile : String,
-                                  timeout : Int64, startup : StartupStatus) : OpenedBrowser
+                                  timeout : Int64, startup : StartupStatus,
+                                  logger : Log) : OpenedBrowser
       startup.update("Starting Firefox…")
       launched = nil.as(FirefoxLaunch::Started?)
       endpoint = begin
         if connected = options["connect"].as_s?
           firefox_endpoint(connected)
         else
-          launched = FirefoxLaunch.launch(profile, timeout)
+          launched = FirefoxLaunch.launch(profile, timeout, log: logger)
           launched.not_nil!.endpoint
         end
       rescue error
@@ -390,17 +433,21 @@ module Tawb
         endpoint: endpoint,
         library_port: library_port,
         launched: launched,
-        chromium: nil)
+        chromium: nil,
+        a11y: launched.try(&.a11y) || A11yBus.open(logger),
+        pid: launched.try(&.pid),
+        names: FIREFOX_NAMES)
     end
 
     # Chromium, over its own HTTP endpoint. There is no broker: CDP gives
     # each tab a connection of its own, so two readers on one browser do not
     # share a session to hold open for each other.
     private def self.open_chromium(options : Hash(String, JSON::Any), profile : String,
-                                   timeout : Int64, startup : StartupStatus) : OpenedBrowser
+                                   timeout : Int64, startup : StartupStatus,
+                                   logger : Log) : OpenedBrowser
       startup.update("Starting Chromium…")
       session = begin
-        Browser.open(chromium_endpoint(options["connect"].as_s?), profile, timeout)
+        Browser.open(chromium_endpoint(options["connect"].as_s?), profile, timeout, logger)
       rescue error
         startup.finish
         raise error
@@ -410,7 +457,10 @@ module Tawb
         endpoint: session.endpoint,
         library_port: nil,
         launched: nil,
-        chromium: session)
+        chromium: session,
+        a11y: session.a11y,
+        pid: session.pid,
+        names: CHROMIUM_NAMES)
     end
 
     # What --connect means to Chromium: an HTTP endpoint. A bare port is the

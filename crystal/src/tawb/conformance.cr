@@ -2016,6 +2016,109 @@ module Tawb
       state
     end
 
+    # A question the browser is asking, written out in the payload instead of
+    # read over the accessibility bus. What the browser does about a press is
+    # part of the script: a press can be refused, and a dialog can stay up
+    # after a press that the browser declined.
+    class ScriptedDialog
+      include Reader::DialogEnv
+
+      getter pressed : Array(String)
+      getter toggled : Array(String)
+
+      def initialize(@payload : Hash(String, JSON::Any))
+        @pressed = [] of String
+        @toggled = [] of String
+        @checked = {} of String => Bool
+        @closed = false
+        (@payload["toggles"]?.try(&.as_a?) || [] of JSON::Any).each do |raw|
+          control = raw.as_h
+          @checked[control["name"].as_s] = control["checked"]?.try(&.as_bool?) || false
+        end
+      end
+
+      def role : String
+        @payload["role"]?.try(&.as_s?) || "alert"
+      end
+
+      def title : String
+        @payload["title"]?.try(&.as_s?) || ""
+      end
+
+      def lines : Array(String)
+        (@payload["lines"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s)
+      end
+
+      def buttons : Array(Reader::DialogControl)
+        (@payload["buttons"]?.try(&.as_a?) || [] of JSON::Any).map do |raw|
+          control = raw.as_h
+          Reader::DialogControl.new(
+            name: control["name"].as_s,
+            focused: control["focused"]?.try(&.as_bool?) || false,
+            is_default: control["isDefault"]?.try(&.as_bool?) || false,
+          )
+        end
+      end
+
+      def toggles : Array(Reader::DialogControl)
+        (@payload["toggles"]?.try(&.as_a?) || [] of JSON::Any).map do |raw|
+          name = raw.as_h["name"].as_s
+          Reader::DialogControl.new(name: name, checked: @checked[name]? || false)
+        end
+      end
+
+      def fields : Array(Reader::DialogField)
+        (@payload["fields"]?.try(&.as_a?) || [] of JSON::Any).map do |raw|
+          field = raw.as_h
+          Reader::DialogField.new(field["name"]?.try(&.as_s?) || "",
+            field["value"]?.try(&.as_s?) || "")
+        end
+      end
+
+      def press(index : Int32) : Bool
+        control = buttons[index]? || raise ArgumentError.new("no button at #{index}")
+        refused = (@payload["pressRefuses"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s)
+        raise Exception.new("the browser refused the press") if refused.includes?(control.name)
+        @pressed << control.name
+        # A press the browser acted on closes the dialog; a press it ignored
+        # leaves the dialog where it was, which is the case the reader has to
+        # be told about rather than congratulated on.
+        @closed = !(@payload["staysOpenAfterPress"]?.try(&.as_bool?) || false)
+        true
+      end
+
+      def toggle(index : Int32) : Bool?
+        control = toggles[index]? || raise ArgumentError.new("no option at #{index}")
+        return nil if (@payload["toggleRefuses"]?.try(&.as_a?) || [] of JSON::Any)
+                        .map(&.as_s).includes?(control.name)
+        @toggled << control.name
+        @checked[control.name] = !(@checked[control.name]? || false)
+        @checked[control.name]
+      end
+
+      def reread : Reader::DialogEnv?
+        return nil if @payload["rereadFails"]?.try(&.as_bool?) || false
+        again = @payload["reread"]?.try(&.as_h?)
+        return self unless again
+        # The same question, read again, and what it says now may differ. The
+        # presses are shared so that a scenario can press after a reread and
+        # still be compared on one list.
+        replacement = ScriptedDialog.new(again)
+        replacement.inherit(self)
+        replacement
+      end
+
+      def still_open? : Bool
+        return false if @closed
+        @payload["stillOpen"]?.try(&.as_bool?) != false
+      end
+
+      protected def inherit(other : ScriptedDialog) : Nil
+        @pressed = other.pressed
+        @toggled = other.toggled
+      end
+    end
+
     # A scripted answer that may be absent or JSON null; both mean "none".
     private def self.scripted_value(object : Hash(String, JSON::Any), key : String) : JSON::Any?
       value = object[key]?
@@ -2262,6 +2365,42 @@ module Tawb
         verdict = ReaderKeys.handle_library_key(output, state, page.not_nil!, keyboard,
           action["chunk"].as_s)
         return verdict ? JSON::Any.new(verdict) : JSON::Any.new(nil)
+      when "dialogBlocks"
+        # Answered as the differential compares a block: the text, and which
+        # control the line stands for by name. The blocks themselves name a
+        # control by index here and hold the control itself in JavaScript, so
+        # the index is resolved to a name rather than compared as an index.
+        dialog = ScriptedDialog.new(action["dialog"].as_h)
+        named_buttons = dialog.buttons
+        named_toggles = dialog.toggles
+        return JSON::Any.new(ReaderKeys.dialog_blocks(dialog).map do |raw|
+          block = raw.as_h
+          button = block["button"]?.try(&.as_i64?).try { |at| named_buttons[at.to_i]?.try(&.name) }
+          toggle = block["toggle"]?.try(&.as_i64?).try { |at| named_toggles[at.to_i]?.try(&.name) }
+          JSON::Any.new({
+            "text"   => block["text"],
+            "button" => button ? JSON::Any.new(button) : JSON::Any.new(nil),
+            "toggle" => toggle ? JSON::Any.new(toggle) : JSON::Any.new(nil),
+          })
+        end)
+      when "answerDialog", "reopenDialog"
+        return JSON::Any.new(nil) unless page
+        keyboard = ScriptedKeyboard.new((action["keys"]?.try(&.as_a?) || [] of JSON::Any).map do |key|
+          text = key.as_s
+          text == "<eof>" ? Input::EOF.as(Input::Key) : text.as(Input::Key)
+        end)
+        dialog = ScriptedDialog.new(action["dialog"].as_h)
+        if action["op"].as_s == "reopenDialog"
+          state.pending_dialog = action["pending"]?.try(&.as_bool?) == false ? nil : dialog
+          ReaderKeys.reopen_pending_dialog(output, state, page.not_nil!, keyboard)
+        else
+          ReaderKeys.answer_native_dialog(output, state, page.not_nil!, keyboard, dialog)
+        end
+        return JSON::Any.new({
+          "pressed" => JSON::Any.new(dialog.pressed.map { |name| JSON::Any.new(name) }),
+          "toggled" => JSON::Any.new(dialog.toggled.map { |name| JSON::Any.new(name) }),
+          "pending" => JSON::Any.new(!state.pending_dialog.nil?),
+        })
       when "browseKey"
         return JSON::Any.new(nil) unless page
         keyboard = nil

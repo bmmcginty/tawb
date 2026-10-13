@@ -5,6 +5,7 @@ require "./fields"
 require "./input"
 require "./library"
 require "./library_chromium"
+require "./native_prompt"
 require "./reader"
 require "./reader_keys"
 require "./runtime"
@@ -294,6 +295,68 @@ module Tawb
                          "password" => JSON::Any.new(password)}))
       end
       def reconsider : Nil; @credentials.reconsider; end
+    end
+
+    # The browser's own question, as the key handlers see it: a
+    # `NativePrompt::Request` read over the accessibility bus, flattened to
+    # the names and the indexes the dialog screen works in.
+    class DialogBinding
+      include Reader::DialogEnv
+
+      def initialize(@request : NativePrompt::Request); end
+
+      def role : String
+        @request.role
+      end
+
+      def title : String
+        @request.title
+      end
+
+      def lines : Array(String)
+        @request.lines
+      end
+
+      def buttons : Array(Reader::DialogControl)
+        @request.buttons.map { |button| DialogBinding.control(button) }
+      end
+
+      def toggles : Array(Reader::DialogControl)
+        @request.toggles.map { |toggle| DialogBinding.control(toggle) }
+      end
+
+      def fields : Array(Reader::DialogField)
+        @request.fields.map { |field| Reader::DialogField.new(field.name, field.value) }
+      end
+
+      def press(index : Int32) : Bool
+        control = @request.buttons[index]? || return false
+        @request.press(control)
+      end
+
+      def toggle(index : Int32) : Bool?
+        control = @request.toggles[index]? || return nil
+        @request.toggle(control)
+      end
+
+      def reread : Reader::DialogEnv?
+        DialogBinding.new(@request.reread)
+      rescue
+        nil
+      end
+
+      def still_open? : Bool
+        @request.still_open?
+      end
+
+      def self.control(described : Atspi::Described) : Reader::DialogControl
+        Reader::DialogControl.new(
+          name: described.name,
+          checked: described.checked,
+          focused: described.focused,
+          is_default: described.is_default,
+        )
+      end
     end
 
     class Keyboard

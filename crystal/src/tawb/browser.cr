@@ -1,7 +1,9 @@
 require "file_utils"
 require "json"
 require "socket"
+require "./a11y_bus"
 require "./detach"
+require "./log"
 require "./transport"
 
 module Tawb
@@ -12,9 +14,19 @@ module Tawb
 
     class Session
       getter endpoint : String
+      # The accessibility bus this browser describes its own windows to, which
+      # is where a native dialog is read from. Nil is an ordinary answer: a
+      # machine with no D-Bus has no native dialogs to offer. See `atspi.cr`.
+      getter a11y : A11yBus::Opened?
+      # The process this reader started, which is how the application on the
+      # accessibility bus is told apart from every other browser on the
+      # desktop. Nil for a browser somebody else started.
+      getter pid : Int64?
 
       def initialize(@endpoint : String, @process : Process? = nil, @owned = false,
-                     @profile_dir : String? = nil, @grouped = false)
+                     @profile_dir : String? = nil, @grouped = false,
+                     @a11y : A11yBus::Opened? = nil)
+        @pid = @process.try(&.pid.to_i64)
       end
 
       def owned? : Bool
@@ -42,24 +54,45 @@ module Tawb
       end
     end
 
-    def self.open(connect : String?, profile : String?, timeout_ms : Int64?) : Session
-      return Session.new(connect.not_nil!) if connect
+    def self.open(connect : String?, profile : String?, timeout_ms : Int64?,
+                  log : Log? = nil) : Session
+      # A browser somebody else started: this reader has no pid of its own to
+      # match on the accessibility bus, so the application is found by name
+      # instead. See `Atspi::Accessibility#application_for`.
+      return Session.new(connect.not_nil!, a11y: A11yBus.open(log)) if connect
       profile_dir = profile || default_profile
       FileUtils.mkdir_p(profile_dir)
       if endpoint = running_endpoint(profile_dir)
-        return Session.new(endpoint)
+        # A browser already running on this profile: the reader that started
+        # the browser recorded the bus it was given, and that recorded address
+        # is the one to read native windows on.
+        record = JSON.parse(File.read(File.join(profile_dir, ENDPOINT_RECORD))).as_h rescue nil
+        return Session.new(endpoint, a11y: A11yBus.recorded(record) || A11yBus.open(log))
       end
       executable = find_executable || raise IO::Error.new(
         "No browser found. Looked for: #{CANDIDATES.join(", ")}. Install Chrome or Chromium."
       )
       port = free_port
+      # Somewhere for Chromium to describe its own windows to, before Chromium
+      # is started: the bus has to exist for the browser to register with, and
+      # the browser's environment has to name it. See `a11y_bus.cr`.
+      a11y = A11yBus.open(log)
+      log.try(&.write("a11y.unavailable", {
+        "reason" => JSON::Any.new(a11y.reason),
+      })) unless a11y.available?
       arguments = [
         "--user-data-dir=#{profile_dir}",
         "--remote-debugging-port=#{port}",
         "--no-first-run",
         "--no-default-browser-check",
-        "about:blank",
       ]
+      # Platform accessibility, without which AT-SPI shows the application and
+      # the window frame and nothing inside them:
+      # `AXPlatformNodeAuraLinux::CreateAtkObject()` refuses to build a node
+      # for anything that is not a top-level window unless `AXMode::kNativeAPIs`
+      # is set, and nothing else sets it. `basic` is enough. See `atspi.cr`.
+      arguments << "--force-renderer-accessibility=basic" if a11y.available?
+      arguments << "about:blank"
       command = executable
       unless ENV["DISPLAY"]?
         xvfb = Detach.which("xvfb-run") || raise IO::Error.new(
@@ -71,7 +104,7 @@ module Tawb
       # Detached into a session of its own, so a terminal's Ctrl+C and a
       # terminal closing both spare a browser that was asked to be kept. See
       # Detach.
-      spawned = Detach.spawn(command, arguments)
+      spawned = Detach.spawn(command, arguments, env: a11y.env)
       process = spawned.process
       endpoint = "http://127.0.0.1:#{port}"
       deadline = Time.instant + (timeout_ms || 25000).milliseconds
@@ -80,15 +113,21 @@ module Tawb
         begin
           Transport.http(endpoint, "GET", "/json/version")
           File.write(File.join(profile_dir, ENDPOINT_RECORD), {
-            "port"      => JSON::Any.new(port.to_i64),
-            "pid"       => JSON::Any.new(process.pid.to_i64),
-            "startedAt" => JSON::Any.new(Time.utc.to_unix_ms),
+            "port"        => JSON::Any.new(port.to_i64),
+            "pid"         => JSON::Any.new(process.pid.to_i64),
+            "startedAt"   => JSON::Any.new(Time.utc.to_unix_ms),
+            # Recorded for the reader that rejoins a kept browser: the bus is
+            # a browser-lifetime resource, and a later reader has no other way
+            # to find a private one.
+            "a11yAddress" => a11y.available? ? JSON::Any.new(a11y.address) : JSON::Any.new(nil),
+            "a11yPid"     => a11y.owned? ? JSON::Any.new(a11y.pid) : JSON::Any.new(nil),
           }.to_json)
           return Session.new(endpoint, process, owned: true, profile_dir: profile_dir,
-            grouped: spawned.grouped)
+            grouped: spawned.grouped, a11y: a11y)
         rescue error
           last_error = error
           if Time.instant >= deadline
+            a11y.close
             process.terminate rescue nil
             raise IO::TimeoutError.new(
               "Chromium did not open its debugging port within #{timeout_ms || 25000}ms: #{last_error.message}"

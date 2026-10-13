@@ -1,6 +1,8 @@
 require "json"
+require "./a11y_bus"
 require "./detach"
 require "./endpoint"
+require "./log"
 require "./marionette"
 
 module Tawb
@@ -42,9 +44,20 @@ module Tawb
       getter marionette_port : Int32?
       getter library_port : Int32?
       getter profile_dir : String
+      # The accessibility bus this Firefox describes its own windows to, which
+      # is where a permission doorhanger is read from. Nil is an ordinary
+      # answer: a machine with no D-Bus has no native dialogs to offer. See
+      # `atspi.cr`.
+      getter a11y : A11yBus::Opened?
+      # The process this reader started, which is how the application on the
+      # accessibility bus is told apart from every other browser on the
+      # desktop. Nil for a Firefox somebody else started.
+      getter pid : Int64?
 
       def initialize(@endpoint, @port, @marionette_port, @library_port, @profile_dir,
-                     @process : Process? = nil, @owned = false, @grouped = false)
+                     @process : Process? = nil, @owned = false, @grouped = false,
+                     @a11y : A11yBus::Opened? = nil)
+        @pid = @process.try(&.pid.to_i64)
       end
 
       def owned? : Bool
@@ -100,7 +113,8 @@ module Tawb
     end
 
     def self.launch(profile_dir : String, timeout_ms = 45000_i64,
-                    path = ENV["PATH"]? || "", display = ENV["DISPLAY"]?) : Started
+                    path = ENV["PATH"]? || "", display = ENV["DISPLAY"]?,
+                    log : Log? = nil) : Started
       process : Process? = nil
       Dir.mkdir_p(profile_dir)
       if port = Endpoint.running(profile_dir)
@@ -108,7 +122,11 @@ module Tawb
         return Started.new(
           "ws://127.0.0.1:#{port}/session", port,
           record["marionettePort"]?.try(&.as_i?).try(&.to_i32),
-          record["libraryPort"]?.try(&.as_i?).try(&.to_i32), profile_dir
+          record["libraryPort"]?.try(&.as_i?).try(&.to_i32), profile_dir,
+          # A Firefox already running on this profile: the reader that started
+          # it recorded the bus it was given, and that recorded address is the
+          # one to read native windows on.
+          a11y: A11yBus.recorded(record) || A11yBus.open(log)
         )
       end
 
@@ -119,6 +137,16 @@ module Tawb
       port = Endpoint.free_port
       marionette_port = Endpoint.free_port
       write_profile_prefs(profile_dir, launch_preferences(marionette_port))
+      # Somewhere for Firefox to describe its own windows to, before Firefox is
+      # started: the bus has to exist for Firefox to register with, and
+      # Firefox's environment has to name it. Firefox needs no command-line
+      # flag for platform accessibility the way Chromium does — what Firefox's
+      # GTK bridge waits for is GNOME_ACCESSIBILITY in the environment, which
+      # `A11yBus.open` sets. See `a11y_bus.cr`.
+      a11y = A11yBus.open(log)
+      log.try(&.write("a11y.unavailable", {
+        "reason" => JSON::Any.new(a11y.reason),
+      })) unless a11y.available?
       arguments = [
         "--no-remote",
         "-profile", profile_dir,
@@ -142,7 +170,7 @@ module Tawb
       # terminal closing both spare a browser somebody may be reading, and so
       # close can take the browser's whole group down with the wrapper that
       # started it. See Detach.
-      spawned = Detach.spawn(command, arguments, path)
+      spawned = Detach.spawn(command, arguments, path, env: a11y.env)
       process = spawned.process
       grouped = spawned.grouped
       deadline = Time.instant + timeout_ms.milliseconds
@@ -159,6 +187,11 @@ module Tawb
         "marionettePort" => JSON::Any.new(marionette_port.to_i64),
         "pid"            => JSON::Any.new(process.pid.to_i64),
         "startedAt"      => JSON::Any.new(Time.utc.to_unix_ms),
+        # Recorded for the reader that rejoins a kept browser: the bus is a
+        # browser-lifetime resource, and a later reader has no other way to
+        # find a private one.
+        "a11yAddress"    => a11y.available? ? JSON::Any.new(a11y.address) : JSON::Any.new(nil),
+        "a11yPid"        => a11y.owned? ? JSON::Any.new(a11y.pid) : JSON::Any.new(nil),
       })
       unless Endpoint.wait(marionette_port, Time.instant + Marionette::TIMEOUT)
         process.terminate rescue nil
@@ -172,9 +205,10 @@ module Tawb
       Endpoint.write_record(profile_dir, record)
       Started.new(
         "ws://127.0.0.1:#{port}/session", port, marionette_port, library_port,
-        profile_dir, process, owned: true, grouped: grouped
+        profile_dir, process, owned: true, grouped: grouped, a11y: a11y
       )
     rescue error
+      a11y.try(&.close) rescue nil
       process.try(&.terminate) rescue nil
       process.try(&.wait) rescue nil
       File.delete?(Endpoint.record_path(profile_dir))

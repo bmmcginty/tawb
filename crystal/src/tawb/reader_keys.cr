@@ -2398,6 +2398,348 @@ module Tawb
     end
 
     # ------------------------------------------------------------------
+    # A dialog the browser drew for itself
+    #
+    # The browser asks things in windows of its own: an extension wanting
+    # consent, a file to be chosen, permission for something. None of them is
+    # a document, none of them is in either protocol, and a reader of a page
+    # cannot see one however hard the reader looks — which before this meant a
+    # browser silently waiting for an answer nobody could give.
+    #
+    # It is the same move the password prompt makes. The dialog's own words go
+    # on the terminal, the reader answers on the terminal, and the answer
+    # presses the dialog's own button. Nothing is bypassed and nothing is
+    # decided for the reader: what is on screen is what Chrome's own
+    # confirmation says, including the list of what an extension will be able
+    # to do, because that list is the reason the question is being asked at
+    # all.
+    #
+    # The screen borrows the library's shape — a buffer of its own, with the
+    # choices as lines to move to and press — so the question can be read at
+    # whatever pace reading takes, on a braille display or by ear, before
+    # anything is answered.
+    # ------------------------------------------------------------------
+
+    # How long to let the browser act on a press before deciding whether the
+    # press did anything.
+    PRESS_SETTLE = 400.milliseconds
+
+    private def self.toggle_text(toggle : Reader::DialogControl) : String
+      "[#{toggle.checked ? "x" : " "}] #{toggle.name}"
+    end
+
+    # The dialog as lines. A block carries the index of the control the block
+    # stands for, so pressing Enter on a line knows what the line is.
+    def self.dialog_blocks(request : Reader::DialogEnv) : Array(JSON::Any)
+      blocks = [] of JSON::Any
+      plain = ->(text : String) do
+        JSON::Any.new({"text" => JSON::Any.new(text),
+                       "button" => JSON::Any.new(nil),
+                       "toggle" => JSON::Any.new(nil)})
+      end
+      request.lines.each { |line| blocks << plain.call(line) }
+      # What the dialog is about, when that lives in a control rather than in
+      # the dialog's words — the username and password a "Save password?"
+      # prompt is offering to keep. The browser masks the password itself, so
+      # what is shown here is what is on the screen a sighted user would be
+      # looking at.
+      request.fields.each do |field|
+        next if field.name.empty? && field.value.empty?
+        text = if !field.name.empty? && !field.value.empty?
+                 "#{field.name}: #{field.value}"
+               else
+                 field.value.empty? ? field.name : field.value
+               end
+        blocks << plain.call(text)
+      end
+
+      toggles = request.toggles
+      buttons = request.buttons
+      if toggles.empty? && buttons.empty?
+        blocks << plain.call("(the browser offers nothing to press)")
+        return blocks
+      end
+
+      blocks << plain.call("")
+      # Options first, because an option changes what answering means:
+      # Firefox's doorhanger offers "Allow extension to run in private
+      # windows", and that is a decision made before the answer rather than
+      # after it.
+      toggles.each_with_index do |toggle, index|
+        blocks << JSON::Any.new({
+          "text"   => JSON::Any.new(toggle_text(toggle)),
+          "item"   => JSON::Any.new({"role" => JSON::Any.new("checkbox"),
+                                     "name" => JSON::Any.new(toggle.name)}),
+          "button" => JSON::Any.new(nil),
+          "toggle" => JSON::Any.new(index.to_i64),
+        })
+      end
+      blocks << plain.call("") unless toggles.empty? || buttons.empty?
+      buttons.each_with_index do |button, index|
+        blocks << JSON::Any.new({
+          "text"   => JSON::Any.new(button.name),
+          "item"   => JSON::Any.new({"role" => JSON::Any.new("button"),
+                                     "name" => JSON::Any.new(button.name)}),
+          "button" => JSON::Any.new(index.to_i64),
+          "toggle" => JSON::Any.new(nil),
+        })
+      end
+      blocks
+    end
+
+    private def self.show_dialog(output : Screen::Output, state : Reader::State,
+                                 page : Reader::PageEnv, request : Reader::DialogEnv,
+                                 keep_place : Int32? = nil) : Nil
+      dialog = state.dialog.try(&.as_h) || return
+      dialog["blocks"] = JSON::Any.new(dialog_blocks(request))
+      Reader.relayout(state)
+      if at = keep_place
+        state.cursor = Math.min(at, Math.max(state.lines.size - 1, 0))
+      end
+      Reader.render(output, state, page.url, true)
+    end
+
+    def self.close_native_dialog(output : Screen::Output, state : Reader::State,
+                                 page : Reader::PageEnv, note : String? = nil) : Nil
+      dialog = state.dialog || return
+      place = dialog.as_h["place"].as_h
+      state.dialog = nil
+      state.dialog_request = nil
+      state.mode = "browse"
+      set_live_value(state, "refreshing", JSON::Any.new(false))
+      state.title = place["title"].as_s
+      Reader.relayout(state)
+      state.cursor = Math.min((place["cursor"]?.try(&.as_i64?) || 0).to_i32,
+        Math.max(state.lines.size - 1, 0))
+      state.col = (place["col"]?.try(&.as_i64?) || 0).to_i32
+      state.scroll = (place["scroll"]?.try(&.as_i64?) || 0).to_i32
+      Reader.clamp_col(state); Reader.clamp_scroll(state)
+      Reader.render(output, state, page.url, true)
+      Reader.set_status(output, state, page.url, note) if note
+    end
+
+    # Pressed, and then checked. A button that answers "yes, pressed" while
+    # the dialog stays where it is has not done anything — the browser can
+    # decline a press, and telling the reader their answer went in when the
+    # answer did not is worse than telling them nothing.
+    private def self.press_dialog_button(request : Reader::DialogEnv, index : Int32,
+                                         log : Log? = nil) : Bool
+      begin
+        request.press(index)
+      rescue error
+        log.try(&.write("native.press.failed", {
+          "button" => JSON::Any.new(request.buttons[index]?.try(&.name) || ""),
+          "error"  => JSON::Any.new((error.message || "")[0, 120]),
+        }))
+        return false
+      end
+      sleep PRESS_SETTLE
+      answered = !(begin
+        request.still_open?
+      rescue
+        false
+      end)
+      log.try(&.write("native.answered", {
+        "button"   => JSON::Any.new(request.buttons[index]?.try(&.name) || ""),
+        "answered" => JSON::Any.new(answered),
+      }))
+      answered
+    end
+
+    # Asks, and does not return until the dialog has been answered or the
+    # reader has decided to leave it. The watch runs this and waits for it:
+    # one question at a time is the only number a single terminal can put to
+    # somebody.
+    def self.answer_native_dialog(output : Screen::Output, state : Reader::State,
+                                  page : Reader::PageEnv, keyboard : Keyboard?,
+                                  request : Reader::DialogEnv, log : Log? = nil) : Nil
+      return if keyboard.nil? || state.mode == "dialog"
+      # Live rebuilds are held for the same reason the library holds them: a
+      # refresh would replace a buffer that is no longer the page's.
+      set_live_value(state, "refreshing", JSON::Any.new(true))
+      previous_mode = state.mode
+      state.mode = "dialog"
+      state.dialog_request = request
+      state.dialog = JSON::Any.new({
+        "role"   => JSON::Any.new(request.role),
+        "title"  => JSON::Any.new(request.title),
+        "blocks" => JSON::Any.new(dialog_blocks(request)),
+        "place"  => JSON::Any.new({
+          "cursor" => JSON::Any.new(state.cursor.to_i64),
+          "col"    => JSON::Any.new(state.col.to_i64),
+          "scroll" => JSON::Any.new(state.scroll.to_i64),
+          "title"  => JSON::Any.new(state.title),
+        }),
+      })
+      state.cursor = 0
+      state.col = 0
+      state.scroll = 0
+      state.title = request.title.empty? ? "The browser is asking" : request.title
+      Reader.relayout(state)
+      Reader.render(output, state, page.url, true)
+      Reader.draw_hint(output, state, true)
+      Reader.set_status(output, state, page.url,
+        "The browser is asking. Move to an answer and press Enter.")
+      log.try(&.write("native.prompt", {
+        "title"   => JSON::Any.new(request.title[0, Math.min(request.title.size, 80)]),
+        "buttons" => JSON::Any.new(request.buttons.map(&.name).join(" / ")[0, 80]),
+      }))
+
+      state.pending_dialog = nil
+      token = keyboard.claim
+      begin
+        loop do
+          key = keyboard.next_key(token)
+          # The keyboard has gone. The browser is left holding its question,
+          # which is the same thing that happens to a sighted user who walks
+          # away, and is better than answering the question on their behalf.
+          if key.is_a?(Input::Eof)
+            close_native_dialog(output, state, page)
+            return
+          end
+          chunk = key.as(String)
+          state.core.mark_input
+          context = context_action(chunk, state)
+
+          if key_is(chunk, "Escape", state) || context == "cancel"
+            # Nothing is pressed. Escaping used to press whichever button the
+            # dialog had focused, on the grounds that the focused button was
+            # the browser's own safe answer — and on Chrome's extension
+            # prompt it is, since that prompt focuses Cancel. Then the
+            # password prompt turned up, which focuses Save: escaping would
+            # have saved a password the reader was trying to walk away from.
+            # A key that means "leave this alone" must leave it alone, so the
+            # question stays open and the browser-question key comes back to
+            # it.
+            state.pending_dialog = request
+            close_native_dialog(output, state, page,
+              "Left the browser asking — nothing was pressed. " \
+              "#{browser_question_key(state)} goes back to it.")
+            return
+          end
+
+          if chunk == "\r" || chunk == "\n" || context == "accept"
+            block = Reader.current_block(state).try(&.as_h)
+            toggle_index = block.try(&.["toggle"]?).try(&.as_i64?).try(&.to_i32)
+            if toggle_index
+              name = request.toggles[toggle_index]?.try(&.name) || ""
+              now = begin
+                request.toggle(toggle_index)
+              rescue
+                nil
+              end
+              if now.nil?
+                Reader.set_status(output, state, page.url, "Could not change \"#{name}\".")
+                next
+              end
+              # An option is ticked in place and the dialog stays up: the
+              # option is part of the question, not an answer to it. The
+              # dialog is drawn again from the browser's own new state rather
+              # than from what the press looked like it did.
+              again = begin
+                request.reread
+              rescue
+                nil
+              end
+              state.dialog_request = again || request
+              request = again || request
+              show_dialog(output, state, page, request, keep_place: state.cursor)
+              Reader.set_status(output, state, page.url, "#{name}: #{now ? "yes" : "no"}.")
+              next
+            end
+            button_index = block.try(&.["button"]?).try(&.as_i64?).try(&.to_i32)
+            unless button_index
+              Reader.set_status(output, state, page.url, "Move to one of the answers first.")
+              next
+            end
+            name = request.buttons[button_index]?.try(&.name) || ""
+            pressed = press_dialog_button(request, button_index, log)
+            close_native_dialog(output, state, page, pressed ?
+              "Pressed \"#{name}\"." :
+              "Pressed \"#{name}\", but the browser has not closed the dialog.")
+            return
+          end
+
+          last = state.lines.size - 1
+          if key_is(chunk, "ArrowDown", state) || context == "next"
+            Reader.move_selection(output, state, page.url, Math.min(state.cursor + 1, last))
+            next
+          end
+          if key_is(chunk, "ArrowUp", state) || context == "previous"
+            Reader.move_selection(output, state, page.url, Math.max(state.cursor - 1, 0))
+            next
+          end
+          if key_is(chunk, "PageDown", state) || context == "page-next"
+            Reader.move_screen(output, state, 1, page.url)
+            next
+          end
+          if key_is(chunk, "PageUp", state) || context == "page-previous"
+            Reader.move_screen(output, state, -1, page.url)
+            next
+          end
+          if key_is(chunk, "Home", state) || context == "first"
+            Reader.move_selection(output, state, page.url, 0)
+            next
+          end
+          if key_is(chunk, "End", state) || context == "last"
+            Reader.move_selection(output, state, page.url, last)
+            next
+          end
+
+          # Every other key, including the keys that would do something on a
+          # page. A reader who presses `q` at a question the browser is
+          # holding open should be told why nothing happened rather than left
+          # wondering whether the terminal has stopped listening.
+          unless chunk.starts_with?(ESC)
+            Reader.set_status(output, state, page.url,
+              "Move to an answer and press Enter, or Escape to leave it unanswered.")
+          end
+        end
+      ensure
+        keyboard.release(token)
+        close_native_dialog(output, state, page) if state.dialog
+        state.mode = previous_mode if state.mode == "dialog"
+        Reader.draw_hint(output, state, true)
+      end
+    end
+
+    # What to tell the reader to press to come back to a question they left.
+    # Read from the keymap rather than written out, because the key is
+    # configurable and a wrong answer here is worse than a vague one.
+    private def self.browser_question_key(state : Reader::State) : String
+      bound = state.keys.try(&.by_id("browser-question")).try(&.bindings)
+      first = bound.try(&.first?)
+      first || "the browser-question key"
+    end
+
+    # The question the reader walked away from, asked again.
+    def self.reopen_pending_dialog(output : Screen::Output, state : Reader::State,
+                                   page : Reader::PageEnv, keyboard : Keyboard?,
+                                   log : Log? = nil) : Nil
+      pending = state.pending_dialog
+      unless pending
+        Reader.set_status(output, state, page.url, "The browser is not asking anything.")
+        return
+      end
+      open = begin
+        pending.still_open?
+      rescue
+        false
+      end
+      unless open
+        state.pending_dialog = nil
+        Reader.set_status(output, state, page.url, "The browser is no longer asking that.")
+        return
+      end
+      again = begin
+        pending.reread
+      rescue
+        nil
+      end
+      answer_native_dialog(output, state, page, keyboard, again || pending, log)
+    end
+
+    # ------------------------------------------------------------------
     # Tabs
     #
     # A tab switch replaces the whole document the buffer describes, so it
@@ -2468,10 +2810,8 @@ module Tawb
     # The browse map
     #
     # One dispatch for everything reading does: quit, go somewhere, move,
-    # toggle, refresh, and press what the cursor is standing on. All of it is
-    # here now; the one key that answers nothing is the browser's own
-    # windows, which this build deliberately does without — see
-    # "browser-question" below for why.
+    # toggle, refresh, press what the cursor is standing on, and go back to a
+    # question the browser is still holding open.
     # ------------------------------------------------------------------
 
     # Asking first: Lynx tells quitting apart from aborting. QUIT asks,
@@ -3200,15 +3540,11 @@ module Tawb
 
       # The browser's own windows — an extension's consent prompt, and
       # whatever else is drawn outside a document — are read through the
-      # desktop's accessibility bus. This build deliberately does without
-      # it: it would put a D-Bus and a runtime dependency on an otherwise
-      # static reader, and the two prompts that matter most, a password
-      # challenge and a file chooser, are taken over through the browser's
-      # own protocol instead. So there is never a pending dialog here, and
-      # saying so is better than a key that does nothing.
+      # accessibility bus. A question the reader walked away from without
+      # answering is still the browser's to answer, so this key goes back to
+      # it rather than to whatever the browser has raised since.
       if action == "browser-question"
-        Reader.set_status(output, state, page.url,
-          "This build does not read the browser's own windows.")
+        reopen_pending_dialog(output, state, page, keyboard)
         return nil
       end
 

@@ -267,6 +267,18 @@ module Tawb
       end
     end
 
+    # A private accessibility bus is a browser-lifetime resource. The reader
+    # that launched a kept browser leaves the daemon running and records the
+    # daemon's address; a later reader rejoining that browser connects to the
+    # recorded address directly. The later reader does not own the daemon and
+    # must not stop the daemon on the way out, which is what `owned?` being
+    # false here says.
+    def self.recorded(record : Hash(String, JSON::Any)?) : Opened?
+      address = record.try(&.["a11yAddress"]?).try(&.as_s?)
+      return nil if address.nil? || address.empty?
+      Opened.new(address: address)
+    end
+
     def self.open(log : Log? = nil) : Opened
       session_address = session_bus_address
       daemon = nil.as(Process?)
