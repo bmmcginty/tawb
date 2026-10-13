@@ -2281,6 +2281,13 @@ module Tawb
       when "relayout"
         Reader.relayout(state)
         return reader_lines_json(state.lines)
+      when "openOptions"
+        ReaderKeys.open_lynx_options(output, state, page.not_nil!)
+        return JSON::Any.new(state.mode)
+      when "optionsKey"
+        ReaderKeys.handle_lynx_options_key(output, state, page.not_nil!,
+          action["chunk"].as_s)
+        return JSON::Any.new(state.mode)
       when "preserveViewportRow"
         Reader.preserve_viewport_row(state,
           (action["row"]?.try(&.as_i64?) || 0).to_i32,

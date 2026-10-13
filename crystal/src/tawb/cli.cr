@@ -331,6 +331,8 @@ module Tawb
                       ReaderKeys.handle_find_key(terminal, state, current.url, chunk); nil
                     when "number"
                       ReaderKeys.handle_number_key(terminal, state, current, keyboard, chunk); nil
+                    when "options"
+                      ReaderKeys.handle_lynx_options_key(terminal, state, current, chunk); nil
                     else
                       ReaderKeys.handle_browse_key(terminal, state, current, keyboard, chunk,
                         Time.utc.to_unix_ms)

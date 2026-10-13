@@ -9,6 +9,8 @@ require "./input"
 require "./interfaces"
 require "./library"
 require "./lynx_pages"
+require "./lynx_options_screen"
+require "./lynx_settings"
 require "./auth"
 require "./unicode_escape"
 
@@ -1445,15 +1447,21 @@ module Tawb
       end
 
       def open_help(state : LynxActions::State, page : Reader::PageEnv?) : Nil
+        reader = state.reader
+        ReaderKeys.open_help_page(@output, reader, page) if reader && page
       end
 
       def describe_current(state : LynxActions::State, page : Reader::PageEnv?) : Nil
+        reader = state.reader
+        ReaderKeys.describe_current_item(@output, reader, @page_url) if reader
       end
 
       def open_main_menu(state : LynxActions::State, page : Reader::PageEnv?) : Nil
       end
 
       def open_options(state : LynxActions::State, page : Reader::PageEnv?) : Nil
+        reader = state.reader
+        ReaderKeys.open_lynx_options(@output, reader, page) if reader && page
       end
 
       def open_trace_log(state : LynxActions::State, page : Reader::PageEnv?) : Nil
@@ -1465,6 +1473,135 @@ module Tawb
 
     private def self.mode_actions(output : Screen::Output, page_url : String) : LynxActions
       LynxActions.new(ModeHost.new(output, page_url))
+    end
+
+    # The Options screen is Lynx's own module, driven through this host. The
+    # screen keeps its own state so it can be tested without a terminal, but
+    # what the reader shows and where its cursor sits is the reader's state,
+    # so each call carries the scalars across the seam.
+    class OptionsScreenHost
+      include LynxOptionsScreen::Host
+
+      def initialize(@output : Screen::Output, @reader : Reader::State, @page_url : String)
+      end
+
+      def reset_scroll_region : Nil
+        @output.write("\e[r")
+      end
+
+      def write_line(row : Int32, text : String) : Nil
+        Screen.write_line(@output, row, text)
+      end
+
+      def move_cursor(row : Int32, col : Int32) : Nil
+        @output.write("\e[#{row};#{col}H")
+      end
+
+      def clear_screen : Nil
+        @output.write("\e[2J")
+      end
+
+      def set_status(state : LynxOptionsScreen::State, message : String) : Nil
+        Reader.set_status(@output, @reader, @page_url, message)
+      end
+
+      def relayout(state : LynxOptionsScreen::State) : Nil
+        carry_to_reader(state)
+        Reader.relayout(@reader)
+        carry_from_reader(state)
+      end
+
+      def render(state : LynxOptionsScreen::State, page, force : Bool) : Nil
+        carry_to_reader(state)
+        Reader.render(@output, @reader, @page_url, force)
+      end
+
+      def clamp_col(state : LynxOptionsScreen::State) : Nil
+        carry_to_reader(state)
+        Reader.clamp_col(@reader)
+        state.col = @reader.col
+      end
+
+      def clamp_scroll(state : LynxOptionsScreen::State) : Nil
+        carry_to_reader(state)
+        Reader.clamp_scroll(@reader)
+        state.scroll = @reader.scroll
+      end
+
+      def save_settings(state : LynxOptionsScreen::State, settings : Hash(String, JSON::Any)) : Nil
+        LynxSettings.write_lynx_settings(settings, file: state.settings_file)
+      end
+
+      def key_is(chunk : String, name : String, state : LynxOptionsScreen::State) : Bool
+        (state.keys || FALLBACK_KEYMAP).is_key(chunk, name)
+      end
+
+      private def carry_to_reader(state : LynxOptionsScreen::State) : Nil
+        @reader.cursor = state.cursor
+        @reader.col = state.col
+        @reader.scroll = state.scroll
+        @reader.title = state.title
+      end
+
+      private def carry_from_reader(state : LynxOptionsScreen::State) : Nil
+        state.cursor = @reader.cursor
+        state.col = @reader.col
+        state.scroll = @reader.scroll
+        # Only the count matters to the screen when leaving it; the rows
+        # themselves are the reader's to draw.
+        state.lines = Array.new(@reader.lines.size) { JSON::Any.new(nil) }
+      end
+    end
+
+    # Open Lynx's Options screen over the page. The keymap is shared with the
+    # reader, so a preference changed here and kept is in effect the moment
+    # the screen closes — which is what makes a change to the numbering
+    # visible without a restart.
+    def self.open_lynx_options(output : Screen::Output, reader : Reader::State,
+                               page : Reader::PageEnv) : Nil
+      screen = LynxOptionsScreen::State.new
+      screen.keys = reader.keys
+      screen.cursor = reader.cursor
+      screen.col = reader.col
+      screen.scroll = reader.scroll
+      screen.title = reader.title
+      reader.lynx_options = screen
+      reader.mode = "options"
+      LynxOptionsScreen.open_options(
+        OptionsScreenHost.new(output, reader, page.url), screen, page)
+    end
+
+    def self.handle_lynx_options_key(output : Screen::Output, reader : Reader::State,
+                                     page : Reader::PageEnv, chunk : String) : Nil
+      screen = reader.lynx_options
+      return unless screen
+      LynxOptionsScreen.handle_options_key(
+        OptionsScreenHost.new(output, reader, page.url), chunk, screen, page)
+      return unless screen.mode == "browse"
+      # Closed: the reader has its screen back, and the screen's answer — the
+      # place it was opened from — is the reader's again.
+      reader.title = screen.title
+      reader.cursor = screen.cursor
+      reader.col = screen.col
+      reader.scroll = screen.scroll
+      reader.mode = "browse"
+      reader.lynx_options = nil
+    end
+
+    # HELP, Lynx's fixed list of the commands this interface acts on.
+    def self.open_help_page(output : Screen::Output, reader : Reader::State,
+                            page : Reader::PageEnv) : Nil
+      unsupported = reader.keys.try(&.unsupported) || [] of String
+      rows = LynxPages.help_rows(unsupported).map { |text| LynxPages::Row.new(text, nil) }
+      open_internal_rows(output, reader, page, "info", "Lynx Help", rows)
+    end
+
+    # DWIMHELP: the one-line description of what is under the cursor.
+    def self.describe_current_item(output : Screen::Output, reader : Reader::State,
+                                   page_url : String) : Nil
+      description = LynxPages.describe_item(Reader.item_under_cursor(reader))
+      Reader.set_status(output, reader, page_url, description ||
+        "Nothing here to describe — move to a link, button or form field.")
     end
 
     def self.handle_type_key(output : Screen::Output, state : Reader::State,

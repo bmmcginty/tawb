@@ -2,6 +2,7 @@ require "json"
 require "./screen"
 require "./unicode_escape"
 require "./lynx_display"
+require "./lynx_options_screen"
 require "./lynx_session"
 require "./layout"
 require "./place"
@@ -869,6 +870,10 @@ module Tawb
       property dialog_request : DialogEnv?
       property pending_dialog : DialogEnv?
       property options : JSON::Any?
+      # The Lynx Options screen, while it is open. Its own type so the screen
+      # can be driven without a terminal; the loop keeps it here so it
+      # survives between keystrokes.
+      property lynx_options : LynxOptionsScreen::State?
       # The slider the control mode is adjusting, and the dropdown whose
       # entries are on screen: each mode's own record of what it is acting on.
       property controlling : JSON::Any?
@@ -930,6 +935,7 @@ module Tawb
         @dialog_request = nil
         @pending_dialog = nil
         @options = nil
+        @lynx_options = nil
         @controlling = nil
         @chooser = nil
         @last_find = nil
