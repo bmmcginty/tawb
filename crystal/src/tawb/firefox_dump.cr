@@ -54,8 +54,10 @@ module Tawb
         STDOUT << result["text"].as_s
       ensure
         # Only a browser we started is ours to shut down, and only when
-        # --keep-browser did not ask for it to stay.
-        started.close if started.owned? && !keep_browser
+        # --keep-browser did not ask for it to stay. A kept one is marked so
+        # in the registry — the next reader's sweep would otherwise take it
+        # for one a crashed reader left behind, and kill it mid-rejoin.
+        started.release(keep_browser) if started.owned?
       end
     end
 
