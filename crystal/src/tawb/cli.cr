@@ -372,18 +372,19 @@ module Tawb
           # tabs stay, and so does the browser.
           session.close
         end
-        if started = launched
-          started.close if started.owned? && !options["keepBrowser"].as_bool
-        end
-        if browser_session = opened.chromium
-          browser_session.close if browser_session.owned? && !options["keepBrowser"].as_bool
-        end
-        # A kept browser keeps the bus it was started with: the browser still
-        # has the address in its environment, and the reader that rejoins the
-        # browser reads native windows on the recorded address. A browser this
-        # reader is taking down takes the bus with it.
+        keep_browser = options["keepBrowser"].as_bool
+        browser_stays = if started = launched
+                          started.release(keep_browser)
+                        elsif chromium = opened.chromium
+                          chromium.release(keep_browser)
+                        else
+                          true # a browser reached through --connect is not ours
+                        end
+        # A browser that stays — deliberately or because another reader is in
+        # it — keeps the bus it was started with. The registry owns that bus
+        # until the browser itself is forgotten.
         if bus = opened.a11y
-          if options["keepBrowser"].as_bool && bus.owned?
+          if browser_stays && bus.owned?
             bus.leave_running rescue nil
           else
             bus.close rescue nil

@@ -3897,6 +3897,128 @@ function readerCommands(root) {
 // quoting rules are the interesting half: they are a shell's, and a reader
 // who wrote `--search "https://example.com/?q=%s"` in the file is owed the
 // same argument either implementation reads it with.
+// The browser registry, as the differential sees it.
+//
+// One scenario rather than one call per question, because "the session that
+// started this browser is still running" means the process making the call —
+// and a conformance process that answered one question and exited would make
+// every browser it recorded look stranded. So both implementations walk the
+// same steps inside one process of their own, each with its own state
+// directory and its own stand-in browser, since a sweep takes one down.
+function registryImplementations(javascript) {
+  const implementations = [{
+    name: 'JavaScript',
+    scenario(spec) { return registryScenario(javascript, spec); },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    scenario(spec) {
+      return callAsync('registry.scenario', spec, {
+        env: { XDG_DATA_HOME: spec.state },
+        timeoutMs: 30000,
+      });
+    },
+  });
+  return implementations;
+}
+
+async function registryScenario(javascript, spec) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const session = require('../src/session');
+  const proc = require('../src/proc');
+  // Where the registry lives is read from the environment on every call, so
+  // it is set for the duration — the Crystal side is handed the same variable
+  // as a child process environment.
+  const before = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = spec.state;
+  const answers = [];
+  const own = (entry) => ({
+    ...entry,
+    owner: entry.owner === 'self' ? process.pid : entry.owner,
+    at: entry.at ?? Date.now(),
+  });
+  for (const step of spec.steps) {
+    if (step.type === 'write') {
+      javascript.writeRegistry((step.entries ?? []).map(own));
+      answers.push(true);
+    } else if (step.type === 'record') {
+      javascript.recordBrowser({
+        pid: step.pid,
+        port: step.port,
+        profileDir: step.profileDir,
+        engine: step.engine,
+        a11yPid: step.a11yPid ?? null,
+        a11yAddress: step.a11yAddress ?? null,
+      });
+      answers.push(true);
+    } else if (step.type === 'mark_kept') {
+      javascript.markKept(step.port);
+      answers.push(true);
+    } else if (step.type === 'forget') {
+      javascript.forgetBrowser(step.port);
+      answers.push(true);
+    } else if (step.type === 'disown') {
+      // The owner rewritten to a process that is not running, which is what
+      // a session killed outright leaves behind.
+      const entries = javascript.readRegistry();
+      const found = entries.find((entry) => entry.port === step.port);
+      if (found) {
+        javascript.writeRegistry(entries.map((entry) => (entry.port === step.port
+          ? { ...entry, owner: step.owner }
+          : entry)));
+      }
+      answers.push(!!found);
+    } else if (step.type === 'claim') {
+      fs.mkdirSync(path.dirname(session.claimsPath(step.port)), { recursive: true });
+      fs.writeFileSync(session.claimsPath(step.port), JSON.stringify([
+        { pid: step.pid, targetId: step.targetId ?? 'T', at: Date.now() },
+      ]));
+      answers.push(true);
+    } else if (step.type === 'release_claims') {
+      fs.writeFileSync(session.claimsPath(step.port), JSON.stringify([]));
+      answers.push(true);
+    } else if (step.type === 'ours') {
+      answers.push(javascript.stillOurBrowser(step.pid, step.profileDir));
+    } else if (step.type === 'sweep') {
+      answers.push(javascript.sweepStrandedBrowsers());
+    } else if (step.type === 'read') {
+      // Compared without the pids and the times, which are this run's own.
+      answers.push(javascript.readRegistry()
+        .sort((a, b) => a.port - b.port)
+        .map((entry) => ({
+          port: entry.port,
+          engine: entry.engine ?? null,
+          keep: entry.keep === true,
+          hasA11y: entry.a11yPid != null,
+          ownedHere: entry.owner === process.pid,
+        })));
+    } else if (step.type === 'alive') {
+      answers.push(proc.processAlive(step.pid));
+    } else if (step.type === 'gone_within') {
+      const deadline = Date.now() + (step.ms ?? 5000);
+      let gone = false;
+      while (Date.now() < deadline) {
+        if (!proc.processAlive(step.pid)) { gone = true; break; }
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      answers.push(gone);
+    } else if (step.type === 'companion_files') {
+      answers.push({
+        socket: fs.existsSync(step.socket),
+        config: fs.existsSync(`${step.socket}.conf`),
+      });
+    } else {
+      throw new Error(`unknown registry scenario step ${step.type}`);
+    }
+  }
+  if (before === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = before;
+  return { answers };
+}
+
 function settingsImplementations(javascript) {
   const implementations = [{
     name: 'JavaScript',
@@ -3962,6 +4084,7 @@ module.exports = {
   inputImplementations, interfaceImplementations, keyWizardImplementations, keymapImplementations, layoutImplementations,
   liveImplementations, liveRealImplementations, lynxActionsImplementations, lynxConfigImplementations, lynxDisplayImplementations, lynxKeymapImplementations,
   lynxNumberImplementations, lynxOptionsImplementations, lynxPagesImplementations, lynxStateImplementations, marionetteImplementations, optionImplementations,
-  placeElementImplementations, placeImplementations, readerCommands, readerImplementations, screenImplementations, sessionImplementations,
+  placeElementImplementations, placeImplementations, readerCommands, readerImplementations,
+  registryImplementations, screenImplementations, sessionImplementations,
   settingsImplementations, unicodeImplementations,
 };

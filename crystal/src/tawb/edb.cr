@@ -490,10 +490,15 @@ module Tawb
 
     private def self.shut_down(options : Hash(String, JSON::Any), opened : Opened) : Nil
       keep = options["keepBrowser"].as_bool
-      opened.launched.try { |started| started.close if started.owned? && !keep }
-      opened.chromium.try { |session| session.close if session.owned? && !keep }
+      browser_stays = if launched = opened.launched
+                        launched.release(keep)
+                      elsif chromium = opened.chromium
+                        chromium.release(keep)
+                      else
+                        true # a browser reached through --connect is not ours
+                      end
       if bus = opened.a11y
-        if keep && bus.owned?
+        if browser_stays && bus.owned?
           bus.leave_running rescue nil
         else
           bus.close rescue nil

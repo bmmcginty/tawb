@@ -1,9 +1,11 @@
 require "file_utils"
 require "json"
 require "socket"
+require "uri"
 require "./a11y_bus"
 require "./detach"
 require "./log"
+require "./registry"
 require "./transport"
 
 module Tawb
@@ -31,6 +33,34 @@ module Tawb
 
       def owned? : Bool
         @owned
+      end
+
+      # The port this browser is listening on, which is the name the registry
+      # keeps it under.
+      def port : Int32?
+        URI.parse(@endpoint).port.try(&.to_i32)
+      rescue
+        nil
+      end
+
+      # Letting go of a browser this session started.
+      #
+      # Ours to close only while nobody else is reading it — starting the
+      # browser makes this reader its first user, not its owner. A browser
+      # left running on purpose is marked so, or a later sweep would mistake
+      # it for one somebody crashed out of.
+      def release(keep : Bool) : Bool
+        return true unless @owned
+        if keep
+          Registry.mark_kept(port)
+          return true
+        end
+        return true if ::Tawb::Session.other_readers_on(port || 0)
+        close
+        # Forgetting also stops a private accessibility-bus daemon recorded as
+        # this browser's companion.
+        Registry.forget(port)
+        false
       end
 
       def close : Nil
@@ -62,6 +92,9 @@ module Tawb
       return Session.new(connect.not_nil!, a11y: A11yBus.open(log)) if connect
       profile_dir = profile || default_profile
       FileUtils.mkdir_p(profile_dir)
+      # Sweep before looking for a browser to rejoin: a stranded browser still
+      # has a live endpoint, but belongs to no surviving reader.
+      Registry.sweep_stranded(log)
       if endpoint = running_endpoint(profile_dir)
         # A browser already running on this profile: the reader that started
         # the browser recorded the bus it was given, and that recorded address
@@ -122,6 +155,8 @@ module Tawb
             "a11yAddress" => a11y.available? ? JSON::Any.new(a11y.address) : JSON::Any.new(nil),
             "a11yPid"     => a11y.owned? ? JSON::Any.new(a11y.pid) : JSON::Any.new(nil),
           }.to_json)
+          Registry.record(process.pid.to_i64, port, profile_dir, "chromium",
+            a11y.owned? ? a11y.pid : nil, a11y.owned? ? a11y.address : nil)
           return Session.new(endpoint, process, owned: true, profile_dir: profile_dir,
             grouped: spawned.grouped, a11y: a11y)
         rescue error

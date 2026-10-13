@@ -13,6 +13,7 @@
 # only while their process is still alive rather than trusted outright.
 
 require "json"
+require "./processes"
 
 module Tawb
   module Session
@@ -33,18 +34,10 @@ module Tawb
     end
 
     # Whether a process id recorded earlier still belongs to a running
-    # process.
-    #
-    # Signal 0 performs the permission and existence checks without
-    # delivering anything. EPERM means the process is there and simply is not
-    # ours, which still counts as running — only ESRCH means it is gone.
-    #
-    # This is src/proc.js's processAlive. It lives here, as the same file's
-    # killProcessGroup lives in firefox_launch.cr and its detached spawn in
-    # detach.cr, until a second consumer calls for a proc.cr of its own.
+    # process. The browser registry asks the same question, which is what
+    # brought `processes.cr` into being.
     private def self.process_alive?(pid : Int64) : Bool
-      return false unless pid.in?(1..Int32::MAX)
-      LibC.kill(pid.to_i32, 0) == 0 || Errno.value == Errno::EPERM
+      Processes.alive?(pid)
     end
 
     def self.read_claims(port : Int32) : Array(Claim)

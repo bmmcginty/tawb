@@ -11,6 +11,7 @@ require "./core"
 require "./dbus"
 require "./key_wizard"
 require "./edit"
+require "./registry"
 require "./remap"
 require "./broker"
 require "./dump"
@@ -617,6 +618,8 @@ module Tawb
         return JSON::Any.new(Edb.explain(payload.as_h["message"].as_s))
       when "edb.routes_scenario"
         return edb_routes_scenario(payload)
+      when "registry.scenario"
+        return registry_scenario(payload)
       when "settings.path"
         object = payload.as_h
         return JSON::Any.new(Settings.path(
@@ -5316,6 +5319,118 @@ module Tawb
       ensure
         browser.close
       end
+    end
+
+    # The browser registry, driven step by step.
+    #
+    # One scenario rather than one call per question, because "the session
+    # that started this browser is still running" means the process making the
+    # call — and a conformance process that answered one question and exited
+    # would make every browser it recorded look stranded.
+    private def self.registry_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      answers = [] of JSON::Any
+      (object["steps"]?.try(&.as_a?) || [] of JSON::Any).each do |raw|
+        step = raw.as_h
+        case step["type"].as_s
+        when "write"
+          Registry.write((step["entries"]?.try(&.as_a?) || [] of JSON::Any).map do |entry|
+            registry_entry(entry.as_h)
+          end)
+          answers << JSON::Any.new(true)
+        when "record"
+          Registry.record(
+            step["pid"].as_i.to_i64,
+            step["port"].as_i.to_i32,
+            step["profileDir"]?.try(&.as_s?),
+            step["engine"]?.try(&.as_s?),
+            step["a11yPid"]?.try(&.as_i?).try(&.to_i64),
+            step["a11yAddress"]?.try(&.as_s?),
+          )
+          answers << JSON::Any.new(true)
+        when "mark_kept"
+          Registry.mark_kept(step["port"].as_i.to_i32)
+          answers << JSON::Any.new(true)
+        when "forget"
+          Registry.forget(step["port"].as_i.to_i32)
+          answers << JSON::Any.new(true)
+        when "disown"
+          # The owner rewritten to a process that is not running, which is
+          # what a session killed outright leaves behind.
+          entry = Registry.read_entry(step["port"].as_i.to_i32)
+          if entry
+            Registry.write_entry(Registry::Entry.new(
+              pid: entry.pid, port: entry.port, profile_dir: entry.profile_dir,
+              engine: entry.engine, owner: step["owner"].as_i.to_i64, keep: entry.keep,
+              at: entry.at, a11y_pid: entry.a11y_pid, a11y_address: entry.a11y_address))
+          end
+          answers << JSON::Any.new(!entry.nil?)
+        when "claim"
+          Session.write_claims(step["port"].as_i.to_i32,
+            [Session::Claim.new(step["pid"].as_i.to_i64,
+              step["targetId"]?.try(&.as_s?) || "T", Time.utc.to_unix_ms)])
+          answers << JSON::Any.new(true)
+        when "release_claims"
+          Session.write_claims(step["port"].as_i.to_i32, [] of Session::Claim)
+          answers << JSON::Any.new(true)
+        when "ours"
+          answers << JSON::Any.new(Registry.ours?(
+            step["pid"].as_i.to_i64, step["profileDir"]?.try(&.as_s?)))
+        when "sweep"
+          answers << JSON::Any.new(Registry.sweep_stranded.to_i64)
+        when "read"
+          # Compared without the pids and the times, which are this run's own.
+          answers << JSON::Any.new(Registry.read.sort_by(&.port).map do |entry|
+            JSON::Any.new({
+              "port"      => JSON::Any.new(entry.port.to_i64),
+              "engine"    => JSON::Any.new(entry.engine),
+              "keep"      => JSON::Any.new(entry.keep),
+              "hasA11y"   => JSON::Any.new(!entry.a11y_pid.nil?),
+              "ownedHere" => JSON::Any.new(entry.owner == Process.pid.to_i64),
+            })
+          end)
+        when "alive"
+          answers << JSON::Any.new(Processes.alive?(step["pid"].as_i.to_i64))
+        when "gone_within"
+          deadline = Time.instant + (step["ms"]?.try(&.as_i?) || 5000).milliseconds
+          pid = step["pid"].as_i.to_i64
+          gone = false
+          while Time.instant < deadline
+            unless Processes.alive?(pid)
+              gone = true
+              break
+            end
+            sleep 50.milliseconds
+          end
+          answers << JSON::Any.new(gone)
+        when "companion_files"
+          # Whether the private bus's socket and configuration are still on
+          # disk, which is what forgetting a browser has to take with it.
+          socket = step["socket"].as_s
+          answers << JSON::Any.new({
+            "socket" => JSON::Any.new(File.exists?(socket)),
+            "config" => JSON::Any.new(File.exists?("#{socket}.conf")),
+          })
+        else
+          raise ArgumentError.new("unknown registry scenario step #{step["type"]}")
+        end
+      end
+      JSON::Any.new({"answers" => JSON::Any.new(answers)})
+    end
+
+    private def self.registry_entry(object : Hash(String, JSON::Any)) : Registry::Entry
+      owner = object["owner"]?
+      Registry::Entry.new(
+        pid: object["pid"].as_i.to_i64,
+        port: object["port"].as_i.to_i32,
+        profile_dir: object["profileDir"]?.try(&.as_s?),
+        engine: object["engine"]?.try(&.as_s?),
+        owner: owner.try(&.as_s?) == "self" ? Process.pid.to_i64 : owner.try(&.as_i?).try(&.to_i64),
+        keep: object["keep"]?.try(&.as_bool?) || false,
+        at: object["at"]?.try(&.as_i?).try(&.to_i64) || Time.utc.to_unix_ms,
+        a11y_pid: object["a11yPid"]?.try(&.as_i?).try(&.to_i64),
+        a11y_address: object["a11yAddress"]?.try(&.as_s?),
+      )
     end
 
     private def self.reader_index(step : Hash(String, JSON::Any)) : Int32

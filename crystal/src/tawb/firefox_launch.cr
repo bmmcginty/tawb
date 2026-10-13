@@ -4,6 +4,7 @@ require "./detach"
 require "./endpoint"
 require "./log"
 require "./marionette"
+require "./registry"
 
 module Tawb
   module FirefoxLaunch
@@ -64,6 +65,26 @@ module Tawb
         @owned
       end
 
+      # Letting go of a browser this session started.
+      #
+      # Ours to close only while nobody else is reading it — starting the
+      # browser makes this reader its first user, not its owner. A browser
+      # left running on purpose is marked so, or a later sweep would mistake
+      # it for one somebody crashed out of.
+      def release(keep : Bool) : Bool
+        return true unless @owned
+        if keep
+          Registry.mark_kept(@port)
+          return true
+        end
+        return true if Session.other_readers_on(@port)
+        close
+        # Forgetting also stops a private accessibility-bus daemon recorded as
+        # this browser's companion.
+        Registry.forget(@port)
+        false
+      end
+
       def close : Nil
         process = @process
         return unless process
@@ -117,6 +138,9 @@ module Tawb
                     log : Log? = nil) : Started
       process : Process? = nil
       Dir.mkdir_p(profile_dir)
+      # Sweep before looking for a browser to rejoin: a stranded browser still
+      # has a live endpoint, but belongs to no surviving reader.
+      Registry.sweep_stranded(log)
       if port = Endpoint.running(profile_dir)
         record = Endpoint.read_record(profile_dir) || {} of String => JSON::Any
         return Started.new(
@@ -203,6 +227,8 @@ module Tawb
       record = Endpoint.read_record(profile_dir) || {} of String => JSON::Any
       record["libraryPort"] = library_port ? JSON::Any.new(library_port.to_i64) : JSON::Any.new(nil)
       Endpoint.write_record(profile_dir, record)
+      Registry.record(process.pid.to_i64, port, profile_dir, "firefox",
+        a11y.owned? ? a11y.pid : nil, a11y.owned? ? a11y.address : nil)
       Started.new(
         "ws://127.0.0.1:#{port}/session", port, marionette_port, library_port,
         profile_dir, process, owned: true, grouped: grouped, a11y: a11y
