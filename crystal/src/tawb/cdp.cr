@@ -83,67 +83,194 @@ module Tawb
       raise IO::Error.new(text.lines.first? || text)
     end
 
-    # The browser, as a tab inventory (src/cdp_browser.js
-    # CdpBrowserContext).
-    #
-    # Chromium's HTTP endpoint is what lists and creates targets, and each
-    # tab gets a protocol connection of its own. The JavaScript original
-    # multiplexes one connection because it listens across every target at
-    # once; a reader here acts on one tab at a time, and the tab it acts on
-    # is the tab it is connected to.
-    class BrowserSession
-      getter endpoint : String
+    # One browser-lifetime CDP connection. Chromium's flat protocol carries
+    # the browser, every tab and every out-of-process frame on this one socket;
+    # sessionId distinguishes the conversations. Replies are routed by id and
+    # events by session so a quiet tab never owns or blocks the connection.
+    class Connection
+      DEFAULT_TIMEOUT_MS = 30_000
 
-      def initialize(@endpoint : String)
-        @pages = {} of String => Page
-        # Tabs this session opened to ask the browser something, which are
-        # not the reader's tabs and are kept out of their list.
-        @internal = Set(String).new
-        @browser_socket = nil.as(String?)
-        @browser_channel = nil.as(Transport::Channel?)
-        @browser_next_id = 0_i64
-        @auth_handler = nil.as(Proc(JSON::Any, String, JSON::Any?)?)
+      def initialize(endpoint : String)
+        uri = URI.parse(endpoint)
+        base = "ws://#{uri.host}:#{uri.port}"
+        version = JSON.parse(Transport.http(endpoint, "GET", "/json/version")).as_h
+        named = version["webSocketDebuggerUrl"]?.try(&.as_s?) ||
+                raise IO::Error.new("the browser named no WebSocket to talk on")
+        @socket = Transport::WebSocket.new("#{base}#{URI.parse(named).path}", read_timeout: nil)
+        @mutex = Mutex.new
+        @write_mutex = Mutex.new
+        @next_id = 0_i64
+        @waiters = {} of Int64 => Channel(JSON::Any)
+        @events = Hash(String?, Array(JSON::Any)).new { |hash, key| hash[key] = [] of JSON::Any }
+        @event_ready = Hash(String?, Channel(Nil)).new { |hash, key| hash[key] = Channel(Nil).new(1) }
+        # Sessions the browser has taken back. A session whose target is gone
+        # answers nothing, so anything still waiting on it must be released
+        # rather than wait for an event that will never come.
+        @dead_sessions = Set(String).new
+        @closed = false
+        spawn { read_loop }
       end
 
-      # The tabs the browser has open, in the order it lists them.
-      #
-      # Only tabs: a listing also carries extension background pages, the
-      # browser's own interface windows and service workers, and none of
-      # those is something a reader can read. And only tabs that will accept
-      # a connection — a target listed while it is still being created, or
-      # one that goes between the listing and the connection, is not in the
-      # list rather than being the reason there is no list. That is what the
-      # JavaScript original's own listing means by a wired page.
+      def command(method : String, params = {} of String => JSON::Any,
+                  session_id : String? = nil, timeout_ms : Int32 = DEFAULT_TIMEOUT_MS) : JSON::Any
+        response = Channel(JSON::Any).new(1)
+        wanted = @mutex.synchronize do
+          raise IO::Error.new("CDP connection is closed") if @closed
+          @next_id += 1
+          @waiters[@next_id] = response
+          @next_id
+        end
+        request = {
+          "id"     => JSON::Any.new(wanted),
+          "method" => JSON::Any.new(method),
+          "params" => JSON::Any.new(params),
+        }
+        request["sessionId"] = JSON::Any.new(session_id) if session_id
+        begin
+          @write_mutex.synchronize { @socket.send(request.to_json) }
+        rescue error
+          @mutex.synchronize { @waiters.delete(wanted) }
+          raise error
+        end
+        answer = select
+        when value = response.receive
+          value
+        when timeout(timeout_ms.milliseconds)
+          @mutex.synchronize { @waiters.delete(wanted) }
+          raise IO::TimeoutError.new("#{method} did not answer within #{timeout_ms / 1000.0}s")
+        end
+        if error = answer.as_h["error"]?
+          raise IO::Error.new("CDP #{method} failed: #{error.to_json}")
+        end
+        answer
+      end
+
+      def poll_event(session_id : String?) : JSON::Any?
+        @mutex.synchronize { @events[session_id].shift? }
+      end
+
+      def next_event(session_id : String?) : JSON::Any
+        loop do
+          found = @mutex.synchronize do
+            event = @events[session_id].shift?
+            if event.nil? && (@closed || session_dead?(session_id))
+              raise IO::Error.new("the CDP session is closed")
+            end
+            event
+          end
+          return found if found
+          @event_ready[session_id].receive
+        end
+      end
+
+      def close : Nil
+        @mutex.synchronize { @closed = true }
+        @socket.close
+        wake_closed
+      rescue
+        wake_closed
+      end
+
+      private def read_loop : Nil
+        loop do
+          message = JSON.parse(@socket.receive)
+          object = message.as_h
+          if id = object["id"]?.try(&.as_i64?)
+            waiter = @mutex.synchronize { @waiters.delete(id) }
+            waiter.try(&.send(message))
+          else
+            if object["method"]?.try(&.as_s?) == "Target.detachedFromTarget"
+              dead = object["params"]?.try(&.as_h?).try(&.["sessionId"]?.try(&.as_s?))
+              @mutex.synchronize { @dead_sessions << dead } if dead
+            end
+            session_id = object["sessionId"]?.try(&.as_s?)
+            ready = @mutex.synchronize do
+              @events[session_id] << message
+              @event_ready[session_id]
+            end
+            select
+            when ready.send(nil)
+            else
+            end
+          end
+        end
+      rescue
+        @mutex.synchronize { @closed = true }
+        wake_closed
+      end
+
+      private def session_dead?(session_id : String?) : Bool
+        session_id.is_a?(String) && @dead_sessions.includes?(session_id)
+      end
+
+      private def wake_closed : Nil
+        failed = JSON::Any.new({
+          "error" => JSON::Any.new({
+            "message" => JSON::Any.new("CDP connection is closed"),
+          }),
+        })
+        waiters, ready = @mutex.synchronize do
+          found = @waiters.values
+          @waiters.clear
+          {found, @event_ready.values}
+        end
+        waiters.each { |waiter| waiter.send(failed) rescue nil }
+        ready.each do |channel|
+          select
+          when channel.send(nil)
+          else
+          end
+        end
+      end
+    end
+
+    # The browser, as a tab inventory (src/cdp_browser.js
+    # CdpBrowserContext). One persistent browser WebSocket is shared by every
+    # Page this object hands out, matching the JavaScript driver's flat CDP
+    # connection rather than opening a socket per tab.
+    class BrowserSession
+      getter endpoint : String
+      getter connection : Connection
+
+      def initialize(@endpoint : String)
+        @connection = Connection.new(@endpoint)
+        @pages = {} of String => Page
+        @root_sessions = {} of String => String
+        @internal = Set(String).new
+        @auth_handler = nil.as(Proc(JSON::Any, String, JSON::Any?)?)
+        @draining = false
+        # Page targets arrive already attached on the persistent connection,
+        # exactly as they do in the JavaScript driver. Pausing a newly opened
+        # target until its domains and frame tree are wired prevents its first
+        # navigation from racing initialization.
+        @connection.command("Target.setAutoAttach", {
+          "autoAttach"             => JSON::Any.new(true),
+          "waitForDebuggerOnStart" => JSON::Any.new(true),
+          "flatten"                => JSON::Any.new(true),
+          "filter"                 => JSON.parse(%([{"type":"page"}])),
+        })
+        drain_browser_events
+        browser_command("Target.setDiscoverTargets", {
+          "discover" => JSON::Any.new(true),
+          "filter"   => JSON.parse(%([{"type":"iframe"}])),
+        })
+      end
+
+      # The tabs the browser has, in the order this session first saw them
+      # (src/cdp_browser.js CdpBrowserContext#pages). The listing is the
+      # auto-attach set rather than a fresh inventory: every page target
+      # announces itself on the persistent connection, so a tab the browser
+      # has closed has announced its own departure by the time anything
+      # lists, and Target.getTargets cannot be the source of the list — once
+      # discovery is enabled for the iframe filter, it answers with the
+      # targets discovery matches, which is never the tabs.
       def list_pages : Array(Page)
-        listed = JSON.parse(Transport.http(@endpoint, "GET", "/json/list")).as_a
-        tabs = listed.compact_map do |entry|
-          object = entry.as_h
-          next nil unless object["type"]?.try(&.as_s?) == "page"
-          socket = object["webSocketDebuggerUrl"]?.try(&.as_s?)
-          next nil unless socket
-          target_id = object["id"].as_s
-          next nil if @internal.includes?(target_id)
-          {id: target_id, socket: socket,
-           url: object["url"]?.try(&.as_s?) || "about:blank"}
-        end
-        open_ids = tabs.map { |tab| tab[:id] }.to_set
-
-        # A tab that has gone takes its connection with it.
-        @pages.each do |target_id, page|
-          page.detach unless open_ids.includes?(target_id)
-        end
-        @pages.select! { |target_id, _page| open_ids.includes?(target_id) }
-
-        # First-seen order, so that stepping between tabs does not depend on
-        # which one the browser was last looking at: Chromium lists the most
-        # recently used first, and a list that reorders itself under the
-        # reader is not a list they can step through.
-        by_id = tabs.to_h { |tab| {tab[:id], tab} }
-        ordered = @pages.keys.compact_map { |target_id| by_id[target_id]? }
-        ordered += tabs.reject { |tab| @pages.has_key?(tab[:id]) }
-        ordered.compact_map do |tab|
+        drain_browser_events
+        @pages.values.compact_map do |page|
+          next nil if page.closed? || @internal.includes?(page.target.id)
           begin
-            page_for(tab[:id], tab[:socket], tab[:url])
+            page.sync
+            page
           rescue
             nil
           end
@@ -155,81 +282,36 @@ module Tawb
       end
 
       def create_page : Page
-        page = Page.new(@endpoint)
-        page.auth_handler = @auth_handler
-        @pages[page.target.id] = page
-        page
+        create_target(false, false)
       end
 
-      # A tab of our own, for asking the browser something only one of its
-      # own pages can answer.
-      #
-      # It is created in the background so the browser does not move to it,
-      # and its target is marked before the tab is listed anywhere — which is
-      # soon enough, because the reader's tab list is built from list_pages
-      # and that leaves a marked target out. So the reader is never told a
-      # tab opened, and never finds one in the list that was not theirs.
       def create_internal_page : Page
-        target_id = browser_command("Target.createTarget", {
-          "url"        => JSON::Any.new("about:blank"),
-          "background" => JSON::Any.new(true),
-        }).as_h["result"].as_h["targetId"].as_s
-        @internal << target_id
-        socket = "#{websocket_base}/devtools/page/#{target_id}"
-        page = Page.new(@endpoint, Target.new(target_id, socket),
-          Transport::WebSocket.new(socket))
-        @pages[target_id] = page
-        page
+        create_target(true, true)
       end
 
-      # One command to the browser itself rather than to a tab. The browser's
-      # own socket is not at a fixed path — it carries a per-launch token —
-      # so /json/version is where the browser says where to find it.
-      private def browser_command(method : String,
-                                  params = {} of String => JSON::Any) : JSON::Any
-        socket = @browser_socket ||= begin
-          version = JSON.parse(Transport.http(@endpoint, "GET", "/json/version")).as_h
-          url = version["webSocketDebuggerUrl"]?.try(&.as_s?) ||
-                raise IO::Error.new("the browser named no WebSocket to talk on")
-          # The url names whatever host the browser thinks it is on; the port
-          # is the part that matters and the host we asked is the host we can
-          # reach.
-          "#{websocket_base}#{URI.parse(url).path}"
-        end
-        channel = @browser_channel ||= Transport::WebSocket.new(socket)
-        @browser_next_id += 1
-        wanted = @browser_next_id
-        channel.send({
-          "id"     => JSON::Any.new(wanted),
-          "method" => JSON::Any.new(method),
-          "params" => JSON::Any.new(params),
-        }.to_json)
-        loop do
-          message = JSON.parse(channel.receive)
-          object = message.as_h
-          next unless object["id"]?.try(&.as_i64?) == wanted
-          if error = object["error"]?
-            raise IO::Error.new("CDP #{method} failed: #{error.to_json}")
-          end
-          return message
-        end
+      def browser_command(method : String,
+                          params = {} of String => JSON::Any) : JSON::Any
+        answer = @connection.command(method, params)
+        drain_browser_events unless @draining
+        answer
       end
 
-      private def websocket_base : String
-        uri = URI.parse(@endpoint)
-        "ws://#{uri.host}:#{uri.port}"
+      def attach_target(target_id : String) : String
+        browser_command("Target.attachToTarget", {
+          "targetId" => JSON::Any.new(target_id),
+          "flatten"  => JSON::Any.new(true),
+        }).as_h["result"].as_h["sessionId"].as_s
       end
 
-      # A CDP target id is stable for the life of a tab and means the same
-      # thing in every reader process, which is exactly what a claim on a tab
-      # needs from a tab's name.
+      def detach_target(session_id : String) : Nil
+        browser_command("Target.detachFromTarget", {"sessionId" => JSON::Any.new(session_id)})
+      rescue
+      end
+
       def target_id_for(page : Page) : String
         page.target.id
       end
 
-      # Who answers a password prompt, for every tab this session hands out.
-      # Taking the prompt over happens per tab and only when the tab is
-      # adopted; see Page#arm_auth.
       def attach_auth(handler : Proc(JSON::Any, String, JSON::Any?)) : Nil
         @auth_handler = handler
         @pages.each_value { |page| page.auth_handler = handler }
@@ -241,35 +323,82 @@ module Tawb
         page.close
       end
 
-      # Let go of every tab this session connected to. The browser itself is
-      # somebody else's to stop: it was launched before this session and a
-      # kept one outlives it.
       def close : Nil
-        # A tab opened to ask the browser something is ours, and goes with
-        # us; the reader's own tabs stay, and so does the browser.
-        @pages.each do |target_id, page|
+        @pages.to_a.each do |target_id, page|
           @internal.includes?(target_id) ? (page.close rescue nil) : page.detach
         end
         @pages.clear
+        @root_sessions.clear
         @internal.clear
-        @browser_channel.try(&.close) rescue nil
-        @browser_channel = nil
+        @connection.close
       end
 
-      # One connection per tab, kept, so that a tab listed twice is the same
-      # page object both times — which is what the reader's own tab list and
-      # its claims are compared by.
-      private def page_for(target_id : String, socket : String, url : String) : Page
+      private def create_target(background : Bool, internal : Bool) : Page
+        params = {"url" => JSON::Any.new("about:blank")}
+        params["background"] = JSON::Any.new(true) if background
+        target_id = browser_command("Target.createTarget", params)
+          .as_h["result"].as_h["targetId"].as_s
+        @internal << target_id if internal
+        drain_browser_events
+        page = @pages[target_id]? || begin
+          # Auto-attachment is an event and can trail createTarget's reply by
+          # a turn. Give it that turn before falling back to an explicit flat
+          # attachment (older Chromium builds did not honour the filter).
+          deadline = Time.instant + 2.seconds
+          until found = @pages[target_id]?
+            break if Time.instant >= deadline
+            sleep 5.milliseconds
+            drain_browser_events
+          end
+          @pages[target_id]? || adopt_page(target_id, attach_target(target_id), "about:blank")
+        end
+        page
+      end
+
+      private def page_for(target_id : String, url : String) : Page
         if page = @pages[target_id]?
           page.set_url(url)
           return page
         end
-        page = Page.new(@endpoint, Target.new(target_id, socket),
-          Transport::WebSocket.new(socket))
+        adopt_page(target_id, attach_target(target_id), url)
+      end
+
+      private def adopt_page(target_id : String, session_id : String, url : String) : Page
+        if page = @pages[target_id]?
+          page.set_url(url)
+          return page
+        end
+        page = Page.new(@endpoint, Target.new(target_id, ""), @connection, session_id, self)
         page.set_url(url)
         page.auth_handler = @auth_handler
+        @root_sessions[session_id] = target_id
         @pages[target_id] = page
         page
+      end
+
+      private def drain_browser_events : Nil
+        return if @draining
+        @draining = true
+        while message = @connection.poll_event(nil)
+          object = message.as_h
+          case object["method"]?.try(&.as_s?)
+          when "Target.attachedToTarget"
+            params = object["params"].as_h
+            info = params["targetInfo"].as_h
+            next unless info["type"]?.try(&.as_s?) == "page"
+            target_id = info["targetId"].as_s
+            session_id = params["sessionId"].as_s
+            adopt_page(target_id, session_id,
+              info["url"]?.try(&.as_s?) || "about:blank") unless @pages.has_key?(target_id)
+          when "Target.detachedFromTarget"
+            session_id = object["params"].as_h["sessionId"]?.try(&.as_s?)
+            if session_id && (target_id = @root_sessions.delete(session_id))
+              @pages.delete(target_id).try(&.mark_closed)
+            end
+          end
+        end
+      ensure
+        @draining = false
       end
     end
 
@@ -280,11 +409,11 @@ module Tawb
     # from the page: a reader who cannot see it has no way to answer. CDP
     # hands it over through Fetch, which is a heavier instrument than
     # Firefox's auth-only intercept — with interception on, every request
-    # pauses and has to be let through — so it runs on a connection of its
-    # own, with one fiber doing nothing but letting requests through and
-    # answering challenges. Sharing the reader's connection would mean a
-    # request pausing with nobody reading the socket, which is a page that
-    # never finishes.
+    # pauses and has to be let through — so it runs on a CDP session of its
+    # own over the persistent browser connection, with one fiber doing nothing
+    # but letting requests through and answering challenges. Sharing the
+    # page's session would let another event consumer steal a paused request,
+    # which is a page that never finishes.
     #
     # The prompt is ours the moment this is armed: the browser stops drawing
     # its own dialog and holds the request instead. So a session that leaves
@@ -293,35 +422,28 @@ module Tawb
     # 401's own body, which is what escaping the prompt does: a page, and a
     # tab that has finished.
     class AuthWatcher
-      def initialize(@page : Page, @socket : String,
+      def initialize(@page : Page,
                      @handler : Proc(JSON::Any, String, JSON::Any?))
-        @channel = nil.as(Transport::Channel?)
-        @next_id = 0_i64
+        @session_id = nil.as(String?)
         @pending = Set(String).new
         @closed = false
       end
 
       def arm : Bool
-        return true if @channel
-        channel = Transport::WebSocket.new(@socket)
-        @channel = channel
+        return true if @session_id
+        session_id = @page.attach_auxiliary_session
+        @session_id = session_id
         # Every request, because a challenge can come from any of them, and
         # at the request stage, because that is where one is raised.
-        reply = send("Fetch.enable", {
+        @page.session_command("Fetch.enable", session_id, {
           "handleAuthRequests" => JSON::Any.new(true),
           "patterns"           => JSON.parse(%([{"urlPattern":"*","requestStage":"Request"}])),
         })
-        await_reply(reply)
-        # The watcher lives as long as the tab. A quiet page may make no
-        # requests for minutes; that silence must not abandon Fetch while it
-        # is still intercepting every later request. The bounded initial
-        # reply above retains the transport's ordinary command timeout.
-        channel.read_timeout = nil
         spawn { watch }
         true
       rescue
-        @channel.try(&.close) rescue nil
-        @channel = nil
+        @session_id.try { |session| @page.detach_auxiliary_session(session) }
+        @session_id = nil
         false
       end
 
@@ -347,15 +469,17 @@ module Tawb
         return if @closed
         @closed = true
         cancel_pending
-        @channel.try(&.close) rescue nil
-        @channel = nil
+        if session_id = @session_id
+          @page.session_command("Fetch.disable", session_id) rescue nil
+          @page.detach_auxiliary_session(session_id)
+        end
+        @session_id = nil
       end
 
       private def watch : Nil
-        channel = @channel || return
+        session_id = @session_id || return
         until @closed
-          message = JSON.parse(channel.receive)
-          object = message.as_h
+          object = @page.next_session_event(session_id).as_h
           case object["method"]?.try(&.as_s?)
           when "Fetch.requestPaused"
             # Nothing is being inspected; the interception exists only so
@@ -411,31 +535,9 @@ module Tawb
         # Nothing left to answer with, and nothing to answer to.
       end
 
-      # Fire and forget: the watching fiber is the only reader of this
-      # connection, so a reply is read there and ignored like any other
-      # message that is not an event worth acting on.
-      private def send(method : String, params : Hash(String, JSON::Any)) : Int64
-        channel = @channel || raise IO::Error.new("the auth connection is closed")
-        @next_id += 1
-        channel.send({
-          "id"     => JSON::Any.new(@next_id),
-          "method" => JSON::Any.new(method),
-          "params" => JSON::Any.new(params),
-        }.to_json)
-        @next_id
-      end
-
-      # Only used before the fiber starts, when nothing else is reading.
-      private def await_reply(wanted : Int64) : Nil
-        channel = @channel || return
-        loop do
-          object = JSON.parse(channel.receive).as_h
-          next unless object["id"]?.try(&.as_i64?) == wanted
-          if error = object["error"]?
-            raise IO::Error.new("CDP Fetch.enable failed: #{error.to_json}")
-          end
-          return
-        end
+      private def send(method : String, params : Hash(String, JSON::Any)) : Nil
+        session_id = @session_id || raise IO::Error.new("the auth connection is closed")
+        @page.session_command(method, session_id, params)
       end
     end
 
@@ -717,7 +819,7 @@ module Tawb
       end
 
       private def call(fn : String, arg : JSON::Any?, expression : Bool,
-                       by_value : Bool) : Hash(String, JSON::Any)
+                       by_value : Bool, retry_context = true) : Hash(String, JSON::Any)
         context = @page.context_for(@frame_id)
         arguments = arg ? [Cdp.call_argument(arg)] : [] of JSON::Any
         parameters = {
@@ -731,6 +833,12 @@ module Tawb
           .as_h["result"].as_h
         Cdp.raise_on_exception(result, "evaluating")
         result
+      rescue error
+        if retry_context && /Cannot find context|Execution context was destroyed/i.matches?(error.message || "")
+          @page.forget_context(@frame_id, context[0]) if context
+          return call(fn, arg, expression, by_value, false)
+        end
+        raise error
       end
     end
 
@@ -911,7 +1019,10 @@ module Tawb
     class Page
       getter target : Target
 
-      @socket : Transport::Channel
+      @socket : Transport::Channel?
+      @connection : Connection?
+      @owner : BrowserSession?
+      @root_session_id : String?
       @next_id = 0_i64
       @events = [] of JSON::Any
       # Which execution context answers for each document, and on which
@@ -934,18 +1045,24 @@ module Tawb
       @auth_handler : Proc(JSON::Any, String, JSON::Any?)? = nil
       @auth : AuthWatcher? = nil
 
-      def initialize(@endpoint : String)
-        body = Transport.http(@endpoint, "PUT", "/json/new?about%3Ablank")
-        object = JSON.parse(body).as_h
-        @target = Target.new(object["id"].as_s, object["webSocketDebuggerUrl"].as_s)
-        @socket = Transport::WebSocket.new(@target.web_socket_url)
+      # A tab on a channel somebody else opened. The conformance harness
+      # hands in a recorded one; production pages use the shared Connection
+      # constructor below.
+      def initialize(@endpoint : String, @target : Target,
+                     socket : Transport::Channel)
+        @socket = socket
+        @connection = nil
+        @owner = nil
+        @root_session_id = nil
         enable_domains
       end
 
-      # A tab on a channel somebody else opened. The conformance harness
-      # hands in a recorded one; nothing else needs this.
       def initialize(@endpoint : String, @target : Target,
-                     @socket : Transport::Channel)
+                     connection : Connection, @root_session_id : String,
+                     owner : BrowserSession)
+        @socket = nil
+        @connection = connection
+        @owner = owner
         enable_domains
       end
 
@@ -956,15 +1073,15 @@ module Tawb
         # reader waits for DOMContentLoaded on a click that may navigate and
         # for load on an address it typed.
         command("Page.setLifecycleEventsEnabled", {"enabled" => JSON::Any.new(true)})
-        command("Target.setDiscoverTargets", {
-          "discover" => JSON::Any.new(true),
-          "filter"   => JSON.parse(%([{"type":"iframe"}])),
-        })
         # Asked now rather than when something first needs it: every
         # lifecycle and navigation event is read for whether it belongs to
         # this tab's own document, and an event that arrives before the
         # answer is known would be read as somebody else's.
         main_frame_id
+        # Auto-attached tabs are paused until their protocol domains and frame
+        # identity are ready. Explicit attachments were never paused, and
+        # Chromium treats this command as harmless for them.
+        command("Runtime.runIfWaitingForDebugger") if @connection
       end
 
       # ------------------------------------------------------------------
@@ -1071,6 +1188,11 @@ module Tawb
 
       def closed? : Bool
         @closed
+      end
+
+      def mark_closed : Nil
+        @closed = true
+        release_auth
       end
 
       def title : String
@@ -1225,12 +1347,16 @@ module Tawb
       def frame_tree : JSON::Any
         # Discovery events can still be in flight when the top document's DOM
         # event arrives. The listing is a synchronous census and closes that
-        # race without recursively auto-attaching to renderer workers.
+        # race without recursively auto-attaching to renderer workers. It
+        # replaces what is known rather than adding to it: targets destroyed
+        # since the last census are announced on the browser session, which
+        # this page does not read, so an accumulating set would keep frames
+        # that are long gone.
         targets = command("Target.getTargets").as_h["result"].as_h["targetInfos"].as_a
-        targets.each do |target|
+        @iframe_targets = targets.compact_map do |target|
           info = target.as_h
-          @iframe_targets << info["targetId"].as_s if info["type"]?.try(&.as_s?) == "iframe"
-        end
+          info["targetId"].as_s if info["type"]?.try(&.as_s?) == "iframe"
+        end.to_set
         tree = command("Page.getFrameTree").as_h["result"].as_h["frameTree"]
         known_frames = frame_ids(tree).to_set
         # A tab session may omit an out-of-process document from its own
@@ -1244,9 +1370,15 @@ module Tawb
         end
         @iframe_targets.each do |target_id|
           next if known_frames.includes?(target_id)
-          session_id = attach_frame(target_id)
-          child_tree = command("Page.getFrameTree", session_id: session_id).as_h["result"].as_h["frameTree"]
-          children << child_tree
+          begin
+            session_id = attach_frame(target_id)
+            child_tree = command("Page.getFrameTree", session_id: session_id).as_h["result"].as_h["frameTree"]
+            children << child_tree
+          rescue
+            # A short-lived frame can go between the census and its
+            # attachment. It contributed no document, so there is nothing
+            # stale to retain.
+          end
         end
         tree
       end
@@ -1273,30 +1405,42 @@ module Tawb
       end
 
       def close : Nil
+        return if @closed
         @closed = true
         release_auth
-        @socket.close
-        Transport.http(@endpoint, "GET", "/json/close/#{@target.id}")
+        if owner = @owner
+          owner.browser_command("Target.closeTarget", {"targetId" => JSON::Any.new(@target.id)})
+        else
+          @socket.try(&.close)
+          Transport.http(@endpoint, "GET", "/json/close/#{@target.id}")
+        end
       rescue
-        @socket.close rescue nil
+        @socket.try(&.close) rescue nil
       end
 
-      # Let go of the connection without closing the tab: the tab belongs to
-      # the browser, and a reader leaving is not a reason to take it away.
-      # The interception does go, and every challenge it was holding is
-      # cancelled first — the 401's own body then loads, which leaves the
-      # reader a page rather than a tab that never finishes.
+      # Let go of this tab's sessions without closing the shared browser
+      # connection or the tab itself.
       def detach : Nil
+        return if @closed
         release_auth
-        @socket.close
+        @frame_sessions.each_value { |session| @owner.try(&.detach_target(session)) }
+        @frame_sessions.clear
+        if session_id = @root_session_id
+          @owner.try(&.detach_target(session_id))
+        else
+          @socket.try(&.close)
+        end
+        @closed = true
       rescue
       end
 
       def close_browser : Nil
-        command("Browser.close")
+        if owner = @owner
+          owner.browser_command("Browser.close")
+        else
+          command("Browser.close")
+        end
       rescue
-      ensure
-        @socket.close rescue nil
       end
 
       # The main document's id, as the browser names it. Everything a reader
@@ -1313,17 +1457,26 @@ module Tawb
       # The execution context a document announced, waited for rather than
       # asked for: CDP announces contexts as they are created, so one that
       # has not arrived yet is worth a moment's patience.
+      def forget_context(frame_id : String, context_id : Int64) : Nil
+        @contexts.delete(frame_id) if @contexts[frame_id]?.try(&.[0]) == context_id
+      end
+
       def context_for(frame_id : String) : Tuple(Int64, String?)
         deadline = Time.instant + CONTEXT_WAIT
         loop do
+          # On the persistent connection context announcements arrive while
+          # nobody is issuing a command. Apply them before returning a cached
+          # id; otherwise a navigation can leave the caller holding the id of
+          # the document that was just replaced.
+          drain_connection_events
           if known = @contexts[frame_id]?
             return known
           end
           raise IO::Error.new("that document never announced a context to run in") if Time.instant >= deadline
           sleep 10.milliseconds
-          # Nothing is read from the socket while idle, so a context announced
-          # between commands arrives only when something asks. One cheap
-          # command is what makes the announcement land.
+          # The persistent connection reads while idle, but an announcement
+          # may still be in flight. One cheap command gives it a round trip in
+          # which to arrive.
           command("Runtime.getIsolateId") rescue nil
         end
       end
@@ -1444,7 +1597,7 @@ module Tawb
       # prompt in this tab can be answered from here.
       def arm_auth : Bool
         handler = @auth_handler || return false
-        watcher = @auth ||= AuthWatcher.new(self, @target.web_socket_url, handler)
+        watcher = @auth ||= AuthWatcher.new(self, handler)
         watcher.arm
       end
 
@@ -1455,9 +1608,8 @@ module Tawb
         @auth = nil
       end
 
-      # The connection this tab is reached over. CDP gives each tab one of
-      # its own, so a preload script installed on it reaches this tab's
-      # documents and no others.
+      # A target id is the stable identity of this tab even though every tab
+      # now shares the browser's one physical connection.
       def connection_id : String
         @target.id
       end
@@ -1546,8 +1698,9 @@ module Tawb
       end
 
       private def call_function(fn : String, arg : JSON::Any?, expression : Bool,
-                                by_value : Bool) : Hash(String, JSON::Any)
-        context = context_for(main_frame_id)
+                                by_value : Bool, retry_context = true) : Hash(String, JSON::Any)
+        frame_id = main_frame_id
+        context = context_for(frame_id)
         arguments = arg ? [Cdp.call_argument(arg)] : [] of JSON::Any
         parameters = {
           "functionDeclaration" => JSON::Any.new(Cdp.function_declaration(fn, expression)),
@@ -1560,11 +1713,37 @@ module Tawb
           .as_h["result"].as_h
         Cdp.raise_on_exception(result, "evaluating")
         result
+      rescue error
+        if retry_context && /Cannot find context|Execution context was destroyed/i.matches?(error.message || "")
+          forget_context(frame_id, context[0]) if frame_id && context
+          return call_function(fn, arg, expression, by_value, false)
+        end
+        raise error
       end
 
       # The handles and the keyboard speak to the page through this, the way
-      # FirefoxDriver's do through its protocol session.
-      def command(method : String, params = {} of String => JSON::Any, session_id : String? = nil) : JSON::Any
+      # FirefoxDriver's do through its protocol session. Production commands
+      # are multiplexed over the browser connection; the recorded channel is
+      # retained for the protocol differential.
+      def command(method : String, params = {} of String => JSON::Any,
+                  session_id : String? = nil) : JSON::Any
+        if connection = @connection
+          # Events are read continuously on the shared socket. Apply anything
+          # already announced before building a command that may depend on a
+          # current execution context, then apply events which accompanied
+          # its reply afterwards.
+          drain_connection_events
+          routed = if method.starts_with?("Target.") || method == "Browser.close"
+                     session_id
+                   else
+                     session_id || @root_session_id
+                   end
+          answer = connection.command(method, params, routed)
+          drain_connection_events
+          return answer
+        end
+
+        socket = @socket || raise IO::Error.new("CDP page has no connection")
         @next_id += 1
         wanted = @next_id
         request = {
@@ -1573,9 +1752,9 @@ module Tawb
           "params" => JSON::Any.new(params),
         }
         request["sessionId"] = JSON::Any.new(session_id) if session_id
-        @socket.send(request.to_json)
+        socket.send(request.to_json)
         loop do
-          message = JSON.parse(@socket.receive)
+          message = JSON.parse(socket.receive)
           object = message.as_h
           if object["id"]?.try(&.as_i64?) == wanted
             if error = object["error"]?
@@ -1585,6 +1764,44 @@ module Tawb
           end
           note_event(message)
           @events << message if object["method"]?
+        end
+      end
+
+      def attach_auxiliary_session : String
+        owner = @owner || raise IO::Error.new("CDP page has no browser connection")
+        owner.attach_target(@target.id)
+      end
+
+      # Apply what this tab has announced since its last command, so a listing
+      # taken without a command on this tab is still current about where the
+      # tab is and which documents it holds.
+      def sync : Nil
+        drain_connection_events
+      end
+
+      def detach_auxiliary_session(session_id : String) : Nil
+        @owner.try(&.detach_target(session_id))
+      end
+
+      def session_command(method : String, session_id : String,
+                          params = {} of String => JSON::Any) : JSON::Any
+        connection = @connection || raise IO::Error.new("CDP page has no browser connection")
+        connection.command(method, params, session_id)
+      end
+
+      def next_session_event(session_id : String) : JSON::Any
+        connection = @connection || raise IO::Error.new("CDP page has no browser connection")
+        connection.next_event(session_id)
+      end
+
+      private def drain_connection_events : Nil
+        connection = @connection || return
+        sessions = [@root_session_id] + @frame_sessions.values.map(&.as(String?))
+        sessions.compact.each do |session_id|
+          while message = connection.poll_event(session_id)
+            note_event(message)
+            @events << message if message.as_h["method"]?
+          end
         end
       end
 
@@ -1866,7 +2083,11 @@ module Tawb
           return @events.delete_at(index)
         end
         loop do
-          message = JSON.parse(@socket.receive)
+          message = if connection = @connection
+                      connection.next_event(@root_session_id)
+                    else
+                      JSON.parse((@socket || raise IO::Error.new("CDP page has no connection")).receive)
+                    end
           object = message.as_h
           note_event(message)
           return message if object["method"]?.try(&.as_s?) == method

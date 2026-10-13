@@ -363,8 +363,8 @@ module Tawb
             session.close
           end
         when Cdp::BrowserSession
-          # A connection per tab, so letting go of them is all there is: the
-          # tabs stay, and so does the browser.
+          # Detach this reader's flat target sessions and close its persistent
+          # connection; the tabs and browser belong to their own processes.
           session.close
         end
         keep_browser = options["keepBrowser"].as_bool
@@ -513,9 +513,10 @@ module Tawb
         names: FIREFOX_NAMES)
     end
 
-    # Chromium, over its own HTTP endpoint. There is no broker: CDP gives
-    # each tab a connection of its own, so two readers on one browser do not
-    # share a session to hold open for each other.
+    # Chromium, over its own HTTP endpoint. There is no broker: CDP permits
+    # each reader its own persistent browser connection and flat target
+    # sessions, so readers do not share a session that one must hold open for
+    # the other.
     private def self.open_chromium(options : Hash(String, JSON::Any), profile : String,
                                    timeout : Int64, startup : StartupStatus,
                                    logger : Log) : OpenedBrowser
@@ -563,9 +564,10 @@ module Tawb
       target = Dump.resolve_target(options["url"].as_s?, search: options["search"].as_s)
       timeout = options["browserTimeoutMs"].as_i64?
       session = Browser.open(options["connect"].as_s?, options["profile"].as_s?, timeout)
+      browser = Cdp::BrowserSession.new(session.endpoint)
       page = nil
       begin
-        page = Cdp::Page.new(session.endpoint)
+        page = browser.create_page
         page.navigate(target)
         Dump.settle_embedded_frames(page)
         lynx = options["frontEnd"].as_s == "lynx"
@@ -587,10 +589,12 @@ module Tawb
             session.close
           else
             current_page.close
+            session.release(true) if session.owned? && options["keepBrowser"].as_bool
           end
         elsif session.owned?
           session.close
         end
+        browser.close rescue nil
       end
     end
   end

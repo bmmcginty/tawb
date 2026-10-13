@@ -87,6 +87,10 @@ module Tawb
       def initialize(url : String, read_timeout : Time::Span? = 30.seconds)
         target = Transport.parse_url(url, "ws")
         @socket = TCPSocket.new(target.host, target.port)
+        # CDP and BiDi are request/reply protocols carrying many small frames.
+        # A frame header and payload must reach the browser as one command,
+        # not wait on TCP's delayed-ACK/Nagle interaction between writes.
+        @socket.tcp_nodelay = true
         @socket.read_timeout = read_timeout
         key = Base64.strict_encode(Random::Secure.random_bytes(16))
         @socket << "GET #{target.path} HTTP/1.1\r\nHost: #{target.host}:#{target.port}\r\n"
