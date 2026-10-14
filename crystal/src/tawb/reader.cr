@@ -4,6 +4,7 @@ require "./unicode_escape"
 require "./lynx_display"
 require "./lynx_options_screen"
 require "./lynx_session"
+require "./log"
 require "./layout"
 require "./place"
 
@@ -870,6 +871,10 @@ module Tawb
       property dialog_request : DialogEnv?
       property pending_dialog : DialogEnv?
       property options : JSON::Any?
+      # The diagnostic logger belongs to the session. Lynx can turn it on at
+      # runtime and show the file it has written.
+      property logger : Log
+      property log_dir : String?
       # The Lynx Options screen, while it is open. Its own type so the screen
       # can be driven without a terminal; the loop keeps it here so it
       # survives between keystrokes.
@@ -938,6 +943,8 @@ module Tawb
         @dialog_request = nil
         @pending_dialog = nil
         @options = nil
+        @logger = Log.new
+        @log_dir = nil
         @lynx_options = nil
         @controlling = nil
         @chooser = nil

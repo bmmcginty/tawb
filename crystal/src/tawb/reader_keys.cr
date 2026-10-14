@@ -1473,9 +1473,38 @@ module Tawb
       end
 
       def open_trace_log(state : LynxActions::State, page : Reader::PageEnv?) : Nil
+        reader = state.reader
+        return unless reader && page
+        path = reader.logger.path
+        unless path
+          Reader.set_status(@output, reader, page.url,
+            "Trace logging is off — press Ctrl+T to turn it on.")
+          return
+        end
+        reader.logger.flush
+        rows = LynxPages.trace_rows(File.read(path))
+        ReaderKeys.open_internal_rows(@output, reader, page, "info", "Trace Log", rows)
+        reader.title = "Trace Log — #{path}"
+        Reader.draw_title(@output, reader, true)
+      rescue error
+        reason = (error.message || error.to_s).lines.first? || error.to_s
+        Reader.set_status(@output, reader, page.try(&.url) || @page_url,
+          "Could not read the trace log: #{reason}") if reader
       end
 
       def toggle_trace(state : LynxActions::State) : Nil
+        reader = state.reader
+        return unless reader
+        if reader.logger.path
+          path = reader.logger.disable
+          Reader.set_status(@output, reader, @page_url,
+            "Trace logging off — #{path}.")
+        else
+          path = reader.logger.enable(reader.log_dir)
+          reader.logger.write("trace.enabled", {"interface" => JSON::Any.new("lynx")})
+          Reader.set_status(@output, reader, @page_url,
+            "Trace logging on — #{path}.")
+        end
       end
     end
 
@@ -2282,7 +2311,7 @@ module Tawb
       end
     end
 
-    private def self.open_internal_rows(output : Screen::Output, state : Reader::State,
+    def self.open_internal_rows(output : Screen::Output, state : Reader::State,
                                         page : Reader::PageEnv, kind : String, label : String,
                                         rows : Array(LynxPages::Row), empty : String? = nil) : Nil
       if rows.empty? && empty

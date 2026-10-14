@@ -1879,6 +1879,7 @@ module Tawb
       state.link_address = object["linkAddress"]?.try(&.as_bool?) != false
       state.status_msg = object["statusMsg"]?.try(&.as_s?) || ""
       state.home_url = object["homeUrl"]?.try(&.as_s?) || "https://www.google.com"
+      state.log_dir = object["logDir"]?.try(&.as_s?)
       state.cursor = (object["cursor"]?.try(&.as_i64?) || 0).to_i32
       state.col = (object["col"]?.try(&.as_i64?) || 0).to_i32
       state.scroll = (object["scroll"]?.try(&.as_i64?) || 0).to_i32
@@ -2670,6 +2671,14 @@ module Tawb
         "controlling" => state.controlling || JSON::Any.new(nil),
         "chooserMode" => state.chooser || JSON::Any.new(nil),
         "files"      => state.files || JSON::Any.new(nil),
+        "library"    => state.library.try do |library|
+          object = library.as_h
+          rows = object["rows"]?.try(&.as_a?)
+          rows ? JSON::Any.new({
+            "kind" => object["kind"], "label" => object["label"],
+            "rows" => JSON::Any.new(rows.map { |row| row.as_h["text"] }),
+          }) : JSON::Any.new(nil)
+        end || JSON::Any.new(nil),
         "linkNumber" => link_number_json(state.link_number),
         "loadingMore" => JSON::Any.new(state.loading_more),
         "changeIndex" => JSON::Any.new(state.core.change_index.to_i64),

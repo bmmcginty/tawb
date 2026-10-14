@@ -1407,6 +1407,7 @@ function readerImplementations(index, keysModule) {
       chooser: spec.chooser ?? null,
       linkNumber: spec.linkNumber ?? null,
       homeUrl: spec.homeUrl ?? 'https://www.google.com',
+      logDir: spec.logDir ?? null,
       search: spec.search ?? null,
       sources: spec.sources ?? ['ax'],
       lynxPresentationSource: spec.presentationSource ?? null,
@@ -1637,6 +1638,10 @@ function readerImplementations(index, keysModule) {
     controlling: state.controlling ?? null,
     chooserMode: state.chooser ?? null,
     files: state.files ?? null,
+    library: state.library && Array.isArray(state.library.rows) ? {
+      kind: state.library.kind, label: state.library.label,
+      rows: state.library.rows.map((row) => row.text),
+    } : null,
     loadingMore: state.loadingMore ?? false,
     changeIndex: state.core.changeIndex ?? -1,
     linkNumber: state.linkNumber

@@ -195,6 +195,8 @@ module Tawb
         state = Reader::State.new
         state.core = binding
         state.tabs = tabs
+        state.logger = logger
+        state.log_dir = options["logDir"].as_s?
         state.interface = options["frontEnd"].as_s
         state.link_address = options["linkAddress"].as_bool
         state.short_links = options["shortLinks"].as_bool
