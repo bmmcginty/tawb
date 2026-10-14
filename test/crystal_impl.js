@@ -2,12 +2,22 @@
 
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 const { spawn, spawnSync } = require('node:child_process');
 const { PassThrough } = require('node:stream');
 const { EOF } = require('../src/input');
 
 const binary = process.env.TAWB_CRYSTAL_BIN
   || path.join(__dirname, '..', 'dist', 'tawb-crystal');
+
+// The conformance keymaps share the reader's own Keymap, whose default file is
+// the reader's config. Loading that would let a developer's personal bindings
+// change an answer on one machine and not another, and the differential would
+// compare two readings of the same personal file. Both runtimes resolve the
+// default through XDG_CONFIG_HOME, and the Crystal binary inherits this
+// process's environment, so pointing it at an empty directory beside the
+// tests isolates the whole run. A test that wants a file names one.
+process.env.XDG_CONFIG_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'tawb-conformance-config-'));
 
 function call(operation, payload) {
   const child = spawnSync(binary, ['--conformance', operation], {
