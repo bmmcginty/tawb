@@ -956,10 +956,6 @@ module Tawb
           object["showConfig"].as_s, object["lynxrc"]?.try(&.as_s?) || ""))
       when "lynx_config.read"
         lynx_config_read(payload)
-      when "lynx_keymap.table"
-        string_table(LynxKeymap::FUNCTION_ACTIONS)
-      when "lynx_keymap.action_names"
-        string_table(LynxKeymap::ACTION_FUNCTIONS)
       when "lynx_keymap.action_for_function"
         found = LynxKeymap.action_for_function(payload.as_h["name"].as_s)
         found ? JSON::Any.new(found) : JSON::Any.new(nil)
