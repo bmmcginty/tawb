@@ -133,10 +133,19 @@ module Tawb
       # pushed is answered for any of the named methods, anything else is
       # kept for its reader, and an idle socket is simply reported as having
       # nothing. A load-state wait polls this rather than blocking on an
-      # event the protocol never promised to send.
-      def poll_any(methods : Array(String)) : Tuple(String, JSON::Any)?
+      # event the protocol never promised to send. When a context is given,
+      # only events carrying that context answer, and events for any other
+      # context stay queued for the reader they belong to: a navigation
+      # event describes one browsing context, and treating a frame's or
+      # another tab's as this tab's own is how a load wait ends too early.
+      def poll_any(methods : Array(String), context : String? = nil) : Tuple(String, JSON::Any)?
         @mutex.synchronize do
-          if index = @events.index { |event| methods.includes?(event.as_h["method"]?.try(&.as_s?) || "") }
+          if index = @events.index do |event|
+               object = event.as_h
+               methods.includes?(object["method"]?.try(&.as_s?) || "") &&
+                 (context.nil? ||
+                   object["params"]?.try(&.as_h?).try(&.["context"]?.try(&.as_s?)) == context)
+             end
             event = @events.delete_at(index).as_h
             return {event["method"].as_s, event["params"]? || JSON::Any.new(nil)}
           end

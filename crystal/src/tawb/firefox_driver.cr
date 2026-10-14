@@ -769,10 +769,13 @@ module Tawb
       # them: every navigation event carries the address, a start marks the
       # document as loading, a completion unmarks it, and a fragment move is
       # an address change with no new document. Answers whether the document
-      # finished loading, since that is the thing a caller waits for.
+      # finished loading, since that is the thing a caller waits for. Only
+      # this page's own context is drained: navigation events are delivered
+      # for every frame and every tab, and a child frame reaching load says
+      # nothing about whether this document has arrived.
       def drain_navigation : Bool
         saw_load = false
-        while found = @protocol.poll_any(NAVIGATION_EVENTS)
+        while found = @protocol.poll_any(NAVIGATION_EVENTS, @context_id)
           method, params = found
           case method
           when "browsingContext.navigationStarted"
