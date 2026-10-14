@@ -4101,6 +4101,49 @@ function unicodeImplementations(javascript) {
   return implementations;
 }
 
+// The WebSocket the protocol clients ride on, differenced between the
+// platform's own client and the hand-written Crystal one. Both connect to the
+// same server, send the same text, and report what came back; the server owns
+// the framing, so the test can make one of them read a length the other never
+// produces. An error is one kind of answer, since the two clients do not spell
+// theirs the same way.
+function transportImplementations() {
+  const implementations = [{
+    name: 'JavaScript',
+    roundTrip({ url, text, timeoutMs = 5000 }) {
+      return new Promise((resolve) => {
+        let socket = null;
+        let settled = false;
+        const finish = (outcome) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          try { if (socket) socket.close(); } catch { /* already gone */ }
+          resolve(outcome);
+        };
+        const timer = setTimeout(() => finish({ ok: false, reason: 'timeout' }), timeoutMs);
+        socket = new WebSocket(url);
+        socket.addEventListener('open', () => {
+          try { socket.send(text); } catch { finish({ ok: false, reason: 'send failed' }); }
+        });
+        socket.addEventListener('message', (event) => finish({ ok: true, value: String(event.data) }));
+        socket.addEventListener('error', () => finish({ ok: false, reason: 'error' }));
+        socket.addEventListener('close', () => finish({ ok: false, reason: 'closed' }));
+      });
+    },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    roundTrip({ url, text, timeoutMs = 5000 }) {
+      return callAsync('transport.websocket_round_trip', { url, text }, { timeoutMs })
+        .then((value) => ({ ok: true, value }))
+        .catch(() => ({ ok: false, reason: 'error' }));
+    },
+  });
+  return implementations;
+}
+
 module.exports = {
   call, callAsync, addressImplementations, cdpImplementations, ariaImplementations, bidiImplementations,
   blockImplementations, coreImplementations, coreTabImplementations,
@@ -4116,5 +4159,5 @@ module.exports = {
   lynxNumberImplementations, lynxOptionsImplementations, lynxPagesImplementations, lynxStateImplementations, marionetteImplementations, optionImplementations,
   placeElementImplementations, placeImplementations, readerCommands, readerImplementations,
   registryImplementations, screenImplementations, sessionImplementations,
-  settingsImplementations, unicodeImplementations,
+  settingsImplementations, unicodeImplementations, transportImplementations,
 };
