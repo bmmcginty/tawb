@@ -103,6 +103,25 @@ module Tawb
         @live["snapshotCostMs"] = JSON::Any.new(ms)
       end
 
+      # A key handler writes live state through the binding, but the live
+      # ticker reads the core's own state, not this mirror. Reach the core
+      # here so a write is what the next tick sees: a "refreshing" left set
+      # on the core used to stop every later rebuild, and a "navigated" the
+      # handler meant to clear stayed set and reset the cursor on the next
+      # tick. The mirror is kept in step for the handlers that read it back.
+      def set_live(key : String, value : JSON::Any) : Nil
+        state = @core.live
+        case key
+        when "enabled"    then state.enabled = value.as_bool
+        when "dirty"      then state.dirty = value.as_bool
+        when "refreshing" then state.refreshing = value.as_bool
+        when "navigated"  then state.navigated = value.as_bool
+        when "href"       then state.href = value.as_s?
+        when "print"      then state.print = value.as_s?
+        end
+        @live[key] = value
+      end
+
       def anchor : JSON::Any; anchor_json(@core.anchor); end
       def restore(saved : JSON::Any) : Int32; @core.restore(parse_anchor(saved)); end
       def reanchor(saved : JSON::Any) : JSON::Any

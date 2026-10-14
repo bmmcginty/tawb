@@ -18,6 +18,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const http = require('node:http');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { tempDir, removeTempDir } = require('../tmpdir');
@@ -253,6 +254,104 @@ for (const engine of ['firefox', 'chromium']) {
           + 'screen reader follows');
       } finally {
         for (const profile of profiles) killProfile(profile);
+        removeTempDir(root);
+      }
+    });
+}
+
+// A site that moves between two views with the History API, the way a modern
+// reader's pages do, and blanks its view before re-rendering on a back move.
+// The blank is the point: it is what the reader sees if it reads the document
+// the instant the history command is answered instead of when the site has
+// finished putting the destination back.
+const SPA = `<!doctype html><html><head><meta charset="utf-8"><title>Site</title></head>
+<body><div id="app"></div>
+<script>
+  function render(path) {
+    const app = document.getElementById('app');
+    app.innerHTML = path === '/videos'
+      ? '<h1>Videos page heading</h1><p>Listing.</p><a id="watch" href="/watch">Go to the video</a>'
+      : '<h1>Watch page heading</h1><p>Playing.</p><a id="videos" href="/videos">All videos</a>';
+    app.querySelector('a').addEventListener('click', (event) => {
+      event.preventDefault();
+      const href = event.currentTarget.getAttribute('href');
+      history.pushState({}, '', href);
+      render(href);
+    });
+  }
+  render(location.pathname);
+  addEventListener('popstate', () => {
+    document.getElementById('app').innerHTML = '';
+    setTimeout(() => render(location.pathname), 700);
+  });
+</script></body></html>`;
+
+// A screen has arrived when one of its rows says so. Waiting for quiet is the
+// wrong wait here: the blank a site leaves mid-render is perfectly quiet.
+async function waitForRow(reader, text, timeout = 15000) {
+  for (const deadline = Date.now() + timeout; Date.now() < deadline;) {
+    if (reader.rows().some((row) => row.includes(text))) return true;
+    await sleep(200);
+  }
+  return reader.rows().some((row) => row.includes(text));
+}
+
+// A back move is not finished when the browser says history changed: a site
+// that renders its own views puts the destination back asynchronously, and
+// reading at the commit shows the site's own blank. What has to notice the
+// view arrive is the live ticker, so a back move that leaves the ticker
+// unable to rebuild keeps the reader on a blank page forever.
+for (const engine of ['firefox', 'chromium']) {
+  test(`both readers re-read what the site rendered after history back through ${engine}`,
+    { skip }, async () => {
+      const root = tempDir(`tawb-history-${engine}-`);
+      const server = http.createServer((req, res) => {
+        res.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+        });
+        res.end(SPA);
+      });
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = `http://127.0.0.1:${server.address().port}/videos`;
+      const profiles = [];
+      try {
+        const answers = [];
+        for (const runtime of RUNTIMES) {
+          const name = `${runtime.name}-${engine}-history`;
+          const profile = path.join(root, name, 'profile');
+          const reader = new ReaderTty({
+            session: `tawb-history-${name.toLowerCase()}-${process.pid}`,
+            command: runtime.command,
+            args: [...runtime.args, '--browser', engine, '--profile', profile,
+              '--no-alt-screen', address],
+            env: environment(root, name),
+          });
+          try {
+            await reader.start({ ready: 'Videos page heading' });
+            await reader.press('Down');
+            await reader.press('Down');
+            await reader.press('Enter');
+            assert.ok(await waitForRow(reader, 'Watch page heading'),
+              `${runtime.name} followed the site's own video link`);
+            await reader.press('M--');
+            answers.push({
+              runtime: runtime.name,
+              returned: await waitForRow(reader, 'Videos page heading'),
+            });
+            await reader.quit();
+          } finally {
+            reader.stop();
+          }
+          profiles.push(profile);
+          await waitForProfileToDrain(profile);
+        }
+        for (const answer of answers) {
+          assert.ok(answer.returned,
+            `${answer.runtime} stayed on the blank page the site left before re-rendering`);
+        }
+      } finally {
+        for (const profile of profiles) killProfile(profile);
+        await new Promise((resolve) => server.close(resolve));
         removeTempDir(root);
       }
     });

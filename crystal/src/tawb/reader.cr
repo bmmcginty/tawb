@@ -285,6 +285,19 @@ module Tawb
       abstract def live : JSON::Any?
       abstract def set_live_snapshot_cost(ms : Int64) : Nil
 
+      # A key handler's write to live state: refreshing while a rebuild
+      # runs, the address and navigation baseline after a history move,
+      # whether updates are wanted at all. A scripted core keeps them in the
+      # JSON it already holds; the interactive binding turns them into the
+      # core's own state, which is what the live ticker actually reads. The
+      # default is the scripted behaviour so a core without a ticker has
+      # nowhere else to put them.
+      def set_live(key : String, value : JSON::Any) : Nil
+        hash = live.try(&.as_h?)
+        return unless hash
+        hash[key] = value
+      end
+
       # -- activation ---------------------------------------------------
 
       # The fragment an item's href points at, when it is one.

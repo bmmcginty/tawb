@@ -3221,10 +3221,7 @@ module Tawb
     end
 
     private def self.set_live_value(state : Reader::State, key : String, value : JSON::Any) : Nil
-      live = state.core.live
-      hash = live.try(&.as_h?)
-      return unless hash
-      hash[key] = value
+      state.core.set_live(key, value)
     end
 
     # ------------------------------------------------------------------
