@@ -286,6 +286,22 @@ const SPA = `<!doctype html><html><head><meta charset="utf-8"><title>Site</title
   });
 </script></body></html>`;
 
+// A page that rewrites its own text after it has loaded: the paragraph a
+// reader is looking at, and a live region beside it. Nothing the reader asks
+// for changes; only the page does. What turns the change into a screen is the
+// live ticker rebuilding through the real binding, which is the seam a
+// scripted core stands in for and cannot verify.
+const LIVE = `<!doctype html><html><head><meta charset="utf-8"><title>Live</title></head>
+<body><h1>Live heading</h1>
+<p id="body">before the update</p>
+<div role="status">One result</div>
+<script>
+  setTimeout(() => {
+    document.getElementById('body').firstChild.data = 'after the update';
+    document.querySelector('[role="status"]').firstChild.data = 'Two results';
+  }, 2500);
+</script></body></html>`;
+
 // A screen has arrived when one of its rows says so. Waiting for quiet is the
 // wrong wait here: the blank a site leaves mid-render is perfectly quiet.
 async function waitForRow(reader, text, timeout = 15000) {
@@ -294,6 +310,17 @@ async function waitForRow(reader, text, timeout = 15000) {
     await sleep(200);
   }
   return reader.rows().some((row) => row.includes(text));
+}
+
+// The status row is not part of the compared screen, but a live region's
+// announcement lands there, so a live update is two claims: the text arrived,
+// and the reader said so.
+async function waitForStatus(reader, text, timeout = 15000) {
+  for (const deadline = Date.now() + timeout; Date.now() < deadline;) {
+    if (reader.status().includes(text)) return true;
+    await sleep(200);
+  }
+  return reader.status().includes(text);
 }
 
 // A back move is not finished when the browser says history changed: a site
@@ -348,6 +375,65 @@ for (const engine of ['firefox', 'chromium']) {
         for (const answer of answers) {
           assert.ok(answer.returned,
             `${answer.runtime} stayed on the blank page the site left before re-rendering`);
+        }
+      } finally {
+        for (const profile of profiles) killProfile(profile);
+        await new Promise((resolve) => server.close(resolve));
+        removeTempDir(root);
+      }
+    });
+}
+
+// A change that arrives while the reader is looking is not a navigation and
+// not an answer to a key. It moves only if the live ticker notices it and
+// rebuilds through the binding the reader really uses, so both the rewritten
+// text and the live region's words have to reach the screen.
+for (const engine of ['firefox', 'chromium']) {
+  test(`both readers show a page's own update through ${engine}`,
+    { skip }, async () => {
+      const root = tempDir(`tawb-live-${engine}-`);
+      const server = http.createServer((req, res) => {
+        res.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+        });
+        res.end(LIVE);
+      });
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = `http://127.0.0.1:${server.address().port}/`;
+      const profiles = [];
+      try {
+        const answers = [];
+        for (const runtime of RUNTIMES) {
+          const name = `${runtime.name}-${engine}-live`;
+          const profile = path.join(root, name, 'profile');
+          const reader = new ReaderTty({
+            session: `tawb-live-${name.toLowerCase()}-${process.pid}`,
+            command: runtime.command,
+            args: [...runtime.args, '--browser', engine, '--profile', profile,
+              '--no-alt-screen', address],
+            env: environment(root, name),
+          });
+          try {
+            await reader.start({ ready: 'Live heading' });
+            assert.ok(await waitForRow(reader, 'before the update'),
+              `${runtime.name} never drew the page before it changed`);
+            answers.push({
+              runtime: runtime.name,
+              text: await waitForRow(reader, 'after the update'),
+              announced: await waitForStatus(reader, 'Two results'),
+            });
+            await reader.quit();
+          } finally {
+            reader.stop();
+          }
+          profiles.push(profile);
+          await waitForProfileToDrain(profile);
+        }
+        for (const answer of answers) {
+          assert.ok(answer.text,
+            `${answer.runtime} did not show the text the page rewrote`);
+          assert.ok(answer.announced,
+            `${answer.runtime} did not announce the live region's new words`);
         }
       } finally {
         for (const profile of profiles) killProfile(profile);
