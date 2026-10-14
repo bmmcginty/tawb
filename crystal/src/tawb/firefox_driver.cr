@@ -40,9 +40,15 @@ module Tawb
         result
       end
 
-      def start_verified(library_port : Int32) : NamedTuple(session: JSON::Any, cleared: JSON::Any, webdriver: Bool)
+      def start_verified(library_port : Int32?) : NamedTuple(session: JSON::Any, cleared: JSON::Any, webdriver: Bool)
         started = start
-        cleared = FirefoxAgent.ask(library_port, JSON.parse(%({"kind":"clearAutomation"})))
+        # A browser launched by us has a parent-process agent and is cleared
+        # again now that the BiDi session exists. A directly connected browser
+        # may not expose that agent, but it must still pass the same page-side
+        # verification before anything is driven.
+        cleared = library_port ?
+          FirefoxAgent.ask(library_port, JSON.parse(%({"kind":"clearAutomation"}))) :
+          JSON::Any.new(nil)
         webdriver = verify_webdriver
         if webdriver
           raise IO::Error.new(

@@ -172,7 +172,7 @@ module Tawb
           # Firefox announces navigation on the session; Chromium announces
           # it on the tab, so there is nothing session-wide to subscribe to.
           if browser.is_a?(FirefoxDriver::BrowserSession)
-            browser.start
+            browser.start_verified(opened.library_port)
             browser.subscribe(FirefoxDriver::NAVIGATION_EVENTS)
           end
         ensure
