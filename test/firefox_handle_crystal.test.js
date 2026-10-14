@@ -406,10 +406,49 @@ for (const implementation of firefoxHandleImplementations({
   });
 }
 
-if (firefoxHandleImplementations({
+const nativeImplementation = firefoxHandleImplementations({
   bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard,
   clickThrough, prepareRealClick, submitsAutofilled,
-}).length > 1) {
+}).find((implementation) => implementation.name === 'Crystal');
+
+test('Crystal: item activation waits for the navigation it starts',
+  { skip: !nativeImplementation }, async () => {
+    const destination = 'https://video.example/watch/8';
+    const observations = await withEndpoint((message, peer) => {
+      if (message.method === 'script.callFunction'
+          && message.params.resultOwnership === 'root') {
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result: {
+          type: 'success', result: { type: 'node', handle: 'link-8', sharedId: 'shared-8' },
+        } }));
+        return;
+      }
+      if (message.method === 'script.callFunction'
+          && message.params.functionDeclaration.includes('node.click()')) {
+        peer.send(JSON.stringify({
+          method: 'browsingContext.navigationStarted',
+          params: { context: 'ctx-top', url: destination },
+        }));
+        peer.send(JSON.stringify({
+          method: 'browsingContext.domContentLoaded',
+          params: { context: 'ctx-top', url: destination },
+        }));
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result: {
+          type: 'success', result: { type: 'boolean', value: true },
+        } }));
+        return;
+      }
+      peer.send(JSON.stringify({ id: message.id, type: 'success', result: {} }));
+    }, (url) => nativeImplementation.handleScenario(url, [
+      { op: 'frame', context: 'ctx-top', url: 'https://search.example/results' },
+      { op: 'activate_item', item: { role: 'link', name: 'Result 8', axIndex: 8 } },
+      { op: 'page_url' },
+    ]));
+
+    assert.equal(observations[2], destination,
+      'the reader examined the old document before navigation events were drained');
+  });
+
+if (nativeImplementation) {
   test('both runtimes put the same bytes on the wire', async () => {
     assert.deepEqual(runs.Crystal.received, runs.JavaScript.received);
     assert.deepEqual(runs.Crystal.observations, runs.JavaScript.observations);

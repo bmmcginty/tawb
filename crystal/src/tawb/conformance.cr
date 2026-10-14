@@ -4036,9 +4036,12 @@ module Tawb
             current = frame
             keyboard = FirefoxDriver::Keyboard.new(session, step["context"].as_s)
             acting = FirefoxDriver::Page.new(session, step["context"].as_s)
+            acting.set_url(step["url"].as_s)
             observations.push JSON::Any.new(nil)
           when "url"
             observations.push JSON::Any.new(current.not_nil!.url)
+          when "page_url"
+            observations.push JSON::Any.new(acting.not_nil!.url)
           when "evaluate"
             expression = step["expression"]?.try(&.as_s?)
             value = if expression

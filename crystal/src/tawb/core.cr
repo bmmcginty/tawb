@@ -1022,7 +1022,14 @@ module Tawb
         })
       end
       held = object["pressFrame"]? ? nil : handle_for(item, acting)
-      Actions.activate_item(acting, item, held)
+      result = Actions.activate_item(acting, item, held)
+      # Default activation can begin a navigation after the page-side click
+      # has returned. Wait through its short navigation-start grace period so
+      # the page object drains the resulting events and carries the new URL
+      # before the reader decides whether to rebuild this document or the old
+      # one. The JavaScript core arms this wait alongside clickThrough.
+      acting.wait_for_load_state("domcontentloaded") rescue nil
+      result
     end
 
     def focus_control(item : JSON::Any, page : Engine::Page? = @page) : Bool

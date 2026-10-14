@@ -3248,11 +3248,15 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, Firefox
             frame._url = step.url;
             current = frame;
             acting = new FirefoxPage(session, step.context, {});
+            acting.setUrl(step.url);
             keyboard = new FirefoxKeyboard(session, { contextId: step.context });
             observations.push(null);
             break;
           case 'url':
             observations.push(current.url());
+            break;
+          case 'page_url':
+            observations.push(acting.url());
             break;
           case 'evaluate': {
             // A source shaped like an expression goes in as the string (the
