@@ -51,6 +51,7 @@ test('native logging is opt-in, private, structured, and counted', { skip }, () 
         { op: 'write', event: 'start', fields: { engine: 'firefox' } },
         { op: 'count', name: 'fastKeys', amount: 2 },
         { op: 'flush_counters', fields: { refreshes: 1 } },
+        { op: 'count', name: 'pendingAtClose', amount: 3 },
       ],
     });
     assert.equal(result.path,
@@ -64,6 +65,9 @@ test('native logging is opt-in, private, structured, and counted', { skip }, () 
     assert.deepEqual({ event: records[1].event, fastKeys: records[1].fastKeys,
       refreshes: records[1].refreshes },
     { event: 'counters', fastKeys: 2, refreshes: 1 });
+    assert.deepEqual({ event: records[2].event,
+      pendingAtClose: records[2].pendingAtClose },
+    { event: 'counters', pendingAtClose: 3 });
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

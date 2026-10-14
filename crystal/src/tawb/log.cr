@@ -77,16 +77,19 @@ module Tawb
     end
 
     def flush : Nil
+      flush_counters
       @file.try(&.flush)
     rescue
     end
 
     def close : Nil
+      flush_counters
       close_file
     end
 
     def disable : String?
       disabled = @path
+      flush_counters
       close_file
       @path = nil
       @enabled_at = nil
