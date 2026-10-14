@@ -436,6 +436,16 @@ module Tawb
           "pid"      => JSON::Any.new(found[:pid]),
           "upstream" => JSON::Any.new(object["upstream"].as_s),
         })
+      when "revision.resolve"
+        object = payload.as_h
+        environment = {} of String => String
+        object["env"]?.try(&.as_h?).try do |given|
+          given.each { |key, value| environment[key] = value.as_s }
+        end
+        JSON::Any.new(Revision.resolve(environment,
+          object["built"]?.try(&.as_s?) || "",
+          object["git"]?.try(&.as_s?) || "",
+          object["package"]?.try(&.as_s?) || "{}"))
       when "blocks.build"
         JSON::Any.new(Blocks.build(payload.as_h["items"].as_a))
       when "blocks.fold"

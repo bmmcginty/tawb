@@ -1,12 +1,11 @@
 require "json"
+require "./revision"
 
 module Tawb
   # Opt-in NDJSON diagnostics. The logger opens lazily, creates a private
   # directory and file, and treats every filesystem failure as a disabled log:
   # diagnostics must never take the browser or terminal down.
   class Log
-    REVISION = {{ `git rev-parse HEAD 2>/dev/null || printf unknown`.strip.stringify }}
-
     getter path : String?
 
     def self.timestamp(now : Time) : String
@@ -101,7 +100,7 @@ module Tawb
       Dir.mkdir_p(File.dirname(path), 0o700)
       file = File.open(path, "w", perm: 0o600)
       enabled = @enabled_at || Time.local
-      file << "# tawb log #{enabled.to_rfc3339} pid #{Process.pid} commit #{REVISION}\n"
+      file << "# tawb log #{enabled.to_rfc3339} pid #{Process.pid} commit #{Revision.current}\n"
       file.flush
       @file = file
     rescue
