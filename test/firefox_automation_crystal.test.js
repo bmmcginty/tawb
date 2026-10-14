@@ -37,7 +37,18 @@ async function parentAgent(requests) {
   return server;
 }
 
-async function bidiEndpoint(commands) {
+async function strandedSessionRelease() {
+  let knocks = 0;
+  const server = net.createServer((socket) => {
+    knocks += 1;
+    socket.end('ready');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { server, port: server.address().port, knocks: () => knocks };
+}
+
+async function bidiEndpoint(commands, { refuseFirstSession = false } = {}) {
+  let refused = false;
   const sockets = new Set();
   const server = http.createServer();
   server.on('connection', (socket) => {
@@ -50,6 +61,16 @@ async function bidiEndpoint(commands) {
       const message = JSON.parse(text);
       commands.push(message);
       let result = {};
+      if (message.method === 'session.new' && refuseFirstSession && !refused) {
+        refused = true;
+        peer.send(JSON.stringify({
+          id: message.id,
+          type: 'error',
+          error: 'session not created',
+          message: 'Maximum number of active sessions',
+        }));
+        return;
+      }
       if (message.method === 'session.new') {
         result = { sessionId: 'verified-session', capabilities: { browserName: 'firefox' } };
       } else if (message.method === 'browsingContext.create') {
@@ -78,9 +99,11 @@ async function bidiEndpoint(commands) {
   };
 }
 
-for (const implementation of firefoxAutomationImplementations({
+const implementations = firefoxAutomationImplementations({
   bidi, FirefoxPage, askFirefoxLibrary, verifyWebdriverFlag,
-})) {
+});
+
+for (const implementation of implementations) {
   test(`${implementation.name}: Firefox session clears and verifies webdriver before use`, async () => {
     const requests = [];
     const commands = [];
@@ -122,3 +145,30 @@ for (const implementation of firefoxAutomationImplementations({
     assert.deepEqual(commands[3].params, { context: 'probe-context' });
   });
 }
+
+const crystal = implementations.find((implementation) => implementation.name === 'Crystal');
+test('Crystal: a replacement broker releases the session its predecessor stranded',
+  { skip: !crystal }, async () => {
+    const requests = [];
+    const commands = [];
+    const agent = await parentAgent(requests);
+    const marionette = await strandedSessionRelease();
+    const endpoint = await bidiEndpoint(commands, { refuseFirstSession: true });
+    try {
+      const result = await crystal.verifiedSession(endpoint.url, agent.address().port, {
+        marionettePort: marionette.port,
+      });
+      assert.equal(result.session.sessionId, 'verified-session');
+      assert.equal(marionette.knocks(), 1,
+        'the orphaned WebDriver session was not released through Marionette');
+      assert.equal(commands.filter(({ method }) => method === 'session.new').length, 2,
+        'session.new was not retried after releasing the orphan');
+    } finally {
+      for (const socket of endpoint.sockets) socket.destroy();
+      await Promise.all([
+        new Promise((resolve) => endpoint.server.close(resolve)),
+        new Promise((resolve) => agent.close(resolve)),
+        new Promise((resolve) => marionette.server.close(resolve)),
+      ]);
+    }
+  });

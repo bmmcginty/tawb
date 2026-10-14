@@ -138,6 +138,7 @@ module Tawb
       browser : Engine::Session,
       endpoint : String,
       library_port : Int32?,
+      marionette_port : Int32?,
       launched : FirefoxLaunch::Started?,
       chromium : Browser::Session?,
       # The accessibility bus this browser describes its own windows to, and
@@ -172,7 +173,7 @@ module Tawb
           # Firefox announces navigation on the session; Chromium announces
           # it on the tab, so there is nothing session-wide to subscribe to.
           if browser.is_a?(FirefoxDriver::BrowserSession)
-            browser.start_verified(opened.library_port)
+            browser.start_verified(opened.library_port, opened.marionette_port)
             browser.subscribe(FirefoxDriver::NAVIGATION_EVENTS)
           end
         ensure
@@ -516,12 +517,16 @@ module Tawb
         launched.try(&.close) unless options["keepBrowser"].as_bool
         raise error
       end
+      record = Endpoint.read_record(profile)
       library_port = launched.try(&.library_port) ||
-                     Endpoint.read_record(profile).try(&.["libraryPort"]?.try(&.as_i?).try(&.to_i32))
+                     record.try(&.["libraryPort"]?.try(&.as_i?).try(&.to_i32))
+      marionette_port = launched.try(&.marionette_port) ||
+                        record.try(&.["marionettePort"]?.try(&.as_i?).try(&.to_i32))
       OpenedBrowser.new(
         browser: FirefoxDriver::BrowserSession.new(broker_url),
         endpoint: endpoint,
         library_port: library_port,
+        marionette_port: marionette_port,
         launched: launched,
         chromium: nil,
         a11y: launched.try(&.a11y) || A11yBus.open(logger),
@@ -547,6 +552,7 @@ module Tawb
         browser: Cdp::BrowserSession.new(session.endpoint),
         endpoint: session.endpoint,
         library_port: nil,
+        marionette_port: nil,
         launched: nil,
         chromium: session,
         a11y: session.a11y,

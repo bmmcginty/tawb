@@ -3077,8 +3077,10 @@ function firefoxAutomationImplementations({
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
   implementations.push({
     name: 'Crystal',
-    verifiedSession(url, libraryPort) {
-      return callAsync('firefox.verified_session', { url, library_port: libraryPort });
+    verifiedSession(url, libraryPort, { marionettePort = null } = {}) {
+      return callAsync('firefox.verified_session', {
+        url, library_port: libraryPort, marionette_port: marionettePort,
+      });
     },
   });
   return implementations;

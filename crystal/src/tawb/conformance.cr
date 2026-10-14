@@ -3968,7 +3968,10 @@ module Tawb
       object = payload.as_h
       browser = FirefoxDriver::BrowserSession.new(object["url"].as_s)
       begin
-        result = browser.start_verified(object["library_port"].as_i.to_i32)
+        result = browser.start_verified(
+          object["library_port"].as_i.to_i32,
+          object["marionette_port"]?.try(&.as_i?).try(&.to_i32)
+        )
         JSON::Any.new({
           "session"   => result[:session],
           "cleared"   => result[:cleared],

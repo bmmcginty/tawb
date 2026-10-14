@@ -1,6 +1,7 @@
 require "json"
 require "./bidi"
 require "./firefox_agent"
+require "./marionette"
 
 module Tawb
   module FirefoxDriver
@@ -30,18 +31,32 @@ module Tawb
         @pages = {} of String => Page
       end
 
-      def start : JSON::Any
-        result = @protocol.command("session.new", {
+      def start(stranded_session_port : Int32? = nil) : JSON::Any
+        params = {
           "capabilities" => JSON::Any.new({
             "alwaysMatch" => JSON::Any.new({} of String => JSON::Any),
           }),
-        })
+        }
+        result = begin
+          @protocol.command("session.new", params)
+        rescue error
+          stranded = stranded_session_port &&
+                     /Maximum number of active sessions/i.matches?(error.message || "")
+          raise error unless stranded
+          # A broker with a cached session answers session.new itself. Reaching
+          # Firefox and receiving this refusal therefore means this broker is
+          # new and the session belongs to the broker that disappeared before
+          # ending it. Closing one Marionette connection releases that orphan,
+          # after which this broker can create the replacement it will hold.
+          raise error unless Marionette.release_stranded_session(stranded_session_port.not_nil!)
+          @protocol.command("session.new", params)
+        end
         @started = true
         result
       end
 
-      def start_verified(library_port : Int32?) : NamedTuple(session: JSON::Any, cleared: JSON::Any, webdriver: Bool)
-        started = start
+      def start_verified(library_port : Int32?, stranded_session_port : Int32? = nil) : NamedTuple(session: JSON::Any, cleared: JSON::Any, webdriver: Bool)
+        started = start(stranded_session_port)
         # A browser launched by us has a parent-process agent and is cleared
         # again now that the BiDi session exists. A directly connected browser
         # may not expose that agent, but it must still pass the same page-side

@@ -405,9 +405,12 @@ module Tawb
                      launched.not_nil!.endpoint
                    end
         session = FirefoxDriver::BrowserSession.new(Broker.ensure(profile, endpoint)[:url])
+        record = Endpoint.read_record(profile)
         library_port = launched.try(&.library_port) ||
-                       Endpoint.read_record(profile).try(&.["libraryPort"]?.try(&.as_i?).try(&.to_i32))
-        session.start_verified(library_port)
+                       record.try(&.["libraryPort"]?.try(&.as_i?).try(&.to_i32))
+        marionette_port = launched.try(&.marionette_port) ||
+                          record.try(&.["marionettePort"]?.try(&.as_i?).try(&.to_i32))
+        session.start_verified(library_port, marionette_port)
         session.subscribe(FirefoxDriver::NAVIGATION_EVENTS)
         Opened.new(EngineBrowser.new(session, log: logger), launched, nil,
           launched.try(&.a11y) || A11yBus.open(logger))
