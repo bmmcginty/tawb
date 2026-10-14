@@ -276,6 +276,7 @@ module Tawb
         Reader.refresh(state, tabs.current_page, true)
         Reader.render(terminal, state, tabs.current_page.url, true)
         core.attach_live rescue nil
+        live_ticker = Interactive::LiveTicker.new(terminal, state, tabs, core, logger)
 
         # Dialogs the browser draws for itself: an extension asking for
         # consent, a file to be chosen, permission for something. Neither
@@ -308,7 +309,17 @@ module Tawb
         end
 
         loop do
-          key = reader.not_nil!.next
+          tick = Channel(Nil).new(1)
+          spawn do
+            sleep Live::TICK_MS.milliseconds
+            tick.send(nil)
+          end
+          next_event = reader.not_nil!.next_or(tick)
+          if next_event.is_a?(Input::OperationResult(Nil))
+            live_ticker.tick
+            next
+          end
+          key = next_event.as(Input::KeyResult).key
           break if key.is_a?(Input::Eof)
           chunk = key.as(String)
           break if chunk == ReaderKeys::ALWAYS_QUIT

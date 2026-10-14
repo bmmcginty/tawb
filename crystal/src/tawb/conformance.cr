@@ -1115,6 +1115,7 @@ module Tawb
       begin
         core.rescan
         core.at(1)
+        idle = core.live_cycle(nil, page).as_h
         first = JSON::Any.new({
           "pureText"      => JSON::Any.new(true),
           "mutations"     => JSON::Any.new(2),
@@ -1151,6 +1152,7 @@ module Tawb
           "undone"     => JSON::Any.new(refused["patched"].raw.nil?),
           "kept"       => kept,
           "refreshes"  => JSON::Any.new(core.live.refreshes.to_i64),
+          "idleDirty"  => idle["dirty"],
         } of String => JSON::Any)
       ensure
         session.close

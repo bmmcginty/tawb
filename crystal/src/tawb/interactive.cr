@@ -255,6 +255,7 @@ module Tawb
         found = @core.where(unwrap(page)); {position: found.position, of: found.of}
       end
       def tab_label(page : Reader::PageEnv) : String; @core.tab_label(unwrap(page)); end
+      def page_env(page : Engine::Page) : Reader::PageEnv; wrap(page); end
 
       private def wrap(page : Engine::Page) : Page
         @pages[page.tab_id]? || begin
@@ -262,6 +263,154 @@ module Tawb
         end
       end
       private def unwrap(page : Reader::PageEnv) : Engine::Page; page.as(Page).raw; end
+    end
+
+    # One front-end tick: reconcile tabs and navigation, drain observer
+    # batches, pulse the safety-net fingerprint, and repaint only rows whose
+    # rendered text changed. Browser work remains serialized with key handling
+    # because the CLI calls this from the same loop between keystrokes.
+    class LiveTicker
+      NEW_TAB_SETTLE_MS = 1200_i64
+
+      def initialize(@output : Screen::Output, @state : Reader::State,
+                     @tabs : Tabs, @core : Core, @logger : Log)
+        @known_tabs = Set(String).new
+        @core.tabs.each { |page| @known_tabs << page.tab_id }
+        @new_tabs = {} of String => Tuple(Engine::Page, Int64)
+      end
+
+      def tick(now : Int64 = Time.utc.to_unix_ms) : Nil
+        return if recover_closed_tab
+        discover_tabs(now)
+        return if follow_settled_tab(now)
+
+        page = @core.page || return
+        wrapper = @tabs.current_page
+        case @core.external_navigation(page.url)
+        when :navigated
+          Reader.refresh(@state, wrapper, true)
+          Reader.render(@output, @state, wrapper.url, true)
+          Reader.set_status(@output, @state, wrapper.url,
+            "Page changed: #{wrapper.url}")
+          @core.attach_live(page) rescue nil
+        end
+
+        events = @core.collect_live(page)
+        pulse = @core.pulse_live(page, now)
+        if pulse && (pulse.changed || pulse.navigated || pulse.rearmed || pulse.ms > 50)
+          @logger.write("live.pulse", {
+            "changed" => JSON::Any.new(pulse.changed),
+            "navigated" => JSON::Any.new(pulse.navigated),
+            "rearmed" => JSON::Any.new(pulse.rearmed),
+            "ms" => JSON::Any.new(pulse.ms),
+          })
+        end
+        events.each { |event| apply(event, page, wrapper) }
+        # A previous batch may have been held by the input grace period. A
+        # payload-free cycle advances that dirty buffer once it becomes due.
+        apply(nil, page, wrapper) if events.empty? || @core.live.dirty
+        if @core.live.pulse_errors > 0
+          @logger.count("pulseErrors", @core.live.pulse_errors.to_i64)
+          @core.live.pulse_errors = 0
+        end
+      rescue error
+        @logger.write("live.tick.error", {
+          "error" => JSON::Any.new((error.message || error.to_s)[0, Math.min((error.message || error.to_s).size, 160)]),
+        })
+      end
+
+      private def recover_closed_tab : Bool
+        page = @core.page || return false
+        return false unless page.closed?
+        remaining = @core.tabs.reject { |other| other.same?(page) }
+        if remaining.empty?
+          Reader.set_status(@output, @state, @tabs.current_page.url,
+            "The last tab closed.")
+          return true
+        end
+        @logger.write("tab.closed", {"remaining" => JSON::Any.new(remaining.size.to_i64)})
+        switch_to(remaining.last, "That tab closed")
+        true
+      end
+
+      private def discover_tabs(now : Int64) : Nil
+        live_ids = Set(String).new
+        @core.tabs.each do |page|
+          id = page.tab_id
+          live_ids << id
+          unless @known_tabs.includes?(id)
+            @known_tabs << id
+            @new_tabs[id] = {page, now}
+          end
+        end
+        @known_tabs.select! { |id| live_ids.includes?(id) }
+        @new_tabs.reject! { |id, pair| !live_ids.includes?(id) || pair[0].closed? }
+      end
+
+      private def follow_settled_tab(now : Int64) : Bool
+        ready = @new_tabs.find { |_id, pair| now - pair[1] >= NEW_TAB_SETTLE_MS }
+        return false unless ready
+        id, pair = ready
+        @new_tabs.delete(id)
+        page = pair[0]
+        return false if page.same?(@core.page) || page.closed?
+        foreground = @core.foreground?(page)
+        @logger.write("tab.opened", {
+          "url" => JSON::Any.new(page.url[0, Math.min(page.url.size, 120)]),
+          "foreground" => JSON::Any.new(foreground),
+        })
+        if foreground
+          switch_to(page, "Followed a new tab")
+          return true
+        end
+        Reader.set_status(@output, @state, @tabs.current_page.url,
+          "A new tab opened in the background: #{@core.tab_label(page)} — press > to reach it.")
+        false
+      end
+
+      private def switch_to(page : Engine::Page, note : String) : Nil
+        ReaderKeys.switch_to_tab(@output, @state, @tabs, @tabs.page_env(page), note)
+        @core.attach_live(page) rescue nil
+      end
+
+      private def apply(payload : JSON::Any?, page : Engine::Page,
+                        wrapper : Reader::PageEnv) : Nil
+        before = Reader.screen_before(@state)
+        anchor = @state.core.anchor
+        line_count = @state.lines.size
+        was_navigation = @core.live.navigated
+        wraps = ->(_touched : Array(Int32)) do
+          Reader.relayout(@state)
+          @state.lines.size == line_count
+        end
+        result = @core.live_cycle(payload, page, wraps: wraps,
+          already_classified: !payload.nil?).as_h
+        if result["patched"]?.try(&.raw).nil?
+          # A refused patch has already been undone in the core; discard the
+          # temporary layout the wrapping check made from it.
+          Reader.relayout(@state)
+        end
+        if result["refreshed"].as_bool
+          Reader.relayout(@state)
+          if was_navigation
+            @state.cursor = 0; @state.col = 0; @state.scroll = 0
+          else
+            Reader.reanchor_quietly(@state, anchor)
+          end
+          @logger.count("refreshes")
+        end
+        Reader.repaint_list(@output, @state, wrapper.url, before)
+        (result["announcements"]?.try(&.as_a?) || [] of JSON::Any).each do |announcement|
+          text = announcement.as_h["text"]?.try(&.as_s?) || ""
+          Reader.set_status(@output, @state, wrapper.url,
+            text[0, Math.min(text.size, @state.cols)]) unless text.empty?
+        end
+        if payload
+          mutations = payload.as_h["mutations"]?.try(&.as_i64?) || 0_i64
+          @logger.count("notifies")
+          @logger.count("mutations", mutations)
+        end
+      end
     end
 
     class LibraryBinding

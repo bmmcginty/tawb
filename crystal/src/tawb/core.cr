@@ -39,14 +39,13 @@
 # costs at worst one refused patch, which is the safe direction to be wrong
 # in.
 #
-# ## What is not here yet
+# ## Front-end work
 #
-# Item activation and tabs are here, on top of the Firefox handle and action
-# layers; typing's front-end orchestration and live updates' page observer and
-# refresh loop still live in the JavaScript originals and move here as the
-# front end work proceeds. File attachment bookkeeping is here: paths remain
-# outside the page and survive snapshots only while the browser reports
-# matching names.
+# Item activation, tabs, typing, and the live-update policy are here. The
+# terminal loop owns only scheduling and drawing: it ticks the observer,
+# presents announcements, and repaints rows the core reports as changed. File
+# attachment bookkeeping is here too: paths remain outside the page and
+# survive snapshots only while the browser reports matching names.
 
 require "json"
 require "set"
@@ -1164,12 +1163,17 @@ module Tawb
     # only once a refresh has actually replaced it.
     def live_cycle(payload : JSON::Any?, page : Engine::Page? = @page,
                    wraps : Proc(Array(Int32), Bool)? = nil,
-                   keep_place : Bool? = nil) : JSON::Any
-      classified = classify(payload).as_h
+                   keep_place : Bool? = nil,
+                   already_classified : Bool = false) : JSON::Any
+      decision = payload ? (already_classified ? payload.not_nil! : classify(payload)) :
+                 JSON::Any.new({"announcements" => JSON::Any.new([] of JSON::Any),
+                                "patches" => JSON::Any.new(nil),
+                                "mutations" => JSON::Any.new(0_i64)})
+      classified = decision.as_h
       announcements = classified["announcements"].as_a
       mutations = classified["mutations"]?.try(&.as_i64?) || 0_i64
       patched : Array(Int32)? = nil
-      if (raw = classified["patches"]?) && !raw.raw.nil? && !@live.refreshing
+      if payload && (raw = classified["patches"]?) && !raw.raw.nil? && !@live.refreshing
         if applied = patch_text(raw.as_a? || [] of JSON::Any, protect: reading?)
           if wraps && !wraps.call(applied.touched)
             applied.undo.call
@@ -1180,7 +1184,7 @@ module Tawb
         end
       end
 
-      if patched.nil?
+      if payload && patched.nil?
         @live.mutations += mutations
         @live.dirty = true
       end

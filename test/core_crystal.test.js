@@ -817,6 +817,8 @@ if (implementations.length > 1) {
       assert.equal(observed.undone, true);
       assert.equal(observed.kept, -1);
       assert.equal(observed.refreshes, 2);
+      assert.equal(observed.idleDirty, false,
+        'a timer tick without a mutation must not dirty the buffer');
     } finally {
       for (const socket of sockets) socket.destroy();
       await new Promise((resolve) => server.close(resolve));
