@@ -462,6 +462,8 @@ module Tawb
         core_fragment_scenario(payload)
       when "core.navigation_scenario"
         core_navigation_scenario(payload)
+      when "core.history_scenario"
+        core_history_scenario(payload)
       when "core.live_cycle_scenario"
         core_live_cycle_scenario(payload)
       when "core.diff_blocks"
@@ -1103,6 +1105,42 @@ module Tawb
       ensure
         session.close
       end
+    end
+
+    # A history move through the reader's page interface, so both the
+    # driver's own command and the wiring above it are exercised. The steps
+    # are scripted so the endpoint can answer a history command with only a
+    # BFCache navigationStarted, or with the protocol's "no such history
+    # entry", and the test can read what the page then reports.
+    private def self.core_history_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      session = Bidi::Session.new(object["url"].as_s)
+      observations = [] of JSON::Any
+      begin
+        session.command("session.new", {
+          "capabilities" => JSON::Any.new({
+            "alwaysMatch" => JSON::Any.new({} of String => JSON::Any),
+          }),
+        })
+        session.subscribe(FirefoxDriver::NAVIGATION_EVENTS)
+        page = FirefoxDriver::Page.new(session, "main",
+          object["start"]?.try(&.as_s?) || "https://start.test/")
+        wrapped = Interactive::Page.new(page)
+        object["steps"].as_a.each do |step_value|
+          step = step_value.as_h
+          case step["op"].as_s
+          when "traverse"
+            observations.push(JSON::Any.new(wrapped.history_go(step["direction"].as_i)))
+          when "url"
+            observations.push(JSON::Any.new(page.url))
+          when "loading"
+            observations.push(JSON::Any.new(page.loading))
+          end
+        end
+      ensure
+        session.close
+      end
+      JSON::Any.new(observations)
     end
 
     private def self.core_live_cycle_scenario(payload : JSON::Any) : JSON::Any

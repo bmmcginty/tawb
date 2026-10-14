@@ -38,13 +38,21 @@ module Tawb
         "url:#{url}"
       end
       def history_go(direction : Int32) : Bool
+        raw = @raw
+        # Firefox moves through BiDi's own history command, which is
+        # answered when the move commits and does not depend on the page's
+        # load events — a BFCache restore emits neither load nor
+        # domContentLoaded. Chromium keeps the page-side move and entry
+        # poll (src/index.js traversePageHistory); src/cdp_page.js's
+        # goBack is a different command the reader does not use.
+        return raw.traverse_history(direction) if raw.is_a?(FirefoxDriver::Page)
         before = history_identity
-        @raw.evaluate("(delta) => window.history.go(delta)", JSON::Any.new(direction.to_i64))
+        raw.evaluate("(delta) => window.history.go(delta)", JSON::Any.new(direction.to_i64))
         deadline = Time.instant + 1500.milliseconds
         while Time.instant < deadline
           sleep 50.milliseconds
-          current = @raw.evaluate("() => location.href").as_s? || @raw.url
-          @raw.set_url(current)
+          current = raw.evaluate("() => location.href").as_s? || raw.url
+          raw.set_url(current)
           return true if history_identity != before
         end
         false

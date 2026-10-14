@@ -704,7 +704,6 @@ if (implementations.length > 1) {
   test('Crystal follows navigation and load state across a scripted page', async () => {
     const server = http.createServer();
     const sockets = new Set();
-    let entries = 0;
     const remote = (value) => {
       if (value === undefined) return { type: 'undefined' };
       if (value === null) return { type: 'null' };
@@ -728,16 +727,15 @@ if (implementations.length > 1) {
           result = { navigation: 'nav-1', url: 'https://next.test/deep' };
           event('browsingContext.navigationStarted', { context: 'main', url: 'https://next.test/deep' });
           event('browsingContext.load', { context: 'main', url: 'https://next.test/deep' });
+        } else if (message.method === 'browsingContext.traverseHistory') {
+          // A BFCache restore announces the move with navigationStarted and
+          // no load; a frame of the page finishes at the same time.
+          result = { navigation: 'nav-2', url: 'https://next.test/deeper' };
+          event('browsingContext.navigationStarted', { context: 'main', url: 'https://next.test/deeper' });
+          event('browsingContext.load', { context: 'child', url: 'https://frame.test/player' });
         } else if (message.method === 'script.callFunction') {
           const declaration = message.params.functionDeclaration;
-          if (declaration.includes('currentEntry')) {
-            entries += 1;
-            result = { result: remote(entries === 1 ? 'entry-1' : 'entry-2') };
-          } else if (declaration.includes('history.go')) {
-            result = { result: { type: 'undefined' } };
-          } else if (declaration.includes('readyState')) {
-            result = { result: remote('complete') };
-          } else if (declaration.includes('location.href')) {
+          if (declaration.includes('location.href')) {
             result = { result: remote('https://next.test/deeper') };
           }
         }
@@ -758,6 +756,119 @@ if (implementations.length > 1) {
         navigated: true,
         same: true,
       });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('Crystal: a history move follows the browser command, not the load events', async () => {
+    const server = http.createServer();
+    const sockets = new Set();
+    const sent = [];
+    const remote = (value) => {
+      if (value === undefined) return { type: 'undefined' };
+      if (value === null) return { type: 'null' };
+      if (typeof value === 'boolean') return { type: 'boolean', value };
+      if (typeof value === 'number') return { type: 'number', value };
+      if (typeof value === 'string') return { type: 'string', value };
+      if (Array.isArray(value)) return { type: 'array', value: value.map(remote) };
+      return { type: 'object', value: Object.entries(value).map(([key, item]) => [key, remote(item)]) };
+    };
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    server.on('upgrade', (request, socket, head) => {
+      let peer;
+      peer = acceptWebSocket(request, socket, (text) => {
+        const message = JSON.parse(text);
+        sent.push(message);
+        if (message.method === 'browsingContext.traverseHistory') {
+          // BFCache: the move is announced with navigationStarted and no
+          // load, while one of the page's frames finishes on its own.
+          peer.send(JSON.stringify({ id: message.id, type: 'success', result: {
+            navigation: 'nav-2', url: 'https://back.test/',
+          } }));
+          peer.send(JSON.stringify({
+            method: 'browsingContext.navigationStarted',
+            params: { context: 'main', url: 'https://back.test/' },
+          }));
+          peer.send(JSON.stringify({
+            method: 'browsingContext.load',
+            params: { context: 'child', url: 'https://frame.test/player' },
+          }));
+          return;
+        }
+        if (message.method === 'script.callFunction'
+            && message.params.functionDeclaration.includes('location.href')) {
+          peer.send(JSON.stringify({ id: message.id, type: 'success', result: {
+            result: remote('https://back.test/'),
+          } }));
+          return;
+        }
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result: {} }));
+      }, () => {});
+      if (head.length) peer.consume(head);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    try {
+      const observed = await crystal.historyScenario(`ws://127.0.0.1:${port}/session`, {
+        start: 'https://start.test/',
+        steps: [{ op: 'traverse', direction: -1 }, { op: 'url' }, { op: 'loading' }],
+      });
+      assert.deepEqual(observed, [true, 'https://back.test/', false]);
+      const move = sent.find((message) => message.method === 'browsingContext.traverseHistory');
+      assert.deepEqual(move.params, { context: 'main', delta: -1 },
+        'the move names the tab and the step');
+      const asked = sent.filter((message) => message.method === 'script.callFunction')
+        .map((message) => message.params.functionDeclaration);
+      assert.ok(asked.some((declaration) => declaration.includes('location.href')));
+      assert.ok(!asked.some((declaration) => declaration.includes('readyState')),
+        'readiness is the destination realm answering, not a load state');
+      assert.ok(!asked.some((declaration) => declaration.includes('history.go')),
+        'the browser moves history itself');
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('Crystal: a history step past the end is no page to go to', async () => {
+    const server = http.createServer();
+    const sockets = new Set();
+    const sent = [];
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    server.on('upgrade', (request, socket, head) => {
+      let peer;
+      peer = acceptWebSocket(request, socket, (text) => {
+        const message = JSON.parse(text);
+        sent.push(message);
+        if (message.method === 'browsingContext.traverseHistory') {
+          peer.send(JSON.stringify({
+            id: message.id, type: 'error', error: 'no such history entry',
+            message: 'No such history entry',
+          }));
+          return;
+        }
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result: {} }));
+      }, () => {});
+      if (head.length) peer.consume(head);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    try {
+      const observed = await crystal.historyScenario(`ws://127.0.0.1:${port}/session`, {
+        start: 'https://start.test/',
+        steps: [{ op: 'traverse', direction: -1 }, { op: 'url' }],
+      });
+      assert.deepEqual(observed, [false, 'https://start.test/']);
+      assert.ok(sent.some((message) => message.method === 'browsingContext.traverseHistory'),
+        'the end of history is the protocol refusing the move');
     } finally {
       for (const socket of sockets) socket.destroy();
       await new Promise((resolve) => server.close(resolve));

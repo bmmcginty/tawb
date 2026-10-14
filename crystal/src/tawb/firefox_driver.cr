@@ -814,52 +814,56 @@ module Tawb
         saw_load
       end
 
-      # Step through this tab's own history (src/index.js
-      # traversePageHistory). The address the driver cached lags the document
-      # history actually lands on, so both the navigation entry and
-      # location.href are read from the page itself, and readiness is asked
-      # of the document rather than awaited from the protocol — a document
-      # that reports itself and then stalls must not hold the reader for the
-      # full navigation timeout.
-      def traverse_history(direction : Int32, watch_ms = 1500, load_ms = 15000) : Bool
-        entry_of = "() => (globalThis.navigation?.currentEntry ? " \
-                   "globalThis.navigation.currentEntry.key : null)"
-        before_entry = begin
-          evaluate(entry_of).as_s?
-        rescue
-          nil
+      # Step through this tab's own history with the browser's own history
+      # command (src/index.js traversePageHistory, but through BiDi rather
+      # than a script in the page). browsingContext.traverseHistory names
+      # the tab and is answered once the browser has committed the move,
+      # which is the completion signal the page-side version could only
+      # poll for. A BFCache restore emits browsingContext.navigationStarted
+      # but no load or domContentLoaded, so readiness is a successful
+      # evaluation in the realm the destination installs rather than a load
+      # event. A step past an end of history is the protocol's "no such
+      # history entry", which is the caller's "no page to go to".
+      def traverse_history(direction : Int32, ready_ms = 15000) : Bool
+        begin
+          result = @protocol.command("browsingContext.traverseHistory", {
+            "context" => JSON::Any.new(@context_id),
+            "delta"   => JSON::Any.new(direction.to_i64),
+          }).as_h
+        rescue error
+          return false if error.message.try { |message| /no such history entry/i.matches?(message) }
+          raise error
         end
-        before_url = @url
-        evaluate("(delta) => window.history.go(delta)", JSON::Any.new(direction.to_i64))
-        deadline = Time.monotonic + watch_ms.milliseconds
-        while Time.monotonic < deadline
-          sleep 50.milliseconds
-          drain_navigation
-          entry = begin
-            evaluate(entry_of).as_s?
-          rescue
-            before_entry
-          end
-          next unless @url != before_url || (entry && entry != before_entry)
-          load_deadline = Time.monotonic + load_ms.milliseconds
-          while Time.monotonic < load_deadline
-            ready = begin
-              evaluate("() => document.readyState").as_s?
-            rescue
-              ""
-            end
-            break if ready == "interactive" || ready == "complete"
-            sleep 50.milliseconds
-          end
+        # The move is committed, but the browser also pushes a
+        # navigationStarted for it — including a BFCache restore, which
+        # never pushes a load. Drain this tab's own events so a stale
+        # "loading" is not left for the next action's load wait, and clear
+        # the flag regardless.
+        drain_navigation
+        @loading = false
+        result["url"]?.try(&.as_s?).try { |url| set_url(url) }
+        # The command answered, so the destination is committed; wait only
+        # until the destination realm answers a script. A restored document
+        # may stay at readyState "loading" with no load event left to
+        # reach, so a successful evaluation is the readiness that matters.
+        deadline = Time.monotonic + ready_ms.milliseconds
+        loop do
           address = begin
             evaluate("() => location.href").as_s?
           rescue
             nil
           end
-          set_url(address) if address
-          return true
+          if address
+            set_url(address)
+            return true
+          end
+          break if Time.monotonic >= deadline
+          sleep 20.milliseconds
         end
-        false
+        # The move itself succeeded; failing to read the destination here is
+        # for the caller's refresh to discover, not a reason to report that
+        # there was nowhere to go.
+        true
       end
 
       # This tab's own top document, which is a document like any other.
