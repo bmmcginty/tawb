@@ -896,6 +896,9 @@ module Tawb
       # The view the SOURCE toggle comes back to, remembered when that
       # toggle leaves a presentation view for SOURCE.
       property presentation_source : String?
+      # The address the session began at. Lynx's main-screen command returns
+      # here rather than to a hard-coded site.
+      property home_url : String
       # A load-more is already asking the page for more; a second request
       # would fight the first one's rebuild.
       property loading_more : Bool
@@ -946,6 +949,7 @@ module Tawb
         @search = nil
         @sources = ["ax"]
         @presentation_source = nil
+        @home_url = "https://www.google.com"
         @loading_more = false
       end
     end

@@ -231,6 +231,7 @@ module Tawb
         end || "https://www.google.com"
         split = Auth.split_credentials(resolved)
         target = split["url"].as_s
+        state.home_url = target
 
         # Authentication can interrupt the first navigation, so the terminal
         # and keyboard must belong to the reader before that navigation starts.

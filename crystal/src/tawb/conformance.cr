@@ -1878,6 +1878,7 @@ module Tawb
       state.short_links = object["shortLinks"]?.try(&.as_bool?) || false
       state.link_address = object["linkAddress"]?.try(&.as_bool?) != false
       state.status_msg = object["statusMsg"]?.try(&.as_s?) || ""
+      state.home_url = object["homeUrl"]?.try(&.as_s?) || "https://www.google.com"
       state.cursor = (object["cursor"]?.try(&.as_i64?) || 0).to_i32
       state.col = (object["col"]?.try(&.as_i64?) || 0).to_i32
       state.scroll = (object["scroll"]?.try(&.as_i64?) || 0).to_i32

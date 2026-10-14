@@ -75,6 +75,20 @@ test('cycling a one-tab browser says why it stayed put', { skip: needsCrystal },
   assert.equal(result.state.statusMsg, 'Only one tab open.');
 });
 
+test('Lynx main menu returns to the session home without reloading it',
+  { skip: needsCrystal }, async () => {
+    const keys = { profile: 'lynx', bindings: { 'main-menu': ['m'] } };
+    const returned = await runBoth('return home', state({
+      interface: 'lynx', keys, homeUrl: 'https://home.test/',
+    }), [{ op: 'browseKey', chunk: 'm' }]);
+    assert.equal(returned.state.statusMsg, 'Loaded https://home.test/');
+
+    const already = await runBoth('already home', state({
+      interface: 'lynx', keys, homeUrl: 'https://one.test/',
+    }), [{ op: 'browseKey', chunk: 'm' }]);
+    assert.equal(already.state.statusMsg, 'You are already at the main screen.');
+  });
+
 test('new tab opens an empty address bar', { skip: needsCrystal }, async () => {
   const opened = await runBoth('new tab', state(), [
     { op: 'browseKey', chunk: '\x14' },

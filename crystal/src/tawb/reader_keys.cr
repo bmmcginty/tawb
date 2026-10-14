@@ -1400,13 +1400,13 @@ module Tawb
     # ------------------------------------------------------------------
 
     # The Lynx decisions the mode handlers read. The host is the loop's:
-    # the pieces it needs now are the reader's own key test, the status row
-    # and the field entry; the screens it will open — help, options, the
-    # trace log — arrive with the loop and the library work.
+    # the pieces it needs now are the reader's own key test, the status row,
+    # field entry, and the internal screens opened by Lynx commands.
     private class ModeHost
       include LynxActions::Host
 
-      def initialize(@output : Screen::Output, @page_url : String)
+      def initialize(@output : Screen::Output, @page_url : String,
+                     @keyboard : Keyboard? = nil)
       end
 
       def fallback_keymap : Keys::Keymap
@@ -1457,6 +1457,14 @@ module Tawb
       end
 
       def open_main_menu(state : LynxActions::State, page : Reader::PageEnv?) : Nil
+        reader = state.reader
+        return unless reader && page
+        if page.url == reader.home_url
+          Reader.set_status(@output, reader, page.url,
+            "You are already at the main screen.")
+          return
+        end
+        ReaderKeys.load_address(@output, reader, page, @keyboard, reader.home_url)
       end
 
       def open_options(state : LynxActions::State, page : Reader::PageEnv?) : Nil
@@ -1471,8 +1479,9 @@ module Tawb
       end
     end
 
-    private def self.mode_actions(output : Screen::Output, page_url : String) : LynxActions
-      LynxActions.new(ModeHost.new(output, page_url))
+    private def self.mode_actions(output : Screen::Output, page_url : String,
+                                  keyboard : Keyboard? = nil) : LynxActions
+      LynxActions.new(ModeHost.new(output, page_url, keyboard))
     end
 
     # The Options screen is Lynx's own module, driven through this host. The
@@ -3333,7 +3342,7 @@ module Tawb
                                page : Reader::PageEnv, keyboard : Keyboard?,
                                chunk : String, now : Int64 = 0_i64) : String?
       state.core.mark_input
-      actions = mode_actions(output, page.url)
+      actions = mode_actions(output, page.url, keyboard)
       if actions.digit?(chunk, lynx_view(state))
         return nil
       end
