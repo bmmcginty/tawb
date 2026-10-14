@@ -373,6 +373,11 @@ module Tawb
         page.auth_handler = @auth_handler
         @root_sessions[session_id] = target_id
         @pages[target_id] = page
+        # Lifecycle events only describe what happens after attachment. Seed
+        # the states this already-loaded document reached before we arrived,
+        # or the next click can wait out the full navigation timeout for an
+        # event that happened long ago.
+        page.seed_load_state
         page
       end
 
