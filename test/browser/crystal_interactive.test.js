@@ -1019,3 +1019,89 @@ for (const runtime of RUNTIMES) {
     });
 }
 
+// One reader's answer for the keyboard screen: the page before, the wizard it
+// took the screen with, and whether the session left idle underneath still
+// answers afterwards.
+async function wizardRun(root, runtime, address, idleMs) {
+  const name = `${runtime.name}-wizard`;
+  const profile = path.join(root, name, 'profile');
+  const env = environment(root, name);
+  // The wizard is bound to a plain key so the test does not have to get an
+  // Alt chord through tmux. Both runtimes read the same file.
+  fs.mkdirSync(path.join(env.XDG_CONFIG_HOME, 'tawb'), { recursive: true });
+  fs.writeFileSync(path.join(env.XDG_CONFIG_HOME, 'tawb', 'keys.json'),
+    JSON.stringify({ version: 1, actions: { 'keyboard-wizard': ['w'] } }));
+  const reader = new ReaderTty({
+    session: `tawb-wizard-${name.toLowerCase()}-${process.pid}`,
+    command: runtime.command,
+    args: [...runtime.args, '--browser', 'firefox', '--profile', profile,
+      '--no-alt-screen', address],
+    env,
+  });
+  try {
+    await reader.start({ ready: 'First page' });
+    const before = reader.drawn();
+    await reader.press('w');
+    const opened = await waitForRow(reader, 'Keyboard bindings', 10000);
+    const wizard = reader.drawn();
+    if (idleMs) await sleep(idleMs);
+    await reader.press('Escape');
+    await reader.press('n');
+    const returned = await waitForRow(reader, 'Keyboard bindings unchanged', 10000);
+    // Movement can be answered from the lines the reader already holds; only
+    // following the link asks the browser anything, so it is what proves the
+    // session outlived the quiet window.
+    await reader.press('Down');
+    await reader.press('Enter');
+    const navigated = await waitForRow(reader, 'Second page', 15000);
+    const after = reader.drawn();
+    await reader.quit();
+    return { name: runtime.name, before, wizard, opened, returned, navigated, after, profile };
+  } finally {
+    reader.stop();
+  }
+}
+
+// The keyboard screen is the reader mode no browser test reached, and it is
+// also the one place a session is legitimately quiet for minutes: the reading
+// loop is inside the wizard, so nothing is asked of the browser while it is
+// open. The Crystal reader must still have its session afterwards; the
+// JavaScript reader, whose client never put a deadline on the socket, is the
+// screen oracle. Only the Crystal run holds the quiet window, because it is
+// the only socket that ever had a deadline.
+test('both readers keep their session through the keyboard screen, idle past the deadline',
+  { skip }, async () => {
+    const root = tempDir('tawb-wizard-');
+    fs.writeFileSync(path.join(root, 'first.html'), FIRST);
+    fs.writeFileSync(path.join(root, 'second.html'), SECOND);
+    const address = `file://${path.join(root, 'first.html')}`;
+    const profiles = [];
+    try {
+      const seen = [];
+      for (const runtime of RUNTIMES) {
+        const idleMs = runtime.name === 'Crystal' ? 31000 : 0;
+        const run = await wizardRun(root, runtime, address, idleMs);
+        profiles.push(run.profile);
+        seen.push(run);
+        await waitForProfileToDrain(run.profile);
+      }
+      const [javascript, crystal] = seen;
+      assert.ok(javascript.opened && crystal.opened,
+        'the keyboard screen did not take the reader over');
+      assert.deepEqual(crystal.before, javascript.before,
+        'the page is the same in both runtimes before the wizard');
+      assert.deepEqual(crystal.wizard, javascript.wizard,
+        'the keyboard screen itself is the same in both runtimes');
+      assert.ok(javascript.returned && crystal.returned,
+        'the page did not come back when the wizard was left');
+      assert.ok(crystal.navigated,
+        'the Crystal session did not survive the quiet window');
+      assert.ok(javascript.navigated,
+        'the JavaScript reader did not follow the link afterwards');
+      assert.deepEqual(crystal.after, javascript.after,
+        'the page after the wizard is the same in both runtimes');
+    } finally {
+      for (const profile of profiles) killProfile(profile);
+      removeTempDir(root);
+    }
+  });
