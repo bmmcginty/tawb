@@ -52,14 +52,25 @@ async function stopBroker(profile) {
 // A Firefox that speaks BiDi's shape, answers every command, and records what
 // it was asked — so the test can see the session, the probe, the navigation,
 // the extraction, and how the reader left.
-async function fakeFirefox({ status = null, webdriver = false } = {}) {
+async function fakeFirefox({ status = null, webdriver = false, vanishFirstCommand = false } = {}) {
   let peer = null;
   const commands = [];
+  let connections = 0;
   const server = http.createServer((req, res) => { res.writeHead(404); res.end(); });
   server.on('upgrade', (req, socket) => {
+    connections += 1;
+    const vanishing = vanishFirstCommand && connections === 1;
     peer = acceptWebSocket(req, socket, (text) => {
       const message = JSON.parse(text);
       commands.push(message);
+      if (vanishing) {
+        // The browser goes with the command still outstanding and no reply
+        // coming. This is what a broker dying mid-command looks like from the
+        // reader's side: the connection it was reading over closes under it.
+        try { socket.end(); } catch { /* already gone */ }
+        try { socket.destroy(); } catch { /* already gone */ }
+        return;
+      }
       let answer = null;
       switch (message.method) {
         case 'session.status':
@@ -208,6 +219,28 @@ check('a rejoining dump replays the kept session instead of asking again', async
     const probesAfter = browser.commands.filter((c) => c.method === 'script.evaluate').length;
     assert.equal(probesAfter - probesBefore, 1,
       'a replayed session cleared parent-process state again');
+  } finally {
+    await stopBroker(profile);
+    browser.close();
+    removeTempDir(profile);
+  }
+});
+
+check('a reader whose broker vanishes mid-command retries against its replacement', async () => {
+  const profile = tempDir('tweb-ff-dump-vanished-');
+  // The first upstream connection answers nothing and then goes, so the
+  // reader's session.new fails against a broker that is already leaving.
+  const browser = await fakeFirefox({ vanishFirstCommand: true });
+  try {
+    const result = await dump(profile, browser, { owned: true, keepBrowser: true });
+    assert.equal(result.text, 'Hello\n',
+      'the reader did not recover from the broker that vanished under it');
+
+    // Once against the broker that left, once against the broker that
+    // replaced it. The retry is the reader starting a new broker, not the
+    // same one answering late.
+    assert.equal(browser.commands.filter((c) => c.method === 'session.new').length, 2,
+      'the vanished broker was not replaced by a fresh session');
   } finally {
     await stopBroker(profile);
     browser.close();
