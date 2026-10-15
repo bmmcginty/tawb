@@ -41,8 +41,10 @@ async function stopBroker(pid) {
   await waitFor(() => !alive(pid), 5000);
 }
 
-// A browser that speaks BiDi's shape and answers everything.
-async function fakeBrowser() {
+// A browser that speaks BiDi's shape. Every command is answered unless the
+// caller's hook declines one, which leaves a reader's command outstanding
+// while the test takes the broker away underneath it.
+async function fakeBrowser(onMessage = () => true) {
   let peer = null;
   const commands = [];
   const server = http.createServer((req, res) => { res.writeHead(404); res.end(); });
@@ -50,6 +52,7 @@ async function fakeBrowser() {
     peer = acceptWebSocket(req, socket, (text) => {
       const message = JSON.parse(text);
       commands.push(message);
+      if (onMessage(message, peer) === false) return;
       peer.send(JSON.stringify({ type: 'success', id: message.id, result: { echo: message.method } }));
     }, () => {});
   });
@@ -215,6 +218,47 @@ check('an idle broker leaves with its record', async () => {
     removeTempDir(profile);
   }
 });
+
+check('a reader whose broker goes rejoins the broker that replaces it and is served',
+  async () => {
+    const profile = tempDir('tweb-broker-restart-');
+    // The browser never answers script.evaluate, so the reader's command is
+    // still outstanding when the broker is taken away underneath it.
+    const browser = await fakeBrowser((message) => message.method !== 'script.evaluate');
+    try {
+      const first = await callAsync('broker.ensure_scenario', { profile, upstream: browser.url });
+      const one = await reader(first.url);
+      one.send(1, 'browsingContext.getTree');
+      await one.until((m) => m.id === 1);
+      let closed = false;
+      one.socket.addEventListener('close', () => { closed = true; });
+      one.send(2, 'script.evaluate');
+      await stopBroker(first.pid);
+      assert.equal(await waitFor(() => closed, 5000), true,
+        'the reader was left holding a socket the broker no longer served');
+      assert.equal(one.messages.some((m) => m.id === 2), false,
+        'a reply came from a broker that had gone');
+
+      // What a reader starting now does: find the broker that replaces the
+      // stopped one, not the record it left naming a dead pid. The record a
+      // crashed broker leaves is indistinguishable, and the same rule covers
+      // both.
+      const second = await callAsync('broker.ensure_scenario', { profile, upstream: browser.url });
+      assert.notEqual(second.pid, first.pid, 'the stopped broker was joined instead of replaced');
+      assert.equal(alive(second.pid), true);
+      const two = await reader(second.url);
+      two.send(3, 'browsingContext.getTree');
+      const reply = await two.until((m) => m.id === 3);
+      assert.equal(reply.result.echo, 'browsingContext.getTree',
+        'the replacement broker did not serve the rejoining reader');
+      two.close();
+    } finally {
+      const pid = await recordedPid(profile);
+      if (pid) await stopBroker(pid);
+      browser.close();
+      removeTempDir(profile);
+    }
+  });
 
 check('a browser that goes takes the running broker with it', async () => {
   const profile = tempDir('tweb-browser-gone-');
