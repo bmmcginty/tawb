@@ -646,3 +646,43 @@ for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crysta
       });
   }
 }
+
+// A browser that goes away underneath a reader — crashed, killed, or quit from
+// its own menu — must reach the reader as an end, not as a wait for a browser
+// that will never answer. Whichever runtime is reading, the session ends
+// within a bounded time instead of sitting on the terminal.
+for (const runtime of RUNTIMES) {
+  test(`a ${runtime.name} reader ends when the browser it is reading is killed`,
+    { skip }, async () => {
+      const root = tempDir(`tawb-loss-${runtime.name}-`);
+      const page = path.join(root, 'page.html');
+      fs.writeFileSync(page, PAGE);
+      const profile = path.join(root, 'profile');
+      const reader = new ReaderTty({
+        session: `tawb-loss-${runtime.name}-${process.pid}`.toLowerCase(),
+        command: runtime.command,
+        args: [...runtime.args, '--browser', 'firefox', '--profile', profile,
+          '--no-alt-screen', `file://${page}`],
+        env: environment(root, runtime.name),
+      });
+      try {
+        await reader.start({ ready: 'Fixture heading' });
+        assert.ok(processesUsing(profile).length > 0,
+          'the reader has a browser to lose');
+        killProfile(profile);
+        let ended = false;
+        for (const deadline = Date.now() + 15000; Date.now() < deadline;) {
+          await sleep(250);
+          if (!reader.alive()) { ended = true; break; }
+        }
+        assert.ok(ended,
+          `${runtime.name} sat on the terminal after its browser was killed`);
+      } finally {
+        reader.stop();
+        killProfile(profile);
+        await waitForProfileToDrain(profile, 10000);
+        removeTempDir(root);
+      }
+    });
+}
+
