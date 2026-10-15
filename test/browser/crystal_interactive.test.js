@@ -743,6 +743,66 @@ for (const engine of ['firefox', 'chromium']) {
     });
 }
 
+// A change that lands just after a keystroke is held for the input grace
+// period and then applied with no further input. The page is armed after the
+// one key press, so the change is inside the window; the row must not be on
+// screen while the reader still counts as reading, and must arrive on its own
+// once the window lapses.
+for (const engine of ['firefox', 'chromium']) {
+  test(`both readers apply a ${engine} change made during the input grace period`,
+    { skip }, async () => {
+      const root = tempDir(`tawb-grace-${engine}-`);
+      const hold = await startHoldServer();
+      const profiles = [];
+      try {
+        const answers = [];
+        for (const runtime of RUNTIMES) {
+          hold.disarm();
+          const name = `${runtime.name}-${engine}-grace`;
+          const profile = path.join(root, name, 'profile');
+          const reader = new ReaderTty({
+            session: `tawb-grace-${name.toLowerCase()}-${process.pid}`,
+            command: runtime.command,
+            args: [...runtime.args, '--browser', engine, '--profile', profile,
+              '--no-alt-screen', hold.address],
+            env: environment(root, name),
+          });
+          try {
+            await reader.start({ ready: 'Hold heading' });
+            assert.ok(reader.rows().some((row) => row.includes('First row')),
+              `${runtime.name} never drew the list before it changed`);
+            await reader.press('Up', { settle: 40, timeout: 2000 });
+            hold.arm();
+            // The page poll, the observer flush, and a ticker beat all add up
+            // to well under the 2.5 seconds the reader is still owed, so the
+            // row may not be on screen yet.
+            await sleep(1200);
+            answers.push({
+              runtime: runtime.name,
+              early: reader.rows().some((row) => row.includes('Held row')),
+              arrived: await waitForRow(reader, 'Held row'),
+            });
+            await reader.quit();
+          } finally {
+            reader.stop();
+          }
+          profiles.push(profile);
+          await waitForProfileToDrain(profile);
+        }
+        for (const answer of answers) {
+          assert.equal(answer.early, false,
+            `${answer.runtime} applied a change during the input grace period`);
+          assert.ok(answer.arrived,
+            `${answer.runtime} never applied the held change after the grace period`);
+        }
+      } finally {
+        for (const profile of profiles) killProfile(profile);
+        await hold.close();
+        removeTempDir(root);
+      }
+    });
+}
+
 test('the native reader closes the browser it launched, and keeps one it was told to keep',
   { skip }, async () => {
     const root = tempDir('tawb-interactive-keep-');
