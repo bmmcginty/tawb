@@ -358,6 +358,55 @@ const UNDER = `<!doctype html><html><head><meta charset="utf-8"><title>Anchor</t
   }, 6000);
 </script></body></html>`;
 
+// A page that changes when the test tells it to, not when a wall clock does.
+// The exact instant matters once the change has to land inside a keystroke's
+// grace period, and a timer measured from page load cannot say where the
+// reader was when it fired. The page asks its own origin whether the change is
+// due, so the test arms it at a chosen point in the reader's session. The
+// change is structural — a row is added — so it takes the whole-page rebuild
+// path, and it announces itself through a live region so the test can see it
+// arrived even when the buffer is held.
+const HOLD = `<!doctype html><html><head><meta charset="utf-8"><title>Hold</title></head>
+<body><h1>Hold heading</h1>
+<p>Reading line</p>
+<ul id="list"><li>First row</li></ul>
+<div role="status">Nothing yet</div>
+<script>
+  const timer = setInterval(async () => {
+    try {
+      const answer = await fetch('/ready');
+      if ((await answer.text()) !== 'go') return;
+      clearInterval(timer);
+      const row = document.createElement('li');
+      row.textContent = 'Held row';
+      document.getElementById('list').appendChild(row);
+      document.querySelector('[role="status"]').firstChild.data = 'Held announcement';
+    } catch (error) { /* the server went away; the page stays as it was */ }
+  }, 120);
+</script></body></html>`;
+
+async function startHoldServer() {
+  let armed = false;
+  const server = http.createServer((req, res) => {
+    if (req.url === '/ready') {
+      res.writeHead(200, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
+      res.end(armed ? 'go' : 'wait');
+      return;
+    }
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+    });
+    res.end(HOLD);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    address: `http://127.0.0.1:${server.address().port}/`,
+    arm() { armed = true; },
+    disarm() { armed = false; },
+    close: () => new Promise((resolve) => server.close(resolve)),
+  };
+}
+
 // A screen has arrived when one of its rows says so. Waiting for quiet is the
 // wrong wait here: the blank a site leaves mid-render is perfectly quiet.
 async function waitForRow(reader, text, timeout = 15000) {
@@ -619,6 +668,76 @@ for (const engine of ['firefox', 'chromium']) {
       } finally {
         for (const profile of profiles) killProfile(profile);
         await new Promise((resolve) => server.close(resolve));
+        removeTempDir(root);
+      }
+    });
+}
+
+// Keys arriving while a page changes must not have the buffer swapped under
+// the reader. The change is armed only after the pressing is under way, so it
+// is guaranteed to land inside the input grace period; the live region proves
+// it landed, and the buffer must still describe the page as it was.
+for (const engine of ['firefox', 'chromium']) {
+  test(`both readers hold the buffer while keys arrive during ${engine} updates`,
+    { skip }, async () => {
+      const root = tempDir(`tawb-freeze-${engine}-`);
+      const hold = await startHoldServer();
+      const profiles = [];
+      try {
+        const answers = [];
+        for (const runtime of RUNTIMES) {
+          hold.disarm();
+          const name = `${runtime.name}-${engine}-freeze`;
+          const profile = path.join(root, name, 'profile');
+          const reader = new ReaderTty({
+            session: `tawb-freeze-${name.toLowerCase()}-${process.pid}`,
+            command: runtime.command,
+            args: [...runtime.args, '--browser', engine, '--profile', profile,
+              '--no-alt-screen', hold.address],
+            env: environment(root, name),
+          });
+          try {
+            await reader.start({ ready: 'Hold heading' });
+            assert.ok(reader.rows().some((row) => row.includes('First row')),
+              `${runtime.name} never drew the list before it changed`);
+            // Up on the first line marks input without moving or writing the
+            // status row, so the whole press window counts as reading and the
+            // announcement is not overwritten by an end-of-page notice.
+            let announced = false;
+            let swapped = false;
+            let armed = false;
+            const until = Date.now() + 5000;
+            while (Date.now() < until) {
+              await reader.press('Up', { settle: 40, timeout: 2000 });
+              if (!armed) { hold.arm(); armed = true; }
+              if (reader.status().includes('Held announcement')) announced = true;
+              if (reader.rows().some((row) => row.includes('Held row'))) swapped = true;
+              await sleep(50);
+            }
+            answers.push({
+              runtime: runtime.name,
+              announced,
+              swapped,
+              arrived: await waitForRow(reader, 'Held row'),
+            });
+            await reader.quit();
+          } finally {
+            reader.stop();
+          }
+          profiles.push(profile);
+          await waitForProfileToDrain(profile);
+        }
+        for (const answer of answers) {
+          assert.ok(answer.announced,
+            `${answer.runtime} never announced the live region while the reader was active`);
+          assert.equal(answer.swapped, false,
+            `${answer.runtime} rebuilt the buffer while keys were still arriving`);
+          assert.ok(answer.arrived,
+            `${answer.runtime} never showed the row once the reader stopped`);
+        }
+      } finally {
+        for (const profile of profiles) killProfile(profile);
+        await hold.close();
         removeTempDir(root);
       }
     });

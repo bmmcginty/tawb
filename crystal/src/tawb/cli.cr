@@ -309,6 +309,7 @@ module Tawb
           end
         end
 
+        last_tick_ms = Time.utc.to_unix_ms
         loop do
           tick = Channel(Nil).new(1)
           spawn do
@@ -317,6 +318,7 @@ module Tawb
           end
           next_event = reader.not_nil!.next_or(tick)
           if next_event.is_a?(Input::OperationResult(Nil))
+            last_tick_ms = Time.utc.to_unix_ms
             live_ticker.tick
             next
           end
@@ -353,6 +355,17 @@ module Tawb
                         Time.utc.to_unix_ms)
                     end
           break if verdict == "quit"
+
+          # A held key keeps the reader reading faster than the wait can
+          # expire, so next_or never races the tick and the live ticker would
+          # starve: no live region is announced and no buffer is ever rebuilt
+          # while a key is held. The tick that rides alongside the keyboard
+          # has to be run by hand once its interval has passed.
+          now = Time.utc.to_unix_ms
+          if now - last_tick_ms >= Live::TICK_MS
+            last_tick_ms = now
+            live_ticker.tick
+          end
         end
       ensure
         Signal::WINCH.reset rescue nil
