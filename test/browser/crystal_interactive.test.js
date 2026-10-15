@@ -146,6 +146,14 @@ class ReaderTty {
     return current;
   }
 
+  // Literal text, for a prompt that edits a line: sent as one send-keys -l so
+  // the address bar is not retyped key by key with a settle after each.
+  async type(text, { settle = 300 } = {}) {
+    run('tmux', ['send-keys', '-t', this.session, '-l', text]);
+    await sleep(settle);
+    return this.raw();
+  }
+
   alive() {
     return run('tmux', ['has-session', '-t', this.session]).status === 0;
   }
@@ -1105,3 +1113,98 @@ test('both readers keep their session through the keyboard screen, idle past the
       removeTempDir(root);
     }
   });
+
+// One reader's answer for the tab journeys: the screen on each tab it visits,
+// and whether the reader's own tabs binding put it there.
+async function tabsRun(root, runtime, firstAddress, secondAddress) {
+  const name = `${runtime.name}-tabs`;
+  const profile = path.join(root, name, 'profile');
+  const env = environment(root, name);
+  // Shift+F4 is not a chord tmux sends cleanly; the close binding is moved to
+  // a plain key. Both runtimes read the same file.
+  fs.mkdirSync(path.join(env.XDG_CONFIG_HOME, 'tawb'), { recursive: true });
+  fs.writeFileSync(path.join(env.XDG_CONFIG_HOME, 'tawb', 'keys.json'),
+    JSON.stringify({ version: 1, actions: { 'close-tab': ['E'] } }));
+  const reader = new ReaderTty({
+    session: `tawb-tabs-${name.toLowerCase()}-${process.pid}`,
+    command: runtime.command,
+    args: [...runtime.args, '--browser', 'firefox', '--profile', profile,
+      '--no-alt-screen', firstAddress],
+    env,
+  });
+  try {
+    await reader.start({ ready: 'First page' });
+    const first = reader.drawn();
+    // A second tab and a second page, both through the reader rather than the
+    // browser's own link handling, so the tabs binding is what is under test.
+    await reader.press('C-t');
+    const opened = await waitForStatus(reader, 'Opened a new tab', 10000);
+    const openedStatus = reader.status();
+    // The browser's own new-tab follow is on a 1.2s timer; let it fire before
+    // steering, or it switches back to the new tab under the test.
+    await sleep(1500);
+    await reader.type(secondAddress);
+    await reader.press('Enter');
+    const second = await waitForRow(reader, 'Second page', 15000);
+    await reader.press('<');
+    const back = await waitForRow(reader, 'First page', 10000);
+    await reader.press('>');
+    const forward = await waitForRow(reader, 'Second page', 10000);
+    await reader.press('E');
+    const closed = await waitForStatus(reader, 'Closed', 10000);
+    const after = reader.drawn();
+    await reader.quit();
+    return {
+      name: runtime.name, first, opened, openedStatus, second, back, forward, closed,
+      after, profile,
+    };
+  } finally {
+    reader.stop();
+  }
+}
+
+// The reader's own tab commands — open, cycle, close — are wired to the real
+// browser only through the Tabs binding, which the scripted reader tests stand
+// in for and the direct-driver tab test never reaches. The assembled reader is
+// the only place the two meet. The status the new tab reports names its place
+// in the tab inventory, which is what shows whether the reader found a tab of
+// its own or took one that was already there.
+test('both readers open, cycle and close a tab the same way', { skip }, async () => {
+  const root = tempDir('tawb-tabs-');
+  fs.writeFileSync(path.join(root, 'first.html'), FIRST);
+  fs.writeFileSync(path.join(root, 'second.html'), SECOND);
+  const firstAddress = `file://${path.join(root, 'first.html')}`;
+  const secondAddress = `file://${path.join(root, 'second.html')}`;
+  const profiles = [];
+  try {
+    const seen = [];
+    for (const runtime of RUNTIMES) {
+      const run = await tabsRun(root, runtime, firstAddress, secondAddress);
+      profiles.push(run.profile);
+      seen.push(run);
+      await waitForProfileToDrain(run.profile);
+    }
+    const [javascript, crystal] = seen;
+    assert.ok(javascript.opened && crystal.opened,
+      'a new tab was not opened in both runtimes');
+    assert.equal(crystal.openedStatus, javascript.openedStatus,
+      'the new tab joined a different tab inventory in Crystal than in JavaScript');
+    assert.ok(javascript.second && crystal.second,
+      'the address bar did not load the second page in both runtimes');
+    assert.ok(javascript.back && crystal.back,
+      'cycling back to the first tab did not show the first page');
+    assert.ok(javascript.forward && crystal.forward,
+      'cycling forward to the second tab did not show the second page');
+    assert.ok(javascript.closed && crystal.closed,
+      'closing the second tab was not reported in both runtimes');
+    assert.deepEqual(crystal.first, javascript.first,
+      'the first tab is the same in both runtimes');
+    assert.deepEqual(crystal.second, javascript.second,
+      'the second tab is the same in both runtimes');
+    assert.deepEqual(crystal.after, javascript.after,
+      'the screen after closing the tab is the same in both runtimes');
+  } finally {
+    for (const profile of profiles) killProfile(profile);
+    removeTempDir(root);
+  }
+});

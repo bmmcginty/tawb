@@ -179,15 +179,24 @@ module Tawb
         ensure
           startup.finish
         end
-        existing = browser.list_pages.reject(&.closed?).map(&.as(Engine::Page))
-        if options["connect"].as_s? && options["url"].as_s?.nil?
-          page = existing.reverse.find { |candidate| candidate.url != "about:blank" }
-          adopted = !page.nil?
-        end
-        page ||= existing.first? || browser.create_page.as(Engine::Page)
-
         layout = options["frontEnd"].as_s == "lynx"
         browser_port = URI.parse(endpoint).port.try(&.to_i32)
+        existing = browser.list_pages.reject(&.closed?).map(&.as(Engine::Page))
+        # A reader that launched this browser has nothing to inherit, so it
+        # reads in a tab of its own, the way the JavaScript reader does. One
+        # that joined a browser already being read reuses a tab only when no
+        # address says what to read: adopting a tab that may be another
+        # reader's and navigating it is how two readers ended up moving each
+        # other around.
+        rejoined = opened.chromium ? !opened.chromium.not_nil!.owned? : launched.nil?
+        if rejoined && options["url"].as_s?.nil?
+          claimed = browser_port ? Session.claimed_targets(browser_port) : [] of String
+          page = existing.reverse.find do |candidate|
+            candidate.url != "about:blank" && !claimed.includes?(candidate.tab_id)
+          end
+          adopted = !page.nil?
+        end
+        page ||= browser.create_page.as(Engine::Page)
         core = Core.new(source: "ax", layout: layout, driver: browser,
           page: page, browser_port: browser_port)
         core.adopt_tab(page.not_nil!)
