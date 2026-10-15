@@ -301,6 +301,18 @@ const SPA = `<!doctype html><html><head><meta charset="utf-8"><title>Site</title
   });
 </script></body></html>`;
 
+// A page whose link leaves the drawn page. Movement and re-reading can be
+// answered from lines the reader already holds, so following the link is what
+// proves the browser behind the reader is the one still answering.
+const FIRST = `<!doctype html><html><head><title>First</title></head><body>
+<h1>First page</h1>
+<a href="second.html">Go second</a>
+</body></html>`;
+
+const SECOND = `<!doctype html><html><head><title>Second</title></head><body>
+<h1>Second page</h1>
+</body></html>`;
+
 // A page that rewrites its own text after it has loaded: the paragraph a
 // reader is looking at, and a live region beside it. Nothing the reader asks
 // for changes; only the page does. What turns the change into a screen is the
@@ -567,4 +579,70 @@ for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crysta
         removeTempDir(root);
       }
     });
+}
+
+// Two readers, one browser at the same time. Whichever one quits — the reader
+// that launched the browser or the one that joined it — the other must keep
+// reading: the browser and the BiDi session it rides on are the shared thing,
+// and neither a departing owner nor a departing guest may end them while a
+// third process is still using them. The broker is exercised on its own in
+// broker_crystal, but not with two real readers and a real terminal.
+for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crystal']]) {
+  for (const leaver of ['launcher', 'joiner']) {
+    const stayingName = leaver === 'launcher' ? second : first;
+    test(`${first} and ${second} readers share one Firefox when the ${leaver} quits first`,
+      { skip }, async () => {
+        const label = `${first}-${leaver}`;
+        const root = tempDir(`tawb-shared-${label}-`);
+        fs.writeFileSync(path.join(root, 'first.html'), FIRST);
+        fs.writeFileSync(path.join(root, 'second.html'), SECOND);
+        const address = `file://${path.join(root, 'first.html')}`;
+        const profile = path.join(root, 'profile');
+        const env = environment(root, 'shared');
+        const launcherRuntime = runtimeNamed(first);
+        const joinerRuntime = runtimeNamed(second);
+        const launcher = new ReaderTty({
+          session: `tawb-shared-${label}-launcher-${process.pid}`.toLowerCase(),
+          command: launcherRuntime.command,
+          args: [...launcherRuntime.args, '--browser', 'firefox', '--profile', profile,
+            '--no-alt-screen', address],
+          env,
+        });
+        const joiner = new ReaderTty({
+          session: `tawb-shared-${label}-joiner-${process.pid}`.toLowerCase(),
+          command: joinerRuntime.command,
+          args: [...joinerRuntime.args, '--browser', 'firefox', '--profile', profile,
+            '--no-alt-screen', address],
+          env,
+        });
+        const staying = leaver === 'launcher' ? joiner : launcher;
+        const leaving = leaver === 'launcher' ? launcher : joiner;
+        try {
+          await launcher.start({ ready: 'First page' });
+          const port = endpointPort(profile);
+          try {
+            await joiner.start({ ready: 'First page' });
+            assert.equal(endpointPort(profile), port,
+              `the ${second} reader joined the browser already running`);
+            await leaving.quit();
+            assert.ok(staying.alive(),
+              `the ${stayingName} reader is still running after the other quit`);
+            assert.ok(processesUsing(profile).length > 0,
+              'the shared Firefox is still running');
+            await staying.press('Down');
+            await staying.press('Enter');
+            assert.ok(await waitForRow(staying, 'Second page'),
+              `the ${stayingName} reader is still driving the shared browser`);
+            await staying.quit();
+          } finally {
+            joiner.stop();
+          }
+        } finally {
+          launcher.stop();
+          killProfile(profile);
+          await waitForProfileToDrain(profile, 10000);
+          removeTempDir(root);
+        }
+      });
+  }
 }
