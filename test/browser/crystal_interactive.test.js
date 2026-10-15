@@ -329,6 +329,20 @@ const LIVE = `<!doctype html><html><head><meta charset="utf-8"><title>Live</titl
   }, 2500);
 </script></body></html>`;
 
+// A change that adds a block instead of replacing the text of one: a list gets
+// a row. There is no line to splice, so the reader has to rebuild the page
+// through the binding rather than patch the buffer it already holds.
+const APPEND = `<!doctype html><html><head><meta charset="utf-8"><title>Grow</title></head>
+<body><h1>List heading</h1>
+<ul id="list"><li>First row</li></ul>
+<script>
+  setTimeout(() => {
+    const row = document.createElement('li');
+    row.textContent = 'Second row';
+    document.getElementById('list').appendChild(row);
+  }, 2500);
+</script></body></html>`;
+
 // A screen has arrived when one of its rows says so. Waiting for quiet is the
 // wrong wait here: the blank a site leaves mid-render is perfectly quiet.
 async function waitForRow(reader, text, timeout = 15000) {
@@ -461,6 +475,61 @@ for (const engine of ['firefox', 'chromium']) {
             `${answer.runtime} did not show the text the page rewrote`);
           assert.ok(answer.announced,
             `${answer.runtime} did not announce the live region's new words`);
+        }
+      } finally {
+        for (const profile of profiles) killProfile(profile);
+        await new Promise((resolve) => server.close(resolve));
+        removeTempDir(root);
+      }
+    });
+}
+
+// A structural change is not a text patch. The reader has no line for the row
+// the page added, so it has to notice the page is different and rebuild, which
+// is the whole-page path the text-replacement case never takes.
+for (const engine of ['firefox', 'chromium']) {
+  test(`both readers show a row the page appends through ${engine}`,
+    { skip }, async () => {
+      const root = tempDir(`tawb-append-${engine}-`);
+      const server = http.createServer((req, res) => {
+        res.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+        });
+        res.end(APPEND);
+      });
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = `http://127.0.0.1:${server.address().port}/`;
+      const profiles = [];
+      try {
+        const answers = [];
+        for (const runtime of RUNTIMES) {
+          const name = `${runtime.name}-${engine}-append`;
+          const profile = path.join(root, name, 'profile');
+          const reader = new ReaderTty({
+            session: `tawb-append-${name.toLowerCase()}-${process.pid}`,
+            command: runtime.command,
+            args: [...runtime.args, '--browser', engine, '--profile', profile,
+              '--no-alt-screen', address],
+            env: environment(root, name),
+          });
+          try {
+            await reader.start({ ready: 'List heading' });
+            assert.ok(await waitForRow(reader, 'First row'),
+              `${runtime.name} never drew the list before it grew`);
+            answers.push({
+              runtime: runtime.name,
+              added: await waitForRow(reader, 'Second row'),
+            });
+            await reader.quit();
+          } finally {
+            reader.stop();
+          }
+          profiles.push(profile);
+          await waitForProfileToDrain(profile);
+        }
+        for (const answer of answers) {
+          assert.ok(answer.added,
+            `${answer.runtime} never showed the row the page appended`);
         }
       } finally {
         for (const profile of profiles) killProfile(profile);
