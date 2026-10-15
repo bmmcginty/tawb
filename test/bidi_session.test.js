@@ -92,4 +92,30 @@ for (const implementation of bidiImplementations(javascript)) {
     assert.match(values[0].error, /script\.evaluate did not answer within 0\.05s/);
     assert.deepEqual(values[1], { result: { contexts: [] } });
   });
+
+  // The other half of the idle case: the socket does not merely go quiet, it
+  // goes away. A command already in flight has no reply coming, and the
+  // session must say so rather than leave its caller waiting on a browser
+  // that is not there.
+  test(`${implementation.name}: a socket that closes mid-command fails it and ends the session`,
+    async () => {
+      const values = await withEndpoint((message, peer) => {
+        if (message.method === 'script.evaluate') {
+          // The browser goes without answering, the way a crashed one does.
+          try { peer.socket.end(); } catch { /* already gone */ }
+          try { peer.socket.destroy(); } catch { /* already gone */ }
+          return;
+        }
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result: { contexts: [] } }));
+      }, (url) => implementation.sessionScenario(url, [
+        { type: 'command', method: 'script.evaluate', timeoutMs: 2000 },
+        { type: 'command', method: 'browsingContext.getTree' },
+      ]));
+
+      assert.match(values[0].error, /clos/i,
+        'the outstanding command was not failed by the socket closing');
+      assert.ok(values[1].error,
+        'a later command was served by a session whose socket had closed');
+      assert.equal(values[1].result, undefined);
+    });
 }
