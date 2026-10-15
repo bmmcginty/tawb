@@ -223,6 +223,21 @@ const RUNTIMES = [
   { name: 'Crystal', command: BINARY, args: [] },
 ];
 
+const runtimeNamed = (name) => RUNTIMES.find((runtime) => runtime.name === name);
+
+// The browser's own BiDi port, as recorded in the profile the reader was
+// pointed at. It names the browser rather than the broker in front of it, so
+// an unchanged port across two readers is what proves the second one joined
+// the first one's browser instead of starting another.
+function endpointPort(profile) {
+  try {
+    const record = JSON.parse(fs.readFileSync(path.join(profile, 'tawb-endpoint.json'), 'utf8'));
+    return record.port || null;
+  } catch {
+    return null;
+  }
+}
+
 for (const engine of ['firefox', 'chromium']) {
   test(`both readers draw the same real page through ${engine} and move through it the same way`,
     { skip }, async () => {
@@ -498,3 +513,58 @@ test('the native reader closes the browser it launched, and keeps one it was tol
       removeTempDir(root);
     }
   });
+
+// The keep test above rejoins with the same runtime. What a person does is
+// read with one build, quit, and read the same browser with the other, and it
+// is the interactive reader's own startup that has to find the kept browser: a
+// dump rejoining proves the endpoint record, not the reader.
+for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crystal']]) {
+  test(`a ${first} reader keeps a Firefox that the ${second} reader rejoins`,
+    { skip }, async () => {
+      const root = tempDir(`tawb-rejoin-${first}-`);
+      const page = path.join(root, 'page.html');
+      fs.writeFileSync(page, PAGE);
+      const address = `file://${page}`;
+      const profile = path.join(root, 'profile');
+      const env = environment(root, 'rejoin');
+      const opened = runtimeNamed(first);
+      const joined = runtimeNamed(second);
+      const launched = new ReaderTty({
+        session: `tawb-rejoin-${first.toLowerCase()}-${process.pid}`,
+        command: opened.command,
+        args: [...opened.args, '--browser', 'firefox', '--profile', profile,
+          '--no-alt-screen', '--keep-browser', address],
+        env,
+      });
+      const rejoined = new ReaderTty({
+        session: `tawb-rejoin-${second.toLowerCase()}-${process.pid}`,
+        command: joined.command,
+        args: [...joined.args, '--browser', 'firefox', '--profile', profile,
+          '--no-alt-screen', address],
+        env,
+      });
+      try {
+        await launched.start({ ready: 'Fixture heading' });
+        const port = endpointPort(profile);
+        await launched.quit();
+        assert.ok(port, 'the first reader recorded the browser it launched');
+        assert.ok(processesUsing(profile).length > 0,
+          'the kept Firefox outlives the reader that launched it');
+        try {
+          await rejoined.start({ ready: 'Fixture heading' });
+          assert.ok(rejoined.drawn().some((row) => row.includes('# Fixture heading')),
+            `the ${second} reader drew the page through the kept browser`);
+          assert.equal(endpointPort(profile), port,
+            'and it joined that browser rather than starting another');
+          await rejoined.quit();
+        } finally {
+          rejoined.stop();
+        }
+      } finally {
+        launched.stop();
+        killProfile(profile);
+        await waitForProfileToDrain(profile, 10000);
+        removeTempDir(root);
+      }
+    });
+}
