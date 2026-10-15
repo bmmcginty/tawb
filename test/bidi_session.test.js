@@ -119,3 +119,35 @@ for (const implementation of bidiImplementations(javascript)) {
       assert.equal(values[1].result, undefined);
     });
 }
+
+// The idle case itself: the socket is open and nothing is outstanding, so no
+// command deadline can fire — only a deadline on the socket's own reads. The
+// pause is longer than the 30s per-command budget on purpose, because the
+// regression this guards was exactly a 30s deadline on those reads. The two
+// runtimes are paused at the same time, so the guard costs one quiet window
+// rather than one per runtime.
+if (process.env.TAWB_TEST_CRYSTAL === '1') {
+  test('a BiDi session that stays quiet past the command deadline is still usable',
+    { timeout: 90000 }, async () => {
+      const actions = [
+        { type: 'command', method: 'browsingContext.getTree', params: {} },
+        { type: 'pause', ms: 31000 },
+        { type: 'command', method: 'browsingContext.getTree', params: {} },
+      ];
+      const answers = await Promise.all(bidiImplementations(javascript).map(
+        async (implementation) => ({
+          name: implementation.name,
+          values: await withEndpoint((message, peer) => {
+            peer.send(JSON.stringify({
+              id: message.id, type: 'success', result: { contexts: [] },
+            }));
+          }, (url) => implementation.sessionScenario(url, actions)),
+        }),
+      ));
+      for (const { name, values } of answers) {
+        assert.deepEqual(values,
+          [{ result: { contexts: [] } }, { result: { contexts: [] } }],
+          `${name} lost a session that was only quiet`);
+      }
+    });
+}

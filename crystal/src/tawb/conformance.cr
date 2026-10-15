@@ -4336,6 +4336,10 @@ module Tawb
             values << JSON::Any.new({
               "event" => session.next_event(action["method"].as_s),
             })
+          when "pause"
+            # Nothing is outstanding: this is the socket's own idle state, the
+            # one a read deadline on the session socket used to kill.
+            sleep action["ms"].as_i64.milliseconds
           else
             raise ArgumentError.new("unknown BiDi scenario action #{action["type"]}")
           end

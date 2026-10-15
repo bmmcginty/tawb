@@ -128,6 +128,12 @@ function bidiImplementations(javascript) {
     try {
       const values = [];
       for (const action of actions) {
+        if (action.type === 'pause') {
+          // The socket is quiet here with nothing outstanding, which is what a
+          // session-level read deadline would mistake for a dead browser.
+          await new Promise((resolve) => setTimeout(resolve, action.ms));
+          continue;
+        }
         if (action.type === 'event') {
           values.push({ event: await nextEvent(action.method) });
         } else {
@@ -158,7 +164,12 @@ function bidiImplementations(javascript) {
       return call('bidi.from_remote', { value });
     },
     sessionScenario(url, actions) {
-      return callAsync('bidi.session_scenario', { url, actions });
+      // A scenario that pauses is quiet longer than the base call budget by
+      // design, so the budget follows the pauses the script asks for.
+      const paused = actions.reduce(
+        (total, action) => total + (action.type === 'pause' ? action.ms : 0), 0);
+      return callAsync('bidi.session_scenario', { url, actions },
+        { timeoutMs: 10000 + paused });
     },
   });
   return implementations;
