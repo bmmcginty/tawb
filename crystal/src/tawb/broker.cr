@@ -207,7 +207,6 @@ module Tawb
       end
 
       private def departing(reason : String) : Nil
-        File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] departing: #{reason}" }
         # The record goes first. A reader that arrives from here on starts a
         # broker of its own rather than joining one that is leaving — and the
         # gap between deciding to go and having gone is exactly when a reader
@@ -345,8 +344,7 @@ module Tawb
                 end
               end
             end
-          rescue e
-            File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] peer died: #{e.class} #{e.message}" }
+          rescue
           ensure
             @socket.close rescue nil
             @on_close.call
@@ -559,7 +557,6 @@ module Tawb
       end
 
       private def client_left(client : Client) : Nil
-        File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] client_left" }
         was = @mutex.synchronize do
           present = @clients.includes?(client)
           @clients.delete(client)
@@ -586,7 +583,6 @@ module Tawb
       end
 
       private def from_client(client : Client, text : String) : Nil
-        File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] #{text[0, 100]}" }
         @mutex.synchronize { client.active_at = Time.instant }
         message = begin
           JSON.parse(text).as_h?
@@ -684,7 +680,6 @@ module Tawb
       end
 
       private def establish_upstream : Nil
-        File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] establish_upstream" }
         connected = begin
           Transport::WebSocket.new(@upstream_url, read_timeout: nil)
         rescue
@@ -697,13 +692,11 @@ module Tawb
         loop do
           from_upstream(socket.receive)
         end
-      rescue e
-        File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] upstream loop died: #{e.class} #{e.message}" }
+      rescue
         browser_gone
       end
 
       private def browser_gone : Nil
-        File.open("/tmp/brokerdbg.log", "a") { |__f| __f.puts "[dbg] browser_gone" }
         closed, peers = @mutex.synchronize do
           @upstream = nil
           @upstream_failed = true
