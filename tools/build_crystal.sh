@@ -5,7 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 CRYSTAL=${CRYSTAL:-crystal}
-OUTPUT=${1:-dist/tawb-crystal}
+OUTPUT=${1:-bin/tawb}
 
 for tool in "$CRYSTAL" file readelf; do
   if ! command -v "$tool" >/dev/null 2>&1; then

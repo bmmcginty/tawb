@@ -62,17 +62,17 @@ Building from source requires Crystal 1.21 or newer:
 tools/build_crystal.sh
 ```
 
-The build writes `dist/tawb-crystal` and rejects an output that has an ELF
+The build writes `bin/tawb` and rejects an output that has an ELF
 interpreter or any `DT_NEEDED` entries. Its browser-backed commands are:
 
 ```sh
 # Read a page in the terminal, through either engine.
-dist/tawb-crystal --browser firefox https://example.com
-dist/tawb-crystal --browser chromium https://example.com
+bin/tawb --browser firefox https://example.com
+bin/tawb --browser chromium https://example.com
 # The same page in the Lynx interface.
-dist/tawb-crystal --front-end=lynx https://example.com
+bin/tawb --front-end=lynx https://example.com
 # Write the page as plain text and exit.
-dist/tawb-crystal --dump https://example.com
+bin/tawb --dump https://example.com
 ```
 
 Run the existing Node specifications against both implementations with:
@@ -101,7 +101,7 @@ Clone the repository and start with Chromium, the default engine:
 git clone https://github.com/bmmcginty/tawb.git
 cd tawb
 tools/build_crystal.sh
-install -Dm755 dist/tawb-crystal ~/.local/bin/tawb
+install -Dm755 bin/tawb ~/.local/bin/tawb
 cd /where/you/keep/files
 tawb https://example.com
 ```

@@ -56,7 +56,7 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
   });
 
   const javascript = run(process.execPath, ['src/index.js', '--dump', page], 'js-data');
-  const crystal = run(path.join(ROOT, 'dist', 'tawb-crystal'), ['--dump', page], 'crystal-data');
+  const crystal = run(path.join(ROOT, 'bin', 'tawb'), ['--dump', page], 'crystal-data');
 
   assert.equal(javascript.status, 0, javascript.stderr);
   assert.equal(crystal.status, 0, crystal.stderr);
@@ -71,7 +71,7 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
   }));
   const javascriptLynx = run(process.execPath,
     ['src/index.js', '--front-end', 'lynx', '--dump', page], 'js-lynx-data');
-  const crystalLynx = run(path.join(ROOT, 'dist', 'tawb-crystal'),
+  const crystalLynx = run(path.join(ROOT, 'bin', 'tawb'),
     ['--front-end', 'lynx', '--dump', page], 'crystal-lynx-data');
   assert.equal(javascriptLynx.status, 0, javascriptLynx.stderr);
   assert.equal(crystalLynx.status, 0, crystalLynx.stderr);
@@ -106,7 +106,7 @@ test('the native Firefox dump matches JavaScript on a real Firefox page', { skip
   const javascript = run(process.execPath, [
     'src/index.js', '--dump', '--browser', 'firefox', page,
   ], 'js-data');
-  const crystal = run(path.join(ROOT, 'dist', 'tawb-crystal'), [
+  const crystal = run(path.join(ROOT, 'bin', 'tawb'), [
     '--dump', '--browser', 'firefox', page,
   ], 'crystal-data');
   assert.equal(javascript.status, 0, javascript.stderr);
@@ -119,7 +119,7 @@ test('the native Firefox dump matches JavaScript on a real Firefox page', { skip
   const javascriptLynx = run(process.execPath, [
     'src/index.js', '--front-end', 'lynx', '--dump', '--browser', 'firefox', page,
   ], 'js-lynx-data');
-  const crystalLynx = run(path.join(ROOT, 'dist', 'tawb-crystal'), [
+  const crystalLynx = run(path.join(ROOT, 'bin', 'tawb'), [
     '--front-end', 'lynx', '--dump', '--browser', 'firefox', page,
   ], 'crystal-lynx-data');
   assert.equal(javascriptLynx.status, 0, javascriptLynx.stderr);
@@ -147,7 +147,7 @@ test('the native dump reads a closed shadow root through CDP', { skip: !enabled 
     timeout: 90000,
   });
   const javascript = run(process.execPath, ['src/index.js', '--dump', page], 'js-data');
-  const crystal = run(path.join(ROOT, 'dist', 'tawb-crystal'), ['--dump', page], 'crystal-data');
+  const crystal = run(path.join(ROOT, 'bin', 'tawb'), ['--dump', page], 'crystal-data');
   assert.equal(javascript.status, 0, javascript.stderr);
   assert.equal(crystal.status, 0, crystal.stderr);
   assert.equal(crystal.stdout, javascript.stdout);
@@ -179,7 +179,7 @@ test('the native dump includes an out-of-process iframe', { skip: !enabled }, as
     const javascript = await runAsync(process.execPath, ['src/index.js', '--dump', url], {
       cwd: ROOT, env: { ...env, XDG_DATA_HOME: path.join(root, 'js-data') }, stdio: ['ignore', 'pipe', 'pipe'],
     });
-    const crystal = await runAsync(path.join(ROOT, 'dist', 'tawb-crystal'), ['--dump', url], {
+    const crystal = await runAsync(path.join(ROOT, 'bin', 'tawb'), ['--dump', url], {
       cwd: ROOT, env: { ...env, XDG_DATA_HOME: path.join(root, 'crystal-data') }, stdio: ['ignore', 'pipe', 'pipe'],
     });
     assert.equal(javascript.status, 0, javascript.stderr);
@@ -208,7 +208,7 @@ test('the native dump waits for the requested document DOM', { skip: !enabled },
   };
   fs.mkdirSync(env.HOME, { recursive: true });
   try {
-    const result = await runAsync(path.join(ROOT, 'dist', 'tawb-crystal'), [
+    const result = await runAsync(path.join(ROOT, 'bin', 'tawb'), [
       '--dump', `http://127.0.0.1:${server.address().port}/`,
     ], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
     assert.equal(result.status, 0, result.stderr);
@@ -231,7 +231,7 @@ test('a kept Chromium is rejoined across the Crystal and JavaScript runtimes', {
     XDG_CACHE_HOME: path.join(root, 'cache'),
   };
   fs.mkdirSync(env.HOME, { recursive: true });
-  const executable = path.join(ROOT, 'dist', 'tawb-crystal');
+  const executable = path.join(ROOT, 'bin', 'tawb');
   const run = (...extra) => spawnSync(executable, [
     '--dump', '--profile', profile, ...extra, page,
   ], { cwd: ROOT, env, encoding: 'utf8', timeout: 90000 });
@@ -278,7 +278,7 @@ test('a kept Firefox is rejoined across the Crystal and JavaScript runtimes', { 
     XDG_CACHE_HOME: path.join(root, 'cache'),
   };
   fs.mkdirSync(env.HOME, { recursive: true });
-  const executable = path.join(ROOT, 'dist', 'tawb-crystal');
+  const executable = path.join(ROOT, 'bin', 'tawb');
   const run = (...extra) => spawnSync(executable, [
     '--dump', '--browser', 'firefox', '--profile', profile, ...extra, page,
   ], { cwd: ROOT, env, encoding: 'utf8', timeout: 120000 });

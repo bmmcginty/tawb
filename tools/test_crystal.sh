@@ -4,7 +4,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-BINARY=${TAWB_CRYSTAL_BIN:-dist/tawb-crystal}
+BINARY=${TAWB_CRYSTAL_BIN:-bin/tawb}
 # A scoped run is the common way to work, and the static build costs about a
 # minute, so an iteration on one file that has not touched the Crystal source
 # keeps the binary the last build wrote. TAWB_SKIP_BUILD=1 asks for that.

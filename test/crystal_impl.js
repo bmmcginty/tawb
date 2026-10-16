@@ -8,7 +8,7 @@ const { PassThrough } = require('node:stream');
 const { EOF } = require('../src/input');
 
 const binary = process.env.TAWB_CRYSTAL_BIN
-  || path.join(__dirname, '..', 'dist', 'tawb-crystal');
+  || path.join(__dirname, '..', 'bin', 'tawb');
 
 // The conformance keymaps share the reader's own Keymap, whose default file is
 // the reader's config. Loading that would let a developer's personal bindings

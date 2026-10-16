@@ -24,7 +24,7 @@ const {
 } = require('../../src/library_chromium');
 
 const ROOT = path.join(__dirname, '..', '..');
-const BINARY = process.env.TAWB_CRYSTAL_BIN || path.join(ROOT, 'dist', 'tawb-crystal');
+const BINARY = process.env.TAWB_CRYSTAL_BIN || path.join(ROOT, 'bin', 'tawb');
 const enabled = process.env.TAWB_TEST_CRYSTAL_BROWSER === '1';
 const skip = enabled ? false : 'TAWB_TEST_CRYSTAL_BROWSER is not 1';
 

@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const binary = process.env.TAWB_CRYSTAL_BIN
-  || path.join(__dirname, '..', 'dist', 'tawb-crystal');
+  || path.join(__dirname, '..', 'bin', 'tawb');
 
 function runProbe() {
   // The child reads its payload from stdin, which is the pty slave here.

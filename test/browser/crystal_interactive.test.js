@@ -25,7 +25,7 @@ const { tempDir, removeTempDir } = require('../tmpdir');
 const { processesUsing } = require('../../src/proc');
 
 const ROOT = path.join(__dirname, '..', '..');
-const BINARY = process.env.TAWB_CRYSTAL_BIN || path.join(ROOT, 'dist', 'tawb-crystal');
+const BINARY = process.env.TAWB_CRYSTAL_BIN || path.join(ROOT, 'bin', 'tawb');
 const TERM = 'xterm-256color';
 const COLS = 80;
 const ROWS = 24;

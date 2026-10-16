@@ -1994,7 +1994,7 @@ npm run edb                       # or: npm run edb -- --browser firefox
 
 It prints a tab list address and writes `~/.local/share/tawb/edb.json`
 so the entry-point plugin can find it. The native build serves the same
-thing: `tawb --front-end edb` (or `dist/tawb-crystal edb`) writes the same
+thing: `tawb --front-end edb` (or `bin/tawb edb`) writes the same
 record, answers the same routes, and produces the same html —
 `test/edb_crystal.test.js` compares the html as strings and
 `test/edb_routes_crystal.test.js` compares the whole of every answer. **The edbrowse side of this — the
@@ -2034,7 +2034,7 @@ whole story.
 `crystal/` is a second implementation of everything on the terminal side of
 the browser, built so a release can be copied to a Linux machine with no Node
 and no runtime to extract. `tools/build_crystal.sh` writes
-`dist/tawb-crystal` and refuses an output with an ELF interpreter or any
+`bin/tawb` and refuses an output with an ELF interpreter or any
 `DT_NEEDED` entry, because a static executable that quietly acquired a
 dynamic dependency is not the thing being shipped.
 
@@ -2091,7 +2091,7 @@ executable carries no asset files of its own.
 
 ### The conformance protocol
 
-The native modules are not tested on their own. `dist/tawb-crystal
+The native modules are not tested on their own. `bin/tawb
 --conformance <operation>` reads one JSON payload on standard input and
 writes one `{ok, value}` answer, and `test/crystal_impl.js` wraps each
 operation as a second implementation of the module the JavaScript tests
@@ -2122,7 +2122,7 @@ different questions.
 ### Running it
 
 ```
-tools/build_crystal.sh                  # dist/tawb-crystal
+tools/build_crystal.sh                  # bin/tawb
 tools/test_crystal.sh                   # every ported specification, both runtimes
 tools/test_crystal.sh test/place_crystal.test.js
 tools/test_crystal_browser.sh           # the differentials that need a real browser

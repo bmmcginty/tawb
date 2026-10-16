@@ -4,7 +4,7 @@
   "description": "the linear web in your terminal",
   "main": "src/index.js",
   "bin": {
-    "tawb": "dist/tawb-crystal"
+    "tawb": "bin/tawb"
   },
   "scripts": {
     "prepack": "tools/build_crystal.sh",

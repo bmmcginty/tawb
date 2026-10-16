@@ -7,11 +7,11 @@ const { spawnSync } = require('node:child_process');
 
 const enabled = process.env.TAWB_TEST_CRYSTAL === '1';
 const binary = process.env.TAWB_CRYSTAL_BIN
-  || path.join(__dirname, '..', 'dist', 'tawb-crystal');
+  || path.join(__dirname, '..', 'bin', 'tawb');
 
 test('the packaged command is the native executable', () => {
   const pkg = require('../package.json');
-  assert.equal(pkg.bin.tawb, 'dist/tawb-crystal');
+  assert.equal(pkg.bin.tawb, 'bin/tawb');
 });
 
 test('the native CLI says which engines it reads interactively', {
