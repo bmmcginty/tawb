@@ -1277,3 +1277,74 @@ test('both readers type into a field and submit the form the same way',
     }
   });
 
+// A page whose text changes on every request, so a reload that reaches the
+// browser is visible on the screen. The favicon is answered without counting,
+// so the browser's own extra request cannot stand in for a reload.
+async function reloadRun(root, runtime, address) {
+  const name = `${runtime.name}-reload`;
+  const profile = path.join(root, name, 'profile');
+  const reader = new ReaderTty({
+    session: `tawb-reload-${name.toLowerCase()}-${process.pid}`,
+    command: runtime.command,
+    args: [...runtime.args, '--browser', 'firefox', '--profile', profile,
+      '--no-alt-screen', address],
+    env: environment(root, name),
+  });
+  try {
+    await reader.start({ ready: 'Counter 1' });
+    const before = reader.drawn();
+    await reader.press('F5');
+    const reloaded = await waitForRow(reader, 'Counter 2', 15000);
+    const after = reader.drawn();
+    await reader.quit();
+    return { name: runtime.name, before, reloaded, after, profile };
+  } finally {
+    reader.stop();
+  }
+}
+
+test('both readers reload the page they are reading the same way',
+  { skip }, async () => {
+    const root = tempDir('tawb-reload-');
+    // One server for both runtimes so the address row is identical; the
+    // counter starts again for each reader, so each sees the same 1 then 2.
+    let hits = 0;
+    const server = http.createServer((req, res) => {
+      if (req.url === '/favicon.ico') {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      hits += 1;
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+      });
+      res.end(`<h1>Counter ${hits}</h1>`);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = `http://127.0.0.1:${server.address().port}/page`;
+    const profiles = [];
+    try {
+      const seen = [];
+      for (const runtime of RUNTIMES) {
+        hits = 0;
+        const run = await reloadRun(root, runtime, address);
+        profiles.push(run.profile);
+        seen.push(run);
+        await waitForProfileToDrain(run.profile);
+      }
+      const [javascript, crystal] = seen;
+      assert.ok(javascript.reloaded && crystal.reloaded,
+        'reloading did not read the page again in both runtimes');
+      assert.deepEqual(crystal.before, javascript.before,
+        'the page before reloading is the same in both runtimes');
+      assert.deepEqual(crystal.after, javascript.after,
+        'the page after reloading is the same in both runtimes');
+    } finally {
+      for (const profile of profiles) killProfile(profile);
+      server.closeAllConnections?.();
+      server.close();
+      removeTempDir(root);
+    }
+  });
+

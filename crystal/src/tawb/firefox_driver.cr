@@ -742,11 +742,23 @@ module Tawb
       # Ask the browser for this document again, cache or no.
       def reload(wait_until = "complete", ignore_cache = false) : Nil
         begin
-          result = @protocol.command("browsingContext.reload", {
-            "context"     => JSON::Any.new(@context_id),
-            "wait"        => JSON::Any.new(wait_until == "domcontentloaded" ? "interactive" : "complete"),
-            "ignoreCache" => JSON::Any.new(ignore_cache),
-          }).as_h
+          wait = wait_until == "domcontentloaded" ? "interactive" : "complete"
+          result = begin
+            @protocol.command("browsingContext.reload", {
+              "context"     => JSON::Any.new(@context_id),
+              "wait"        => JSON::Any.new(wait),
+              "ignoreCache" => JSON::Any.new(ignore_cache),
+            }).as_h
+          rescue error
+            # Firefox BiDi has not implemented ignoreCache and refuses the
+            # whole command over it. A reload without the hint is the reload a
+            # person asked for; the hint only ever asked it to skip the cache.
+            raise error unless /ignoreCache/i.matches?(error.message || "")
+            @protocol.command("browsingContext.reload", {
+              "context" => JSON::Any.new(@context_id),
+              "wait"    => JSON::Any.new(wait),
+            }).as_h
+          end
           @url = result["url"]?.try(&.as_s?) || @url
         ensure
           @loading = false

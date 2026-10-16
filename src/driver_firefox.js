@@ -441,9 +441,20 @@ class FirefoxPage {
   async reload({ waitUntil = 'complete', ignoreCache = false } = {}) {
     const wait = waitUntil === 'domcontentloaded' ? 'interactive' : 'complete';
     try {
-      const result = await this.session.send('browsingContext.reload', {
-        context: this.contextId, wait, ignoreCache,
-      });
+      let result;
+      try {
+        result = await this.session.send('browsingContext.reload', {
+          context: this.contextId, wait, ignoreCache,
+        });
+      } catch (err) {
+        // Firefox BiDi has not implemented ignoreCache and refuses the whole
+        // command over it. A reload without the hint is the reload a person
+        // asked for; the hint only ever asked it to skip the cache.
+        if (!/ignoreCache/i.test(String(err.message || ''))) throw err;
+        result = await this.session.send('browsingContext.reload', {
+          context: this.contextId, wait,
+        });
+      }
       if (result && result.url) this.setUrl(result.url);
     } finally {
       this._loading = false;
