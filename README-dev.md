@@ -2145,6 +2145,15 @@ Each run builds the binary unless `TAWB_SKIP_BUILD=1` is set, which keeps
 the one the last build wrote. A scoped run that has not touched the Crystal
 source does not need the static build, which costs about a minute.
 
+Both scripts run the suite under `tools/run_isolated.sh`. It puts the run in
+a PID namespace of its own, so the kernel takes every process the run started
+down with the namespace's init — including a browser that detached itself and
+a helper some session bus started — and a guardian outside the namespace
+removes the run's temporary directory, which the namespace cannot. A kernel
+or container that refuses the nested namespace falls back to the guardian
+sweeping by the run directory, and `TAWB_NO_NAMESPACE=1` asks for that
+fallback directly.
+
 `test/browser/crystal_interactive.test.js` is the end of that line: both
 readers in a tmux pane, each started for itself and launching its own
 Firefox, compared on the rendered screen and on the terminal cursor — which
