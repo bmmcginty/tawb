@@ -207,6 +207,39 @@ test('a private bus can be handed to a browser that outlives its reader', async 
   }
 });
 
+test('a run asked to isolate itself starts a private bus instead of using a session bus', async (t) => {
+  if (!await daemonOrSkip(t)) return;
+  // A reachable session bus a browser would otherwise be handed. Without the
+  // request to isolate, the implementation would take the desktop's
+  // accessibility bus or serve the name on this one; with it, it starts a bus
+  // of its own, where the desktop's services are not activatable and so a
+  // portal the browser asks for is never started.
+  const offered = await a11yBus.startSessionBus();
+  try {
+    const env = {
+      DBUS_SESSION_BUS_ADDRESS: offered.address,
+      TAWB_A11Y_BUS: 'private',
+    };
+    for (const implementation of implementations) {
+      const outcome = await implementation.openScenario(env, 'close');
+      if (!outcome.available) {
+        t.skip(`no accessibility bus available to ${implementation.name}: ${outcome.reason}`);
+        return;
+      }
+      assert.equal(outcome.owned, true, `${implementation.name} used the offered bus`);
+      assert.match(outcome.address, /^unix:path=/, `${implementation.name} named no unix bus`);
+      assert.notEqual(
+        outcome.address,
+        offered.address,
+        `${implementation.name} did not start a bus of its own`,
+      );
+      assert.equal(outcome.env.DBUS_SESSION_BUS_ADDRESS, outcome.address);
+    }
+  } finally {
+    offered.child.kill('SIGTERM');
+  }
+});
+
 for (const implementation of implementations) {
   const check = (name, fn) => test(`${implementation.name}: ${name}`, fn);
 

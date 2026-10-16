@@ -66,6 +66,17 @@ module Tawb
       nil
     end
 
+    # Whether the desktop's session bus is to be left alone even where it
+    # exists. A run that must not start the desktop services a browser asks a
+    # session bus for — a portal, dconf, GVfs, a keyring, each a process of its
+    # own that outlives the run — asks for a bus of this program's own instead.
+    # The private bus has no service directories, so those names are not
+    # activatable at all; see `private_bus_config`.
+    def self.isolated? : Bool
+      value = ENV["TAWB_A11Y_BUS"]?
+      value == "private" || value == "isolated"
+    end
+
     # A session bus of this program's own, for a machine that has none. The
     # address is chosen here rather than read from the daemon's stdout so that
     # the daemon can have no pipe back to the reader. Closing that pipe when
@@ -280,7 +291,7 @@ module Tawb
     end
 
     def self.open(log : Log? = nil) : Opened
-      session_address = session_bus_address
+      session_address = isolated? ? nil : session_bus_address
       daemon = nil.as(Process?)
       daemon_socket = nil.as(String?)
       env = {} of String => String

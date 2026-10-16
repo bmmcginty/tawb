@@ -61,6 +61,17 @@ function sessionBusAddress() {
   return fs.existsSync(path) ? `unix:path=${path}` : null;
 }
 
+// Whether the desktop's session bus is to be left alone even where it exists.
+// A run that must not start the desktop services a browser asks a session bus
+// for — a portal, dconf, GVfs, a keyring, each a process of its own that
+// outlives the run — asks for a bus of this program's own instead. The private
+// bus has no service directories, so those names are not activatable at all;
+// see `privateBusConfig`.
+function isolatedSessionBus() {
+  const wanted = process.env.TAWB_A11Y_BUS;
+  return wanted === 'private' || wanted === 'isolated';
+}
+
 // A session bus of our own, for a machine that has none. Its address is chosen
 // here rather than read from stdout so the daemon can have no pipe back to the
 // reader. Closing that pipe when the launching process exits otherwise takes
@@ -199,7 +210,7 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
     close: async () => {}, leaveRunning: async () => {},
   };
 
-  let sessionAddress = sessionBusAddress();
+  let sessionAddress = isolatedSessionBus() ? null : sessionBusAddress();
   let daemon = null;
   let daemonSocket = null;
   const env = {};

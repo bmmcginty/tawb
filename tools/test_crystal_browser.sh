@@ -12,6 +12,11 @@ if [ -z "${TAWB_SKIP_BUILD:-}" ]; then
   tools/build_crystal.sh
 fi
 export TAWB_TEST_CRYSTAL_BROWSER=1
+# A browser asked for a session bus will activate the desktop's portal, dconf,
+# GVfs and keyring services on it, and each is a process of its own that
+# outlives the run. The private bus has no service directories, so nothing is
+# activatable, and it is what a terminal with no desktop already gets.
+export TAWB_A11Y_BUS=private
 
 # Files may be named to run a subset:
 #

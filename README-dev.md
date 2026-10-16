@@ -1424,7 +1424,10 @@ Two things have to be true, and both are checked rather than assumed:
   D-Bus's `StartServiceByName` blocks until the service has started or failed.
   A browser that asks for a launcher which cannot come up on a terminal waits
   out the activation timeout before sending its first request. With no service
-  directories the ask is refused immediately. The socket path stays on the
+  directories the ask is refused immediately. A run can ask for that private
+  bus even where a session bus does exist, with `TAWB_A11Y_BUS=private`, so a
+  test never starts a desktop service that outlives it; the test suites set
+  it. The socket path stays on the
   daemon's command line as well, because the browser registry proves a
   companion daemon is ours by finding it there before signalling it. The name
   is released when the reader ends.
