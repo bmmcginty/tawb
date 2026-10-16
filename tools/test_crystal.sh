@@ -5,7 +5,12 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 BINARY=${TAWB_CRYSTAL_BIN:-dist/tawb-crystal}
-tools/build_crystal.sh "$BINARY"
+# A scoped run is the common way to work, and the static build costs about a
+# minute, so an iteration on one file that has not touched the Crystal source
+# keeps the binary the last build wrote. TAWB_SKIP_BUILD=1 asks for that.
+if [ -z "${TAWB_SKIP_BUILD:-}" ]; then
+  tools/build_crystal.sh "$BINARY"
+fi
 export TAWB_TEST_CRYSTAL=1
 export TAWB_CRYSTAL_BIN="$BINARY"
 

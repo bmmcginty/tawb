@@ -2130,6 +2130,21 @@ The browser differentials (`test/browser/crystal_*.test.js`,
 a real accessibility tree extracts to, what a real field reads back, what a
 real mutation observer reports. They run one at a time.
 
+A run may be scoped. `tools/test_crystal.sh` forwards whatever it is given
+to `node --test`, so a file name narrows it to that file. The browser script
+accepts file names the same way, and both accept node's own options, which
+narrow whatever files are chosen:
+
+```
+tools/test_crystal_browser.sh test/browser/crystal_dump.test.js
+tools/test_crystal_browser.sh --test-name-pattern='the dump'
+tools/test_crystal_browser.sh --test-shard=1/3
+```
+
+Each run builds the binary unless `TAWB_SKIP_BUILD=1` is set, which keeps
+the one the last build wrote. A scoped run that has not touched the Crystal
+source does not need the static build, which costs about a minute.
+
 `test/browser/crystal_interactive.test.js` is the end of that line: both
 readers in a tmux pane, each started for itself and launching its own
 Firefox, compared on the rendered screen and on the terminal cursor — which
