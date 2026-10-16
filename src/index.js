@@ -1223,6 +1223,18 @@ function focusableEdge(state, direction) {
   return null;
 }
 
+// A fresh Lynx document begins on its first link or form control. TAWB's
+// header means the physical row cannot match Lynx's, but the semantic current
+// item must: the next Down should leave from the same control in both.
+function placeFreshDocumentCursor(state) {
+  if (state.interface !== 'lynx') return;
+  const first = focusableEdge(state, 1);
+  if (!first) return;
+  state.cursor = first.line;
+  state.col = first.col;
+  clampScroll(state);
+}
+
 function findQuickNav(state, match, direction, { sameLine = false } = {}) {
   const step = direction > 0 ? 1 : -1;
 
@@ -1533,6 +1545,7 @@ async function refresh(state, page, { resetCursor = false, anchor = null } = {})
   if (state.core.live) state.core.live.snapshotCostMs = state.core.snapshotCostMs;
   if (resetCursor) { state.cursor = 0; state.scroll = 0; state.col = 0; }
   relayout(state);
+  if (resetCursor) placeFreshDocumentCursor(state);
   if (anchor) restoreAnchor(state, anchor);
 }
 
@@ -1710,6 +1723,7 @@ async function runLiveRefresh(state, page) {
   }
   relayout(state);
   if (keepPlace) settleCursorOn(state, rebuilt.settled.block);
+  else placeFreshDocumentCursor(state);
   const remapExact = rebuilt.settled.exact;
   const regions = rebuilt.regions;
   const reanchorMs = Date.now() - tPost;

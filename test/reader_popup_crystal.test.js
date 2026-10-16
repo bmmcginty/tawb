@@ -158,3 +158,25 @@ test('a refresh that resets the cursor starts from the top', { skip: needsCrysta
   assert.equal(result.state.cursor, 0);
   assert.equal(result.state.scroll, 0);
 });
+
+test('a resetting Lynx refresh starts on the first control, not the first row',
+  { skip: needsCrystal }, async () => {
+    const blocks = [
+      { text: 'Page heading', item: { role: 'heading', name: 'Page heading' } },
+      { text: 'Introduction', item: { role: 'text', name: 'Introduction' } },
+      { text: 'Contact', item: { role: 'link', name: 'Contact', href: 'mailto:hello@example.test' } },
+      { text: 'Cart', item: { role: 'button', name: 'Cart' } },
+    ];
+    const state = stateFor({
+      interface: 'lynx', cursor: 3,
+      keys: { profile: 'lynx', preferences: { numberLinks: true, numberFields: true } },
+      core: { blocks },
+    });
+    state.core.rescanBlocks = blocks;
+    const result = await runBoth('Lynx reset refresh', state, [
+      { op: 'refresh', resetCursor: true },
+    ]);
+    assert.equal(result.state.lines[result.state.cursor].text, 'Contact');
+    assert.equal(result.state.col, 0);
+    assert.equal(result.state.scroll, 0);
+  });

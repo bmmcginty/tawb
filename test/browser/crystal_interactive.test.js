@@ -1531,3 +1531,84 @@ test("both readers answer the browser's own question the same way",
       removeTempDir(root);
     }
   });
+
+// Lynx enters a fresh document on its first actionable item. The ordinary
+// interface starts at the first text row, but carrying that policy into the
+// Lynx profile leaves it one control behind real Lynx: Down reaches the first
+// link while Lynx is already leaving it. Drive the address command through a
+// real Firefox so the navigation's later live pulse cannot silently put the
+// cursor back on the heading after the first refresh placed it correctly.
+const LYNX_START = `<!doctype html><title>Starting page</title>
+<h1>Starting heading</h1><p><a href="#start">starting link</a></p>`;
+const LYNX_DESTINATION = `<!doctype html><title>Destination page</title>
+<h1>Destination heading</h1><p>Static introduction before any controls.</p>
+<p><a href="#first">first link</a></p><p><a href="#second">second link</a></p>`;
+
+async function lynxLandingRun(root, runtime, startAddress, destinationAddress) {
+  const name = `${runtime.name}-lynx-landing`;
+  const profile = path.join(root, name, 'profile');
+  const config = path.join(root, name, 'config', 'tawb');
+  fs.mkdirSync(config, { recursive: true });
+  fs.writeFileSync(path.join(config, 'settings.lynx.json'),
+    JSON.stringify({ version: 1, lynx: { showCursor: true } }));
+  const reader = new ReaderTty({
+    session: `tawb-lynx-landing-${name.toLowerCase()}-${process.pid}`,
+    command: runtime.command,
+    args: [...runtime.args, '--front-end', 'lynx', '--browser', 'firefox',
+      '--profile', profile, '--no-alt-screen', startAddress],
+    env: environment(root, name),
+  });
+  try {
+    await reader.start({ ready: 'Starting heading' });
+    await reader.press('g');
+    await reader.type(destinationAddress);
+    await reader.press('Enter');
+    const arrived = await waitForRow(reader, 'Destination heading', 20000);
+    // The live pulse follows the explicit refresh. This is long enough for it
+    // to classify the new address and would expose a second reset to row zero.
+    await sleep(2500);
+    const firstCursor = reader.cursor();
+    const first = reader.rows()[firstCursor.row].trim();
+    await reader.press('Down');
+    const secondCursor = reader.cursor();
+    const second = reader.rows()[secondCursor.row].trim();
+    await reader.quit();
+    return { name: runtime.name, arrived, first, second, profile };
+  } finally {
+    reader.stop();
+  }
+}
+
+test('both Lynx readers enter a Firefox navigation on its first link',
+  { skip }, async () => {
+    const root = tempDir('tawb-lynx-landing-');
+    const start = path.join(root, 'start.html');
+    const destination = path.join(root, 'destination.html');
+    fs.writeFileSync(start, LYNX_START);
+    fs.writeFileSync(destination, LYNX_DESTINATION);
+    const profiles = [];
+    try {
+      const seen = [];
+      for (const runtime of RUNTIMES) {
+        const run = await lynxLandingRun(root, runtime,
+          `file://${start}`, `file://${destination}`);
+        profiles.push(run.profile);
+        seen.push(run);
+        await waitForProfileToDrain(run.profile);
+      }
+      const [javascript, crystal] = seen;
+      assert.ok(javascript.arrived && crystal.arrived,
+        'the address command did not reach the destination in both runtimes');
+      assert.match(javascript.first, /first link/,
+        'the Lynx reader started on text before the first link');
+      assert.match(javascript.second, /second link/,
+        'Down did not leave the same first link real Lynx starts on');
+      assert.equal(crystal.first, javascript.first,
+        'the Crystal reader started on a different item from JavaScript');
+      assert.equal(crystal.second, javascript.second,
+        'the Crystal reader moved to a different next item from JavaScript');
+    } finally {
+      for (const profile of profiles) killProfile(profile);
+      removeTempDir(root);
+    }
+  });

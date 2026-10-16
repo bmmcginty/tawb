@@ -1189,6 +1189,7 @@ module Tawb
         state.col = 0
       end
       relayout(state)
+      place_fresh_document_cursor(state) if reset_cursor
       restore_anchor(state, anchor) if present?(anchor)
     end
 
@@ -1254,6 +1255,18 @@ module Tawb
         return {line: line_index, col: 0}
       end
       nil
+    end
+
+    # A fresh Lynx document begins on its first link or form control. TAWB's
+    # header means the physical row cannot match Lynx's, but the semantic
+    # current item must: the next Down should leave from the same control in
+    # both.
+    def self.place_fresh_document_cursor(state : State) : Nil
+      return unless state.interface == "lynx"
+      first = focusable_edge(state, 1) || return
+      state.cursor = first[:line]
+      state.col = first[:col]
+      clamp_scroll(state)
     end
 
     private def self.focusable_item?(item : JSON::Any) : Bool

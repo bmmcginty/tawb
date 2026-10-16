@@ -421,6 +421,7 @@ module Tawb
           Reader.relayout(@state)
           if was_navigation
             @state.cursor = 0; @state.col = 0; @state.scroll = 0
+            Reader.place_fresh_document_cursor(@state)
           else
             Reader.reanchor_quietly(@state, anchor)
           end
