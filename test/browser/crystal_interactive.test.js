@@ -870,56 +870,61 @@ test('the native reader closes the browser it launched, and keeps one it was tol
 // The keep test above rejoins with the same runtime. What a person does is
 // read with one build, quit, and read the same browser with the other, and it
 // is the interactive reader's own startup that has to find the kept browser: a
-// dump rejoining proves the endpoint record, not the reader.
-for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crystal']]) {
-  test(`a ${first} reader keeps a Firefox that the ${second} reader rejoins`,
-    { skip }, async () => {
-      const root = tempDir(`tawb-rejoin-${first}-`);
-      const page = path.join(root, 'page.html');
-      fs.writeFileSync(page, PAGE);
-      const address = `file://${page}`;
-      const profile = path.join(root, 'profile');
-      const env = environment(root, 'rejoin');
-      const opened = runtimeNamed(first);
-      const joined = runtimeNamed(second);
-      const launched = new ReaderTty({
-        session: `tawb-rejoin-${first.toLowerCase()}-${process.pid}`,
-        command: opened.command,
-        args: [...opened.args, '--browser', 'firefox', '--profile', profile,
-          '--no-alt-screen', '--keep-browser', address],
-        env,
-      });
-      const rejoined = new ReaderTty({
-        session: `tawb-rejoin-${second.toLowerCase()}-${process.pid}`,
-        command: joined.command,
-        args: [...joined.args, '--browser', 'firefox', '--profile', profile,
-          '--no-alt-screen', address],
-        env,
-      });
-      try {
-        await launched.start({ ready: 'Fixture heading' });
-        const port = endpointPort(profile);
-        await launched.quit();
-        assert.ok(port, 'the first reader recorded the browser it launched');
-        assert.ok(processesUsing(profile).length > 0,
-          'the kept Firefox outlives the reader that launched it');
-        try {
-          await rejoined.start({ ready: 'Fixture heading' });
-          assert.ok(rejoined.drawn().some((row) => row.includes('# Fixture heading')),
-            `the ${second} reader drew the page through the kept browser`);
-          assert.equal(endpointPort(profile), port,
-            'and it joined that browser rather than starting another');
-          await rejoined.quit();
-        } finally {
-          rejoined.stop();
-        }
-      } finally {
-        launched.stop();
-        killProfile(profile);
-        await waitForProfileToDrain(profile, 10000);
-        removeTempDir(root);
-      }
-    });
+// dump rejoining proves the endpoint record, not the reader. Both engines are
+// covered, because each keeps and rejoins through its own session.
+async function keptRejoinCheck(engine, first, second) {
+  const root = tempDir(`tawb-rejoin-${engine}-${first}-`);
+  const page = path.join(root, 'page.html');
+  fs.writeFileSync(page, PAGE);
+  const address = `file://${page}`;
+  const profile = path.join(root, 'profile');
+  const env = environment(root, `rejoin-${engine}`);
+  const opened = runtimeNamed(first);
+  const joined = runtimeNamed(second);
+  const launched = new ReaderTty({
+    session: `tawb-rejoin-${engine}-${first.toLowerCase()}-${process.pid}`,
+    command: opened.command,
+    args: [...opened.args, '--browser', engine, '--profile', profile,
+      '--no-alt-screen', '--keep-browser', address],
+    env,
+  });
+  const rejoined = new ReaderTty({
+    session: `tawb-rejoin-${engine}-${second.toLowerCase()}-${process.pid}`,
+    command: joined.command,
+    args: [...joined.args, '--browser', engine, '--profile', profile,
+      '--no-alt-screen', address],
+    env,
+  });
+  try {
+    await launched.start({ ready: 'Fixture heading' });
+    const port = endpointPort(profile);
+    await launched.quit();
+    assert.ok(port, 'the first reader recorded the browser it launched');
+    assert.ok(processesUsing(profile).length > 0,
+      `the kept ${engine} browser outlives the reader that launched it`);
+    try {
+      await rejoined.start({ ready: 'Fixture heading' });
+      assert.ok(rejoined.drawn().some((row) => row.includes('# Fixture heading')),
+        `the ${second} reader drew the page through the kept browser`);
+      assert.equal(endpointPort(profile), port,
+        'and it joined that browser rather than starting another');
+      await rejoined.quit();
+    } finally {
+      rejoined.stop();
+    }
+  } finally {
+    launched.stop();
+    killProfile(profile);
+    await waitForProfileToDrain(profile, 10000);
+    removeTempDir(root);
+  }
+}
+
+for (const engine of ['firefox', 'chromium']) {
+  for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crystal']]) {
+    test(`a ${first} reader keeps a ${engine} browser the ${second} reader rejoins`,
+      { skip }, () => keptRejoinCheck(engine, first, second));
+  }
 }
 
 // Two readers, one browser at the same time. Whichever one quits — the reader
@@ -990,41 +995,46 @@ for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crysta
 
 // A browser that goes away underneath a reader — crashed, killed, or quit from
 // its own menu — must reach the reader as an end, not as a wait for a browser
-// that will never answer. Whichever runtime is reading, the session ends
-// within a bounded time instead of sitting on the terminal.
-for (const runtime of RUNTIMES) {
-  test(`a ${runtime.name} reader ends when the browser it is reading is killed`,
-    { skip }, async () => {
-      const root = tempDir(`tawb-loss-${runtime.name}-`);
-      const page = path.join(root, 'page.html');
-      fs.writeFileSync(page, PAGE);
-      const profile = path.join(root, 'profile');
-      const reader = new ReaderTty({
-        session: `tawb-loss-${runtime.name}-${process.pid}`.toLowerCase(),
-        command: runtime.command,
-        args: [...runtime.args, '--browser', 'firefox', '--profile', profile,
-          '--no-alt-screen', `file://${page}`],
-        env: environment(root, runtime.name),
-      });
-      try {
-        await reader.start({ ready: 'Fixture heading' });
-        assert.ok(processesUsing(profile).length > 0,
-          'the reader has a browser to lose');
-        killProfile(profile);
-        let ended = false;
-        for (const deadline = Date.now() + 15000; Date.now() < deadline;) {
-          await sleep(250);
-          if (!reader.alive()) { ended = true; break; }
-        }
-        assert.ok(ended,
-          `${runtime.name} sat on the terminal after its browser was killed`);
-      } finally {
-        reader.stop();
-        killProfile(profile);
-        await waitForProfileToDrain(profile, 10000);
-        removeTempDir(root);
-      }
-    });
+// that will never answer. Whichever runtime is reading and whichever engine is
+// under it, the session ends within a bounded time instead of sitting on the
+// terminal.
+async function browserKilledCheck(engine, runtime) {
+  const root = tempDir(`tawb-loss-${engine}-${runtime.name}-`);
+  const page = path.join(root, 'page.html');
+  fs.writeFileSync(page, PAGE);
+  const profile = path.join(root, 'profile');
+  const reader = new ReaderTty({
+    session: `tawb-loss-${engine}-${runtime.name}-${process.pid}`.toLowerCase(),
+    command: runtime.command,
+    args: [...runtime.args, '--browser', engine, '--profile', profile,
+      '--no-alt-screen', `file://${page}`],
+    env: environment(root, `loss-${engine}`),
+  });
+  try {
+    await reader.start({ ready: 'Fixture heading' });
+    assert.ok(processesUsing(profile).length > 0,
+      'the reader has a browser to lose');
+    killProfile(profile);
+    let ended = false;
+    for (const deadline = Date.now() + 15000; Date.now() < deadline;) {
+      await sleep(250);
+      if (!reader.alive()) { ended = true; break; }
+    }
+    assert.ok(ended,
+      `${runtime.name} sat on the terminal after its ${engine} browser was killed`);
+  } finally {
+    reader.stop();
+    killProfile(profile);
+    await waitForProfileToDrain(profile, 10000);
+    removeTempDir(root);
+  }
+}
+
+for (const engine of ['firefox', 'chromium']) {
+  for (const runtime of RUNTIMES) {
+    test(`a ${runtime.name} reader ends when its ${engine} browser is killed`,
+      { skip }, () => browserKilledCheck(engine, runtime));
+  }
 }
 
 // One reader's answer for the keyboard screen: the page before, the wizard it
