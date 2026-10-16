@@ -811,15 +811,15 @@ module Tawb
       # then is its completion awaited. A click that navigates nowhere costs
       # that window and no more.
       def wait_for_load_state(state = "load", timeout_ms = 15000) : Bool
-        started_by = Time.monotonic + NAVIGATION_GRACE_MS.milliseconds
+        started_by = Time.instant + NAVIGATION_GRACE_MS.milliseconds
         saw_load = drain_navigation
-        while !saw_load && !@loading && Time.monotonic < started_by
+        while !saw_load && !@loading && Time.instant < started_by
           sleep 20.milliseconds
           saw_load = drain_navigation
         end
         return saw_load unless @loading
-        deadline = Time.monotonic + timeout_ms.milliseconds
-        while @loading && Time.monotonic < deadline
+        deadline = Time.instant + timeout_ms.milliseconds
+        while @loading && Time.instant < deadline
           saw_load = drain_navigation || saw_load
           sleep 20.milliseconds unless saw_load
         end
@@ -858,7 +858,7 @@ module Tawb
         # until the destination realm answers a script. A restored document
         # may stay at readyState "loading" with no load event left to
         # reach, so a successful evaluation is the readiness that matters.
-        deadline = Time.monotonic + ready_ms.milliseconds
+        deadline = Time.instant + ready_ms.milliseconds
         loop do
           address = begin
             evaluate("() => location.href").as_s?
@@ -869,7 +869,7 @@ module Tawb
             set_url(address)
             return true
           end
-          break if Time.monotonic >= deadline
+          break if Time.instant >= deadline
           sleep 20.milliseconds
         end
         # The move itself succeeded; failing to read the destination here is

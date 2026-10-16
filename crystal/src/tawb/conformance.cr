@@ -1723,10 +1723,10 @@ module Tawb
       def wait_for_load : Nil
       end
 
-      def goto(target : String) : Nil
+      def goto(url : String) : Nil
         raise IO::Error.new(@goto_fault.not_nil!) if @goto_fault
         sleep if @goto_hang
-        @url = target
+        @url = url
       end
 
       def stop_loading : Nil
@@ -2794,14 +2794,14 @@ module Tawb
         watcher = Live::Watcher.new
         install = watcher.install(page)
         page.goto(url, "domcontentloaded")
-        sleep 1.5
+        sleep 1.5.seconds
         parse_batches = watcher.collect(page)
         page.evaluate(mutation)
-        sleep 0.8
+        sleep 800.milliseconds
         mutation_batches = watcher.collect(page)
         live = Live.create_state
         first = watcher.pulse(page, live)
-        sleep 1.1
+        sleep 1.1.seconds
         page.goto(url2, "domcontentloaded")
         second = watcher.pulse(page, live)
         JSON::Any.new({

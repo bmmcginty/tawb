@@ -518,7 +518,7 @@ module Tawb
       unless EXTRACTABLE_SOURCES.includes?(@source)
         raise IO::Error.new("native interactive extraction for #{@source} is not ported")
       end
-      started = Time.monotonic
+      started = Time.instant
       built = snapshot_blocks(target)
       @blocks = built.map do |entry|
         object = entry.as_h
@@ -533,7 +533,7 @@ module Tawb
       # may detach between its snapshot and this call.
       frames = target.all_frames
       arm_live_frames(frames)
-      @snapshot_cost_ms = (Time.monotonic - started).total_milliseconds.to_i64
+      @snapshot_cost_ms = (Time.instant - started).total_milliseconds.to_i64
       @live.snapshot_cost_ms = @snapshot_cost_ms
       @blocks
     end
@@ -638,8 +638,8 @@ module Tawb
       grew = false
       if scrollable
         timeout = moved ? LOAD_MORE_TIMEOUT_MS : LOAD_MORE_SETTLED_MS
-        deadline = Time.monotonic + timeout.milliseconds
-        while Time.monotonic < deadline
+        deadline = Time.instant + timeout.milliseconds
+        while Time.instant < deadline
           count = Core.js_number(target.evaluate(
             "() => document.getElementsByTagName('*').length"))
           if count > before

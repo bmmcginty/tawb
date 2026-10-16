@@ -1996,11 +1996,11 @@ module Tawb
     # holds something, bounded, and the bound is not an error in itself.
     private def self.settle_after_fault(output : Screen::Output, state : Reader::State,
                                         page : Reader::PageEnv) : Bool
-      deadline = Time.monotonic + 4.seconds
+      deadline = Time.instant + 4.seconds
       loop do
         Reader.refresh(state, page, true)
         return true unless state.lines.empty?
-        return false if Time.monotonic >= deadline
+        return false if Time.instant >= deadline
         sleep 150.milliseconds
       end
     end

@@ -115,9 +115,9 @@ module Tawb
         return nil if now - live.last_pulse_ms < PULSE_MS
         live.last_pulse_ms = now
 
-        started = Time.monotonic
+        started = Time.instant
         reading = page.evaluate(PULSE_SCRIPT).as_h
-        elapsed = (Time.monotonic - started).total_milliseconds.to_i64
+        elapsed = (Time.instant - started).total_milliseconds.to_i64
         observing = reading["observing"]?.try(&.as_bool?) || false
         rearmed = !observing && arm_frame(page, force: true, again: true)
         print = reading["print"]?.try(&.as_s?) || ""

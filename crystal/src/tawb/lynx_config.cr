@@ -242,8 +242,8 @@ module Tawb
         error: Process::Redirect::Close)
       output = Channel(String).new
       spawn { output.send(process.output.gets_to_end) }
-      deadline = Time.monotonic + 3.seconds
-      while process.exists? && Time.monotonic < deadline
+      deadline = Time.instant + 3.seconds
+      while process.exists? && Time.instant < deadline
         sleep 50.milliseconds
       end
       if process.exists?

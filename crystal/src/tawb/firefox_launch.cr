@@ -266,7 +266,7 @@ module Tawb
 
     def self.installed_version(executable : String) : String?
       begin
-        app_dir = File.dirname(File.real_path(executable))
+        app_dir = File.dirname(File.realpath(executable))
         text = File.read(File.join(app_dir, "platform.ini"))
         if found = /^Milestone=(\S+)/m.match(text)
           return found[1]
