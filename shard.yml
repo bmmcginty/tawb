@@ -1,0 +1,13 @@
+name: tawb
+version: 0.1.0
+
+authors:
+  - Brandon McGinty <git@bmcginty.us>
+
+description: keyboard-first web in linear text
+
+targets:
+  tawb:
+    main: crystal/src/tawb.cr
+
+license: GPL
