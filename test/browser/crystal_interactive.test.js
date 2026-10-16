@@ -943,6 +943,7 @@ for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crysta
         fs.writeFileSync(path.join(root, 'first.html'), FIRST);
         fs.writeFileSync(path.join(root, 'second.html'), SECOND);
         const address = `file://${path.join(root, 'first.html')}`;
+        const secondAddress = `file://${path.join(root, 'second.html')}`;
         const profile = path.join(root, 'profile');
         const env = environment(root, 'shared');
         const launcherRuntime = runtimeNamed(first);
@@ -975,9 +976,20 @@ for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crysta
               `the ${stayingName} reader is still running after the other quit`);
             assert.ok(processesUsing(profile).length > 0,
               'the shared Firefox is still running');
-            await staying.press('Down');
+            // The reader may be on the tab the other one opened, and the
+            // browser moves the foreground around as that reader leaves. Let
+            // the ticker settle on a tab of its own before steering.
+            await sleep(2500);
+            // Asking for a new address is a protocol command that cannot be
+            // answered from the buffer, so it is what proves the shared
+            // session outlived the reader that left. The page's own link is
+            // not used because both readers share the foreground tab and the
+            // one that left may have left the cursor anywhere.
+            await staying.press('C-l');
+            await staying.press('C-u');
+            await staying.type(secondAddress);
             await staying.press('Enter');
-            assert.ok(await waitForRow(staying, 'Second page'),
+            assert.ok(await waitForRow(staying, 'Second page', 25000),
               `the ${stayingName} reader is still driving the shared browser`);
             await staying.quit();
           } finally {
