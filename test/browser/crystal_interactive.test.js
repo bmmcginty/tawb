@@ -1427,3 +1427,107 @@ test('both readers file and list a bookmark through the browser the same way',
       removeTempDir(root);
     }
   });
+
+// The browser's own question, reached through the assembled reader. A page's
+// alert() is drawn by the browser as a window of its own: it is in neither
+// protocol, it stops the page's script until somebody answers it, and the only
+// way to see it or answer it is the browser's own accessibility interface.
+// The driver tests watch a real browser through that interface and the
+// scripted reader tests drive the dialog screen, but neither reaches the
+// assembled reader; the DialogBinding's conversion of a live request into the
+// screen's lines and buttons only happens when the watch, the screen and the
+// real browser meet.
+//
+// Chromium only. A BiDi session dismisses Firefox's page dialogs before they
+// reach the accessibility tree (see test/browser/native.test.js), so the same
+// page would never ask there.
+//
+// One server and one address for both runtimes: the dialog's own origin line
+// and the address row have to be the same string to compare, and a fresh port
+// per runtime would differ in the digits.
+const ASKING = `<!doctype html><html><head><meta charset="utf-8"><title>Asking</title></head>
+<body><h1>Asking heading</h1>
+<p id="state">Waiting</p>
+<script>
+  setTimeout(() => {
+    alert('Your session will expire in 2 minutes.');
+    document.getElementById('state').textContent = 'Answered the question';
+  }, 2500);
+</script></body></html>`;
+
+async function dialogRun(root, runtime, address) {
+  const name = `${runtime.name}-dialog`;
+  const profile = path.join(root, name, 'profile');
+  const reader = new ReaderTty({
+    session: `tawb-dialog-${name.toLowerCase()}-${process.pid}`,
+    command: runtime.command,
+    args: [...runtime.args, '--browser', 'chromium', '--profile', profile,
+      '--no-alt-screen', address],
+    env: environment(root, name),
+  });
+  try {
+    await reader.start({ ready: 'Asking heading' });
+    const before = reader.drawn();
+    const asking = await waitForStatus(reader, 'The browser is asking', 30000);
+    // Chromium discards input that arrives within about half a second of a
+    // dialog appearing — its protection against clickjacking — and discards
+    // it silently. A reader is never near that window; a test that presses
+    // the instant the status changes is.
+    await sleep(1200);
+    const question = reader.drawn();
+    // End lands on the last line, which is a button: the dialog's own words
+    // come first and its choices after them.
+    await reader.press('End');
+    await reader.press('Enter');
+    const answered = await waitForRow(reader, 'Answered the question', 20000);
+    const after = reader.drawn();
+    await reader.quit();
+    return { name: runtime.name, before, asking, question, answered, after, profile };
+  } finally {
+    reader.stop();
+  }
+}
+
+test("both readers answer the browser's own question the same way",
+  { skip }, async () => {
+    const root = tempDir('tawb-dialog-');
+    const server = http.createServer((req, res) => {
+      if (req.url === '/favicon.ico') { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+      });
+      res.end(ASKING);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = `http://127.0.0.1:${server.address().port}/asking`;
+    const profiles = [];
+    try {
+      const seen = [];
+      for (const runtime of RUNTIMES) {
+        const run = await dialogRun(root, runtime, address);
+        profiles.push(run.profile);
+        seen.push(run);
+        await waitForProfileToDrain(run.profile);
+      }
+      const [javascript, crystal] = seen;
+      assert.ok(javascript.asking && crystal.asking,
+        'the browser asking something was not noticed in both runtimes');
+      assert.ok(javascript.answered && crystal.answered,
+        'answering the question did not let the page go on in both runtimes');
+      assert.ok(javascript.question.some((row) => row.includes('expire in 2 minutes')),
+        'the dialog does not show what the browser said');
+      assert.ok(javascript.question.some((row) => row.includes('OK')),
+        'the dialog does not offer the browser\'s own answer');
+      assert.deepEqual(crystal.before, javascript.before,
+        'the page before the question is the same in both runtimes');
+      assert.deepEqual(crystal.question, javascript.question,
+        'the question itself is the same in both runtimes');
+      assert.deepEqual(crystal.after, javascript.after,
+        'and the page after answering is the same in both runtimes');
+    } finally {
+      for (const profile of profiles) killProfile(profile);
+      server.closeAllConnections?.();
+      server.close();
+      removeTempDir(root);
+    }
+  });
