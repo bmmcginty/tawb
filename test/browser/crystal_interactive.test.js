@@ -1208,3 +1208,72 @@ test('both readers open, cycle and close a tab the same way', { skip }, async ()
     removeTempDir(root);
   }
 });
+
+// A form's own default action, reached through the reader: a field entered and
+// typed into, then submitted. Entering a field holds the element across calls
+// and reads its state back through the real binding, which the scripted reader
+// tests stand in for and the field-state differential never reaches.
+const FORM = `<!doctype html><html><head><meta charset="utf-8"><title>Form</title></head>
+<body><h1>Form heading</h1>
+<form action="result.html">
+  <label>Your name <input type="text" name="name"></label>
+  <button type="submit">Send it</button>
+</form></body></html>`;
+
+const RESULT = `<!doctype html><html><head><title>Result</title></head>
+<body><h1>Result heading</h1></body></html>`;
+
+async function formRun(root, runtime, address) {
+  const name = `${runtime.name}-form`;
+  const profile = path.join(root, name, 'profile');
+  const reader = new ReaderTty({
+    session: `tawb-form-${name.toLowerCase()}-${process.pid}`,
+    command: runtime.command,
+    args: [...runtime.args, '--browser', 'firefox', '--profile', profile,
+      '--no-alt-screen', address],
+    env: environment(root, name),
+  });
+  try {
+    await reader.start({ ready: 'Form heading' });
+    const before = reader.drawn();
+    await reader.press('f');
+    await reader.press('Enter');
+    await reader.type('Ada');
+    await reader.press('Enter');
+    const submitted = await waitForRow(reader, 'Result heading', 15000);
+    const after = reader.drawn();
+    await reader.quit();
+    return { name: runtime.name, before, submitted, after, profile };
+  } finally {
+    reader.stop();
+  }
+}
+
+test('both readers type into a field and submit the form the same way',
+  { skip }, async () => {
+    const root = tempDir('tawb-form-');
+    fs.writeFileSync(path.join(root, 'form.html'), FORM);
+    fs.writeFileSync(path.join(root, 'result.html'), RESULT);
+    const address = `file://${path.join(root, 'form.html')}`;
+    const profiles = [];
+    try {
+      const seen = [];
+      for (const runtime of RUNTIMES) {
+        const run = await formRun(root, runtime, address);
+        profiles.push(run.profile);
+        seen.push(run);
+        await waitForProfileToDrain(run.profile);
+      }
+      const [javascript, crystal] = seen;
+      assert.ok(javascript.submitted && crystal.submitted,
+        'submitting the form did not reach the result page in both runtimes');
+      assert.deepEqual(crystal.before, javascript.before,
+        'the form page is the same in both runtimes');
+      assert.deepEqual(crystal.after, javascript.after,
+        'the page after submitting is the same in both runtimes');
+    } finally {
+      for (const profile of profiles) killProfile(profile);
+      removeTempDir(root);
+    }
+  });
+

@@ -325,6 +325,16 @@ function readFieldStateInPage(el) {
   return { text, caret: text.length, native: false };
 }
 
+// Whether an element can take typed text. A top-level function declaration,
+// not a class method: the browser is handed this function's own source, and a
+// method's shorthand source (`FIELD_EDITABLE(el) { … }`) is not a function
+// declaration the protocol can parse.
+function fieldEditable(el) {
+  const tag = el && el.tagName;
+  return !!el && !el.disabled && !el.readOnly
+    && (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable);
+}
+
 // Reads the field's live text + caret straight from the DOM.
 //
 // Takes an ElementHandle, not a Locator: a locator re-resolves by role+name
@@ -1628,15 +1638,6 @@ class Core {
     return decodeURIComponent(href.slice(1));
   }
 
-  // Whether the element Enter is standing on can take typed text at all.
-  // A control that is disabled, read-only, or none of the three editing
-  // shapes has nothing for a caret to enter.
-  static FIELD_EDITABLE(el) {
-    const tag = el && el.tagName;
-    return !!el && !el.disabled && !el.readOnly
-      && (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable);
-  }
-
   // Makes an item ready to type into and reads what is already there. The
   // editable check, the focus and the read are one act as far as the reader
   // is concerned; the handle is kept on the core because the typing mode
@@ -1644,7 +1645,7 @@ class Core {
   async fieldForTyping(item, page = this.page) {
     const handle = await withTimeout(
       this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating field');
-    const editable = await handle.evaluate(Core.FIELD_EDITABLE);
+    const editable = await handle.evaluate(fieldEditable);
     if (!editable) {
       await handle.dispose().catch(() => {});
       return null;
