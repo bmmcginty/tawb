@@ -1358,3 +1358,60 @@ test('both readers reload the page they are reading the same way',
     }
   });
 
+// The browser's own bookmark list, reached through the reader: file the page,
+// then open the list and find it. The library binding is compared against a
+// real browser directly elsewhere; only the assembled reader proves the reader
+// asks it.
+async function libraryRun(root, runtime, address) {
+  const name = `${runtime.name}-library`;
+  const profile = path.join(root, name, 'profile');
+  const reader = new ReaderTty({
+    session: `tawb-library-${name.toLowerCase()}-${process.pid}`,
+    command: runtime.command,
+    args: [...runtime.args, '--browser', 'firefox', '--profile', profile,
+      '--no-alt-screen', address],
+    env: environment(root, name),
+  });
+  try {
+    await reader.start({ ready: 'Fixture heading' });
+    await reader.press('C-d');
+    await reader.press('Enter');
+    const saved = await waitForStatus(reader, 'Bookmarked', 10000);
+    await reader.press('C-o');
+    const listed = await waitForRow(reader, 'Fixture page', 10000);
+    const screen = reader.drawn();
+    await reader.press('Escape');
+    await reader.quit();
+    return { name: runtime.name, saved, listed, screen, profile };
+  } finally {
+    reader.stop();
+  }
+}
+
+test('both readers file and list a bookmark through the browser the same way',
+  { skip }, async () => {
+    const root = tempDir('tawb-library-');
+    const page = path.join(root, 'page.html');
+    fs.writeFileSync(page, PAGE);
+    const address = `file://${page}`;
+    const profiles = [];
+    try {
+      const seen = [];
+      for (const runtime of RUNTIMES) {
+        const run = await libraryRun(root, runtime, address);
+        profiles.push(run.profile);
+        seen.push(run);
+        await waitForProfileToDrain(run.profile);
+      }
+      const [javascript, crystal] = seen;
+      assert.ok(javascript.saved && crystal.saved,
+        'the bookmark was not saved in both runtimes');
+      assert.ok(javascript.listed && crystal.listed,
+        'the saved bookmark was not listed in both runtimes');
+      assert.deepEqual(crystal.screen, javascript.screen,
+        'the bookmarks screen is the same in both runtimes');
+    } finally {
+      for (const profile of profiles) killProfile(profile);
+      removeTempDir(root);
+    }
+  });
