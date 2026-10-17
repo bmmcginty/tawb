@@ -133,10 +133,13 @@ const CONSTRUCTS = [
   ['content-visibility:auto', 'read',
     '<div style="content-visibility:auto;contain-intrinsic-size:200px"><p>M09</p></div>'],
   ['the hidden attribute', 'skip', '<div hidden><p>M10</p></div>'],
-  // Inert content is on screen and has a box, and nothing in its style says
-  // it is gone; the specification says to hide it from assistive technology,
-  // and a control the browser will not activate is worse than absent.
-  ['an inert subtree', 'skip', '<div inert><p>M12</p><button>M13</button></div>'],
+  // Inert content is on screen and has a box. Pages use `inert` for the
+  // background behind an overlay and often leave it applied after the overlay
+  // is gone — CNN's Google One Tap sign-in card did that to the whole page,
+  // hiding every headline behind one frame. The content is still there, and
+  // activating a link through the DOM still follows it, so it is read. A
+  // native modal dialog is excluded separately, by the :modal check above.
+  ['an inert subtree', 'read', '<div inert><p>M12</p><button>M13</button></div>'],
   ['aria-hidden', 'skip', '<div aria-hidden="true"><p>M14</p></div>'],
   // The accessibility tree carries text painted at zero opacity; the view of
   // what is on screen does not. The two disagree on purpose.

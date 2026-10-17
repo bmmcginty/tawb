@@ -154,11 +154,16 @@
   const visibilityOf = (el) => {
     if (el.getAttribute('aria-hidden') === 'true') return GONE;
     if (el.hasAttribute('hidden')) return GONE;
-    // Inert content is still on screen and still has a box, so nothing about
-    // its style says it is gone; the specification says to hide it from
-    // assistive technology all the same, and a control the browser refuses to
-    // activate is worse than absent when it is the reader's only clue.
-    if (el.hasAttribute('inert')) return GONE;
+    // `inert` is deliberately not consulted. It is the page's way of taking a
+    // subtree out of the tab order and the accessibility tree while leaving it
+    // on screen, and pages routinely apply it to the whole document while an
+    // overlay — a cookie choice, a sign-in card — is open, then fail to take it
+    // off again. CNN does exactly that behind Google One Tap: the page is
+    // visible and readable, but inert, and honouring the attribute left the
+    // reader with one login frame and nothing else. The content still has a
+    // box and its links still follow when activated through the DOM, so the
+    // reader gets it. A native modal dialog is a separate case below; there
+    // the rest of the document really is unreachable and is left out.
     // Everything outside the modal is inert. Its own ancestors are not — the
     // walk has to reach it through them.
     if (modal && !modal.contains(el) && !el.contains(modal)) return GONE;
