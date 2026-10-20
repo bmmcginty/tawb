@@ -175,7 +175,7 @@ function resolvedUrl(page, item) {
 
 // Activates a DOM-mode line, with the action chosen by what the element
 // actually is rather than by pretending everything is a link.
-async function activateDomItem(page, item) {
+async function activateDomItem(page, item, { activateWith = null } = {}) {
   const url = resolvedUrl(page, item);
 
   if (MEDIA_TAGS.has(item.tag)) {
@@ -190,10 +190,17 @@ async function activateDomItem(page, item) {
   // Aimed where a mouse would land rather than at the element itself: a
   // handler bound to a child hears a real click and would never hear ours.
   const handle = await domElementHandle(page, item);
-  await handle.evaluate(clickThrough);
-  await handle.dispose().catch(() => {});
-  await page.waitForLoadState('domcontentloaded').catch(() => {});
-  return `Activated <${item.tag}>`;
+  try {
+    if (activateWith) return await activateWith(handle);
+    const clicked = await handle.evaluate(clickThrough);
+    if (clicked && clicked.reason === 'no-click-method') {
+      return `Could not press <${item.tag}>: its inner target has no direct click.`;
+    }
+    await page.waitForLoadState('domcontentloaded').catch(() => {});
+    return `Activated <${item.tag}>`;
+  } finally {
+    await handle.dispose().catch(() => {});
+  }
 }
 
 async function domElementHandle(page, item) {

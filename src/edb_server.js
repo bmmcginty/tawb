@@ -462,7 +462,11 @@ async function activate(page, desc, { real = false, core = null } = {}) {
   // the core knows about — but what happens to the element once we have it is
   // the core's, timeouts and all. It is the same click the reader makes.
   if (!real) {
-    await core.activateHandle(found.handle, page);
+    const done = await core.activateHandle(found.handle, page);
+    // The control may have needed a trusted press after its DOM target turned
+    // out to have no click method, and that press may itself have been
+    // refused. Say so rather than reporting a click that never happened.
+    if (done && done.status) return { ok: false, why: done.status };
     return { ok: true, how: found.how };
   }
 

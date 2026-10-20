@@ -150,7 +150,13 @@ module Tawb
           # element once it is held is the ordinary action, timeouts and all.
           # It is the same press the reader makes.
           unless real
-            Actions.activate(handle)
+            done = Actions.default_activation(handle)
+            # The control may have needed a trusted press after its DOM target
+            # turned out to have no click method, and that press may itself
+            # have been refused. Say so rather than reporting a click that
+            # never happened.
+            status = done.as_h?.try(&.["status"]?.try(&.as_s?))
+            return Outcome.new(false, why: status) if status
             return Outcome.new(true, how: "path")
           end
           answered = Actions.real_click(handle).as_h?

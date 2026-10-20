@@ -70,6 +70,26 @@ module Tawb
       handle.evaluate(CLICK_THROUGH)
     end
 
+    # The ordinary default action, with the one fallback the DOM path needs.
+    #
+    # The page side descends to the node a mouse would land on, and that node
+    # is not always an HTMLElement: an SVG icon, a MathML fragment, or a page
+    # that replaced click() has no method to call. Nothing has been pressed
+    # at that point, so the same control is pressed with trusted pointer
+    # input. It reaches the inner node and bubbles from it, which is what the
+    # DOM path was imitating in the first place.
+    def self.default_activation(handle : Engine::Handle) : JSON::Any
+      result = activate(handle)
+      return activation_result("default-action") unless needs_real_click?(result)
+
+      clicked = real_click(handle) rescue nil
+      return activation_result("real-click") if clicked && ready?(clicked)
+
+      why = clicked.try(&.as_h?).try(&.["reason"]?.try(&.as_s?)) || "could not be placed"
+      activation_result("default-action",
+        "Could not press it directly, and a real click #{why}.")
+    end
+
     # The item-level activation policy from Core#activate. The handle-level
     # actions above and below are deliberately smaller: this is the caller
     # that decides when a closed-shadow target or an autofilled sign-in needs
@@ -92,7 +112,14 @@ module Tawb
           clicked = real_click(held) rescue nil
           return activation_result("real-click") if clicked && ready?(clicked)
 
-          activate(held)
+          done = default_activation(held)
+          # The fallback may already have made this a real press, or explained
+          # why neither route worked. Neither should be overwritten with the
+          # remembered-password warning.
+          how = done.as_h["how"]?.try(&.as_s?)
+          status = done.as_h["status"]?.try(&.as_s?)
+          return done if how == "real-click" || status
+
           why = clicked.try(&.as_h?).try(&.["reason"]?.try(&.as_s?)) ||
             "could not be pressed that way"
           name = object["name"]?.try(&.as_s?) || ""
@@ -103,8 +130,7 @@ module Tawb
         end
       end
 
-      activate(held)
-      activation_result("default-action")
+      default_activation(held)
     end
 
     # Press into a document hidden behind a closed shadow root. Page script
@@ -163,6 +189,10 @@ module Tawb
 
     private def self.ready?(ready : JSON::Any) : Bool
       ready.as_h?.try(&.["ok"]?.try(&.as_bool?)) || false
+    end
+
+    private def self.needs_real_click?(result : JSON::Any) : Bool
+      result.as_h?.try(&.["reason"]?.try(&.as_s?)) == "no-click-method"
     end
 
     private def self.activation_result(how : String, status : String? = nil) : JSON::Any

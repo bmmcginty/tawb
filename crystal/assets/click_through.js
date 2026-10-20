@@ -50,6 +50,13 @@ function clickThrough(el) {
     node = inner;
   }
 
+  // Not every node under the aim point is an HTMLElement. An SVG icon, a
+  // MathML fragment, or a page that has replaced the method has no click()
+  // at all, and calling it would throw before anything reaches the page. Say
+  // so rather than failing: the caller can then press the same control with
+  // trusted pointer input, which reaches the inner node and bubbles from it
+  // exactly as a mouse would.
+  if (typeof node.click !== 'function') return { reason: 'no-click-method' };
   node.click();
   return node !== el;
 }

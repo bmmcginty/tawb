@@ -35,6 +35,9 @@ const FIXTURE = `<!doctype html><html><body>
 <a href="#" id="outer" role="button"><div id="inner"
   style="width:60px;height:20px;background:#eee"></div></a>
 <button id="real" type="button">Press me</button>
+<button id="icon" aria-label="Icon button" style="padding:0;border:0;background:transparent">
+  <svg width="40" height="40"><rect id="icon-target" width="40" height="40" fill="#ccc"></rect></svg>
+</button>
 <ul id="menu"><li id="item"><a href="javascript:;" id="itemlink">Members</a>
   <ul id="submenu"><li><a href="/sectionals">Sectionals</a></li></ul>
 </li></ul>
@@ -54,6 +57,10 @@ const FIXTURE = `<!doctype html><html><body>
   document.getElementById('real').addEventListener('click', (event) => {
     window.clicks.push(event.isTrusted);
   });
+  window.iconHeard = [];
+  document.getElementById('icon-target').addEventListener('click', (event) => {
+    window.iconHeard.push(event.isTrusted);
+  });
 </script>
 </body></html>`;
 
@@ -62,6 +69,7 @@ const FIXTURE = `<!doctype html><html><body>
 // focus is what the probe would read.
 const TARGETS = [
   { action: 'activate', selector: '#outer', index: 0 },
+  { action: 'default_activation', selector: '#icon', index: 0 },
   { action: 'real_click', selector: '#real', index: 0 },
   { action: 'hover', selector: '#itemlink', index: 0 },
   { action: 'focus_control', selector: '#text', index: 0 },
@@ -71,6 +79,7 @@ const TARGETS = [
 // What the page heard once every action had been taken.
 const PROBE = `() => ({
   heard: window.heard.slice(),
+  iconHeard: window.iconHeard.slice(),
   clicks: window.clicks.slice(),
   menu: getComputedStyle(document.querySelector('#submenu')).marginLeft,
   focused: document.activeElement ? document.activeElement.id : '',
@@ -102,6 +111,13 @@ check('the page hears the same things however the runtime acts on it', async () 
           case 'activate':
             answers.push(await handle.evaluate(clickThrough));
             break;
+          case 'default_activation': {
+            // The core's ordinary path, including the trusted-press fallback
+            // when the deepest target has no click() of its own.
+            const core = new Core({ driver, page, source: 'ax', sources: ['ax'] });
+            answers.push(await core.activateHandle(handle, page, frame));
+            break;
+          }
           case 'focus_control':
             answers.push(await handle.evaluate((el) => { el.focus(); return true; }));
             break;
@@ -141,6 +157,7 @@ check('the page hears the same things however the runtime acts on it', async () 
     // sitting under the keyboard.
     assert.deepEqual(reactions, {
       heard: ['inner', 'outer'],
+      iconHeard: [true],
       clicks: [true],
       menu: '0px',
       focused: 'text',

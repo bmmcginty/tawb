@@ -1413,7 +1413,18 @@ class Core {
       };
     }
     if (DOM_SOURCES.has(this.source)) {
-      return { how: 'dom', status: await activateDomItem(page, item) };
+      // The HTML view resolves its own element from the page-side node array,
+      // but pressing it still needs the ordinary activation path: that is
+      // where a target with no DOM click() gets its trusted press.
+      let how = 'dom';
+      const status = await activateDomItem(page, item, {
+        activateWith: async (handle) => {
+          const done = await this.activateHandle(handle, page, item.frame || page);
+          how = done.how;
+          return done.status;
+        },
+      });
+      return { how, status };
     }
 
     // Something behind a closed shadow root gets a real click rather than the
@@ -1444,7 +1455,11 @@ class Core {
         // screen it cannot be brought onto. Press it anyway, because a
         // sign-in that might work beats none, and say what may be wrong with
         // it rather than leaving the reader with an unexplained refusal.
-        const done = await this.activateHandle(handle, page);
+        const done = await this.activateHandle(handle, page, item.frame || page);
+        // The fallback may already have made this a real press, or explained
+        // why neither route worked. Neither should be overwritten with the
+        // remembered-password warning.
+        if (done.how === 'real-click' || done.status) return done;
         const why = clicked && clicked.reason ? clicked.reason : 'could not be pressed that way';
         return {
           ...done,
@@ -1454,7 +1469,7 @@ class Core {
         };
       }
     }
-    return this.activateHandle(handle, page);
+    return this.activateHandle(handle, page, item.frame || page);
   }
 
   // The acting half, once something has been resolved to an element. Split
@@ -1462,11 +1477,34 @@ class Core {
   // reader resolves an accessibility item, the edbrowse server resolves a
   // descriptor it handed out in a form. What happens next is the same, and
   // so are the bounds on how long it may take.
-  async activateHandle(handle, page = this.page) {
-    await withTimeout(Promise.all([
+  async activateHandle(handle, page = this.page, scope = null) {
+    const [, result] = await withTimeout(Promise.all([
       page.waitForLoadState('domcontentloaded').catch(() => {}),
       handle.evaluate(clickThrough),
     ]), ACTION_TIMEOUT_MS, 'Activating');
+
+    // The DOM path descends to the node a mouse would land on. An SVG icon,
+    // a MathML fragment, or a page that has replaced the method has no
+    // click() on that node. Nothing has been pressed yet, so press the same
+    // control with trusted pointer input: it reaches that node and bubbles
+    // from it, which is exactly what the DOM path was trying to imitate.
+    if (result && result.reason === 'no-click-method') {
+      if (!this.canRealClick()) {
+        return {
+          how: 'default-action',
+          status: 'Could not press it: its inner target has no direct click, '
+            + 'and this browser cannot send a real click.',
+        };
+      }
+      const clicked = await this.realClickHandle(handle, page, scope)
+        .catch((err) => ({ ok: false, reason: String(err && err.message ? err.message : err) }));
+      if (clicked && clicked.ok) return { how: 'real-click', status: null };
+      return {
+        how: 'default-action',
+        status: 'Could not press it directly, and a real click '
+          + `${clicked && clicked.reason ? clicked.reason : 'could not be placed'}.`,
+      };
+    }
     return { how: 'default-action', status: null };
   }
 

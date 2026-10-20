@@ -4237,6 +4237,8 @@ module Tawb
             case target["action"].as_s
             when "activate"
               answers.push(Actions.activate(held))
+            when "default_activation"
+              answers.push(Actions.default_activation(held))
             when "focus_control"
               answers.push(Actions.focus_control(held))
             when "submits_autofilled"

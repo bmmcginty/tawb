@@ -16,6 +16,9 @@ const assert = require('node:assert');
 const { tempDir, removeTempDir } = require('../tmpdir');
 const { openDriver } = require('../../src/driver');
 const { clickThrough } = require('../../src/click');
+const { Core } = require('../../src/core');
+const { snapshotFrameTree } = require('../../src/frames');
+const { snapshotSourceBlocks } = require('../../src/source_html');
 
 const ENGINE = process.env.TWEB_TEST_BROWSER || 'chromium';
 const profile = tempDir('tweb-click-through-');
@@ -73,4 +76,50 @@ test('a wrapped link is clicked through to the child on its first line', async (
   const heard = await page.evaluate(() => window.heard);
   assert.deepEqual(heard, ['inner'],
     'the click did not reach the span on the link\'s first line');
+});
+
+// The deepest node under the aim point is not always an HTMLElement. SVG has
+// no click() of its own, so the DOM path used to throw before the page heard
+// anything. The control still needs pressing, and a trusted pointer click is
+// the one road that reaches the inner node and bubbles from it.
+test('a control whose inner target has no click method is pressed as a person', async () => {
+  if (!driver) driver = await openDriver({ engine: ENGINE, profile, log: () => {} });
+  const page = driver.context.pages()[0] || await driver.context.newPage();
+  await page.goto('data:text/html,' + encodeURIComponent(`
+    <button aria-label="Icon button" style="padding:0;border:0;background:transparent">
+      <svg width="40" height="40"><rect id="icon-target" width="40" height="40" fill="#ccc"></rect></svg>
+    </button>
+    <script>
+      window.heard = [];
+      document.getElementById('icon-target').addEventListener('click', (event) => {
+        window.heard.push({ target: event.target.id, trusted: event.isTrusted });
+      });
+    </script>
+  `));
+
+  const blocks = await snapshotFrameTree(page, 'ax', { driver });
+  const button = blocks.find((block) => block.item && block.item.name === 'Icon button');
+  assert.ok(button, 'the icon button was not read');
+
+  const core = new Core({ driver, page, source: 'ax', sources: ['ax'] });
+  const result = await core.activate(button.item, page);
+  assert.equal(result.how, 'real-click',
+    'the missing click method was not answered with a trusted press');
+
+  const heard = await page.evaluate(() => window.heard);
+  assert.deepEqual(heard, [{ target: 'icon-target', trusted: true }],
+    'the trusted press did not reach the SVG target');
+
+  // The HTML view resolves its own element, but must take the same fallback.
+  await page.evaluate(() => { window.heard = []; });
+  const sourceBlocks = await snapshotSourceBlocks(page);
+  const sourceButton = sourceBlocks.find((block) => block.item && block.item.tag === 'button');
+  assert.ok(sourceButton, 'the HTML view did not read the icon button');
+  const sourceCore = new Core({ driver, page, source: 'source', sources: ['source'] });
+  const sourceResult = await sourceCore.activate(sourceButton.item, page);
+  assert.equal(sourceResult.how, 'real-click',
+    'the HTML view did not use the trusted press');
+  assert.deepEqual(await page.evaluate(() => window.heard),
+    [{ target: 'icon-target', trusted: true }],
+    'the HTML view did not reach the SVG target');
 });
