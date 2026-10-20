@@ -38,9 +38,7 @@ function extractVisible(options) {
   const SHOWN = 'shown';
 
   const visibilityOf = (el) => {
-    // See ax_own.js: `inert` leaves content on screen, and pages often apply it
-    // to the whole page behind an overlay and never remove it. Reading it is
-    // the difference between the page and one sign-in frame.
+    if (el.hasAttribute('inert')) return GONE;
     if (modal && !modal.contains(el) && !el.contains(modal)) return GONE;
     if (el.hasAttribute('hidden')) return GONE;
     if (el.getAttribute('aria-hidden') === 'true') return GONE;

@@ -58,8 +58,8 @@ test('a cross-origin iframe is read and activated through its own context', asyn
     // mistaken for the first tracker or dropped after the first 25 contexts.
     const hidden = Array.from({ length: 30 }, () =>
       '<iframe hidden src="/hidden"></iframe>').join('');
-    res.end(`<!doctype html><title>parent</title><h1>Parent document</h1>
-      ${hidden}
+    res.end(`<!doctype html><title>parent</title><main inert><h1>Parent document</h1>
+      ${hidden}</main>
       <iframe title="foreign frame" src="http://localhost:${childServer.address().port}/"></iframe>`);
   });
   await listen(parentServer, '127.0.0.1');
@@ -81,6 +81,8 @@ test('a cross-origin iframe is read and activated through its own context', asyn
     'the child document was not included in the page');
   assert.ok(!blocks.some((block) => block.text.includes('Hidden tracker document.')),
     'a hidden frame was read in place of the visible one');
+  assert.ok(!blocks.some((block) => block.text.includes('Parent document')),
+    'the page behind the modal frame was offered as interactive content');
   const button = blocks.find((block) => block.item && block.item.name === 'Press child');
   assert.ok(button, 'the child control was not included in the page');
 

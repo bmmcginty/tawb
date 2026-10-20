@@ -121,6 +121,7 @@ test('both text views skip content the page marked as gone', async () => {
     'Content hidden by display none.',
     'Content hidden by visibility hidden.',
     'Content hidden by content-visibility.',
+    'Content made inert.',
     'Content inside a template, which is never rendered.',
     'Body of the closed disclosure, which must not be read while closed.',
     'A closed dialog that must not be read.',
@@ -129,16 +130,6 @@ test('both text views skip content the page marked as gone', async () => {
   for (const name of ['ax', 'render']) {
     const { text } = await view(name);
     for (const marker of hidden) assert.ok(!text.includes(marker), `${name} read ${marker}`);
-  }
-});
-
-test('both text views read content the page made inert', async () => {
-  // The attribute hides a subtree from assistive technology, but leaves it on
-  // screen. Sites use it for the page behind an overlay and sometimes leave it
-  // behind after the overlay has gone; skipping it then hides the page itself.
-  for (const name of ['ax', 'render']) {
-    const { text } = await view(name);
-    assert.match(text, /Content made inert\./, `${name} skipped inert content`);
   }
 });
 
