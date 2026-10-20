@@ -1,6 +1,7 @@
 require "json"
 require "./bidi"
 require "./firefox_agent"
+require "./frames"
 require "./marionette"
 
 module Tawb
@@ -1068,9 +1069,11 @@ module Tawb
         context = result["contexts"].as_a.first?
         raise IO::Error.new("Firefox exposed no tree for browsing context #{@context_id}") unless context
 
-        documents = {} of String => Array(JSON::Any)
-        collect_documents(context, documents, layout)
-        {frame_tree(context), documents}
+        tree = frame_tree(context)
+        documents = Frames.collect_documents(tree) do |context_id|
+          accessibility_items(context_id, layout)
+        end
+        {tree, documents}
       end
 
       def accessibility_items(context_id = @context_id, layout = false) : Array(JSON::Any)
@@ -1105,14 +1108,6 @@ module Tawb
         end
         decoded = Bidi.from_remote(result["result"]?)
         decoded.as_a
-      end
-
-      private def collect_documents(context : JSON::Any, documents, layout : Bool) : Nil
-        object = context.as_h
-        context_id = object["context"].as_s
-        documents[context_id] = accessibility_items(context_id, layout)
-        children = object["children"]?.try(&.as_a?) || [] of JSON::Any
-        children.each { |child| collect_documents(child, documents, layout) }
       end
 
       private def frame_tree(context : JSON::Any) : JSON::Any

@@ -49,7 +49,17 @@ test('a cross-origin iframe is read and activated through its own context', asyn
 
   parentServer = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    if (req.url === '/hidden') {
+      res.end('<!doctype html><p>Hidden tracker document.</p>');
+      return;
+    }
+    // More hidden children than the frame-reading budget come first. The
+    // visible frame must be selected by its real element ordinal rather than
+    // mistaken for the first tracker or dropped after the first 25 contexts.
+    const hidden = Array.from({ length: 30 }, () =>
+      '<iframe hidden src="/hidden"></iframe>').join('');
     res.end(`<!doctype html><title>parent</title><h1>Parent document</h1>
+      ${hidden}
       <iframe title="foreign frame" src="http://localhost:${childServer.address().port}/"></iframe>`);
   });
   await listen(parentServer, '127.0.0.1');
@@ -69,6 +79,8 @@ test('a cross-origin iframe is read and activated through its own context', asyn
 
   assert.ok(blocks.some((block) => block.text.includes('Words from the other origin.')),
     'the child document was not included in the page');
+  assert.ok(!blocks.some((block) => block.text.includes('Hidden tracker document.')),
+    'a hidden frame was read in place of the visible one');
   const button = blocks.find((block) => block.item && block.item.name === 'Press child');
   assert.ok(button, 'the child control was not included in the page');
 

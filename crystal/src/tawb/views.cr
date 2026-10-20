@@ -46,7 +46,7 @@ module Tawb
           "name" => JSON::Any.new(string(object, "text").presence ||
                                   (images(object).empty? ? string(object, "text") : control_text(object))),
         } of String => JSON::Any
-        {"level", "href", "editable", "file", "table", "flow"}.each do |name|
+        {"level", "href", "editable", "file", "table", "flow", "frameIndex"}.each do |name|
           item[name] = object[name] if object.has_key?(name)
         end
         item["renderIndex"] = object["index"] if object.has_key?("index")
@@ -159,6 +159,7 @@ module Tawb
                  # something to act on.
                  {"role" => JSON::Any.new("text"), "name" => name} of String => JSON::Any
                end
+        item["frameIndex"] = object["frameIndex"] if object.has_key?("frameIndex")
         item["frame"] = JSON::Any.new(frame_id) if frame_id
         JSON::Any.new({
           "kind"  => JSON::Any.new("control"),

@@ -78,6 +78,10 @@ function extractVisible(options) {
   const FIELD_ROLES = new Set(['textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton']);
 
   const out = [];
+  // Keep the browser's child-context index even when earlier frame elements
+  // are hidden and therefore absent from this view.
+  const frameIndices = new Map(Array.from(document.querySelectorAll('iframe,frame'))
+    .map((frame, index) => [frame, index]));
 
   // See ax_own.js: a modal dialog makes the rest of the document inert, and
   // nothing in the markup or the style of those elements says so.
@@ -546,7 +550,13 @@ function extractVisible(options) {
       return;
     }
     if (shown && (tag === 'iframe' || tag === 'frame')) {
-      emit({ kind: 'frame', text: el.getAttribute('title') || el.getAttribute('src') || '', index: register(), block: true }, el);
+      emit({
+        kind: 'frame',
+        text: el.getAttribute('title') || el.getAttribute('src') || '',
+        index: register(),
+        frameIndex: frameIndices.get(el),
+        block: true,
+      }, el);
       return;
     }
 
@@ -669,6 +679,7 @@ async function snapshotRenderBlocks(target, { layout = false } = {}) {
       table: entry.table,
       flow: entry.flow,
       renderIndex: entry.index,
+      frameIndex: entry.frameIndex,
       frame,
     },
     spans: [],

@@ -76,6 +76,12 @@
 
   const nodes = [];
   const out = [];
+  // BiDi does not expose the browsing context hosted by an iframe element.
+  // Record the element's position among every frame in this document, not
+  // merely among the visible ones this walk emits: hidden advertising frames
+  // commonly come before the one modal or player the reader needs.
+  const frameIndices = new Map(Array.from(document.querySelectorAll('iframe,frame'))
+    .map((frame, index) => [frame, index]));
 
   // The flattened tree — what the browser actually renders, and what it
   // exposes to a screen reader. An element with a shadow root renders that
@@ -741,7 +747,10 @@
     // A frame marks where embedded content begins; its own lines are spliced
     // in after it by the frame walker.
     if (shown && role === 'iframe') {
-      emit(fromElement({ role: 'iframe', name: accessibleName(el), axIndex: register(el) }, el));
+      emit(fromElement({
+        role: 'iframe', name: accessibleName(el), axIndex: register(el),
+        frameIndex: frameIndices.get(el),
+      }, el));
       return;
     }
 

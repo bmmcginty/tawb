@@ -36,8 +36,10 @@ function closeServer(server) {
 test('the static Crystal dump matches JavaScript on a real Chromium page', { skip: !enabled }, () => {
   const root = tempDir('tawb-crystal-dump-');
   const page = path.join(root, 'page.html');
+  const hidden = '<iframe hidden srcdoc="Hidden tracker"></iframe>'.repeat(30);
   fs.writeFileSync(page, `<!doctype html><html><body>
     <h1>Heading</h1><p>Hello <a href="https://example.test/">Docs</a> after</p>
+    ${hidden}
     <iframe title="Details" srcdoc="<h2>Inside</h2><p>Child words</p>"></iframe>
     <button>Save</button></body></html>`);
 
@@ -84,8 +86,10 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
 test('the native Firefox dump matches JavaScript on a real Firefox page', { skip: !enabled }, () => {
   const root = tempDir('tawb-crystal-firefox-dump-');
   const page = path.join(root, 'page.html');
+  const hidden = '<iframe hidden srcdoc="Hidden tracker"></iframe>'.repeat(30);
   fs.writeFileSync(page, `<!doctype html><html><body>
     <h1>Heading</h1><p>Hello <a href="https://example.test/">Docs</a> after</p>
+    ${hidden}
     <iframe title="Details" srcdoc="<h2>Inside</h2><p>Child words</p>"></iframe>
     <button>Save</button></body></html>`);
 

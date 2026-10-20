@@ -126,20 +126,28 @@ async function everyChildFrame(frame) {
 // iframes — timeanddate.com reaches 435 — and every contentFrame() call is a
 // round trip to the browser. Resolving them all pushed a single snapshot from
 // 0.4s to 9s. We resolve only as many as the caller can actually descend into.
-async function orderedChildFrames(frame, limit = Infinity) {
+async function orderedChildFrames(frame, limit = Infinity, requested = null) {
   const handles = await frame.$$('iframe, frame');
   const children = [];
+  const wanted = requested && requested.size ? requested : null;
+  let resolved = 0;
 
-  for (const handle of handles) {
-    if (children.length >= limit) {
-      await handle.dispose().catch(() => {});
-      continue;
-    }
-    try {
-      const child = await handle.contentFrame();
-      if (child) children.push(child);
-    } catch {
-      // Inaccessible frame (detached, or a sandbox we cannot reach).
+  // The browser may also report documents hosted in a closed shadow root.
+  // Remember how many hosts ordinary page markup accounted for, so hidden ad
+  // elements are not later mistaken for those genuinely unmentioned frames.
+  Object.defineProperty(children, 'hostCount', { value: handles.length });
+
+  for (const [index, handle] of handles.entries()) {
+    // The array keeps document ordinals rather than compressing out hidden or
+    // inaccessible frames. A visible login iframe may be the 200th element
+    // after a page's trackers while still being the only document we read.
+    if ((!wanted || wanted.has(index)) && resolved < limit) {
+      try {
+        children[index] = await handle.contentFrame();
+        if (children[index]) resolved += 1;
+      } catch {
+        // Inaccessible frame (detached, or a sandbox we cannot reach).
+      }
     }
     await handle.dispose().catch(() => {});
   }
@@ -181,9 +189,13 @@ async function walk(frame, source, depth, budget, seen, visited, driver, layout 
   if (depth >= MAX_DEPTH || budget.remaining <= 0) return blocks;
 
   let children;
+  const requested = new Set(blocks
+    .filter((block) => isFrameItem(block.item) && Number.isInteger(block.item.frameIndex))
+    .map((block) => block.item.frameIndex));
   const tKids = Date.now();
   try {
-    children = await withDeadline(orderedChildFrames(frame, budget.remaining), FRAME_BUDGET_MS, null);
+    children = await withDeadline(
+      orderedChildFrames(frame, budget.remaining, requested), FRAME_BUDGET_MS, null);
   } catch {
     return blocks;
   }
@@ -208,8 +220,9 @@ async function walk(frame, source, depth, budget, seen, visited, driver, layout 
     out.push(block);
     if (!isFrameItem(block.item)) continue;
 
-    const child = children[childIndex];
-    childIndex += 1;
+    const declared = Number.isInteger(block.item.frameIndex) ? block.item.frameIndex : childIndex;
+    const child = children[declared];
+    childIndex = Math.max(childIndex + 1, declared + 1);
     if (!child) continue;
     placed.add(frameKey(child));
 
@@ -238,7 +251,8 @@ async function walk(frame, source, depth, budget, seen, visited, driver, layout 
   // There is no way to know where such a frame belongs, so it goes at the
   // end, named, rather than being dropped. A frame the reader can reach at
   // the wrong place beats one they cannot reach at all.
-  const hidden = (await everyChildFrame(frame)).filter((child) => !placed.has(frameKey(child)));
+  const hidden = (await everyChildFrame(frame)).filter((child, index) =>
+    index >= (children.hostCount || 0) && !placed.has(frameKey(child)));
   for (const child of hidden) {
     if (budget.remaining <= 0) break;
     let url = '';

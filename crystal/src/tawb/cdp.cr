@@ -1390,16 +1390,18 @@ module Tawb
 
       def accessibility_documents(layout = false) : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))
         tree = frame_tree
-        documents = {} of String => Array(JSON::Any)
-        frame_ids(tree).each_with_index do |frame_id, index|
+        root_id = tree.as_h["frame"].as_h["id"].as_s
+        documents = Frames.collect_documents(tree) do |frame_id|
           context = @contexts[frame_id]?
           if context
-            documents[frame_id] = evaluate_items(context[0], context[1], layout)
-          elsif index == 0
-            documents[frame_id] = evaluate_items(nil, nil, layout)
+            evaluate_items(context[0], context[1], layout)
+          elsif frame_id == root_id
+            evaluate_items(nil, nil, layout)
           elsif @iframe_targets.includes?(frame_id)
             session_id = attach_frame(frame_id)
-            documents[frame_id] = evaluate_items(nil, session_id, layout)
+            evaluate_items(nil, session_id, layout)
+          else
+            [] of JSON::Any
           end
         end
         {tree, documents}

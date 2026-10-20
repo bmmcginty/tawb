@@ -9,6 +9,8 @@ function extractSource(options = {}) {
   const nodes = [];
   window[Symbol.for('tweb.dom')] = nodes;
   const out = [];
+  const frameIndices = new Map(Array.from(document.querySelectorAll('iframe,frame'))
+    .map((frame, index) => [frame, index]));
   const privilegedRoots = new Map();
   const nativeControls = new Map();
   const remember = (pairs) => {
@@ -74,26 +76,28 @@ function extractSource(options = {}) {
     const index = nodes.length;
     nodes.push(el);
     const open = openTag(tag, attrs);
+    const frameIndex = (tag === 'iframe' || tag === 'frame') ? frameIndices.get(el) : undefined;
+    const entry = (values) => ({ ...values, ...(frameIndex === undefined ? {} : { frameIndex }) });
 
     if (VOID.has(tag)) {
-      out.push({ kind: 'element', tag, attrs, depth, index, text: open });
+      out.push(entry({ kind: 'element', tag, attrs, depth, index, text: open }));
       return;
     }
 
     if (OPAQUE.has(tag)) {
       const size = (el.textContent || '').length;
       const body = size ? `… ${size} characters …` : '';
-      out.push({ kind: 'element', tag, attrs, depth, index, text: `${open}${body}</${tag}>` });
+      out.push(entry({ kind: 'element', tag, attrs, depth, index, text: `${open}${body}</${tag}>` }));
       return;
     }
 
     if (textOnly(el)) {
       const text = textOf(el);
-      out.push({ kind: 'element', tag, attrs, depth, index, text: `${open}${text}</${tag}>` });
+      out.push(entry({ kind: 'element', tag, attrs, depth, index, text: `${open}${text}</${tag}>` }));
       return;
     }
 
-    out.push({ kind: 'element', tag, attrs, depth, index, text: open });
+    out.push(entry({ kind: 'element', tag, attrs, depth, index, text: open }));
 
     // A shadow root is a second tree, not the element's children, and this
     // view shows what is there rather than a flattened impression of it. The
