@@ -148,6 +148,41 @@
     try { if (dialog.matches(':modal')) modal = dialog; } catch { /* older engine */ }
   }
 
+  // Whether an inert subtree is still behind something that explains it.
+  //
+  // Sites apply inert to the page while a sign-in card, cookie choice or other
+  // overlay is open. They also apply it to a wrapper and then forget to remove
+  // it after the overlay has gone: CNN leaves its header and whole content
+  // wrapper inert while no sign-in frame is on the page at all. Reading the
+  // literal attribute then produces one empty buffer. A visible frame or
+  // dialog outside every inert subtree is the evidence that the lock is still
+  // held; without one, the page is what the reader came for.
+  const liveOverlayOutsideInert = () => {
+    const overlays = document.querySelectorAll('iframe, frame, dialog[open], [aria-modal="true"]');
+    for (const el of overlays) {
+      // An overlay the page has hidden from assistive technology cannot be the
+      // thing holding an accessible lock: the reader could not answer it. CNN
+      // keeps a legal-terms card drawn but aria-hidden and leaves the page
+      // inert behind it; treating that as a live prompt empties the buffer.
+      if (el.closest('[inert], [hidden], [aria-hidden="true"]')) continue;
+      if (el.hasAttribute('hidden') || el.getAttribute('aria-hidden') === 'true') continue;
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') continue;
+      const box = el.getBoundingClientRect();
+      if (box.width <= 1 || box.height <= 1) continue;
+      // A modal dialog says so. An iframe has to look like a floating card:
+      // an ordinary embedded player or article frame is in the document's
+      // flow and explains no inert lock at all.
+      const dialogIsModal = el.tagName === 'DIALOG' && el.matches(':modal');
+      const ariaIsModal = el.getAttribute('aria-modal') === 'true';
+      const frameIsOverlay = (el.tagName === 'IFRAME' || el.tagName === 'FRAME')
+        && (style.position === 'fixed' || style.position === 'sticky');
+      if (dialogIsModal || ariaIsModal || frameIsOverlay) return true;
+    }
+    return false;
+  };
+  const inertIsLive = !!document.querySelector('[inert]') && liveOverlayOutsideInert();
+
   // Three answers, because two of them are not the same question. GONE takes
   // the subtree with it. INVISIBLE is this element alone: `visibility` is
   // inherited, but a descendant may set it back to `visible` and is then
@@ -160,11 +195,11 @@
   const visibilityOf = (el) => {
     if (el.getAttribute('aria-hidden') === 'true') return GONE;
     if (el.hasAttribute('hidden')) return GONE;
-    // Inert content is still on screen and still has a box, so nothing about
-    // its style says it is gone; the specification says to hide it from
-    // assistive technology all the same, and a control the browser refuses to
-    // activate is worse than absent when it is the reader's only clue.
-    if (el.hasAttribute('inert')) return GONE;
+    // Inert content is still on screen and still has a box. While a live
+    // overlay holds the lock it is the page behind the reader's task, so it
+    // is left out. Once that overlay has gone, a leftover inert attribute is
+    // a stale lock over content that is now perfectly ordinary reading.
+    if (el.hasAttribute('inert') && inertIsLive) return GONE;
     // Everything outside the modal is inert. Its own ancestors are not — the
     // walk has to reach it through them.
     if (modal && !modal.contains(el) && !el.contains(modal)) return GONE;

@@ -90,6 +90,29 @@ function extractVisible(options) {
     try { if (dialog.matches(':modal')) modal = dialog; } catch { /* older engine */ }
   }
 
+  // See ax_own.js: inert is a live lock only while an overlay outside it is
+  // still on screen. A wrapper left inert after its overlay went away is a
+  // stale lock, not hidden content.
+  const liveOverlayOutsideInert = () => {
+    const overlays = document.querySelectorAll('iframe, frame, dialog[open], [aria-modal="true"]');
+    for (const el of overlays) {
+      // See ax_own.js: an aria-hidden overlay is not one the reader can answer.
+      if (el.closest('[inert], [hidden], [aria-hidden="true"]')) continue;
+      if (el.hasAttribute('hidden') || el.getAttribute('aria-hidden') === 'true') continue;
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') continue;
+      const box = el.getBoundingClientRect();
+      if (box.width <= 1 || box.height <= 1) continue;
+      const dialogIsModal = el.tagName === 'DIALOG' && el.matches(':modal');
+      const ariaIsModal = el.getAttribute('aria-modal') === 'true';
+      const frameIsOverlay = (el.tagName === 'IFRAME' || el.tagName === 'FRAME')
+        && (style.position === 'fixed' || style.position === 'sticky');
+      if (dialogIsModal || ariaIsModal || frameIsOverlay) return true;
+    }
+    return false;
+  };
+  const inertIsLive = !!document.querySelector('[inert]') && liveOverlayOutsideInert();
+
   // See ax_own.js for all three answers. GONE takes the subtree with it;
   // INVISIBLE is this element alone, because `visibility` is inherited and a
   // descendant may set it back to `visible` and be rendered on its own.
@@ -98,7 +121,7 @@ function extractVisible(options) {
   const SHOWN = 'shown';
 
   const visibilityOf = (el) => {
-    if (el.hasAttribute('inert')) return GONE;
+    if (el.hasAttribute('inert') && inertIsLive) return GONE;
     if (modal && !modal.contains(el) && !el.contains(modal)) return GONE;
     if (el.hasAttribute('hidden')) return GONE;
     if (el.getAttribute('aria-hidden') === 'true') return GONE;

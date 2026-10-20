@@ -133,10 +133,11 @@ const CONSTRUCTS = [
   ['content-visibility:auto', 'read',
     '<div style="content-visibility:auto;contain-intrinsic-size:200px"><p>M09</p></div>'],
   ['the hidden attribute', 'skip', '<div hidden><p>M10</p></div>'],
-  // Inert content is on screen and has a box, and nothing in its style says
-  // it is gone; the specification says to hide it from assistive technology,
-  // and a control the browser will not activate is worse than absent.
-  ['an inert subtree', 'skip', '<div inert><p>M12</p><button>M13</button></div>'],
+  // Inert content is on screen, and no live overlay explains the lock here:
+  // sites apply inert while a sign-in card is open and often leave it behind
+  // after the card has gone. Reading it is the difference between the page
+  // and an empty buffer. A live overlay is covered separately below.
+  ['an inert subtree', 'read', '<div inert><p>M12</p><button>M13</button></div>'],
   ['aria-hidden', 'skip', '<div aria-hidden="true"><p>M14</p></div>'],
   // The accessibility tree carries text painted at zero opacity; the view of
   // what is on screen does not. The two disagree on purpose.
@@ -194,6 +195,37 @@ const MARKERS = {
   'content in an open shadow root': ['M31'],
   'the fallback content of an empty slot': ['M32'],
 };
+
+const INERT_OVERLAY_PAGE = `<!doctype html><meta charset="utf-8"><title>inert overlay</title>
+<div inert><p>M33 behind the frame</p><button>M34 behind the frame</button></div>
+<iframe title="Sign in" style="position:fixed; left:20px; top:20px; width:300px; height:150px"
+        srcdoc="<p>M35 inside the frame</p><button>M36 close</button>"></iframe>`;
+
+for (const view of VIEWS) {
+  test(`${view} view: a live frame keeps the inert page behind it out of reach`, async () => {
+    const text = await readFixture(INERT_OVERLAY_PAGE, view);
+    assert.ok(!text.includes('M33'), 'the inert page behind the frame was read');
+    assert.ok(!text.includes('M34'), 'a control behind the frame was offered');
+    assert.match(text, /<frame: Sign in>/);
+    assert.match(text, /M35 inside the frame/);
+    assert.match(text, /\[\*M36 close\]/);
+  });
+}
+
+const HIDDEN_OVERLAY_PAGE = `<!doctype html><meta charset="utf-8"><title>hidden overlay</title>
+<div aria-hidden="true"><iframe title="Hidden prompt"
+  style="position:fixed; left:20px; top:20px; width:300px; height:150px"
+  srcdoc="<p>M37 hidden prompt</p>"></iframe></div>
+<div inert><p>M38 behind the hidden prompt</p></div>`;
+
+for (const view of VIEWS) {
+  test(`${view} view: an aria-hidden overlay does not hold an accessible lock`, async () => {
+    const text = await readFixture(HIDDEN_OVERLAY_PAGE, view);
+    assert.ok(!text.includes('M37'), 'a prompt the page hid from assistive technology was read');
+    assert.match(text, /M38 behind the hidden prompt/,
+      'an inert page was left unreadable behind an inaccessible overlay');
+  });
+}
 
 for (const view of VIEWS) {
   for (const [what, want] of CONSTRUCTS) {

@@ -60,7 +60,8 @@ test('a cross-origin iframe is read and activated through its own context', asyn
       '<iframe hidden src="/hidden"></iframe>').join('');
     res.end(`<!doctype html><title>parent</title><main inert><h1>Parent document</h1>
       ${hidden}</main>
-      <iframe title="foreign frame" src="http://localhost:${childServer.address().port}/"></iframe>`);
+      <iframe title="foreign frame" style="position:fixed; left:20px; top:20px; width:300px; height:150px"
+        src="http://localhost:${childServer.address().port}/"></iframe>`);
   });
   await listen(parentServer, '127.0.0.1');
 

@@ -121,7 +121,6 @@ test('both text views skip content the page marked as gone', async () => {
     'Content hidden by display none.',
     'Content hidden by visibility hidden.',
     'Content hidden by content-visibility.',
-    'Content made inert.',
     'Content inside a template, which is never rendered.',
     'Body of the closed disclosure, which must not be read while closed.',
     'A closed dialog that must not be read.',
@@ -130,6 +129,17 @@ test('both text views skip content the page marked as gone', async () => {
   for (const name of ['ax', 'render']) {
     const { text } = await view(name);
     for (const marker of hidden) assert.ok(!text.includes(marker), `${name} read ${marker}`);
+  }
+});
+
+test('both text views read inert content when no overlay explains the lock', async () => {
+  // CNN leaves its header and content wrapper inert after the sign-in card
+  // that applied the lock has gone. Skipping the attribute then leaves the
+  // reader with an empty page. A frame or dialog outside the inert subtree is
+  // what says the lock is still live; the coverage page has none.
+  for (const name of ['ax', 'render']) {
+    const { text } = await view(name);
+    assert.match(text, /Content made inert\./, `${name} skipped inert content`);
   }
 });
 
