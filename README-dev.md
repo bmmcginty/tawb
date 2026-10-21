@@ -1980,6 +1980,38 @@ select arrives with sixty entries, that the collision pair is intact, that a
 field with no form around it is still submittable, and that following a
 control answers a redirect rather than a page.
 
+## Versioning and releases
+
+`version.yml` is the one source of the release version. `package.json`,
+`package-lock.json` and `shard.yml` carry the same number because their tools
+require it, and `tools/version.py` is the only thing that writes those copies:
+
+```
+make show-version            # print version.yml's version
+make check-version           # verify the manifests agree
+make version                 # patch bump, commit and tag
+make version 1.2.3           # explicit version, commit and tag
+make version VERSION=1.2.3   # the same, without the positional Make goal
+make release                 # publish the tagged HEAD on GitHub
+```
+
+A version command refuses to run unless `git status --porcelain` is empty,
+including untracked files. It then changes only `version.yml`,
+`package.json`, `package-lock.json` and `shard.yml`, commits them as
+`Release vX.Y.Z`, and creates the annotated tag `vX.Y.Z`. The tag and commit
+remain local; push them when they are ready:
+
+```
+git push origin HEAD --follow-tags
+```
+
+`make release` requires the version tag to point at `HEAD`, the working tree
+to be clean, the tag to exist on `origin`, the GitHub CLI to be authenticated,
+and no release of that name to exist. It builds the static `bin/tawb` with
+`tools/build_crystal.sh` and attaches that binary to the release. The Crystal
+executable embeds its JavaScript assets at compile time, so the binary is the
+whole program.
+
 ## Serving the browser to edbrowse
 
 edbrowse renders html, tables, lists and forms better than a line list does,

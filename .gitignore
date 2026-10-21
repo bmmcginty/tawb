@@ -1,5 +1,6 @@
 node_modules/
 bin/
+__pycache__/
 
 # Timing log, rewritten on every run. A second concurrent session writes
 # tweb-<pid>.log rather than trampling the first one's.
