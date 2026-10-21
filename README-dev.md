@@ -1995,8 +1995,9 @@ make version VERSION=1.2.3   # the same, without the positional Make goal
 make release                 # publish the tagged HEAD on GitHub
 ```
 
-A version command refuses to run unless `git status --porcelain` is empty,
-including untracked files. It then changes only `version.yml`,
+A version command refuses to run if any tracked file has uncommitted changes,
+or if `crystal/` or `src/` contains an untracked file. Untracked scratch files
+elsewhere in the checkout do not block it. It then changes only `version.yml`,
 `package.json`, `package-lock.json` and `shard.yml`, commits them as
 `Release vX.Y.Z`, and creates the annotated tag `vX.Y.Z`. The tag and commit
 remain local; push them when they are ready:

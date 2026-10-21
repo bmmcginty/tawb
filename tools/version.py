@@ -4,8 +4,8 @@
 The version belongs to version.yml. package.json, package-lock.json and
 shard.yml carry copies because their tools require them, and this program is
 the only thing that writes those copies. A version command refuses to start
-unless Git reports a completely clean worktree, then commits exactly those
-four files and tags the commit vX.Y.Z.
+if any tracked file is modified or if crystal/ or src/ holds an untracked
+file, then commits exactly those four files and tags the commit vX.Y.Z.
 
 Run through the Makefile in normal use:
 
@@ -176,12 +176,28 @@ def ensure_repository(root: Path) -> None:
 
 
 def ensure_clean(root: Path) -> None:
-    status = run_git(root, "status", "--porcelain").stdout.rstrip("\n")
-    if status:
-        raise VersionError(
-            "the working tree is not clean; commit, remove or ignore these files first:\n"
-            + status
-        )
+    # "Clean" here has a precise meaning. A tracked file must not be modified
+    # anywhere, because committing the version files would otherwise leave a
+    # release commit carrying somebody else's unfinished work. An untracked
+    # file is different: scratch files at the top of the checkout are common,
+    # but a new file under crystal/ or src/ is program source that the release
+    # would not contain.
+    modified = run_git(
+        root, "status", "--porcelain", "--untracked-files=no"
+    ).stdout.rstrip("\n")
+    new_source = run_git(
+        root, "ls-files", "--others", "--exclude-standard", "--", "crystal", "src"
+    ).stdout.rstrip("\n")
+    if not modified and not new_source:
+        return
+
+    details = ["the working tree has changes a version bump must not absorb"]
+    if modified:
+        details.append("Modified or staged tracked files:\n" + modified)
+    if new_source:
+        details.append("Untracked files under crystal/ or src/:\n" + new_source)
+    details.append("Commit, remove or ignore them before changing the version.")
+    raise VersionError("\n".join(details))
 
 
 def tag_name(version: str) -> str:

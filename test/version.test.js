@@ -118,16 +118,40 @@ test('set accepts an explicit version and tags that version', () => {
   assert.match(git(root, ['tag', '--points-at', 'HEAD']), /(^|\n)v2\.3\.4(\n|$)/);
 });
 
-test('a dirty worktree refuses before changing anything', () => {
+test('a modified tracked file refuses before changing anything', () => {
   const root = makeRepository('1.2.0');
-  fs.writeFileSync(path.join(root, 'scratch.txt'), 'not part of a release\n');
+  fs.appendFileSync(path.join(root, 'package.json'), '\n');
   const before = git(root, ['rev-parse', 'HEAD']);
   const result = run(root, ['bump']);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /working tree is not clean/i);
+  assert.match(result.stderr, /Modified or staged tracked files/);
+  assert.match(result.stderr, /package\.json/);
   assert.equal(versionOf(root), '1.2.0');
   assert.equal(git(root, ['rev-parse', 'HEAD']), before);
   assert.equal(git(root, ['tag']), '');
+});
+
+test('an untracked file under src refuses before changing anything', () => {
+  const root = makeRepository('1.2.0');
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src', 'new.js'), 'new source\n');
+  const before = git(root, ['rev-parse', 'HEAD']);
+  const result = run(root, ['bump']);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Untracked files under crystal\/ or src\//);
+  assert.match(result.stderr, /src\/new\.js/);
+  assert.equal(versionOf(root), '1.2.0');
+  assert.equal(git(root, ['rev-parse', 'HEAD']), before);
+});
+
+test('an untracked scratch file elsewhere does not block a version bump', () => {
+  const root = makeRepository('1.2.0');
+  fs.writeFileSync(path.join(root, 'scratch.txt'), 'not part of a release\n');
+  const result = run(root, ['bump']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(versionOf(root), '1.2.1');
+  assert.match(git(root, ['tag', '--points-at', 'HEAD']), /(^|\n)v1\.2\.1(\n|$)/);
+  assert.match(git(root, ['status', '--porcelain']), /^\?\? scratch\.txt$/m);
 });
 
 test('check names every manifest that disagrees', () => {
