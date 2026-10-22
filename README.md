@@ -181,7 +181,9 @@ comboboxes are activated rather than treated as text fields. Press `m` when a
 site requires a real pointer click, for example to grant user activation to a
 media control or open a file chooser. If the innermost target of a control has
 no DOM click method of its own — an SVG icon, for example — TAWB presses that
-control with a trusted pointer click automatically.
+control with a trusted pointer click automatically. It does the same for
+controls inside a media player's application widget, because playback requires
+user activation and a player ignores an untrusted click.
 
 Press `Alt+M` to put the pointer on the line under the cursor without pressing
 anything, the way a sighted user rests a mouse on a menu to see what is in it.

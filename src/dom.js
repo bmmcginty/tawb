@@ -196,6 +196,9 @@ async function activateDomItem(page, item, { activateWith = null } = {}) {
     if (clicked && clicked.reason === 'no-click-method') {
       return `Could not press <${item.tag}>: its inner target has no direct click.`;
     }
+    if (clicked && clicked.reason === 'needs-trusted-click') {
+      return `Could not press <${item.tag}>: it needs a trusted click.`;
+    }
     await page.waitForLoadState('domcontentloaded').catch(() => {});
     return `Activated <${item.tag}>`;
   } finally {

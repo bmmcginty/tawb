@@ -1485,15 +1485,22 @@ class Core {
 
     // The DOM path descends to the node a mouse would land on. An SVG icon,
     // a MathML fragment, or a page that has replaced the method has no
-    // click() on that node. Nothing has been pressed yet, so press the same
-    // control with trusted pointer input: it reaches that node and bubbles
-    // from it, which is exactly what the DOM path was trying to imitate.
-    if (result && result.reason === 'no-click-method') {
+    // click() on that node. A media player's control has one, but rejects an
+    // untrusted press because playback needs user activation. Nothing has
+    // been pressed in either case, so press the same control with trusted
+    // pointer input: it reaches that node and bubbles from it, which is what
+    // the DOM path was trying to imitate in the first place.
+    if (result && (result.reason === 'no-click-method'
+      || result.reason === 'needs-trusted-click')) {
+      const trustedOnly = result.reason === 'needs-trusted-click';
       if (!this.canRealClick()) {
         return {
           how: 'default-action',
-          status: 'Could not press it: its inner target has no direct click, '
-            + 'and this browser cannot send a real click.',
+          status: trustedOnly
+            ? 'Could not press it: a media control needs a trusted click, '
+              + 'and this browser cannot send one.'
+            : 'Could not press it: its inner target has no direct click, '
+              + 'and this browser cannot send a real click.',
         };
       }
       const clicked = await this.realClickHandle(handle, page, scope)
@@ -1501,7 +1508,9 @@ class Core {
       if (clicked && clicked.ok) return { how: 'real-click', status: null };
       return {
         how: 'default-action',
-        status: 'Could not press it directly, and a real click '
+        status: (trustedOnly
+          ? 'Could not press it with a trusted click, and a real click '
+          : 'Could not press it directly, and a real click ')
           + `${clicked && clicked.reason ? clicked.reason : 'could not be placed'}.`,
       };
     }

@@ -38,6 +38,10 @@ const FIXTURE = `<!doctype html><html><body>
 <button id="icon" aria-label="Icon button" style="padding:0;border:0;background:transparent">
   <svg width="40" height="40"><rect id="icon-target" width="40" height="40" fill="#ccc"></rect></svg>
 </button>
+<div role="application" aria-label="Audio Player">
+  <video></video>
+  <button id="media-play" aria-label="Media Play"><span id="media-target">Play</span></button>
+</div>
 <ul id="menu"><li id="item"><a href="javascript:;" id="itemlink">Members</a>
   <ul id="submenu"><li><a href="/sectionals">Sectionals</a></li></ul>
 </li></ul>
@@ -61,6 +65,10 @@ const FIXTURE = `<!doctype html><html><body>
   document.getElementById('icon-target').addEventListener('click', (event) => {
     window.iconHeard.push(event.isTrusted);
   });
+  window.mediaHeard = [];
+  document.getElementById('media-play').addEventListener('click', (event) => {
+    window.mediaHeard.push({ target: event.target.id, trusted: event.isTrusted });
+  });
 </script>
 </body></html>`;
 
@@ -70,6 +78,7 @@ const FIXTURE = `<!doctype html><html><body>
 const TARGETS = [
   { action: 'activate', selector: '#outer', index: 0 },
   { action: 'default_activation', selector: '#icon', index: 0 },
+  { action: 'default_activation', selector: '#media-play', index: 0 },
   { action: 'real_click', selector: '#real', index: 0 },
   { action: 'hover', selector: '#itemlink', index: 0 },
   { action: 'focus_control', selector: '#text', index: 0 },
@@ -80,6 +89,7 @@ const TARGETS = [
 const PROBE = `() => ({
   heard: window.heard.slice(),
   iconHeard: window.iconHeard.slice(),
+  mediaHeard: window.mediaHeard.slice(),
   clicks: window.clicks.slice(),
   menu: getComputedStyle(document.querySelector('#submenu')).marginLeft,
   focused: document.activeElement ? document.activeElement.id : '',
@@ -158,6 +168,7 @@ check('the page hears the same things however the runtime acts on it', async () 
     assert.deepEqual(reactions, {
       heard: ['inner', 'outer'],
       iconHeard: [true],
+      mediaHeard: [{ target: 'media-target', trusted: true }],
       clicks: [true],
       menu: '0px',
       focused: 'text',

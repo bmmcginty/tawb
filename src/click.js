@@ -93,6 +93,20 @@ function clickThrough(el) {
   // trusted pointer input, which reaches the inner node and bubbles from it
   // exactly as a mouse would.
   if (typeof node.click !== 'function') return { reason: 'no-click-method' };
+
+  // A media player's controls are the other place an untrusted click is not
+  // enough. Pressing Play through element.click() delivers a click the page
+  // can see is not a person's, and players refuse to start playback without
+  // user activation: the event arrives, the button does not change, and the
+  // reader is left with a control that appears to do nothing. The player is
+  // an application widget with the media element inside it; everything in
+  // that boundary belongs to the player, and a trusted press is what its
+  // controls expect. See activateHandle, which sends one instead.
+  const player = node.closest && node.closest('[role="application"]');
+  if (player && player.querySelector('video,audio')) {
+    return { reason: 'needs-trusted-click' };
+  }
+
   node.click();
   return node !== el;
 }

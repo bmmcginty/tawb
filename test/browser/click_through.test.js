@@ -78,6 +78,58 @@ test('a wrapped link is clicked through to the child on its first line', async (
     'the click did not reach the span on the link\'s first line');
 });
 
+// A media player can have a perfectly ordinary button and still refuse an
+// untrusted press: playback needs user activation, which only the browser's
+// own input pipeline grants. The event arrives, the player ignores it, and
+// Play does nothing. The button is inside the application widget that owns
+// the media element, so the DOM path asks for a trusted press instead.
+test('a control inside a media player is pressed as a person', async () => {
+  if (!driver) driver = await openDriver({ engine: ENGINE, profile, log: () => {} });
+  const page = driver.context.pages()[0] || await driver.context.newPage();
+  await page.goto('data:text/html,' + encodeURIComponent(`
+    <div role="application" aria-label="Audio Player" id="player">
+      <video></video>
+      <button aria-label="Play" id="play" style="width:80px;height:40px">
+        <span id="play-target">Play</span>
+      </button>
+    </div>
+    <script>
+      window.heard = [];
+      document.getElementById('play').addEventListener('click', (event) => {
+        window.heard.push({ target: event.target.id, trusted: event.isTrusted });
+      });
+    </script>
+  `));
+
+  const blocks = await snapshotFrameTree(page, 'ax', { driver });
+  const button = blocks.find((block) => block.item && block.item.name === 'Play');
+  assert.ok(button, 'the media play button was not read');
+
+  const core = new Core({ driver, page, source: 'ax', sources: ['ax'] });
+  const result = await core.activate(button.item, page);
+  assert.equal(result.how, 'real-click',
+    'the media control was not pressed with a trusted click');
+
+  assert.deepEqual(await page.evaluate(() => window.heard),
+    [{ target: 'play-target', trusted: true }],
+    'the media control received an untrusted click');
+
+  // The HTML view resolves its own element, but must take the same fallback.
+  await page.evaluate(() => { window.heard = []; });
+  const sourceBlocks = await snapshotSourceBlocks(page);
+  const sourceButton = sourceBlocks.find((block) => block.item
+    && block.item.tag === 'button' && block.item.attrs
+    && block.item.attrs['aria-label'] === 'Play');
+  assert.ok(sourceButton, 'the HTML view did not read the media play button');
+  const sourceCore = new Core({ driver, page, source: 'source', sources: ['source'] });
+  const sourceResult = await sourceCore.activate(sourceButton.item, page);
+  assert.equal(sourceResult.how, 'real-click',
+    'the HTML view did not use a trusted click on the media control');
+  assert.deepEqual(await page.evaluate(() => window.heard),
+    [{ target: 'play-target', trusted: true }],
+    'the HTML view sent an untrusted click to the media control');
+});
+
 // The deepest node under the aim point is not always an HTMLElement. SVG has
 // no click() of its own, so the DOM path used to throw before the page heard
 // anything. The control still needs pressing, and a trusted pointer click is

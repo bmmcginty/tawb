@@ -86,8 +86,13 @@ module Tawb
       return activation_result("real-click") if clicked && ready?(clicked)
 
       why = clicked.try(&.as_h?).try(&.["reason"]?.try(&.as_s?)) || "could not be placed"
-      activation_result("default-action",
-        "Could not press it directly, and a real click #{why}.")
+      reason = result.as_h?.try(&.["reason"]?).try(&.as_s?)
+      status = if reason == "needs-trusted-click"
+                 "Could not press it with a trusted click, and a real click #{why}."
+               else
+                 "Could not press it directly, and a real click #{why}."
+               end
+      activation_result("default-action", status)
     end
 
     # The item-level activation policy from Core#activate. The handle-level
@@ -192,7 +197,8 @@ module Tawb
     end
 
     private def self.needs_real_click?(result : JSON::Any) : Bool
-      result.as_h?.try(&.["reason"]?.try(&.as_s?)) == "no-click-method"
+      reason = result.as_h?.try(&.["reason"]?.try(&.as_s?))
+      reason == "no-click-method" || reason == "needs-trusted-click"
     end
 
     private def self.activation_result(how : String, status : String? = nil) : JSON::Any
