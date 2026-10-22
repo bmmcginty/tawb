@@ -280,8 +280,7 @@ module Tawb
           case event
           when Nil
             next if ended?
-            @buffer = ""
-            emit("\e")
+            parse(true)
           when Chunk
             next if ended?
             @buffer += event.text
@@ -293,11 +292,11 @@ module Tawb
         end
       end
 
-      # A timer is outstanding exactly while the buffer is a lone Escape:
-      # parse always drains everything else it can, and an incomplete CSI or
-      # SS3 waits for more bytes without any timer at all.
+      # A timer is outstanding while the buffer is a lone Escape or the two-
+      # byte Alt prefix. parse always drains everything else it can, and an
+      # incomplete CSI or SS3 waits for more bytes without any timer at all.
       private def pending_escape? : Bool
-        @buffer == "\e"
+        @buffer == "\e" || @buffer == "\e\e"
       end
 
       private def ended? : Bool
@@ -315,10 +314,31 @@ module Tawb
             @buffer = ""
             emit("\e")
           elsif (second = @buffer[1]) == '[' || second == 'O'
-            final = final_byte
+            final = final_byte(1)
             return if final < 0
             emit(@buffer[0..final])
             @buffer = @buffer[(final + 1)..]
+          elsif second == '\e'
+            # A terminal writes Alt+<key> as Escape followed by the key it
+            # would otherwise send. For a function key that key is itself an
+            # escape sequence, so Alt+F12 arrives as Escape, Escape, "[24~".
+            # Treat the second escape as part of the sequence, not as an
+            # Alt+Escape key: otherwise the rest of F12 is left in the stream
+            # as the characters "[", "2", "4" and "~", which then land in
+            # whatever prompt is open.
+            if @buffer.bytesize == 2
+              return unless expire_escape
+              @buffer = ""
+              emit("\e\e")
+            elsif (third = @buffer[2]?) && (third == '[' || third == 'O')
+              final = final_byte(2)
+              return if final < 0
+              emit(@buffer[0..final])
+              @buffer = @buffer[(final + 1)..]
+            else
+              emit(@buffer[0, 2])
+              @buffer = @buffer[2..]
+            end
           else
             # An escape followed by one character is the traditional Alt
             # encoding.
@@ -329,14 +349,15 @@ module Tawb
         end
       end
 
-      # CSI and SS3 end with any byte from @ through ~. That includes the ^
-      # and $ endings older terminals use for modified navigation keys, not
-      # just letters and `~`. ESC[[A is a historical function-key form whose
-      # extra `[` is an introducer rather than its final byte.
-      private def final_byte : Int32
+      # The final byte of a CSI or SS3 sequence whose introducer is at
+      # *start*. Kept here rather than inline because an Alt prefix puts the
+      # same sequence one byte further into the buffer.
+      private def final_byte(start : Int32) : Int32
         bytes = @buffer.to_slice
-        (2...bytes.size).each do |index|
-          next if index == 2 && bytes[index] == '['.ord
+        (start + 1...bytes.size).each do |index|
+          # ESC[[A is a historical function-key form whose extra "[" is an
+          # introducer rather than its final byte.
+          next if index == start + 1 && bytes[index] == '['.ord
           return index if bytes[index] >= 0x40 && bytes[index] <= 0x7e
         end
         -1

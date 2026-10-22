@@ -1068,7 +1068,10 @@ Function keys are the least standardised part of terminal input, so four
 encodings of Shift+F4 are recognised: `\e[1;2S` (xterm, VTE, kitty,
 alacritty, tmux), `\eO2S`, `\e[14;2~`, and `\e[26~` — the Linux console and
 rxvt, which send a shifted function key as a higher-numbered one, so Shift+F4
-arrives as F14. With `--log`, any escape sequence nothing claims is written
+arrives as F14. Alt is another prefix rather than a separate keystroke: a
+terminal sends Alt+F12 as `\e\e[24~`, and the input reader keeps the whole
+sequence together instead of splitting it into Alt+Escape and the literal
+characters `[24~`. With `--log`, any escape sequence nothing claims is written
 to the diagnostic log with its bytes, so a terminal speaking a fifth dialect
 can be added by reading the log.
 

@@ -118,20 +118,42 @@ class KeyReader {
 
       const second = this.buffer[1];
       if (second === '[' || second === 'O') {
-        // CSI and SS3 end with any byte from @ through ~. That includes the
-        // ^ and $ endings older terminals use for modified navigation keys,
-        // not just letters and `~`. ESC[[A is a historical function-key form
-        // whose extra `[` is an introducer rather than its final byte.
-        let end = -1;
-        for (let i = 2; i < this.buffer.length; i += 1) {
-          const code = this.buffer.charCodeAt(i);
-          if (i === 2 && this.buffer[i] === '[') continue;
-          if (code >= 0x40 && code <= 0x7e) { end = i; break; }
-        }
+        const end = this.finalByte(1);
         if (end < 0) return;
         const key = this.buffer.slice(0, end + 1);
         this.buffer = this.buffer.slice(end + 1);
         this.emit(key);
+        continue;
+      }
+
+      // A terminal writes Alt+<key> as Escape followed by the key it would
+      // otherwise send. For a function key that key is itself an escape
+      // sequence, so Alt+F12 arrives as Escape, Escape, "[24~" rather than
+      // as Escape followed by a single character. Treat the second escape as
+      // part of the sequence, not as an Alt+Escape key: otherwise the rest of
+      // the F12 sequence is left in the stream as the characters "[", "2",
+      // "4" and "~", which then land in whatever prompt is open.
+      if (second === '\x1b') {
+        if (this.buffer.length === 2) {
+          if (expireEscape) {
+            this.buffer = '';
+            this.emit('\x1b\x1b');
+          } else {
+            this.escapeTimer = setTimeout(() => this.parse(true), this.escapeMs);
+          }
+          return;
+        }
+        const third = this.buffer[2];
+        if (third === '[' || third === 'O') {
+          const end = this.finalByte(2);
+          if (end < 0) return;
+          const key = this.buffer.slice(0, end + 1);
+          this.buffer = this.buffer.slice(end + 1);
+          this.emit(key);
+          continue;
+        }
+        this.emit(this.buffer.slice(0, 2));
+        this.buffer = this.buffer.slice(2);
         continue;
       }
 
@@ -142,6 +164,20 @@ class KeyReader {
       this.emit(this.buffer.slice(0, length));
       this.buffer = this.buffer.slice(length);
     }
+  }
+
+  // The final byte of a CSI or SS3 sequence whose introducer is at `start`.
+  // Kept here rather than inline because an Alt prefix puts the same sequence
+  // one byte further into the buffer.
+  finalByte(start) {
+    for (let i = start + 1; i < this.buffer.length; i += 1) {
+      const code = this.buffer.charCodeAt(i);
+      // ESC[[A is a historical function-key form whose extra "[" is an
+      // introducer rather than its final byte.
+      if (i === start + 1 && this.buffer[i] === '[') continue;
+      if (code >= 0x40 && code <= 0x7e) return i;
+    }
+    return -1;
   }
 
   next(owner = null) {

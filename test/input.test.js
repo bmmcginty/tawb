@@ -52,6 +52,45 @@ for (const implementation of inputImplementations({ KeyReader, EOF })) {
     assert.deepEqual(observations, ['\x1bk']);
   });
 
+  check('an Alt-prefixed function key stays one key', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 5,
+      script: [
+        { op: 'write', chunk: '\x1b\x1b[24~' },
+        { op: 'next' },
+        { op: 'close' },
+      ],
+    });
+    assert.deepEqual(observations, ['\x1b\x1b[24~'],
+      'Alt+F12 is not Alt+Escape followed by the characters of the F12 sequence');
+  });
+
+  check('an Alt prefix split from its function key still joins', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 80,
+      script: [
+        { op: 'write', chunk: '\x1b\x1b' },
+        { op: 'wait', ms: 10 },
+        { op: 'write', chunk: '[24~' },
+        { op: 'next' },
+        { op: 'close' },
+      ],
+    });
+    assert.deepEqual(observations, ['\x1b\x1b[24~']);
+  });
+
+  check('a double Escape with nothing after it is still Alt+Escape', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 5,
+      script: [
+        { op: 'write', chunk: '\x1b\x1b' },
+        { op: 'next' },
+        { op: 'close' },
+      ],
+    });
+    assert.deepEqual(observations, ['\x1b\x1b']);
+  });
+
   check('the input reader distinguishes Escape from Alt keys', async () => {
     const observations = await implementation.scenario({
       escape_ms: 5,
