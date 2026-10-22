@@ -128,6 +128,27 @@ test('a failed activation is an error with the page\'s own words', { skip: needs
   assert.equal(result.state.mode, 'browse');
 });
 
+test('a control whose frame has gone is reported after the page is refreshed',
+  { skip: needsCrystal }, async () => {
+    const blocks = [
+      { text: 'before', item: { role: 'text' } },
+      { text: '[*Press]', item: { role: 'button', name: 'Press' } },
+      { text: 'after', item: { role: 'text' } },
+    ];
+    const state = stateFor(blocks, { cursor: 1, statusMsg: 'Activating: Press' }, {
+      activationFailure: {
+        message: 'no such frame: Browsing Context with id 49392123905 not found',
+      },
+      rescanBlocks: blocks,
+    });
+    const result = await runBoth('frame gone', state, [{ op: 'activate' }], {
+      url: PAGE_URL, title: 'Example',
+    });
+    assert.equal(result.state.statusMsg,
+      'The page changed while that action ran; it was refreshed.');
+    assert.ok(!result.state.statusMsg.includes('49392123905'));
+  });
+
 test('a timed-out activation says how long was given', { skip: needsCrystal }, async () => {
   const blocks = [
     { text: 'before', item: { role: 'text' } },

@@ -7,6 +7,18 @@ module Tawb
     MAX_DEPTH  =  4
     MAX_FRAMES = 25
 
+    # A frame the page removed after the buffer was read. Firefox calls a
+    # missing browsing context a no-such-frame error and names its discarded
+    # numeric id; Chromium says the document's process has gone or the
+    # execution context was destroyed. They mean the same thing to the reader:
+    # the line they pressed is attached to a document that no longer exists, so
+    # the buffer must be read again rather than the raw protocol failure shown.
+    GONE_FRAME = /no such frame|browsing context with id .+ not found|no frame with given id|that document's process has gone|execution context was destroyed|cannot find context with specified id/i
+
+    def self.frame_gone?(error : Exception) : Bool
+      !!(error.message || error.to_s).matches?(GONE_FRAME)
+    end
+
     # Ask only for documents named by frame markers in the documents already
     # read. The tree itself is one cheap browser census; evaluating every one
     # of its hundreds of advertising contexts is the expensive part this

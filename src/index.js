@@ -9,6 +9,7 @@ const {
   ActionTimeout, withTimeout, ACTION_TIMEOUT_MS,
 } = require('./core');
 const { armFrame, refreshDue, pulse, TICK_MS } = require('./live');
+const { isGoneFrameError } = require('./frames');
 const {
   log, timed, count, flushCounters, enableLog, disableLog, getLogPath, flushLog,
 } = require('./log');
@@ -2712,6 +2713,22 @@ async function beginTyping(state, page, item) {
   return true;
 }
 
+// A control's document was removed while the reader was on it. The action
+// cannot be completed through an element that no longer exists, and the raw
+// protocol error names a discarded browsing context that means nothing to the
+// reader. Read the page again, keep the place when the remap can, and say what
+// happened. The reader can press the control again if it is still there.
+async function recoverGoneFrame(state, page, item, previousTexts, anchor, event) {
+  const name = item && item.name ? item.name : 'that control';
+  const inFrame = !!(item && item.frame && item.frame !== page.mainFrame());
+  log(event, {
+    name: String(name).slice(0, 80), source: state.core.source, inFrame,
+  });
+  state.statusMsg = 'The page changed while that action ran; it was refreshed.';
+  await refresh(state, page, { anchor, previousTexts });
+  render(state, page, { force: true });
+}
+
 async function activateCurrent(state, page) {
   const item = itemUnderCursor(state);
   if (!item || item.role === 'text') {
@@ -2803,6 +2820,11 @@ async function activateCurrent(state, page) {
     if (item.controls) state.core.followPopup(item.controls);
   } catch (err) {
     const timedOut = err instanceof ActionTimeout;
+    if (!timedOut && isGoneFrameError(err)) {
+      await recoverGoneFrame(
+        state, page, item, previousTexts, anchor, 'activate.frame-gone');
+      return;
+    }
     setStatus(state, timedOut
       ? `Gave up activating "${item.name}" after ${ACTION_TIMEOUT_MS / 1000}s — it may be inside a bot check or an unreachable frame.`
       : `Error activating "${item.name}": ${err.message.split('\n')[0]}`);
@@ -2961,6 +2983,11 @@ async function clickAsHuman(state, page) {
     state.statusMsg = `Clicked "${item.name}"`;
   } catch (err) {
     const timedOut = err instanceof ActionTimeout;
+    if (!timedOut && isGoneFrameError(err)) {
+      await recoverGoneFrame(
+        state, page, item, previousTexts, anchor, 'click.frame-gone');
+      return;
+    }
     setStatus(state, timedOut
       ? `Gave up clicking "${item.name}" after ${ACTION_TIMEOUT_MS / 1000}s.`
       : `Could not click "${item.name}": ${err.message.split('\n')[0]}`);
@@ -3023,6 +3050,11 @@ async function hoverAsHuman(state, page) {
     state.statusMsg = `Pointer on "${item.name}"`;
   } catch (err) {
     const timedOut = err instanceof ActionTimeout;
+    if (!timedOut && isGoneFrameError(err)) {
+      await recoverGoneFrame(
+        state, page, item, previousTexts, anchor, 'hover.frame-gone');
+      return;
+    }
     setStatus(state, timedOut
       ? `Gave up hovering "${item.name}" after ${ACTION_TIMEOUT_MS / 1000}s.`
       : `Could not hover "${item.name}": ${String(err.message || err).split('\n')[0]}`);
@@ -3924,6 +3956,8 @@ async function downloadCurrentLink(state, page) {
     return;
   }
 
+  const previousTexts = state.core.blocks.map((b) => b.text);
+  const anchor = anchorFor(state);
   setStatus(state, `Downloading "${item.name}"…`);
   try {
     const result = await state.core.downloadLink(item, page);
@@ -3936,6 +3970,11 @@ async function downloadCurrentLink(state, page) {
     });
     setStatus(state, `Added "${item.name}" to downloads.`);
   } catch (err) {
+    if (isGoneFrameError(err)) {
+      await recoverGoneFrame(
+        state, page, item, previousTexts, anchor, 'download.frame-gone');
+      return;
+    }
     const reason = String(err.message || err).split('\n')[0];
     log('link.download.error', { name: String(item.name || '').slice(0, 80), error: reason.slice(0, 160) });
     setStatus(state, `Could not download "${item.name}": ${reason}`);

@@ -13,6 +13,7 @@ require "./lynx_options_screen"
 require "./lynx_settings"
 require "./auth"
 require "./unicode_escape"
+require "./frames"
 
 module Tawb
   # The reading loop's keyboard: what each mode does with one keystroke.
@@ -641,6 +642,20 @@ module Tawb
       !focus_name.nil?
     end
 
+    # A control's document was removed while the reader was on it. The action
+    # cannot be completed through an element that no longer exists, and the raw
+    # protocol error names a discarded browsing context that means nothing to
+    # the reader. Read the page again, keep the place when the remap can, and
+    # say what happened. The reader can press the control again if it is still
+    # there.
+    def self.recover_gone_frame(output : Screen::Output, state : Reader::State,
+                                page : Reader::PageEnv,
+                                previous_texts : Array(String), anchor : JSON::Any) : Nil
+      state.status_msg = "The page changed while that action ran; it was refreshed."
+      Reader.refresh(state, page, false, anchor, previous_texts)
+      Reader.render(output, state, page.url)
+    end
+
     # What to say afterwards, which is the browser's business as much as
     # ours: the page has had its change event by now.
     def self.attached_note(files : JSON::Any?, asking : String) : String
@@ -765,6 +780,10 @@ module Tawb
           "Gave up activating \"#{name}\" after 6s — it may be inside a bot check or an unreachable frame.")
         return
       rescue err
+        if Frames.frame_gone?(err)
+          recover_gone_frame(output, state, page, previous_texts, anchor)
+          return
+        end
         reason = (err.message || err.to_s).lines.first? || err.to_s
         Reader.set_status(output, state, page.url, "Error activating \"#{name}\": #{reason}")
         return
@@ -3252,7 +3271,15 @@ module Tawb
 
       Reader.set_status(output, state, page.url,
         "Clicking \"#{item.as_h["name"]?.try(&.as_s?)}\" as a person would...")
-      clicked = state.core.real_click(item.not_nil!)
+      begin
+        clicked = state.core.real_click(item.not_nil!)
+      rescue err
+        if Frames.frame_gone?(err)
+          recover_gone_frame(output, state, page, previous_texts, anchor)
+          return
+        end
+        raise err
+      end
       unless clicked.as_h["ok"]?.try(&.as_bool?)
         reason = clicked.as_h["reason"]?.try(&.as_s?) || "could not be found"
         Reader.set_status(output, state, page.url,
@@ -3292,7 +3319,15 @@ module Tawb
 
       Reader.set_status(output, state, page.url,
         "Putting the pointer on \"#{item.as_h["name"]?.try(&.as_s?)}\"…")
-      hovered = state.core.hover(item.not_nil!)
+      begin
+        hovered = state.core.hover(item.not_nil!)
+      rescue err
+        if Frames.frame_gone?(err)
+          recover_gone_frame(output, state, page, previous_texts, anchor)
+          return
+        end
+        raise err
+      end
       unless hovered.as_h["ok"]?.try(&.as_bool?)
         reason = hovered.as_h["reason"]?.try(&.as_s?) || "could not be found"
         Reader.set_status(output, state, page.url,
@@ -3315,6 +3350,10 @@ module Tawb
         return
       end
       name = item.not_nil!.as_h["name"]?.try(&.as_s?) || ""
+      previous_texts = state.core.blocks.map do |block|
+        block.as_h["text"]?.try(&.as_s?) || ""
+      end
+      anchor = state.core.anchor
       Reader.set_status(output, state, page.url, "Downloading \"#{name}\"…")
       begin
         result = state.core.download_link(item.not_nil!)
@@ -3326,6 +3365,10 @@ module Tawb
         end
         Reader.set_status(output, state, page.url, "Added \"#{name}\" to downloads.")
       rescue err
+        if Frames.frame_gone?(err)
+          recover_gone_frame(output, state, page, previous_texts, anchor)
+          return
+        end
         reason = (err.message || err.to_s).lines.first? || err.to_s
         Reader.set_status(output, state, page.url,
           "Could not download \"#{name}\": #{reason}")

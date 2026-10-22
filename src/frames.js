@@ -21,6 +21,18 @@ const { log } = require('./log');
 
 const MAX_DEPTH = 4;
 const MAX_FRAMES = 25;
+
+// A frame the page removed after the buffer was read. Firefox calls a missing
+// browsing context a no-such-frame error and names its discarded numeric id;
+// Chromium says the document's process has gone or the execution context was
+// destroyed. They mean the same thing to the reader: the line they pressed is
+// attached to a document that no longer exists, so the buffer must be read
+// again rather than the raw protocol failure shown.
+const GONE_FRAME = /no such frame|browsing context with id .+ not found|no frame with given id|that document's process has gone|execution context was destroyed|cannot find context with specified id/i;
+
+function isGoneFrameError(error) {
+  return GONE_FRAME.test(String(error && error.message ? error.message : error));
+}
 // No single frame may hold up a snapshot. On a page mid ad-storm, an
 // ariaSnapshot of the main document and a query for its child frames were
 // each measured taking 23 seconds, producing a 46 second snapshot during
@@ -291,7 +303,7 @@ async function walk(frame, source, depth, budget, seen, visited, driver, layout 
 
 module.exports = {
   snapshotFrameTree, isFrameItem, blocksForFrame, orderedChildFrames, everyChildFrame,
-  readDocument, frameKey,
+  readDocument, frameKey, isGoneFrameError,
   // The reader's own views and the edbrowse page descend the same tree, so
   // they must not disagree about how far or how wide. These numbers were
   // measured on real pages; a second set beside them would drift.
