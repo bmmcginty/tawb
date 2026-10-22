@@ -1068,12 +1068,20 @@ Function keys are the least standardised part of terminal input, so four
 encodings of Shift+F4 are recognised: `\e[1;2S` (xterm, VTE, kitty,
 alacritty, tmux), `\eO2S`, `\e[14;2~`, and `\e[26~` — the Linux console and
 rxvt, which send a shifted function key as a higher-numbered one, so Shift+F4
-arrives as F14. Alt is another prefix rather than a separate keystroke: a
-terminal sends Alt+F12 as `\e\e[24~`, and the input reader keeps the whole
-sequence together instead of splitting it into Alt+Escape and the literal
-characters `[24~`. With `--log`, any escape sequence nothing claims is written
+arrives as F14. With `--log`, any escape sequence nothing claims is written
 to the diagnostic log with its bytes, so a terminal speaking a fifth dialect
 can be added by reading the log.
+
+The input reader delimits complete terminal sequences before the keymap sees
+them, so a sequence is never split into its bytes and mistaken for typing.
+That includes Escape, Alt-prefixed keys, CSI and SS3 sequences, OSC, DCS, SOS,
+PM and APC strings, and the payload bytes of an X10 mouse report. A prefix that
+is also a key on its own — Escape, Alt+Escape, Alt+[, Alt+O or Alt+] — is
+delivered after the same short timeout that tells Escape from Alt+letter.
+Terminfo is not needed to recognise the shape of a sequence; it supplies the
+names and terminal-specific byte sequences for the keys TAWB exposes. A key
+the table does not name is still kept whole and can be bound as a raw sequence
+by the keyboard wizard.
 
 ## The browser's own lists
 

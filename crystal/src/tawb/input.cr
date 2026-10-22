@@ -28,6 +28,10 @@ module Tawb
 
     EOF = Eof.new
 
+    # Escape-string introducers. OSC ends with BEL or ST; the others end with
+    # ST. They are kept whole because their payload is terminal data, not keys.
+    STRING_INTRODUCERS = Set(Char).new([']', 'P', 'X', '^', '_'])
+
     alias Key = String | Eof
 
     # Who the keystrokes belong to. Normally nobody, and the reading loop
@@ -292,11 +296,13 @@ module Tawb
         end
       end
 
-      # A timer is outstanding while the buffer is a lone Escape or the two-
-      # byte Alt prefix. parse always drains everything else it can, and an
-      # incomplete CSI or SS3 waits for more bytes without any timer at all.
+      # A timer is outstanding when the buffer is a prefix that could still
+      # become a key but is also a key on its own: Escape, Alt+Escape, Alt+[,
+      # Alt+O, or one of the Alt+string-introducer keys.
       private def pending_escape? : Bool
-        @buffer == "\e" || @buffer == "\e\e"
+        return false if @buffer.empty? || @buffer[0] != '\e'
+        step = complete_escape
+        step[:length].nil? && step[:fallback] > 0
       end
 
       private def ended? : Bool
@@ -309,56 +315,105 @@ module Tawb
           if first != '\e'
             @buffer = @buffer[first.bytesize..]
             emit(first.to_s)
-          elsif @buffer.bytesize == 1
-            return unless expire_escape
-            @buffer = ""
-            emit("\e")
-          elsif (second = @buffer[1]) == '[' || second == 'O'
-            final = final_byte(1)
-            return if final < 0
-            emit(@buffer[0..final])
-            @buffer = @buffer[(final + 1)..]
-          elsif second == '\e'
-            # A terminal writes Alt+<key> as Escape followed by the key it
-            # would otherwise send. For a function key that key is itself an
-            # escape sequence, so Alt+F12 arrives as Escape, Escape, "[24~".
-            # Treat the second escape as part of the sequence, not as an
-            # Alt+Escape key: otherwise the rest of F12 is left in the stream
-            # as the characters "[", "2", "4" and "~", which then land in
-            # whatever prompt is open.
-            if @buffer.bytesize == 2
-              return unless expire_escape
-              @buffer = ""
-              emit("\e\e")
-            elsif (third = @buffer[2]?) && (third == '[' || third == 'O')
-              final = final_byte(2)
-              return if final < 0
-              emit(@buffer[0..final])
-              @buffer = @buffer[(final + 1)..]
-            else
-              emit(@buffer[0, 2])
-              @buffer = @buffer[2..]
-            end
-          else
-            # An escape followed by one character is the traditional Alt
-            # encoding.
-            length = 1 + second.bytesize
+            next
+          end
+
+          step = complete_escape
+          if length = step[:length]
             emit(@buffer[0, length])
             @buffer = @buffer[length..]
+          elsif step[:fallback] > 0 && expire_escape
+            count = Math.min(step[:fallback], @buffer.size)
+            emit(@buffer[0, count])
+            @buffer = @buffer[count..]
+          else
+            return
           end
         end
+      end
+
+      # How much of the buffer one escape sequence occupies, or nil for “not
+      # complete yet”. `fallback` is how many characters can be taken as a key
+      # if no more arrive; it is what keeps a prefix that is also a valid
+      # press — Escape, Alt+Escape, Alt+[, Alt+O, Alt+] — usable on its own.
+      private def complete_escape : NamedTuple(length: Int32?, fallback: Int32)
+        if @buffer.size == 1
+          return {length: nil, fallback: 1}
+        end
+
+        second = @buffer[1]
+        # A terminal writes Alt+<key> as Escape followed by the key it would
+        # otherwise send. For a function key that key is itself an escape
+        # sequence, so Alt+F12 arrives as Escape, Escape, "[24~".
+        if second == '\e'
+          return {length: nil, fallback: 2} if @buffer.size == 2
+          third = @buffer[2]
+          if third == '[' || third == 'O'
+            final = csi_end(2)
+            return {length: nil, fallback: 0} if final < 0
+            return {length: final + 1, fallback: 0}
+          end
+          if STRING_INTRODUCERS.includes?(third)
+            final = string_end(2)
+            return {length: nil, fallback: 2} if final < 0
+            return {length: final, fallback: 0}
+          end
+          return {length: 2, fallback: 0}
+        end
+
+        if second == '[' || second == 'O'
+          final = csi_end(1)
+          if final < 0
+            return {length: nil, fallback: @buffer.size == 2 ? 2 : 0}
+          end
+          # X10 mouse reports are a CSI sequence followed by three payload
+          # bytes. Keeping the payload with the introducer stops coordinate
+          # bytes being read as ordinary keys.
+          if second == '[' && @buffer[2]? == 'M' && final == 2
+            payload_end = final + 1 + 3
+            return {length: nil, fallback: 0} if @buffer.size < payload_end
+            return {length: payload_end, fallback: 0}
+          end
+          return {length: final + 1, fallback: 0}
+        end
+
+        if STRING_INTRODUCERS.includes?(second)
+          final = string_end(1)
+          return {length: nil, fallback: 2} if final < 0
+          return {length: final, fallback: 0}
+        end
+
+        # An escape followed by one character is the traditional Alt encoding.
+        {length: 2, fallback: 0}
       end
 
       # The final byte of a CSI or SS3 sequence whose introducer is at
       # *start*. Kept here rather than inline because an Alt prefix puts the
       # same sequence one byte further into the buffer.
-      private def final_byte(start : Int32) : Int32
+      private def csi_end(start : Int32) : Int32
         bytes = @buffer.to_slice
         (start + 1...bytes.size).each do |index|
           # ESC[[A is a historical function-key form whose extra "[" is an
           # introducer rather than its final byte.
           next if index == start + 1 && bytes[index] == '['.ord
           return index if bytes[index] >= 0x40 && bytes[index] <= 0x7e
+        end
+        -1
+      end
+
+      # One past the end of an OSC/DCS/SOS/PM/APC string, or -1 when it has
+      # not finished arriving. BEL ends an OSC string; ST — Escape followed by
+      # a backslash — ends any of them.
+      private def string_end(start : Int32) : Int32
+        bytes = @buffer.to_slice
+        index = start + 1
+        while index < bytes.size
+          return index + 1 if bytes[index] == 0x07
+          if bytes[index] == 0x1b
+            return -1 if index + 1 >= bytes.size
+            return index + 2 if bytes[index + 1] == '\\'.ord
+          end
+          index += 1
         end
         -1
       end

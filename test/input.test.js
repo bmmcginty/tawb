@@ -22,7 +22,7 @@ for (const implementation of inputImplementations({ KeyReader, EOF })) {
 
   check('the input reader separates combined keys and joins split sequences', async () => {
     const observations = await implementation.scenario({
-      escape_ms: 5,
+      escape_ms: 80,
       script: [
         { op: 'write', chunk: 'ab\x1b[' },
         { op: 'next' },
@@ -89,6 +89,66 @@ for (const implementation of inputImplementations({ KeyReader, EOF })) {
       ],
     });
     assert.deepEqual(observations, ['\x1b\x1b']);
+  });
+
+  check('escape strings and their payloads stay one key', async () => {
+    const cases = [
+      '\x1b]0;title\x07',
+      '\x1bP1;2|payload\x1b\\',
+      '\x1bXpayload\x1b\\',
+      '\x1b^payload\x1b\\',
+      '\x1b_payload\x1b\\',
+      '\x1b\x1b]0;title\x07',
+    ];
+    for (const chunk of cases) {
+      const observations = await implementation.scenario({
+        escape_ms: 5,
+        script: [
+          { op: 'write', chunk },
+          { op: 'next' },
+          { op: 'close' },
+        ],
+      });
+      assert.deepEqual(observations, [chunk], JSON.stringify(chunk));
+    }
+  });
+
+  check('an X10 mouse report keeps its payload', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 5,
+      script: [
+        { op: 'write', chunk: '\x1b[Mabc' },
+        { op: 'next' },
+        { op: 'close' },
+      ],
+    });
+    assert.deepEqual(observations, ['\x1b[Mabc']);
+  });
+
+  check('an unfinished introducer is still a key of its own', async () => {
+    for (const chunk of ['\x1b[', '\x1bO', '\x1b]']) {
+      const observations = await implementation.scenario({
+        escape_ms: 5,
+        script: [
+          { op: 'write', chunk },
+          { op: 'next' },
+          { op: 'close' },
+        ],
+      });
+      assert.deepEqual(observations, [chunk], JSON.stringify(chunk));
+    }
+  });
+
+  check('Alt with a non-ASCII character is one key', async () => {
+    const observations = await implementation.scenario({
+      escape_ms: 5,
+      script: [
+        { op: 'write', chunk: '\x1bé' },
+        { op: 'next' },
+        { op: 'close' },
+      ],
+    });
+    assert.deepEqual(observations, ['\x1bé']);
   });
 
   check('the input reader distinguishes Escape from Alt keys', async () => {
