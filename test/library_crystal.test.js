@@ -30,7 +30,8 @@ test('native library age, size, address and filtering policy matches', { skip },
     assert.equal(call('library.relative_age', { when, now: NOW }),
       library.relativeAge(when, NOW));
   }
-  for (const [bytes, total] of [[0, 0], [42, null], [1536, 0], [0, 15 << 20]]) {
+  for (const [bytes, total] of [[0, 0], [42, null], [1536, 0], [0, 15 << 20],
+    [1 << 30, 1 << 30], [12 * (1 << 30), 12 * (1 << 30)]]) {
     assert.equal(call('library.size_text', { bytes, total }),
       library.sizeText(bytes, total));
   }

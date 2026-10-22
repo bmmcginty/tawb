@@ -36,7 +36,7 @@ module Tawb
       [{"GB", 1_i64 << 30}, {"MB", 1_i64 << 20}, {"KB", 1_i64 << 10}].each do |name, scale|
         next if value < scale
         number = value.to_f / scale
-        return value >= 10 * scale ? "#{number.round.to_i}#{name}" : "#{sprintf("%.1f", number)}#{name}"
+        return value >= 10_i64 * scale ? "#{number.round.to_i}#{name}" : "#{sprintf("%.1f", number)}#{name}"
       end
       "#{value}B"
     end
