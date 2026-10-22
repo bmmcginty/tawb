@@ -1157,9 +1157,21 @@ module Tawb
         state.cursor, state.col, state.core.source)
     end
 
-    def self.restore_anchor(state : State, saved : JSON::Any?) : Nil
+    def self.restore_anchor(state : State, saved : JSON::Any?,
+                            previous_texts : Array(String)? = nil) : Nil
       return unless present?(saved)
-      line = line_for_block(state, state.core.restore(saved.not_nil!))
+      anchor = saved.not_nil!
+      # After an action the reader asked for, the control they pressed is often
+      # the thing that changed: Play becomes Pause, an unchecked box becomes
+      # checked. restore() searches the whole buffer for the anchor's name, so
+      # that a changed label can send the reader to an unrelated block that
+      # merely contains the same word. reanchor() starts with the arithmetic
+      # remap and the neighbourhood, which keeps them on the control they used;
+      # restore() remains the fallback for a rebuild it cannot place at all.
+      settled = previous_texts ? state.core.reanchor_with_texts(anchor, previous_texts) : nil
+      block = settled.try(&.as_h).try(&.["block"]?).try(&.as_i64?) || -1_i64
+      block = state.core.restore(anchor) if block < 0
+      line = line_for_block(state, block.to_i32)
       state.cursor = line if line >= 0
       state.col = 0
       clamp_scroll(state)
@@ -1178,7 +1190,8 @@ module Tawb
     # place to keep, and asking for a reset throws the cursor to the top
     # when the document itself has changed.
     def self.refresh(state : State, page : PageEnv, reset_cursor : Bool = false,
-                     anchor : JSON::Any? = nil) : Nil
+                     anchor : JSON::Any? = nil,
+                     previous_texts : Array(String)? = nil) : Nil
       state.core.rescan
       state.title = read_title(page)
       LynxSession.note_page_visit(state, page.url, state.title)
@@ -1190,7 +1203,7 @@ module Tawb
       end
       relayout(state)
       place_fresh_document_cursor(state) if reset_cursor
-      restore_anchor(state, anchor) if present?(anchor)
+      restore_anchor(state, anchor, previous_texts) if present?(anchor)
     end
 
     # Re-anchoring for an update the reader did not ask for. Unlike

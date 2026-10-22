@@ -740,6 +740,41 @@ test('reporting after a same-page action keeps the reader where they were', { sk
   assert.equal(result.state.statusMsg, 'Activated: Press — no visible change.');
 });
 
+test('a same-page action stays on the control whose own label changed',
+  { skip: needsCrystal }, async () => {
+    const blocks = [
+      { text: 'first', item: { role: 'text' } },
+      { text: '[*Play]', item: { role: 'button', name: 'Play' } },
+      { text: 'third', item: { role: 'text' } },
+      { text: '[*Embed Player]', item: { role: 'tab', name: 'Embed Player' } },
+    ];
+    const fresh = [
+      { text: 'first', item: { role: 'text' } },
+      { text: '[*Pause]', item: { role: 'button', name: 'Pause' } },
+      { text: 'third', item: { role: 'text' } },
+      { text: '[*Embed Player]', item: { role: 'tab', name: 'Embed Player' } },
+    ];
+    const state = stateFor(blocks, { cursor: 1, statusMsg: 'Activated: Play' }, {
+      rescanBlocks: fresh,
+      // The old path searched the whole buffer for the name "Play" and landed
+      // on the "Embed Player" tab; the new one keeps the control itself.
+      restoreBlock: 3,
+      reanchorBlock: 1,
+      reanchorExact: true,
+      reanchored: { block: 1, exact: true },
+    });
+    const anchor = {
+      text: '[*Play]', name: 'Play', identity: null, block: 1,
+      context: ['first', '[*Play]', 'third'], ratio: 0.25,
+    };
+    const result = await runBoth('changed label', state, [
+      { op: 'reportAfterAction', previousTexts: ['first', '[*Play]', 'third', '[*Embed Player]'],
+        previousUrl: PAGE_URL, anchor, focused: null },
+    ], { url: PAGE_URL });
+    assert.equal(result.state.cursor, 1);
+    assert.equal(result.state.lines[1].text, '[*Pause]');
+  });
+
 test('reporting after a navigation disposes of the watched focus', { skip: needsCrystal }, async () => {
   const blocks = [{ text: 'old page', item: { role: 'text' } }];
   const fresh = [{ text: 'new page', item: { role: 'text' } }];

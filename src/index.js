@@ -1530,15 +1530,26 @@ function lineForBlock(state, blockIndex) {
   return position ? position.line : -1;
 }
 
-function restoreAnchor(state, anchor) {
+function restoreAnchor(state, anchor, previousTexts = null) {
   if (!anchor) return;
-  const line = lineForBlock(state, state.core.restore(anchor));
+  // After an action the reader asked for, the control they pressed is often
+  // the thing that changed: Play becomes Pause, an unchecked box becomes
+  // checked. restore() searches the whole buffer for the anchor's name, so
+  // that a changed label can send the reader to an unrelated block that
+  // merely contains the same word. reanchor() starts with the arithmetic
+  // remap and the neighbourhood, which keeps them on the control they used;
+  // restore() remains the fallback for a rebuild it cannot place at all.
+  const settled = previousTexts ? state.core.reanchor(anchor, previousTexts) : null;
+  const block = settled && settled.block >= 0 ? settled.block : state.core.restore(anchor);
+  const line = lineForBlock(state, block);
   if (line >= 0) state.cursor = line;
   state.col = 0;
   clampScroll(state);
 }
 
-async function refresh(state, page, { resetCursor = false, anchor = null } = {}) {
+async function refresh(state, page, {
+  resetCursor = false, anchor = null, previousTexts = null,
+} = {}) {
   await state.core.rescan({ page });
   state.title = await readTitle(page);
   notePageVisit(state, typeof page.url === 'function' ? page.url() : '', state.title);
@@ -1546,7 +1557,7 @@ async function refresh(state, page, { resetCursor = false, anchor = null } = {})
   if (resetCursor) { state.cursor = 0; state.scroll = 0; state.col = 0; }
   relayout(state);
   if (resetCursor) placeFreshDocumentCursor(state);
-  if (anchor) restoreAnchor(state, anchor);
+  if (anchor) restoreAnchor(state, anchor, previousTexts);
 }
 
 // Re-anchoring for an update the reader did not ask for. Unlike
@@ -2841,7 +2852,9 @@ async function reportAfterAction(
   state, page, { previousTexts, previousUrl, anchor, screen = null, focused = null },
 ) {
   const navigated = page.url() !== previousUrl;
-  await refresh(state, page, navigated ? { resetCursor: true } : { anchor });
+  await refresh(state, page, navigated
+    ? { resetCursor: true }
+    : { anchor, previousTexts });
 
   // A handle belongs to the old document after navigation and cannot be a
   // destination in the new one. Disposal is still owed even though it cannot

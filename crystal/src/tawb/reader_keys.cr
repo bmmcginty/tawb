@@ -605,7 +605,7 @@ module Tawb
       if navigated
         Reader.refresh(state, page, true)
       else
-        Reader.refresh(state, page, false, anchor)
+        Reader.refresh(state, page, false, anchor, previous_texts)
       end
 
       # A handle belongs to the old document after navigation and cannot be a
