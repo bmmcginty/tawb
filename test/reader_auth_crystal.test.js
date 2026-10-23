@@ -162,7 +162,7 @@ test('the prompt loop answers, restores the mode, and hands the keyboard back', 
   // The row itself says the sign-in is happening, over the prompt's last words.
   const writes = result.results.flatMap((entry) => entry.writes);
   const lastText = writes[writes.length - 1].replace('\x1b[2K', '');
-  assert.match(lastText, /^Signing in to http:\/\/example\.com — "Staff area" \(basic\)…$/);
+  assert.match(lastText, /^Signing in to http:\/\/example\.com -- "Staff area" \(basic\)\.\.\.$/);
 });
 
 test('a refused challenge says so on the hint row', { skip: needsCrystal }, async () => {

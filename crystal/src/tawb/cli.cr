@@ -16,6 +16,7 @@ require "./options"
 require "./runtime"
 require "./settings"
 require "./startup"
+require "./unicode_text"
 
 module Tawb
   module Cli
@@ -33,6 +34,7 @@ module Tawb
       --alt-screen                  use the alternate screen (default)
       --no-alt-screen               keep the session on the ordinary screen
       --escape-unicode              write non-ASCII text as Unicode escapes
+      --unicode <ascii|full>        ascii punctuation (default) or full Unicode
       --link-address                announce the link under the cursor (default)
       --no-link-address             start with the status row quiet
       --short-links                 shorten same-site links to their path
@@ -211,6 +213,7 @@ module Tawb
         state.link_address = options["linkAddress"].as_bool
         state.short_links = options["shortLinks"].as_bool
         state.escape_unicode = options["escapeUnicode"].as_bool
+        state.unicode = options["unicodeMode"].as_s
         state.search = options["search"].as_s
         # The views the backslash cycle offers: what the native extraction
         # can actually build, which today is AX alone.
@@ -618,13 +621,14 @@ module Tawb
         tree, documents = page.accessibility_documents(layout: lynx)
         blocks = Frames.build(tree, documents)
         if lynx
-          display = LynxDisplay.blocks(blocks, LynxSettings.preferences, options["escapeUnicode"].as_bool)
+          convert = ->(text : String) { UnicodeText.present(text, options["unicodeMode"].as_s, options["escapeUnicode"].as_bool) }
+          display = LynxDisplay.blocks(blocks, LynxSettings.preferences, false, convert)
           lines = Layout.lines(display, 80)
           unless lines.empty?
             STDOUT << lines.map { |line| LynxDisplay.row_text(line, line.as_h["text"].as_s) }.join('\n') << '\n'
           end
         else
-          STDOUT << Dump.format_ax_blocks(blocks, options["escapeUnicode"].as_bool)
+          STDOUT << Dump.format_ax_blocks(blocks, options["escapeUnicode"].as_bool, options["unicodeMode"].as_s)
         end
       ensure
         if current_page = page

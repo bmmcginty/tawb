@@ -97,6 +97,11 @@ function defineOptionTests(implementation) {
     assert.equal(parseArgs(['--escape-unicode'], {}).escapeUnicode, true);
     assert.equal(parseArgs(['--escape-unicode', '--no-escape-unicode'], {}).escapeUnicode, false);
 
+    assert.equal(parseArgs([], {}).unicodeMode, 'ascii');
+    assert.equal(parseArgs(['--unicode', 'full'], {}).unicodeMode, 'full');
+    assert.equal(parseArgs(['--unicode=ascii'], {}).unicodeMode, 'ascii');
+    assert.throws(() => parseArgs(['--unicode', 'visual'], {}), /Unknown unicode mode/);
+
     // The alternate screen is the default, and a settings-file choice can be
     // overridden for one run.
     assert.equal(parseArgs([], {}).altScreen, true);

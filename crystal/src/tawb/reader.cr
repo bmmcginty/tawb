@@ -1,6 +1,7 @@
 require "json"
 require "./screen"
 require "./unicode_escape"
+require "./unicode_text"
 require "./lynx_display"
 require "./lynx_options_screen"
 require "./lynx_session"
@@ -856,6 +857,7 @@ module Tawb
       property mode : String
       property title : String
       property escape_unicode : Bool
+      property unicode : String
       property short_links : Bool
       property link_address : Bool
       property status_msg : String
@@ -931,6 +933,7 @@ module Tawb
         @mode = "browse"
         @title = ""
         @escape_unicode = false
+        @unicode = "ascii"
         @short_links = false
         @link_address = true
         @status_msg = ""
@@ -987,12 +990,11 @@ module Tawb
     end
 
     # What the screen shows, as display blocks: the core blocks passed through
-    # the Lynx vocabulary when the Lynx profile is reading the page, escaped
-    # when the terminal cannot show the page's own characters. Core's original
-    # text is kept intact either way — it is what live patches, place
-    # matching and activation resolve against — so the transform lands on
-    # copies, and on the whole list at once while one of the browser's own
-    # lists is open the answer is that list, untransformed.
+    # the Lynx vocabulary when the Lynx profile is reading the page, and
+    # presented in ASCII punctuation or Unicode escapes as the reader asked.
+    # Core's original text is kept intact either way — it is what live
+    # patches, place matching and activation resolve against — so the transform
+    # lands on copies, including the browser's own lists when one is open.
     def self.display_blocks(state : State) : Array(JSON::Any)
       # Whether the page's own blocks are being shown, rather than one of the
       # browser's own lists, is what `active_blocks` decides: it falls through
@@ -1004,15 +1006,16 @@ module Tawb
       # to a real page.
       page_blocks = state.options.nil? && state.library.nil? && state.dialog.nil?
       blocks = active_blocks(state)
+      convert = ->(text : String) { UnicodeText.present(text, state.unicode, state.escape_unicode) }
       if lynx_active?(state) && page_blocks
         preferences = state.keys.try(&.preferences) || {} of String => JSON::Any
-        return LynxDisplay.blocks(blocks, preferences, state.escape_unicode)
+        return LynxDisplay.blocks(blocks, preferences, false, convert)
       end
-      return blocks unless state.escape_unicode && page_blocks
+      return blocks if state.unicode == "full" && !state.escape_unicode
       blocks.map do |block|
         object = block.as_h
         copy = object.dup
-        copy["text"] = JSON::Any.new(UnicodeEscape.escape(object["text"]?.try(&.as_s?)))
+        copy["text"] = JSON::Any.new(convert.call(object["text"]?.try(&.as_s?) || ""))
         JSON::Any.new(copy)
       end
     end
@@ -1489,8 +1492,7 @@ module Tawb
     end
 
     def self.page_text(state : State, text : String?) : String
-      return UnicodeEscape.escape(text) if state.escape_unicode
-      text || ""
+      UnicodeText.present(text, state.unicode, state.escape_unicode)
     end
 
     # ------------------------------------------------------------------
@@ -1783,7 +1785,7 @@ module Tawb
         label = number + (name.empty? ? "" : page_text(state, name) + " ")
         width = Math.max(20, value.size)
         shown = value[0, Math.min(width, value.size)]
-        offset = state.escape_unicode ? UnicodeEscape.escaped_offset(typing.text, typing.caret) : typing.caret
+        offset = UnicodeText.present_offset(typing.text, typing.caret, state.unicode, state.escape_unicode)
         return {
           text:      label + shown + ("_" * Math.max(0, width - value.size)) + suffix,
           caret_col: GUTTER + label.size + offset + 1,
@@ -1791,7 +1793,7 @@ module Tawb
       end
       name = typing.item.as_h["name"]?.try(&.as_s?) || ""
       label = "[#{page_text(state, name)}: "
-      offset = state.escape_unicode ? UnicodeEscape.escaped_offset(typing.text, typing.caret) : typing.caret
+      offset = UnicodeText.present_offset(typing.text, typing.caret, state.unicode, state.escape_unicode)
       {
         text:      label + value + "]",
         caret_col: GUTTER + label.size + offset + 1,

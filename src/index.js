@@ -47,7 +47,7 @@ const {
 } = require('./options');
 const { startupStatus } = require('./startup');
 const { dumpAx, resolveDumpTarget } = require('./dump');
-const { escapeNonAscii, escapedOffset } = require('./unicode_escape');
+const { presentText, presentOffset } = require('./unicode_text');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -103,9 +103,20 @@ const OPTION_SPEC = {
   'link-address': { type: 'boolean' },
   'short-links': { type: 'boolean' },
   'escape-unicode': { type: 'boolean' },
+  unicode: { type: 'string' },
   'alt-screen': { type: 'boolean' },
   'close-initial-tab-on-exit': { type: 'boolean' },
 };
+
+const UNICODE_MODES = new Set(['ascii', 'full']);
+
+function unicodeMode(value) {
+  const name = String(value || 'ascii').toLowerCase();
+  if (!UNICODE_MODES.has(name)) {
+    throw new Error(`Unknown unicode mode ${value}; use ascii or full`);
+  }
+  return name;
+}
 
 function parseArgs(argv, env = process.env) {
   const { values, url } = parseCommandLine(argv, { options: OPTION_SPEC, env });
@@ -126,6 +137,7 @@ function parseArgs(argv, env = process.env) {
     linkAddress: values['link-address'] ?? true,
     shortLinks: values['short-links'] ?? false,
     escapeUnicode: values['escape-unicode'] ?? false,
+    unicodeMode: unicodeMode(values.unicode || 'ascii'),
     altScreen: values['alt-screen'] ?? true,
     closeInitialTabOnExit: values['close-initial-tab-on-exit'] ?? false,
     help: values.help ?? false,
@@ -523,17 +535,21 @@ function syncCursor(state) {
 }
 
 function pageText(state, text) {
-  return state.escapeUnicode ? escapeNonAscii(text) : String(text ?? '');
+  return presentText(text, {
+    unicode: state.unicode || 'ascii', escape: state.escapeUnicode,
+  });
 }
 
 function displayBlocks(state) {
   const blocks = activeBlocks(state);
   const pageBlocks = blocks === state.core.blocks;
-  const transform = state.escapeUnicode && pageBlocks ? escapeNonAscii : String;
+  const transform = (text) => presentText(text, {
+    unicode: state.unicode || 'ascii', escape: state.escapeUnicode,
+  });
   if (LYNX_ACTIONS.active(state) && pageBlocks) {
     return lynxBlocks(blocks, state.keys && state.keys.preferences, transform);
   }
-  if (!state.escapeUnicode || !pageBlocks) return blocks;
+  if ((state.unicode || 'ascii') === 'full' && !state.escapeUnicode) return blocks;
   // Keep Core's original text intact. It uses that text to resolve live
   // patches, preserve the reader's place, and identify page controls.
   return blocks.map((block) => ({ ...block, text: transform(block.text) }));
@@ -938,18 +954,18 @@ function typingText(state) {
     return {
       text: label + clipField(value, Math.max(20, value.length)) + suffix,
       caretCol: GUTTER + label.length
-        + (state.escapeUnicode
-          ? escapedOffset(state.typing.text, state.typing.caret)
-          : state.typing.caret) + 1,
+        + presentOffset(state.typing.text, state.typing.caret, {
+          unicode: state.unicode || 'ascii', escape: state.escapeUnicode,
+        }) + 1,
     };
   }
   const label = `[${pageText(state, item.name)}: `;
   return {
     text: label + value + ']',
     caretCol: GUTTER + label.length
-      + (state.escapeUnicode
-        ? escapedOffset(state.typing.text, state.typing.caret)
-        : state.typing.caret) + 1,
+      + presentOffset(state.typing.text, state.typing.caret, {
+        unicode: state.unicode || 'ascii', escape: state.escapeUnicode,
+      }) + 1,
   };
 }
 
@@ -4804,6 +4820,7 @@ const USAGE = [
   '  --alt-screen                  use the alternate screen (default)',
   '  --no-alt-screen               keep the session on the ordinary screen',
   '  --escape-unicode              write non-ASCII text as Unicode escapes',
+  '  --unicode <ascii|full>        ascii punctuation (default) or full Unicode',
   '  --link-address                announce the link under the cursor (default)',
   '  --no-link-address             start with the status row quiet',
   '  --short-links                 shorten same-site links to their path',
@@ -4932,6 +4949,7 @@ async function main() {
         // rather than imported, so a dump never runs Lynx or writes config.
         preferences: ARGS.frontEnd === 'lynx' ? lynxPreferences() : {},
         escapeUnicode: ARGS.escapeUnicode,
+        unicodeMode: ARGS.unicodeMode,
         width: process.stdout.columns || 80,
       });
     } finally {
@@ -5036,6 +5054,7 @@ async function main() {
     linkAddress: ARGS.linkAddress,
     shortLinks: ARGS.shortLinks,
     escapeUnicode: ARGS.escapeUnicode,
+    unicode: ARGS.unicodeMode,
     logDir: ARGS.logDir,
     // Lynx keeps two lists about the reader rather than the page: the links
     // followed in this session, and the documents it has been through. Both

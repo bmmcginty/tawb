@@ -37,6 +37,8 @@ for (const implementation of dumpImplementations(javascript)) {
     assert.equal(formatAxBlocks([]), '');
     assert.equal(formatAxBlocks([{ text: 'café 😀' }], { escapeUnicode: true }),
       'caf\\u00E9 \\U0001F600\n');
+    assert.equal(formatAxBlocks([{ text: '“Hi”…' }]), '"Hi"...\n');
+    assert.equal(formatAxBlocks([{ text: '“Hi”…' }], { unicodeMode: 'full' }), '“Hi”…\n');
   });
 }
 

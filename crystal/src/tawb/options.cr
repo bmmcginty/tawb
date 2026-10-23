@@ -34,6 +34,7 @@ module Tawb
       "link-address"              => Kind::Boolean,
       "short-links"               => Kind::Boolean,
       "escape-unicode"            => Kind::Boolean,
+      "unicode"                   => Kind::String,
       "alt-screen"                => Kind::Boolean,
       "close-initial-tab-on-exit" => Kind::Boolean,
     }
@@ -42,6 +43,12 @@ module Tawb
       name = (value && !value.empty? ? value : "default").downcase
       return name if FRONT_ENDS.includes?(name)
       raise ArgumentError.new("Unknown front end #{value}; use default, lynx or edb")
+    end
+
+    def self.unicode_mode(value : String?) : String
+      name = (value && !value.empty? ? value : "ascii").downcase
+      return name if name == "ascii" || name == "full"
+      raise ArgumentError.new("Unknown unicode mode #{value}; use ascii or full")
     end
 
     def self.normalise_endpoint(value : String) : String
@@ -87,6 +94,7 @@ module Tawb
         "linkAddress"           => json(boolean(values, "link-address", true)),
         "shortLinks"            => json(boolean(values, "short-links", false)),
         "escapeUnicode"         => json(boolean(values, "escape-unicode", false)),
+        "unicodeMode"           => json(unicode_mode(string(values, "unicode"))),
         "altScreen"             => json(boolean(values, "alt-screen", true)),
         "closeInitialTabOnExit" => json(boolean(values, "close-initial-tab-on-exit", false)),
         "help"                  => json(boolean(values, "help", false)),

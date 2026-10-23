@@ -482,8 +482,10 @@ function dumpImplementations(javascript) {
       const existing = exists(candidate) ? [candidate] : [];
       return call('dump.resolve_target', { input, cwd, existing, search });
     },
-    formatAxBlocks(blocks, { escapeUnicode = false } = {}) {
-      return call('dump.format_ax_blocks', { blocks, escape_unicode: escapeUnicode });
+    formatAxBlocks(blocks, { escapeUnicode = false, unicodeMode = 'ascii' } = {}) {
+      return call('dump.format_ax_blocks', {
+        blocks, escape_unicode: escapeUnicode, unicode: unicodeMode,
+      });
     },
   });
   return implementations;
@@ -1357,6 +1359,7 @@ function readerImplementations(index, keysModule) {
       rows: spec.rows ?? 24, cols: spec.cols ?? 80,
       interface: spec.interface ?? 'tawb', mode: spec.mode ?? 'browse',
       title: spec.title ?? '', escapeUnicode: !!spec.escapeUnicode,
+      unicode: spec.unicode ?? 'ascii',
       shortLinks: !!spec.shortLinks, linkAddress: spec.linkAddress !== false,
       statusMsg: spec.statusMsg ?? '',
       cursor: spec.cursor ?? 0, col: spec.col ?? 0, scroll: spec.scroll ?? 0,
@@ -4107,6 +4110,15 @@ function unicodeImplementations(javascript) {
     },
     escapedOffset(value, offset) {
       return call('unicode.escaped_offset', { value, offset });
+    },
+    asciiPunctuation(value) {
+      return call('unicode.ascii_punctuation', { value });
+    },
+    presentText(value, { unicode = 'ascii', escape = false } = {}) {
+      return call('unicode.present', { value, unicode, escape });
+    },
+    presentOffset(value, offset, { unicode = 'ascii', escape = false } = {}) {
+      return call('unicode.present_offset', { value, offset, unicode, escape });
     },
   });
   return implementations;

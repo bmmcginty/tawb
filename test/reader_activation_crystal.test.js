@@ -340,7 +340,7 @@ test('a native select opens the chooser on its own entries', { skip: needsCrysta
   assert.deepEqual(result.state.chooser.shown, [0, 1, 2]);
   assert.equal(result.state.live.refreshing, true, 'live rebuilds are held mid-choice');
   assert.equal(result.state.lines[2].text, '(*) North');
-  assert.equal(result.state.lines[4].text, '( ) Unavailable — unavailable');
+  assert.equal(result.state.lines[4].text, '( ) Unavailable -- unavailable');
   assert.equal(result.state.cursor, 2, 'the reader lands on the chosen entry');
   assert.equal(result.state.statusMsg,
     '3 choices for "Region" — type to filter, Enter to choose, Esc to cancel.');

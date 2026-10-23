@@ -2,6 +2,7 @@ require "json"
 require "set"
 require "./address"
 require "./unicode_escape"
+require "./unicode_text"
 
 module Tawb
   module Dump
@@ -21,12 +22,13 @@ module Tawb
       resolved["url"].as_s
     end
 
-    def self.format_ax_blocks(blocks : Array(JSON::Any), escape_unicode : Bool = false) : String
+    def self.format_ax_blocks(blocks : Array(JSON::Any), escape_unicode : Bool = false,
+                              unicode : String = "ascii") : String
       return "" if blocks.empty?
       String.build do |io|
         blocks.each do |block|
           text = block.as_h["text"]?.try(&.as_s?) || ""
-          io << (escape_unicode ? UnicodeEscape.escape(text) : text) << '\n'
+          io << UnicodeText.present(text, unicode, escape_unicode) << '\n'
         end
       end
     end

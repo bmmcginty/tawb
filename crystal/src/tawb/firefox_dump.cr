@@ -12,6 +12,7 @@ require "./layout"
 require "./lynx_display"
 require "./lynx_settings"
 require "./marionette"
+require "./unicode_text"
 
 module Tawb
   module FirefoxDump
@@ -38,7 +39,8 @@ module Tawb
           record["libraryPort"]?.try(&.as_i?).try(&.to_i32),
           owned: false, keep_browser: keep_browser, brokered: false,
           target: target, layout: lynx,
-          escape_unicode: options["escapeUnicode"].as_bool, preferences: preferences)
+          escape_unicode: options["escapeUnicode"].as_bool,
+          unicode: options["unicodeMode"].as_s, preferences: preferences)
         STDOUT << result["text"].as_s
         return
       end
@@ -50,7 +52,8 @@ module Tawb
         result = read_page(started.endpoint, started.profile_dir, started.marionette_port,
           started.library_port, owned: started.owned?, keep_browser: keep_browser,
           brokered: true, target: target, layout: lynx,
-          escape_unicode: options["escapeUnicode"].as_bool, preferences: preferences)
+          escape_unicode: options["escapeUnicode"].as_bool,
+          unicode: options["unicodeMode"].as_s, preferences: preferences)
         STDOUT << result["text"].as_s
       ensure
         # Only a browser we started is ours to shut down, and only when
@@ -68,6 +71,7 @@ module Tawb
                        marionette_port : Int32?, library_port : Int32?,
                        owned : Bool, keep_browser : Bool, brokered : Bool,
                        target : String, layout : Bool, escape_unicode : Bool,
+                       unicode : String,
                        preferences : Hash(String, JSON::Any),
                        attempts = 3) : Hash(String, JSON::Any)
       endpoint = browser_endpoint
@@ -124,11 +128,12 @@ module Tawb
         tree, documents = page.accessibility_documents(layout)
         blocks = Frames.build(tree, documents)
         text = if layout
-                 display = LynxDisplay.blocks(blocks, preferences, escape_unicode)
+                 convert = ->(value : String) { UnicodeText.present(value, unicode, escape_unicode) }
+                 display = LynxDisplay.blocks(blocks, preferences, false, convert)
                  lines = Layout.lines(display, 80)
                  lines.empty? ? "" : "#{lines.map { |line| LynxDisplay.row_text(line, line.as_h["text"].as_s) }.join('\n')}\n"
                else
-                 Dump.format_ax_blocks(blocks, escape_unicode)
+                 Dump.format_ax_blocks(blocks, escape_unicode, unicode)
                end
         {
           "text"          => JSON::Any.new(text),

@@ -14,7 +14,7 @@ const { snapshotFrameTree } = require('./frames');
 const { layoutLines } = require('./layout');
 const { lynxBlocks, lynxRowText } = require('./lynx_display');
 const { needsLayoutMetadata } = require('./interfaces');
-const { escapeNonAscii } = require('./unicode_escape');
+const { presentText } = require('./unicode_text');
 
 // Mailcap's %s is a filesystem path, not a file: URL. Prefer an existing path
 // before applying the address-bar rules; otherwise a relative file such as
@@ -35,10 +35,11 @@ function resolveDumpTarget(input, {
   return resolved.url;
 }
 
-function formatAxBlocks(blocks, { escapeUnicode = false } = {}) {
+function formatAxBlocks(blocks, { escapeUnicode = false, unicodeMode = 'ascii' } = {}) {
   if (!blocks.length) return '';
-  const text = blocks.map((block) => String(block.text ?? ''));
-  return text.map((line) => (escapeUnicode ? escapeNonAscii(line) : line)).join('\n') + '\n';
+  const transform = (line) => presentText(line, { unicode: unicodeMode, escape: escapeUnicode });
+  const text = blocks.map((block) => transform(String(block.text ?? '')));
+  return text.join('\n') + '\n';
 }
 
 // The top document's DOMContentLoaded says nothing about the documents
@@ -109,9 +110,9 @@ async function settleEmbeddedFrames(page, {
 // terminal. lynxRowText is the same row composition renderLynxRow uses, so
 // the two presentations cannot disagree about where the margin or a marker
 // goes.
-function formatLynxBlocks(blocks, { preferences = {}, escapeUnicode = false, width = 80 } = {}) {
+function formatLynxBlocks(blocks, { preferences = {}, escapeUnicode = false, unicodeMode = 'ascii', width = 80 } = {}) {
   if (!blocks.length) return '';
-  const transform = escapeUnicode ? escapeNonAscii : String;
+  const transform = (text) => presentText(text, { unicode: unicodeMode, escape: escapeUnicode });
   const lines = layoutLines(lynxBlocks(blocks, preferences, transform), width);
   return lines.map((line) => lynxRowText(line, line.text)).join('\n') + '\n';
 }
@@ -122,6 +123,7 @@ async function dumpAx({
   frontEnd = 'default',
   preferences = {},
   escapeUnicode = false,
+  unicodeMode = 'ascii',
   width = 80,
   write = (text) => process.stdout.write(text),
   snapshot = snapshotFrameTree,
@@ -136,8 +138,8 @@ async function dumpAx({
       driver, layout: needsLayoutMetadata(frontEnd),
     });
     const output = frontEnd === 'lynx'
-      ? formatLynxBlocks(blocks, { preferences, escapeUnicode, width })
-      : formatAxBlocks(blocks, { escapeUnicode });
+      ? formatLynxBlocks(blocks, { preferences, escapeUnicode, unicodeMode, width })
+      : formatAxBlocks(blocks, { escapeUnicode, unicodeMode });
     if (output) write(output);
   } finally {
     // A kept or externally managed browser must not collect one mail-viewing

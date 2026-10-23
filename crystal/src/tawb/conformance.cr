@@ -54,6 +54,7 @@ require "./settings"
 require "./screen"
 require "./transport"
 require "./unicode_escape"
+require "./unicode_text"
 
 module Tawb
   module Conformance
@@ -549,7 +550,8 @@ module Tawb
       when "dump.format_ax_blocks"
         object = payload.as_h
         JSON::Any.new(Dump.format_ax_blocks(
-          object["blocks"].as_a, object["escape_unicode"]?.try(&.as_bool?) || false
+          object["blocks"].as_a, object["escape_unicode"]?.try(&.as_bool?) || false,
+          object["unicode"]?.try(&.as_s?) || "ascii"
         ))
       when "native.default_button"
         buttons = (payload.as_h["buttons"].as_a).map do |raw|
@@ -1011,6 +1013,21 @@ module Tawb
         value = object["value"]?.try(&.as_s?)
         offset = object["offset"].as_i.to_i32
         JSON::Any.new(UnicodeEscape.escaped_offset(value, offset).to_i64)
+      when "unicode.ascii_punctuation"
+        JSON::Any.new(UnicodeText.ascii_punctuation(payload.as_h["value"]?.try(&.as_s?)))
+      when "unicode.present"
+        object = payload.as_h
+        JSON::Any.new(UnicodeText.present(
+          object["value"]?.try(&.as_s?), object["unicode"]?.try(&.as_s?) || "ascii",
+          object["escape"]?.try(&.as_bool?) || false
+        ))
+      when "unicode.present_offset"
+        object = payload.as_h
+        JSON::Any.new(UnicodeText.present_offset(
+          object["value"]?.try(&.as_s?), (object["offset"]?.try(&.as_i?) || 0).to_i32,
+          object["unicode"]?.try(&.as_s?) || "ascii",
+          object["escape"]?.try(&.as_bool?) || false
+        ).to_i64)
       else
         raise ArgumentError.new("unknown conformance operation #{operation}")
       end
@@ -1921,6 +1938,7 @@ module Tawb
       state.mode = object["mode"]?.try(&.as_s?) || "browse"
       state.title = object["title"]?.try(&.as_s?) || ""
       state.escape_unicode = object["escapeUnicode"]?.try(&.as_bool?) || false
+      state.unicode = object["unicode"]?.try(&.as_s?) || "ascii"
       state.short_links = object["shortLinks"]?.try(&.as_bool?) || false
       state.link_address = object["linkAddress"]?.try(&.as_bool?) != false
       state.status_msg = object["statusMsg"]?.try(&.as_s?) || ""
@@ -3994,6 +4012,7 @@ module Tawb
         object["target"].as_s,
         object["layout"]?.try(&.as_bool?) || false,
         object["escape_unicode"]?.try(&.as_bool?) || false,
+        object["unicode"]?.try(&.as_s?) || "ascii",
         object["preferences"]?.try(&.as_h?) || {} of String => JSON::Any,
       ))
     end

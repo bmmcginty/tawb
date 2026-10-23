@@ -80,6 +80,18 @@ test('the title, address and hint each take their own row once', { skip: needsCr
   ]);
 });
 
+test('punctuation is ASCIIized unless full Unicode is asked for', { skip: needsCrystal }, () => {
+  const ascii = both('ascii punctuation', stateFor({ title: '“Hi”…' }), [
+    { op: 'drawTitle' },
+  ]);
+  assert.deepEqual(ascii.results[0].writes, row(1, '"Hi"...'));
+
+  const full = both('full punctuation', stateFor({ title: '“Hi”…', unicode: 'full' }), [
+    { op: 'drawTitle' },
+  ]);
+  assert.deepEqual(full.results[0].writes, row(1, '“Hi”…'));
+});
+
 test('an unchanged row is not rewritten, but a forced paint is', { skip: needsCrystal }, () => {
   const { results } = both('title cache', stateFor({ title: 'Example Domain' }), [
     { op: 'drawTitle' },
@@ -427,10 +439,10 @@ test('clampScroll keeps the cursor inside the window and says where they are', {
 
 test('setStatus writes the row at once and leaves the cursor on the reader', { skip: needsCrystal }, () => {
   const { results } = both('set status', stateFor(), [
-    { op: 'setStatus', msg: 'Loading https://example.test…' },
+    { op: 'setStatus', msg: 'Loading https://example.test...' },
   ]);
   assert.deepEqual(results[0].writes, [
-    ...row(24, 'Loading https://example.test…'), '\x1b[5;1H',
+    ...row(24, 'Loading https://example.test...'), '\x1b[5;1H',
   ]);
 });
 

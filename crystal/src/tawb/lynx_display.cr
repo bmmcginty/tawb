@@ -22,22 +22,24 @@ module Tawb
       getter offsets = [] of Int32
     end
 
-    def self.render_item(item : JSON::Any?, fallback = "", escape_unicode = false) : String
-      return transform(fallback, escape_unicode) unless item
+    def self.render_item(item : JSON::Any?, fallback = "", escape_unicode = false,
+                         convert : Proc(String, String)? = nil) : String
+      convert ||= ->(text : String) { escape_unicode ? UnicodeEscape.escape(text) : text }
+      return convert.call(fallback) unless item
       object = item.as_h
       role = string(object, "role")
-      name = transform(string(object, "name"), escape_unicode)
-      value = transform(string(object, "value"), escape_unicode)
+      name = convert.call(string(object, "name"))
+      value = convert.call(string(object, "value"))
 
       if table = object["table"]?.try(&.as_h?)
         if truthy?(table["caption"]?)
-          shown = name.empty? ? transform(fallback, escape_unicode) : name
+          shown = name.empty? ? convert.call(fallback) : name
           return "CAPTION: #{shown}"
         end
       end
-      return transform(fallback, escape_unicode) if role == "text"
+      return convert.call(fallback) if role == "text"
       return name if role == "heading"
-      return name.empty? ? transform(fallback, escape_unicode) : name if Aria::LINK_ROLES.includes?(role)
+      return name.empty? ? convert.call(fallback) : name if Aria::LINK_ROLES.includes?(role)
       if role.in?({"checkbox", "switch", "menuitemcheckbox"})
         checked = object["checked"]?
         mark = checked.try(&.as_s?) == "mixed" ? "-" : (truthy?(checked) ? "X" : " ")
@@ -67,13 +69,15 @@ module Tawb
       return name.empty? ? "[IMAGE]" : name if role == "img"
       return name.empty? ? "IFRAME:" : "IFRAME: #{name}" if role == "iframe"
       return name.empty? ? "[#{role}]" : "[#{name}]" if role == "video" || role == "audio"
-      name.empty? ? transform(fallback, escape_unicode) : name
+      name.empty? ? convert.call(fallback) : name
     end
 
-    def self.render_block(block : JSON::Any, escape_unicode = false) : JSON::Any
+    def self.render_block(block : JSON::Any, escape_unicode = false,
+                          convert : Proc(String, String)? = nil) : JSON::Any
       rendered = block.as_h.dup
       item = rendered["item"]?.try(&.as_h?) || {} of String => JSON::Any
-      rendered["text"] = JSON::Any.new(render_item(rendered["item"]?, string(rendered, "text"), escape_unicode))
+      rendered["text"] = JSON::Any.new(render_item(rendered["item"]?, string(rendered, "text"),
+        escape_unicode, convert))
       if string(item, "role") == "heading"
         level_value = item["level"]?
         level = level_value.try(&.as_i64?) || level_value.try(&.as_s?).try(&.to_i64?) || 2_i64
@@ -111,8 +115,9 @@ module Tawb
       end
     end
 
-    def self.blocks(blocks : Array(JSON::Any), preferences : Hash(String, JSON::Any), escape_unicode = false) : Array(JSON::Any)
-      rendered = blocks.map { |block| render_block(block, escape_unicode) }
+    def self.blocks(blocks : Array(JSON::Any), preferences : Hash(String, JSON::Any),
+                    escape_unicode = false, convert : Proc(String, String)? = nil) : Array(JSON::Any)
+      rendered = blocks.map { |block| render_block(block, escape_unicode, convert) }
       group_table_rows(group_flows(number_blocks(rendered, preferences)))
     end
 
@@ -376,10 +381,6 @@ module Tawb
 
     private def self.label_and_control(label : String, control : String) : String
       label.empty? ? control : "#{label} #{control}"
-    end
-
-    private def self.transform(value : String, escape_unicode : Bool) : String
-      escape_unicode ? UnicodeEscape.escape(value) : value
     end
 
     private def self.string(object : Hash(String, JSON::Any), key : String) : String

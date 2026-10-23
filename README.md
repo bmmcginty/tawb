@@ -609,6 +609,17 @@ status line. Browser interaction and submitted field values retain their
 original Unicode. Put `--escape-unicode` in the settings file to enable it for
 every run; `--no-escape-unicode` overrides that setting for one run.
 
+Typographic punctuation is written in ASCII unless `--unicode full` asks for
+the page's own characters. Smart quotes become `'` or `"`, en dashes become
+`-`, em dashes become `--`, an ellipsis becomes `...`, and the other common
+symbols in the punctuation table are spelled the same way. Unmapped symbols,
+CJK punctuation and emoji are left alone. `--escape-unicode` applies after this
+substitution, so text that is still non-ASCII is escaped as before.
+
+```sh
+npm start -- --unicode full https://example.com
+```
+
 ### Diagnostic logging
 
 TAWB does not create a diagnostic log by default. Add `--log` when
