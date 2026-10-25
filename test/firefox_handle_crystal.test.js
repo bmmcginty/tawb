@@ -411,6 +411,56 @@ const nativeImplementation = firefoxHandleImplementations({
   clickThrough, prepareRealClick, submitsAutofilled,
 }).find((implementation) => implementation.name === 'Crystal');
 
+test('Crystal: a completed goto is not charged to the next fragment activation',
+  { skip: !nativeImplementation }, async () => {
+    const preferences = 'about:preferences';
+    const started = Date.now();
+    const observations = await withEndpoint((message, peer) => {
+      if (message.method === 'browsingContext.navigate') {
+        // The command's interactive wait is the authority that this move is
+        // complete. Firefox can leave its navigationStarted event queued for
+        // the client even though no later load event belongs to this wait.
+        peer.send(JSON.stringify({
+          method: 'browsingContext.navigationStarted',
+          params: { context: 'ctx-top', url: preferences },
+        }));
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result: {
+          navigation: 'preferences-navigation', url: preferences,
+        } }));
+        return;
+      }
+      if (message.method === 'script.callFunction'
+          && message.params.resultOwnership === 'root') {
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result: {
+          type: 'success', result: { type: 'node', handle: 'downloads', sharedId: 'downloads' },
+        } }));
+        return;
+      }
+      if (message.method === 'script.callFunction'
+          && message.params.functionDeclaration.includes('node.click()')) {
+        // Firefox's preferences categories are same-document moves. There is
+        // a fragment event, not a document load to release a poisoned waiter.
+        peer.send(JSON.stringify({
+          method: 'browsingContext.fragmentNavigated',
+          params: { context: 'ctx-top', url: `${preferences}#downloads` },
+        }));
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result: {
+          type: 'success', result: { type: 'boolean', value: true },
+        } }));
+        return;
+      }
+      peer.send(JSON.stringify({ id: message.id, type: 'success', result: {} }));
+    }, (url) => nativeImplementation.handleScenario(url, [
+      { op: 'frame', context: 'ctx-top', url: 'about:blank' },
+      { op: 'page_goto', url: preferences },
+      { op: 'activate_item', item: { role: 'tab', name: 'Downloads', axIndex: 6 } },
+    ]));
+
+    assert.deepEqual(observations[2], { how: 'default-action', status: null });
+    assert.ok(Date.now() - started < 3000,
+      'the completed goto was mistaken for this activation and paid the 15-second timeout');
+  });
+
 test('Crystal: item activation waits for the navigation it starts',
   { skip: !nativeImplementation }, async () => {
     const destination = 'https://video.example/watch/8';

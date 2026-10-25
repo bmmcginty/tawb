@@ -3283,6 +3283,10 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, Firefox
           case 'page_url':
             observations.push(acting.url());
             break;
+          case 'page_goto':
+            await acting.goto(step.url, { waitUntil: step.wait || 'domcontentloaded' });
+            observations.push(null);
+            break;
           case 'evaluate': {
             // A source shaped like an expression goes in as the string (the
             // driver wraps it); anything else is eval'd back into a real

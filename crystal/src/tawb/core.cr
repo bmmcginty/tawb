@@ -1022,13 +1022,22 @@ module Tawb
         })
       end
       held = object["pressFrame"]? ? nil : handle_for(item, acting)
+
+      # Node races waitForLoadState with the press. Doing the press first is
+      # observably different on Firefox: a fast navigation can finish before
+      # the wait begins, while an old queued navigationStarted can instead be
+      # mistaken for the press and cost the full timeout. A ready channel lets
+      # the waiter drain old events and prove that its observation window is
+      # open before the action is allowed to run.
+      ready = Channel(Nil).new(1)
+      finished = Channel(Nil).new(1)
+      spawn do
+        acting.wait_for_load_state("domcontentloaded", 15000, ready) rescue nil
+        finished.send(nil)
+      end
+      ready.receive
       result = Actions.activate_item(acting, item, held)
-      # Default activation can begin a navigation after the page-side click
-      # has returned. Wait through its short navigation-start grace period so
-      # the page object drains the resulting events and carries the new URL
-      # before the reader decides whether to rebuild this document or the old
-      # one. The JavaScript core arms this wait alongside clickThrough.
-      acting.wait_for_load_state("domcontentloaded") rescue nil
+      finished.receive
       result
     end
 

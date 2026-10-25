@@ -736,6 +736,12 @@ module Tawb
         begin
           navigate(url, wait_until == "domcontentloaded" ? "interactive" : "complete")
         ensure
+          # The navigate command waited for this document itself. Consume the
+          # events which described that already-completed move so a later
+          # activation cannot mistake its navigationStarted for a move the
+          # activation just began. JavaScript's eager event handlers have
+          # already done this by the time its goto resolves.
+          drain_navigation
           @loading = false
         end
       end
@@ -762,6 +768,9 @@ module Tawb
           end
           @url = result["url"]?.try(&.as_s?) || @url
         ensure
+          # As for goto: this command's wait is authoritative, and its queued
+          # events must not become the next action's apparent navigation.
+          drain_navigation
           @loading = false
         end
       end
@@ -811,9 +820,15 @@ module Tawb
       # caught up. So a navigation gets a short window to begin, and only
       # then is its completion awaited. A click that navigates nowhere costs
       # that window and no more.
-      def wait_for_load_state(state = "load", timeout_ms = 15000) : Bool
+      def wait_for_load_state(state = "load", timeout_ms = 15000,
+                              ready : Channel(Nil)? = nil) : Bool
         started_by = Time.instant + NAVIGATION_GRACE_MS.milliseconds
         saw_load = drain_navigation
+        # Core starts this in a fiber beside the activation, just as the Node
+        # core starts waitForLoadState beside clickThrough. Tell it only after
+        # old events have been drained, so the press cannot race ahead of the
+        # observation window.
+        ready.try(&.send(nil))
         while !saw_load && !@loading && Time.instant < started_by
           sleep 20.milliseconds
           saw_load = drain_navigation
@@ -824,6 +839,10 @@ module Tawb
           saw_load = drain_navigation || saw_load
           sleep 20.milliseconds unless saw_load
         end
+        # A missing completion must not charge every later action the same
+        # timeout. A real late load event will establish the next state when
+        # the following observation window drains it.
+        @loading = false if @loading && Time.instant >= deadline
         saw_load
       end
 

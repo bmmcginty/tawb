@@ -1273,8 +1273,13 @@ module Tawb
       # reached the state is not waited for. Callers race this against the
       # action that might navigate, so making it wait for a navigation that
       # never starts would put that wait on the price of every click.
-      def wait_for_load_state(state = "load", timeout_ms = 15000) : Bool
+      def wait_for_load_state(state = "load", timeout_ms = 15000,
+                              ready : Channel(Nil)? = nil) : Bool
         wanted = LIFECYCLE[state]? || "load"
+        # Core races this wait with the press. CDP queues lifecycle events as
+        # soon as they arrive, so reaching this point is enough to say the
+        # observation side is armed.
+        ready.try(&.send(nil))
         return true if @reached.includes?(wanted)
         await_lifecycle(wanted, timeout_ms)
       end

@@ -749,7 +749,10 @@ if (implementations.length > 1) {
       const observed = await crystal.navigationScenario(`ws://127.0.0.1:${port}/session`);
       assert.deepEqual(observed, {
         goto: 'https://next.test/deep',
-        waited: true,
+        // The navigate command already waited for this document. Its queued
+        // lifecycle events were acknowledged there rather than being
+        // misread as a navigation started by the next action.
+        waited: false,
         moved: true,
         history: 'https://next.test/deeper',
         fragment: true,

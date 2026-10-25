@@ -4095,6 +4095,10 @@ module Tawb
             observations.push JSON::Any.new(current.not_nil!.url)
           when "page_url"
             observations.push JSON::Any.new(acting.not_nil!.url)
+          when "page_goto"
+            acting.not_nil!.goto(step["url"].as_s,
+              step["wait"]?.try(&.as_s?) || "domcontentloaded")
+            observations.push JSON::Any.new(nil)
           when "evaluate"
             expression = step["expression"]?.try(&.as_s?)
             value = if expression
