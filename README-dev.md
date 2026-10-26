@@ -1670,33 +1670,79 @@ second proxy *inward* as well: a reader outside the sandbox can call
 sandboxed application's own connection, which is exactly how atspi.js reads a
 browser. A sandboxed browser is therefore readable, not only askable.
 
-One thing a sandboxed application must not do is follow the specification too
-literally. `org.a11y.Bus.GetAddress` through the proxy answers with this
-program's own socket path, `/tmp/tawb-a11y-<pid>-<random>.sock`, and that path
-does not exist inside the sandbox. What works is the `AT_SPI_BUS_ADDRESS`
-flatpak sets, which names the proxy. GTK reads that variable first, so GTK is
-fine.
+`org.a11y.Bus.GetAddress` is refused for a sandboxed caller rather than
+answered. The address is a socket path, and this program's path —
+`/tmp/tawb-a11y-<pid>-<random>.sock` — does not exist inside the sandbox: a
+caller that follows the specification connects to it and gets ENOENT, which it
+reports as no accessibility bus at all. The path that would work is the proxy
+flatpak put in the caller's `AT_SPI_BUS_ADDRESS`, and this program cannot name
+it: the caller on the bus is the proxy, and the proxy's own mount namespace
+does not contain the sandbox's `/run/flatpak` — measured, both halves. So a
+sandboxed caller is told that in the error instead of being sent somewhere that
+is not there. GTK and at-spi2 read `AT_SPI_BUS_ADDRESS` before they ask, so
+nothing that works stops working. `flatpak run` asks the same question from
+outside the sandbox and still gets the real address, which is the bus its proxy
+then connects to.
 
-Two limits remain, and neither of them is in the portal:
+**A chosen path, for a filesystem that is not ours.** The chooser answers with
+a path, and a Flatpak browser's filesystem is its own: `/tmp/outside/x` here is
+not `/tmp/outside/x` in the sandbox, and a browser handed that URI finds
+nothing and reports nothing. The real portals answer this with the *document
+portal*, a FUSE filesystem that re-exports one chosen file or directory at a
+path the sandbox can see, and so does this program — with the real
+`xdg-document-portal`, started on the bus this program made. See flatpak.js.
+It is a separate binary from the file chooser frontend in the same package, so
+starting it does not put a second chooser on the bus to compete with this one;
+flatpak *recommends* xdg-desktop-portal, so an Ubuntu machine with flatpak on
+it has the document portal already.
 
-- The chooser answers with a path, and the sandbox has its own filesystem view.
-  A path outside the sandbox's granted filesystems does not exist for the
-  browser: `/tmp/portal-answer/x` on the host side is not
-  `/tmp/portal-answer/x` in the sandbox, and a browser handed that URI cannot
-  open it. org.mozilla.firefox holds `xdg-download`, so a path under
-  `XDG_DOWNLOAD_DIR` is readable and writable inside the sandbox — verified,
-  and it is the path a download directory prompt is answered with anyway. A
-  real portal avoids the question entirely with the document portal, which
-  re-exports a chosen file into `/run/user/<uid>/doc/`. This program has no
-  document portal and hands back the path the reader typed.
-- This program cannot launch a Flatpak browser. `findBrowserExecutable` in
-  browser.js and `findFirefox` in firefox.js look on PATH for `firefox`,
-  `firefox-esr`, `librewolf`, `google-chrome-stable`, `google-chrome`,
-  `chromium` and `chromium-browser`. A Flatpak install exports
-  `org.mozilla.firefox` rather than `firefox`. Launching a Flatpak browser also
-  needs a profile directory the sandbox can open, which is the Snap
-  confinement problem over again, and `platform.ini` beside the executable,
-  which a Flatpak install does not put beside the exported name.
+Three measurements shape how the export is done:
+
+- `flatpak run` binds the document portal's mount into the sandbox **at
+  launch**. A sandbox started before the portal was running has a dangling
+  `/run/user/<uid>/doc` for its whole life, and starting the portal afterwards
+  does not reach it. So the document portal is started with the portal name,
+  before the browser, and only when the browser about to start is a Flatpak
+  one — `openAccessibilityBus({ documents: true })`.
+- The export is done by `flatpak document-export` and not by calling
+  `org.freedesktop.portal.Documents` here, because every method that adds a
+  document takes a file descriptor and Node cannot send one over a unix socket:
+  there is no SCM_RIGHTS in `net`. The command does the descriptor passing and
+  prints the exported path.
+- A save exports the *parent directory* with write, and puts the name back on
+  the end. Two reasons, either sufficient: `flatpak document-export --noexist`
+  segfaults in flatpak 1.14.6, parsing an `AddFull` reply from an `AddNamed`
+  call; and a download is written as `name.part` and renamed, which needs the
+  directory rather than the name.
+
+A file is exported read-only. A directory is exported with write and delete,
+because a directory is chosen in order to put something in it. Every export is
+`--transient`, so the grants go away when the document portal stops rather than
+accumulating in the reader's document store — which is also why a kept browser
+keeps the document portal running: the paths it was already given would
+otherwise read as empty. An export that fails cancels the request instead of
+answering with the raw path, because a browser told "here is your file" that
+then cannot find one fails with nothing to see.
+
+Verified in the real org.mozilla.firefox sandbox, against a file and a folder
+under `/tmp/outside`, which flatpak grants that application nothing for: a
+read-only file at `/run/user/0/doc/<id>/a file.txt` that the sandbox could open,
+a writable folder, and a save target whose parent the sandbox could write. The
+`.part`-then-rename sequence was run inside the sandbox and the result appeared
+on the real host path.
+
+One limit remains, and it is not in the portal: **this program cannot launch a
+Flatpak browser.** `findBrowserExecutable` in browser.js and `findFirefox` in
+firefox.js look on PATH for `firefox`, `firefox-esr`, `librewolf`,
+`google-chrome-stable`, `google-chrome`, `chromium` and `chromium-browser`. A
+Flatpak install exports `org.mozilla.firefox` rather than `firefox`. Launching
+a Flatpak browser also needs a profile directory the sandbox can open — which
+is the Snap confinement problem over again, and `~/.var/app/<app id>/` is the
+answer, being the same path inside the sandbox and outside it — and a version
+read from the flatpak install tree rather than from `platform.ini` beside the
+exported name. Measured along the way: a port opened inside the sandbox is
+reachable at `127.0.0.1` outside it, because flatpak browsers share the
+network namespace, so a remote debugging port needs nothing special.
 
 `flatpak run` needs a *system* bus and refuses to start an application without
 one. With `/run/dbus/system_bus_socket` absent, `flatpak run` fails with

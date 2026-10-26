@@ -8,7 +8,15 @@
 #     private bus TAWB made is the bus the sandboxed application talks to;
 #   * whether the proxy's default policy still lets
 #     `org.freedesktop.portal.Desktop` through when that name is owned by TAWB
-#     rather than by the machine's real portal.
+#     rather than by the machine's real portal;
+#   * whether a path chosen on the terminal can be made reachable inside the
+#     sandbox, which is what `xdg-document-portal` is for.
+#
+# xdg-desktop-portal is installed for one binary out of it,
+# `/usr/libexec/xdg-document-portal`. The file chooser frontend in the same
+# package is never started: TAWB answers that itself, and two frontends would
+# compete for one name. flatpak *recommends* xdg-desktop-portal, so an Ubuntu
+# machine with flatpak on it has the document portal already.
 #
 # Flatpak needs bubblewrap, bubblewrap needs user namespaces, and the runtime
 # store needs FUSE for revokefs. Run this image with `--privileged` and
@@ -31,6 +39,7 @@ RUN apt-get update \
       python3 \
       strace \
       xdg-dbus-proxy \
+      xdg-desktop-portal \
       xz-utils \
     && rm -rf /var/lib/apt/lists/*
 

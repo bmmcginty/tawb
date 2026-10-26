@@ -33,6 +33,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { connect } = require('./dbus');
 const { serveFileChooser, PORTAL_NAME } = require('./portal');
+const {
+  sandboxOf, startDocumentPortal, exportedPathsFor, documentPortalBinary,
+} = require('./flatpak');
 
 const A11Y_NAME = 'org.a11y.Bus';
 const A11Y_PATH = '/org/a11y/bus';
@@ -170,7 +173,40 @@ function serveAccessibilityBus(connection, address) {
   connection.onMethodCall((message, { reply, fail }) => {
     if (message.path !== A11Y_PATH) return false;
     if (message.iface === A11Y_INTERFACE && message.member === 'GetAddress') {
-      reply('s', [address]);
+      // The address is a socket path, and a path means nothing to a caller
+      // with a filesystem of its own. A Flatpak application asking this gets
+      // `/tmp/tawb-a11y-<pid>-<random>.sock`, which does not exist inside its
+      // sandbox: it connects, fails with ENOENT, and reports no accessibility
+      // bus at all. What it should use is the proxy flatpak already put in its
+      // AT_SPI_BUS_ADDRESS, and this program cannot name that path — the
+      // caller on the bus is the proxy, whose own mount namespace does not
+      // contain the sandbox's `/run/flatpak`. Measured, both halves.
+      //
+      // So a sandboxed caller is told that, rather than handed a path that
+      // looks like an answer. GTK and at-spi2 read AT_SPI_BUS_ADDRESS before
+      // they ask this, so nothing that works today starts failing; what stops
+      // is a caller being sent somewhere that is not there.
+      //
+      // `flatpak run` itself asks this question too, from outside any sandbox,
+      // and it is the caller that matters: it gets the real address, which is
+      // the bus its proxy then connects to.
+      (async () => {
+        let caller = null;
+        try {
+          caller = sandboxOf(await connection.processIdOf(message.sender));
+        } catch {
+          // The bus could not say who is asking. Answer as before.
+        }
+        if (!caller) {
+          reply('s', [address]);
+          return;
+        }
+        fail(
+          'org.freedesktop.DBus.Error.Failed',
+          `this accessibility bus is at ${address}, which is not a path inside `
+          + `${caller.appId}'s sandbox. Use the AT_SPI_BUS_ADDRESS flatpak set for it.`,
+        );
+      })();
       return true;
     }
     if (message.iface === PROPERTIES && message.member === 'Get') {
@@ -205,7 +241,7 @@ function serveAccessibilityBus(connection, address) {
 // `available: false` is an ordinary answer rather than a failure: a machine
 // without D-Bus is one where native dialogs cannot be read, and everything
 // else about the browser still works.
-async function openAccessibilityBus({ log = () => {} } = {}) {
+async function openAccessibilityBus({ log = () => {}, documents = false } = {}) {
   const idle = {
     available: false, address: null, env: {}, reason: null, owned: false, pid: null,
     close: async () => {}, leaveRunning: async () => {},
@@ -336,6 +372,46 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
   // Chromium asks the bus once, at startup, whether a portal exists and never
   // asks again. A name claimed after that answer leaves it with no file dialog
   // for the whole session.
+  //
+  // `documents` asks for the document portal as well, and only a launcher
+  // about to start a Flatpak browser asks for it. A chosen path is in this
+  // program's filesystem; a Flatpak browser's filesystem is its own, and the
+  // document portal is what re-exports one into the other — see flatpak.js.
+  // It has to be running before `flatpak run` starts the browser, because
+  // flatpak binds its mount into the sandbox at launch and a sandbox started
+  // first never sees it, so it is started here with the portal name and not
+  // when the reader arms.
+  let documentPortal = null;
+
+  // The paths the reader chose, as the caller can open them.
+  //
+  // An ordinary caller shares this program's filesystem and is answered with
+  // what the reader chose. A Flatpak caller does not, and is answered with the
+  // document portal's re-export of it. Answering null cancels the request,
+  // which is the honest outcome: a browser told "here is your file" that then
+  // cannot find it reports nothing at all.
+  const translate = async (paths, { sender, request }) => {
+    let caller = null;
+    try {
+      caller = sandboxOf(await session.processIdOf(sender));
+    } catch {
+      return paths;
+    }
+    if (!caller) return paths;
+    if (!documentPortal) {
+      log('portal.sandboxed.unexported', {
+        appId: caller.appId,
+        reason: documentPortalBinary()
+          ? 'the document portal was not started for this browser'
+          : 'no xdg-document-portal is installed',
+      });
+      return null;
+    }
+    return exportedPathsFor(paths, {
+      appId: caller.appId, request, address: sessionAddress, log,
+    });
+  };
+
   if (daemon) {
     portalPromise = (async () => {
       let claimed;
@@ -351,8 +427,15 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
         log('portal.busy', {});
         return null;
       }
-      portal = serveFileChooser(session, { log });
-      log('portal.served', { address: sessionAddress, version: portal.version });
+      if (documents) {
+        documentPortal = await startDocumentPortal({ address: sessionAddress, log });
+      }
+      portal = serveFileChooser(session, { log, translate });
+      log('portal.served', {
+        address: sessionAddress,
+        version: portal.version,
+        documents: documentPortal ? documentPortal.mountPoint : null,
+      });
       return portal;
     })();
   }
@@ -375,6 +458,9 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
       if (released) return;
       released = true;
       if (portal) portal.stop();
+      // Every export this program made was `--transient`, so stopping the
+      // document portal is what withdraws them.
+      if (documentPortal) documentPortal.stop();
       await stop(session);
     },
     // A kept browser still has DBUS_SESSION_BUS_ADDRESS and
@@ -386,7 +472,10 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
       if (released) return;
       released = true;
       // The prompt is this reader's keyboard, so a kept browser loses its
-      // chooser with the reader that was answering it.
+      // chooser with the reader that was answering it. The document portal is
+      // left running with the bus: a kept browser still has the mount bound
+      // into its sandbox, and taking the portal away would turn every path it
+      // was already given into a path that reads as empty.
       if (portal) portal.stop();
       session.close();
       if (daemon) {

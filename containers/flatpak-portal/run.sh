@@ -12,7 +12,12 @@
 #      by TAWB rather than by the machine's real portal;
 #   3. does the second proxy flatpak makes for the accessibility bus carry a
 #      call *inward*, from a reader outside the sandbox to the application
-#      inside it, which is how TAWB reads a browser at all.
+#      inside it, which is how TAWB reads a browser at all;
+#   4. is the path the chooser answers with one the sandboxed application can
+#      actually open. The path the reader chose is not: the sandbox has a
+#      filesystem of its own. So the reader's path is seeded under
+#      `/tmp/outside`, which nothing grants the sandbox, and the probe reports
+#      whether what came back exists for it.
 #
 # Everything runs in one container: TAWB's own private bus and portal outside
 # the Flatpak sandbox, and TAWB's own D-Bus client inside it. The sandboxed
@@ -60,35 +65,41 @@ docker exec -d "$CONTAINER" bash -c 'test -S /run/dbus/system_bus_socket || dbus
 sleep 2
 run "ls -l /run/dbus/system_bus_socket"
 
-# A directory the sandbox can see. The chooser answers with a path, and a path
-# outside the sandbox's filesystems is a path the browser cannot open — so the
-# answer is seeded inside XDG_DOWNLOAD_DIR, which org.mozilla.firefox holds.
-say "a download directory, which this app may see"
-run 'mkdir -p /root/.config /root/Downloads; printf "XDG_DOWNLOAD_DIR=\"\$HOME/Downloads\"\n" > /root/.config/user-dirs.dirs; echo downloaded > "/root/Downloads/a file.txt"; ls -l /root/Downloads'
+# What the reader chose, somewhere the sandbox has no grant for at all.
+# org.mozilla.firefox holds `xdg-download`, so a path under the reader's
+# Downloads folder would have been reachable without a document portal and
+# would prove nothing. `/tmp/outside` is granted to nothing: if the chooser's
+# answer is reachable from inside the sandbox, the document portal is the only
+# thing that could have made it so.
+say "a chosen file and folder the sandbox cannot see"
+run 'mkdir -p /tmp/outside/folder; echo "chosen outside the sandbox" > "/tmp/outside/a file.txt"; ls -l /tmp/outside'
 
 # Node and TAWB's source, where the sandbox can reach them. A Flatpak sandbox
 # cannot see /app, so the probe and what it needs are copied somewhere a
 # --filesystem can be granted for.
 run "mkdir -p /srv/tawb && cp /usr/bin/node /srv/tawb/node && cp -r /app/src /srv/tawb/src && cp /app/containers/flatpak-portal/portal_client.js /app/containers/flatpak-portal/a11y_app.js /srv/tawb/"
 
-say "TAWB's private bus and portal, outside the sandbox"
+say "TAWB's private bus, portal and document portal, outside the sandbox"
 # The bracket keeps the pattern from matching the shell this pkill runs in:
 # that shell's own command line contains the pattern otherwise, and it kills
 # itself before it kills anything else.
 run "pkill -f '[p]ortal_host.js' || true"
+run "pkill -f '[x]dg-document-portal' || true"
 sleep 1
-docker exec -d "$CONTAINER" bash -c 'export PORTAL_CHOSEN_FILE="/root/Downloads/a file.txt" PORTAL_CHOSEN_DIR=/root/Downloads; sleep infinity | node /app/containers/flatpak-portal/portal_host.js > /tmp/portal.log 2>&1'
+docker exec -d "$CONTAINER" bash -c 'export XDG_RUNTIME_DIR=/run/user/0 PORTAL_DOCUMENTS=1 PORTAL_CHOSEN_FILE="/tmp/outside/a file.txt" PORTAL_CHOSEN_DIR=/tmp/outside/folder; mkdir -p /run/user/0; sleep infinity | node /app/containers/flatpak-portal/portal_host.js > /tmp/portal.log 2>&1'
 sleep 3
 run "cat /tmp/portal.log"
 ADDRESS=$(run 'grep -o "unix:path=[^\"]*" /tmp/portal.log | head -1')
 printf 'bus: %s\n' "$ADDRESS"
 
 say "the file chooser, asked from inside the Flatpak sandbox"
-docker exec -e DBUS_SESSION_BUS_ADDRESS="$ADDRESS" -e AT_SPI_BUS_ADDRESS="$ADDRESS" "$CONTAINER" \
+docker exec -e DBUS_SESSION_BUS_ADDRESS="$ADDRESS" -e AT_SPI_BUS_ADDRESS="$ADDRESS" \
+  -e XDG_RUNTIME_DIR=/run/user/0 "$CONTAINER" \
   bash -lc "flatpak run --filesystem=/srv/tawb --command=sh $APP -c '/srv/tawb/node /srv/tawb/portal_client.js'"
 
 say "the accessibility bus, read inward into the sandbox"
-docker exec -d -e DBUS_SESSION_BUS_ADDRESS="$ADDRESS" -e AT_SPI_BUS_ADDRESS="$ADDRESS" "$CONTAINER" \
+docker exec -d -e DBUS_SESSION_BUS_ADDRESS="$ADDRESS" -e AT_SPI_BUS_ADDRESS="$ADDRESS" \
+  -e XDG_RUNTIME_DIR=/run/user/0 "$CONTAINER" \
   bash -c "sleep 120 | flatpak run --filesystem=/srv/tawb --command=sh $APP -c '/srv/tawb/node /srv/tawb/a11y_app.js' > /tmp/a11yapp.log 2>&1"
 sleep 8
 run "cat /tmp/a11yapp.log"

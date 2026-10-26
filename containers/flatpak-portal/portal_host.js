@@ -25,7 +25,13 @@ function say(event, detail = {}) {
 
 async function main() {
   process.env.TAWB_A11Y_BUS = 'private';
-  const bus = await openAccessibilityBus({ log: (event, detail) => say(event, detail) });
+  // The document portal is what makes a chosen path reachable inside a
+  // Flatpak sandbox, and a launcher asks for it only when the browser it is
+  // about to start is a Flatpak one. The test asks for it the same way.
+  const documents = process.env.PORTAL_DOCUMENTS === '1';
+  const bus = await openAccessibilityBus({
+    documents, log: (event, detail) => say(event, detail),
+  });
   if (!bus.available) {
     say('bus.failed', { reason: bus.reason });
     process.exit(2);
@@ -44,6 +50,7 @@ async function main() {
     },
   });
   say('bus', {
+    documents,
     address: bus.address,
     owned: bus.owned,
     portal: service ? service.version : null,

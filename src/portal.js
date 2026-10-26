@@ -140,8 +140,15 @@ function fileUriBody(paths) {
 // already a boundary — only the browser this program launched is on a bus this
 // program owns — but a chooser is a question put to a person, and only the
 // browser being read should be able to put one.
+// `translate` turns the paths the reader chose into paths the caller can
+// actually open. A caller that shares this program's filesystem needs no
+// translation and the default answers with what it was given. A Flatpak
+// browser does not share it: see flatpak.js, where a chosen path is
+// re-exported through the document portal. Answering null means the chosen
+// path could not be made reachable, and the request is cancelled rather than
+// answered with a path the caller would fail to find.
 function serveFileChooser(connection, {
-  ask = () => null, log = () => {}, allow = () => true,
+  ask = () => null, log = () => {}, allow = () => true, translate = (paths) => paths,
 } = {}) {
   // The question is answered by whoever is reading, and that is not known when
   // the name is claimed: Chromium decides once, at startup, whether there is a
@@ -187,11 +194,34 @@ function serveFileChooser(connection, {
       return;
     }
     pending.delete(path);
-    answer(path, paths && paths.length ? RESPONSE_SUCCESS : RESPONSE_CANCELLED, paths);
+
+    // The caller may not share this program's filesystem, and a path it
+    // cannot open is worse than no answer: the browser finds nothing and says
+    // nothing about why.
+    let reachable = paths;
+    if (paths && paths.length) {
+      try {
+        reachable = await translate(paths, { sender, request });
+      } catch (err) {
+        log('portal.translate.failed', { error: String(err.message || err).slice(0, 160) });
+        reachable = null;
+      }
+      if (!reachable || !reachable.length) {
+        answer(path, RESPONSE_CANCELLED, null);
+        answered += 1;
+        log('portal.unreachable', {
+          kind: request.directory ? 'directory' : 'file',
+          chosen: paths.length,
+        });
+        return;
+      }
+    }
+
+    answer(path, reachable && reachable.length ? RESPONSE_SUCCESS : RESPONSE_CANCELLED, reachable);
     answered += 1;
     log('portal.responded', {
       kind: request.directory ? 'directory' : 'file',
-      chosen: (paths || []).length,
+      chosen: (reachable || []).length,
     });
   };
 

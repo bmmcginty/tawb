@@ -198,6 +198,71 @@ test('a request cancelled by its caller is answered once, not twice', async () =
   assert.deepEqual(service.openRequests(), []);
 });
 
+test('a caller with a filesystem of its own is answered in its own terms', async () => {
+  // A Flatpak browser cannot open the path the reader chose. What it can open
+  // is the document portal's re-export of that path, and the chooser has to
+  // answer with the second one — see flatpak.js. The portal does not know
+  // anything about flatpak; it knows that a caller may need translating.
+  const connection = fakeConnection();
+  const asked = [];
+  const service = portal.serveFileChooser(connection, {
+    ask: () => ['/home/reader/report.pdf'],
+    translate: (paths, { sender, request }) => {
+      asked.push({ paths, sender, saving: request.saving });
+      return paths.map((each) => `/run/user/1000/doc/d00d/${each.split('/').pop()}`);
+    },
+  });
+  await openChooser(service, connection, { sender: ':1.7' });
+  await service.idle();
+  assert.deepEqual(asked, [{
+    paths: ['/home/reader/report.pdf'], sender: ':1.7', saving: false,
+  }]);
+  const response = connection.signals.at(-1);
+  assert.equal(response.body[0], portal.RESPONSE_SUCCESS);
+  assert.deepEqual(response.body[1], [['uris', {
+    signature: 'as', value: ['file:///run/user/1000/doc/d00d/report.pdf'],
+  }]]);
+});
+
+test('a path the caller could not be given is a cancellation, not a wrong path', async () => {
+  // Answering with the untranslated path would tell the browser it has a file
+  // and leave it unable to find one, which is a failure with nothing to see.
+  const connection = fakeConnection();
+  const service = portal.serveFileChooser(connection, {
+    ask: () => ['/home/reader/report.pdf'],
+    translate: () => null,
+  });
+  await openChooser(service, connection);
+  await service.idle();
+  const response = connection.signals.at(-1);
+  assert.equal(response.body[0], portal.RESPONSE_CANCELLED);
+  assert.deepEqual(response.body[1], [['uris', { signature: 'as', value: [] }]]);
+});
+
+test('a translation that throws cancels rather than escaping', async () => {
+  const connection = fakeConnection();
+  const service = portal.serveFileChooser(connection, {
+    ask: () => ['/home/reader/report.pdf'],
+    translate: () => { throw new Error('the document portal is not there'); },
+  });
+  await openChooser(service, connection);
+  await service.idle();
+  assert.equal(connection.signals.at(-1).body[0], portal.RESPONSE_CANCELLED);
+});
+
+test('declining is not translated, because nothing was chosen', async () => {
+  const connection = fakeConnection();
+  let translated = 0;
+  const service = portal.serveFileChooser(connection, {
+    ask: () => null,
+    translate: (paths) => { translated += 1; return paths; },
+  });
+  await openChooser(service, connection);
+  await service.idle();
+  assert.equal(translated, 0);
+  assert.equal(connection.signals.at(-1).body[0], portal.RESPONSE_CANCELLED);
+});
+
 test('a sender that may not choose is refused rather than shown a prompt', async () => {
   const connection = fakeConnection();
   let asked = 0;

@@ -25,6 +25,7 @@
 // inside the sandbox can be read from outside it.
 
 const { connect } = require('/srv/tawb/src/dbus');
+const fs = require('node:fs');
 
 const PORTAL_NAME = 'org.freedesktop.portal.Desktop';
 const PORTAL_PATH = '/org/freedesktop/portal/desktop';
@@ -106,8 +107,23 @@ async function chooser(connection, { member, options, title, closeIt = false }) 
   }
 
   const answer = await arrived;
+  // The question the whole exercise is for: can this application open what it
+  // was handed? A URI naming a path outside the sandbox is answered "no" here
+  // and nowhere else — the browser itself would simply find nothing.
+  const reachable = (answer.uris || []).map((uri) => {
+    const target = decodeURIComponent(new URL(uri).pathname);
+    let exists = false;
+    let writableParent = false;
+    try { exists = fs.existsSync(target); } catch { /* no */ }
+    try {
+      fs.accessSync(target.replace(/\/[^/]*$/, '') || '/', fs.constants.W_OK);
+      writableParent = true;
+    } catch { /* no */ }
+    return { path: target, exists, writableParent };
+  });
   return {
     closed,
+    reachable,
     member,
     expectedPath: expected,
     returnedPath: returned,
