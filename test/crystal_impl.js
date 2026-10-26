@@ -3141,6 +3141,54 @@ function firefoxAutomationImplementations({
   return implementations;
 }
 
+// The parts of the file chooser portal whose exact shape a client depends on:
+// the request path a caller computes for itself, the URI a chosen name comes
+// back as, and what the options a caller sends mean.
+function portalImplementations() {
+  // eslint-disable-next-line global-require
+  const portal = require('../src/portal');
+  const buildOptions = (given = {}) => {
+    const held = [];
+    for (const name of ['directory', 'multiple']) {
+      if (given[name] !== undefined) held.push([name, given[name]]);
+    }
+    for (const name of ['handle_token', 'current_name']) {
+      if (given[name] !== undefined) held.push([name, given[name]]);
+    }
+    if (given.current_folder !== undefined) {
+      held.push(['current_folder', [...Buffer.from(`${given.current_folder}\0`)]]);
+    }
+    return held;
+  };
+  const implementations = [{
+    name: 'JavaScript',
+    requestPath(sender, token) { return portal.requestPathFor(sender, token); },
+    fileUri(path) { return portal.fileUri(path); },
+    readOptions(given, saving) {
+      const held = portal.readRequest(buildOptions(given), !!saving);
+      return {
+        directory: held.directory,
+        multiple: held.multiple,
+        handle_token: held.token || '',
+        current_folder: held.initial,
+        current_name: held.name,
+      };
+    },
+  }];
+  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  implementations.push({
+    name: 'Crystal',
+    requestPath(sender, token) {
+      return call('portal.request_path', { sender, token });
+    },
+    fileUri(path) { return call('portal.file_uri', { path }); },
+    readOptions(given, saving) {
+      return call('portal.options', { options: given, saving: !!saving });
+    },
+  });
+  return implementations;
+}
+
 function firefoxLaunchImplementations(javascript) {
   const withEnvironment = (values, fn) => {
     const before = Object.fromEntries(Object.keys(values).map((name) => [name, process.env[name]]));
@@ -4207,6 +4255,7 @@ module.exports = {
   blockImplementations, coreImplementations, coreTabImplementations,
   a11yBusImplementations, atspiImplementations, dbusImplementations, edbImplementations,
   nativePromptImplementations,
+  portalImplementations,
   dumpImplementations, editImplementations,
   endpointImplementations,
   firefoxAgentImplementations,

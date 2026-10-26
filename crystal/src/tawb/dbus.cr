@@ -772,6 +772,20 @@ module Tawb
         # The connection is gone, and so is whoever was asking.
       end
 
+      # Speak without being asked. A signal is the other half of a request:
+      # the portal answers a file chooser by returning an object path and then
+      # emitting `Response` on that path, because the person choosing a file
+      # takes longer than any method call should. Broadcast, so no destination:
+      # the client that called has already subscribed to that exact path.
+      def emit_signal(path : String, iface : String, member : String,
+                      signature : String = "", body : Array(Argument) = [] of Argument,
+                      destination : String? = nil) : Nil
+        send_message(
+          type: MESSAGE_SIGNAL, path: path, iface: iface, member: member,
+          destination: destination, signature: signature, body: body,
+        )
+      end
+
       def call(
         destination : String? = nil,
         path : String? = nil,

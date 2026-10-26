@@ -588,6 +588,19 @@ class DbusConnection {
     } catch { /* the connection is gone, and so is whoever was asking */ }
   }
 
+  // Speak without being asked. A signal is the other half of a request: the
+  // portal answers a file chooser by returning an object path and then
+  // emitting `Response` on it, because the person choosing a file takes
+  // longer than any method call should. Broadcast, so no destination: the
+  // client that called already subscribed to that exact path.
+  emitSignal({
+    path, iface, member, signature = '', body = [], destination = undefined,
+  }) {
+    this.#send({
+      type: MESSAGE_SIGNAL, path, iface, member, signature, body, destination,
+    });
+  }
+
   // Claim a name on the bus. Answers with what the bus decided: 1 is
   // "yours", 3 is "somebody else already has it", and the difference is the
   // whole question when the point is not to disturb a service that exists.

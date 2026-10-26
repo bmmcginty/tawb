@@ -42,6 +42,7 @@ require "./lynx_number"
 require "./lynx_state"
 require "./marionette"
 require "./native_prompt"
+require "./portal"
 require "./options"
 require "./reader"
 require "./reader_keys"
@@ -695,6 +696,45 @@ module Tawb
         else
           JSON::Any.new(nil)
         end
+      when "portal.request_path"
+        object = payload.as_h
+        JSON::Any.new(Portal.request_path(object["sender"].as_s, object["token"].as_s))
+      when "portal.file_uri"
+        JSON::Any.new(Portal.file_uri(payload.as_h["path"].as_s))
+      when "portal.options"
+        # The options are built into the dictionary a client sends: the pairs
+        # an `a{sv}` decodes to, with `current_folder` a byte string carrying
+        # its trailing nul. Both runtimes build that from the same description,
+        # so what is compared is the reading and not the marshal.
+        object = payload.as_h
+        given = object["options"]?.try(&.as_h?) || {} of String => JSON::Any
+        held = [] of Dbus::Value
+        {"directory", "multiple"}.each do |name|
+          value = given[name]?
+          next if value.nil?
+          held << [name.as(Dbus::Value), value.as_bool.as(Dbus::Value)].as(Dbus::Value)
+        end
+        {"handle_token", "current_name"}.each do |name|
+          value = given[name]?
+          next if value.nil?
+          held << [name.as(Dbus::Value), value.as_s.as(Dbus::Value)].as(Dbus::Value)
+        end
+        if folder = given["current_folder"]?
+          bytes = (folder.as_s + "\0").bytes.map { |each| each.as(Dbus::Value) }
+          held << [
+            "current_folder".as(Dbus::Value),
+            bytes.as(Dbus::Value),
+          ].as(Dbus::Value)
+        end
+        options = held.as(Dbus::Value)
+        ask = Portal.read_options(options, object["saving"]?.try(&.as_bool?) || false)
+        JSON::Any.new({
+          "directory"      => JSON::Any.new(ask.directory),
+          "multiple"       => JSON::Any.new(ask.multiple),
+          "handle_token"   => JSON::Any.new(Portal.option_string(options, "handle_token")),
+          "current_folder" => JSON::Any.new(ask.initial),
+          "current_name"   => JSON::Any.new(ask.name),
+        })
       when "firefox.launch_preferences"
         JSON::Any.new(FirefoxLaunch.launch_preferences(payload.as_h["port"].as_i.to_i32))
       when "firefox.launch_scenario"
