@@ -1598,7 +1598,12 @@ Three properties of the protocol are not this program's to choose:
   `Response(u, a{sv})` carrying `uris`, because a person choosing a file takes
   longer than a method call should;
 - cancellation is response code 1. Escape has to send it, or the browser waits
-  for ever.
+  for ever;
+- a request has exactly one answer. A client that sends `Close` while the
+  reader is still choosing has already been answered with code 1, so the
+  chosen path is dropped rather than sent as a second `Response` on the same
+  path. Found with the Flatpak sandbox test described below, where the portal
+  log showed a `portal.closed` and then a `portal.responded` carrying a path.
 
 The name is claimed **while the bus is being made**, not when the reader is
 ready, because Chromium asks the bus once at startup whether a portal exists
@@ -1632,18 +1637,79 @@ deterministic/headless mode and not the default. And a kept browser
 (`--keep-browser`) loses its chooser with the reader that was answering it,
 because the prompt is that reader's keyboard.
 
-**Flatpak.** A Flatpak browser does not connect to the host bus: `flatpak run`
-starts an `xdg-dbus-proxy` for the sandbox, so on the host bus the caller is the
-proxy rather than the browser, and the sandbox's session bus address is chosen
-by flatpak rather than inherited. `flatpak run` does read
-`DBUS_SESSION_BUS_ADDRESS` from its own environment, which is the environment
-this program passes the browser process, so a private bus reaches the proxy —
-but the proxy has its own allowlist and the app then sees only the bus this
-program made, losing the desktop's `Settings`, `Documents`, `OpenURI` and
-notifications with it. Flatpak remains the case where the portal has to be the
-machine's own, which means either the desktop's GTK backend on a real display
-or a backend of this program's registered with the real frontend. Neither is
-implemented.
+**Flatpak.** The portal works for a Flatpak browser as it is, which is not what
+was expected before it was tried. Verified against a real Flatpak sandbox,
+org.mozilla.firefox's own, inside an Ubuntu container;
+`containers/flatpak-portal/run.sh` reproduces the whole test from a machine
+with no flatpak installed.
+
+A Flatpak browser does not connect to the bus this program made. `flatpak run`
+starts an `xdg-dbus-proxy` for the sandbox, and the sandboxed browser talks to
+the proxy, at `/run/flatpak/bus`. The proxy connects to the bus named by
+`DBUS_SESSION_BUS_ADDRESS` in `flatpak run`'s own environment. That environment
+is the environment this program gives the browser process, so the bus the proxy
+connects to is the bus this program made.
+
+Every part of the FileChooser exchange crosses the proxy:
+`org.freedesktop.host.portal.Registry.Register`, the `version` property,
+`OpenFile`, `SaveFile`, the request path a client computed for itself,
+cancellation as response code 1, `Close` sent by the client, and — the part
+that was in doubt — the broadcast `Response` signal, which the proxy forwards
+to a client that subscribed with an ordinary AddMatch rather than by becoming a
+monitor. `org.freedesktop.portal.Desktop` does not appear in
+org.mozilla.firefox's declared session bus policy and the exchange works
+anyway, so flatpak allows the portal names itself rather than per application.
+
+Flatpak makes a second proxy for the accessibility bus, at
+`/run/flatpak/at-spi-bus`, and sets `AT_SPI_BUS_ADDRESS` in the sandbox to
+point at that second proxy. Flatpak finds the accessibility bus by calling
+`org.a11y.Bus.GetAddress` on the session bus, which this program answers, so
+the second proxy also connects to the bus this program made. Calls cross that
+second proxy *inward* as well: a reader outside the sandbox can call
+`org.a11y.atspi.Accessible` at `/org/a11y/atspi/accessible/root` on the
+sandboxed application's own connection, which is exactly how atspi.js reads a
+browser. A sandboxed browser is therefore readable, not only askable.
+
+One thing a sandboxed application must not do is follow the specification too
+literally. `org.a11y.Bus.GetAddress` through the proxy answers with this
+program's own socket path, `/tmp/tawb-a11y-<pid>-<random>.sock`, and that path
+does not exist inside the sandbox. What works is the `AT_SPI_BUS_ADDRESS`
+flatpak sets, which names the proxy. GTK reads that variable first, so GTK is
+fine.
+
+Two limits remain, and neither of them is in the portal:
+
+- The chooser answers with a path, and the sandbox has its own filesystem view.
+  A path outside the sandbox's granted filesystems does not exist for the
+  browser: `/tmp/portal-answer/x` on the host side is not
+  `/tmp/portal-answer/x` in the sandbox, and a browser handed that URI cannot
+  open it. org.mozilla.firefox holds `xdg-download`, so a path under
+  `XDG_DOWNLOAD_DIR` is readable and writable inside the sandbox — verified,
+  and it is the path a download directory prompt is answered with anyway. A
+  real portal avoids the question entirely with the document portal, which
+  re-exports a chosen file into `/run/user/<uid>/doc/`. This program has no
+  document portal and hands back the path the reader typed.
+- This program cannot launch a Flatpak browser. `findBrowserExecutable` in
+  browser.js and `findFirefox` in firefox.js look on PATH for `firefox`,
+  `firefox-esr`, `librewolf`, `google-chrome-stable`, `google-chrome`,
+  `chromium` and `chromium-browser`. A Flatpak install exports
+  `org.mozilla.firefox` rather than `firefox`. Launching a Flatpak browser also
+  needs a profile directory the sandbox can open, which is the Snap
+  confinement problem over again, and `platform.ini` beside the executable,
+  which a Flatpak install does not put beside the exported name.
+
+`flatpak run` needs a *system* bus and refuses to start an application without
+one. With `/run/dbus/system_bus_socket` absent, `flatpak run` fails with
+"Could not connect: No such file or directory" and launches nothing at all. A
+desktop always has a system bus. A container does not, which is why
+`containers/flatpak-portal/run.sh` starts one. With no
+`DBUS_SESSION_BUS_ADDRESS` in its environment `flatpak run` does start the
+application, and the application gets no session bus, no portal and no
+accessibility bus — which is the broken state this portal exists to prevent.
+
+And on a bus this program made, a Flatpak browser still has no `Settings`,
+`Documents`, `OpenURI` and no notifications, exactly as a browser that is not
+sandboxed does not.
 
 ### A chooser the browser did not draw
 
@@ -2040,6 +2106,7 @@ npm run axe -- https://example.com      # page-authoring audit with axe-core
 npm run axe -- --browser firefox https://example.com
 npm run test:firefox-releases           # latest stable, beta, and nightly in Docker
 npm run test:firefox-releases -- beta   # one channel
+containers/flatpak-portal/run.sh        # the portal against a real Flatpak sandbox
 ```
 
 `npm run coverage` serves `tools/content-coverage.html`: one checked-in page
@@ -2074,6 +2141,22 @@ and exits unsuccessfully when violations are found. `--tags=wcag2a,wcag2aa`
 limits an audit to selected axe rule tags. This checks the page author's HTML
 and ARIA, not whether TAWB represented it correctly; use it alongside the
 ARIA-AT and WAI-ARIA checks rather than as a replacement for them.
+
+`containers/flatpak-portal/run.sh` is the Flatpak test, and it exists because
+no development machine here has flatpak on it. The script builds an Ubuntu
+image with flatpak, bubblewrap and `xdg-dbus-proxy`, installs
+org.mozilla.firefox from Flathub into a Docker volume that a second run
+reuses, starts a system bus for `flatpak run` to proxy, starts this program's
+own private bus and portal outside the sandbox, and then runs two probes
+inside the real org.mozilla.firefox sandbox: `portal_client.js`, which asks
+for a file, a folder and a save, cancels one and closes another exactly as
+Chromium and GTK do; and `a11y_app.js`, which joins the accessibility bus and
+is read from outside by `a11y_reader.js`. The sandboxed probes are this
+program's own D-Bus client rather than Firefox, because the question is what
+the sandbox's proxy carries and not what Firefox does with what it carried.
+The container is privileged: bubblewrap needs user namespaces and the runtime
+store needs FUSE. See the Flatpak part of the portal section for what the test
+established.
 
 The Firefox release matrix uses Mozilla's current official Linux archives, not
 the distribution package, and changes a download cache key on every run. Its
