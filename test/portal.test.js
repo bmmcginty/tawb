@@ -173,6 +173,31 @@ test('a caller may cancel a request it raised', async () => {
   assert.deepEqual(service.openRequests(), []);
 });
 
+test('a request cancelled by its caller is answered once, not twice', async () => {
+  // The reader is still being asked when the browser gives up. Found with a
+  // real Flatpak sandbox: the portal log showed `portal.closed` and then a
+  // `portal.responded` carrying a path, which is a second Response on a path
+  // the specification gives one answer — and that second answer would hand
+  // the browser a path the reader chose after the browser stopped waiting.
+  const connection = fakeConnection();
+  let choose = null;
+  const service = portal.serveFileChooser(connection, {
+    ask: () => new Promise((resolve) => { choose = resolve; }),
+  });
+  const { path } = await openChooser(service, connection);
+  connection.call({
+    sender: ':1.42', path, iface: portal.REQUEST, member: 'Close',
+  });
+  assert.equal(connection.signals.length, 1);
+  assert.equal(connection.signals.at(-1).body[0], portal.RESPONSE_CANCELLED);
+
+  // The reader answers the prompt that is still on their terminal.
+  choose(['/home/reader/report.pdf']);
+  await service.idle();
+  assert.equal(connection.signals.length, 1);
+  assert.deepEqual(service.openRequests(), []);
+});
+
 test('a sender that may not choose is refused rather than shown a prompt', async () => {
   const connection = fakeConnection();
   let asked = 0;

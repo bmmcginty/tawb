@@ -302,7 +302,18 @@ module Tawb
           }))
           nil
         end
-        @pending.delete(path)
+        # A request the client closed while the reader was still choosing has
+        # already been answered, with the cancelled code, by the Close that
+        # removed it. Answering again would put a second Response on a path
+        # the specification gives one answer — and the second one would carry
+        # the path the reader chose after the browser had stopped waiting.
+        unless @pending.delete(path)
+          @log.try(&.write("portal.abandoned", {
+            "kind"   => JSON::Any.new(ask.directory ? "directory" : "file"),
+            "chosen" => JSON::Any.new((paths || [] of String).size.to_i64),
+          }))
+          return
+        end
         respond(path, paths && !paths.empty? ? RESPONSE_SUCCESS : RESPONSE_CANCELLED, paths)
         @log.try(&.write("portal.responded", {
           "kind"   => JSON::Any.new(ask.directory ? "directory" : "file"),

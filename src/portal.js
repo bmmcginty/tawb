@@ -174,6 +174,18 @@ function serveFileChooser(connection, {
       log('portal.ask.failed', { error: String(err.message || err).slice(0, 160) });
       paths = null;
     }
+    // A request the client closed while the reader was still choosing has
+    // already been answered, with the cancelled code, by the Close that
+    // removed it. Answering again would put a second Response on a path the
+    // specification gives one answer — and the second one would carry the
+    // path the reader chose after the browser had stopped waiting for it.
+    if (!pending.has(path)) {
+      log('portal.abandoned', {
+        kind: request.directory ? 'directory' : 'file',
+        chosen: (paths || []).length,
+      });
+      return;
+    }
     pending.delete(path);
     answer(path, paths && paths.length ? RESPONSE_SUCCESS : RESPONSE_CANCELLED, paths);
     answered += 1;
