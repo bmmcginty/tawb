@@ -2819,6 +2819,15 @@ async function activateCurrent(state, page) {
       }
     }
 
+    // Firefox can delegate a browser-chrome chooser to an XDG portal. That
+    // chooser belongs to another accessibility application, so prepare a
+    // one-shot desktop watch before pressing a browser-owned button. Ordinary
+    // web file inputs are intercepted above and never reach the desktop.
+    if (state.nativeWatch && state.nativeWatch.expectExternalFileChooser
+      && BUTTON_ROLES.has(item.role) && /^(?:about|chrome):/i.test(previousUrl)) {
+      await state.nativeWatch.expectExternalFileChooser().catch(() => false);
+    }
+
     const focusWatch = await state.core.watchActivationFocus(item, page).catch(() => null);
     let done;
     try {
@@ -2830,6 +2839,10 @@ async function activateCurrent(state, page) {
     focused = focusWatch
       ? await state.core.activationFocus(focusWatch).catch(() => null)
       : null;
+    // A native watch can put the chooser on the terminal before this action's
+    // bookkeeping resumes. Do not repaint the page or overwrite the chooser's
+    // status while its handler owns the keyboard.
+    if (state.mode === 'dialog') return;
     state.statusMsg = done.status || `Activated: ${item.name}`;
     // If this control says it opens something, follow it: the thing it opens
     // is very often rendered at the end of the document rather than here.
@@ -2893,6 +2906,10 @@ async function reportAfterAction(
   await refresh(state, page, navigated
     ? { resetCursor: true }
     : { anchor, previousTexts });
+  // The native watch runs independently of the page refresh. If it found a
+  // chooser while that refresh was in flight, its terminal buffer and status
+  // now belong to the dialog, not to this completed page action.
+  if (state.mode === 'dialog') return false;
 
   // A handle belongs to the old document after navigation and cannot be a
   // destination in the new one. Disposal is still owed even though it cannot
@@ -3976,7 +3993,17 @@ async function downloadCurrentLink(state, page) {
   const anchor = anchorFor(state);
   setStatus(state, `Downloading "${item.name}"…`);
   try {
+    // Alt-click can open Firefox's browser-owned Save As chooser. On a
+    // portal desktop it will not belong to Firefox's accessibility tree, so
+    // take the same one-shot desktop baseline used by internal Browse buttons
+    // before asking Firefox to start the operation.
+    if (state.nativeWatch && state.nativeWatch.expectExternalFileChooser) {
+      await state.nativeWatch.expectExternalFileChooser().catch(() => false);
+    }
     const result = await state.core.downloadLink(item, page);
+    // Save As is now the operation in progress; its answer, not the Alt-click
+    // that opened it, determines whether anything was added to downloads.
+    if (state.mode === 'dialog') return;
     if (!result.ok) {
       setStatus(state, `Could not download "${item.name}": ${result.reason}.`);
       return;

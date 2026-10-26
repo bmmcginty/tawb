@@ -64,6 +64,7 @@ module Tawb
     class CoreBinding
       include Reader::CoreEnv
       getter core : Core
+      property native_watch : NativePrompt::Armed?
       @live : Hash(String, JSON::Any)
       @focus_tracker : Focus::Tracker?
 
@@ -71,6 +72,7 @@ module Tawb
         @live = live_json
         @focus_tracker = nil
         @activation_watch = nil.as(JSON::Any?)
+        @native_watch = nil
       end
 
       def source : String; @core.source; end
@@ -95,6 +97,9 @@ module Tawb
       def popup_at : Int64; @core.popup_at.to_i64; end
       def forget_popup : Nil; @core.forget_popup; end
       def activate(item : JSON::Any) : JSON::Any; @core.activate(item); end
+      def expect_external_file_chooser : Bool
+        @native_watch.try(&.expect_external_file_chooser) || false
+      end
       def rescan : Nil; sync_live_to_core; @core.rescan; sync_live_from_core; end
       def snapshot_cost_ms : Int64; @core.snapshot_cost_ms; end
       def live : JSON::Any?; JSON::Any.new(@live); end

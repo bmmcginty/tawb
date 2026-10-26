@@ -29,6 +29,7 @@ const { tempDir, removeTempDir } = require('./tmpdir');
 const implementations = nativePromptImplementations({ nativePrompt, atspi });
 
 const BUS = ':1.1';
+const PORTAL_BUS = ':1.2';
 const APPLICATION = `${BUS}|${ROOT}`;
 
 // AT-SPI state words, by the bit AT-SPI defines. Bit 12 is focused and bit 39
@@ -57,14 +58,31 @@ function treeWith({ beside = [], inside = [] } = {}) {
   return tree;
 }
 
+function treeWithPortal(dialogs = []) {
+  const tree = treeWith();
+  const offered = Array.isArray(dialogs) ? dialogs : [dialogs];
+  tree[`${PORTAL_BUS}|${ROOT}`] = {
+    role: 'application', name: 'Desktop Portal',
+    children: offered.map((dialog, index) => [PORTAL_BUS, `/portal-window-${index}`]),
+  };
+  offered.forEach((dialog, index) => {
+    tree[`${PORTAL_BUS}|/portal-window-${index}`] = {
+      role: 'frame', name: 'Files', children: [[PORTAL_BUS, dialog.path]],
+    };
+    addDialog(tree, { ...dialog, bus: PORTAL_BUS });
+  });
+  return tree;
+}
+
 function addDialog(tree, {
   path: dialogPath, role = 'alert', name = '', lines = [], buttons = [], toggles = [], fields = [],
+  bus: dialogBus = BUS,
 }) {
   const children = [];
   const add = (suffix, node) => {
     const childPath = `${dialogPath}/${suffix}`;
-    tree[`${BUS}|${childPath}`] = { children: [], ...node };
-    children.push([BUS, childPath]);
+    tree[`${dialogBus}|${childPath}`] = { children: [], ...node };
+    children.push([dialogBus, childPath]);
   };
   lines.forEach((line, index) => add(`line${index}`, { role: 'static', name: line }));
   fields.forEach((field, index) => add(`field${index}`, {
@@ -76,7 +94,7 @@ function addDialog(tree, {
   buttons.forEach((button, index) => add(`button${index}`, {
     role: 'push button', name: button.name, state: button.state,
   }));
-  tree[`${BUS}|${dialogPath}`] = { role, name, children };
+  tree[`${dialogBus}|${dialogPath}`] = { role, name, children };
   return tree;
 }
 
@@ -106,7 +124,9 @@ const INSTALL_READING = {
 };
 
 // One scenario run against every implementation, compared to the first.
-async function compare(what, steps, { tree = treeWith(), pids = { [BUS]: 4242 } } = {}) {
+async function compare(what, steps, {
+  tree = treeWith(), pids = { [BUS]: 4242, [PORTAL_BUS]: 5252 },
+} = {}) {
   const answers = [];
   for (const implementation of implementations) {
     const directory = tempDir('tawb-native-');
@@ -115,7 +135,7 @@ async function compare(what, steps, { tree = treeWith(), pids = { [BUS]: 4242 } 
       socketPath: socket,
       tree: JSON.parse(JSON.stringify(tree)),
       pids,
-      names: ['org.freedesktop.DBus', BUS, ':1.9'],
+      names: ['org.freedesktop.DBus', BUS, PORTAL_BUS, ':1.9'],
     });
     try {
       answers.push({
@@ -327,6 +347,32 @@ test('a file chooser is a question like any other', async () => {
   // With nothing marked as the dialog's default, the focused button is what
   // the dialog has ready.
   assert.equal(outcome.results[3].defaultButton, 'Open');
+});
+
+test('a portal file chooser is offered only after a browser-owned action expects one', async () => {
+  const oldChooser = {
+    path: '/chooser/already-open', role: 'file chooser', name: 'Another application',
+    buttons: [{ name: 'Cancel' }, { name: 'Open' }],
+  };
+  const firefoxChooser = {
+    path: '/chooser/firefox', role: 'file chooser', name: 'Choose Download Folder',
+    buttons: [{ name: 'Cancel' }, { name: 'Open', state: FOCUSED }],
+  };
+  const { outcome } = await compare('an external portal chooser', [
+    { type: 'arm', pid: 4242 },
+    // This chooser predates the Firefox action and belongs to somebody else.
+    setTree({ tree: treeWithPortal([oldChooser]) }),
+    { type: 'settle', ms: 60 },
+    { type: 'expect_external_file_chooser', intervalMs: 10 },
+    setTree({ tree: treeWithPortal([oldChooser, firefoxChooser]) }),
+    { type: 'await', count: 1 },
+    { type: 'dialog', index: 0 },
+  ]);
+  assert.equal(outcome.results[2], 0, 'other applications were watched without an expectation');
+  assert.equal(outcome.results[3], true);
+  assert.equal(outcome.results[5], 1);
+  assert.equal(outcome.results[6].role, 'file chooser');
+  assert.equal(outcome.results[6].title, 'Choose Download Folder');
 });
 
 test('a panel with nothing to say and nothing to press is not a question', async () => {

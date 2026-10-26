@@ -38,6 +38,11 @@ module Tawb
     # else is asked unless something new appeared.
     POLL_INTERVAL = 500.milliseconds
 
+    # A chooser delegated to an XDG portal belongs to the portal application,
+    # not to the browser. It is watched only around a browser-owned action
+    # that can raise one, rather than claiming every chooser on the desktop.
+    EXTERNAL_CHOOSER_TIMEOUT = 10.seconds
+
     # Where the two engines put a dialog, which is not the same place.
     #
     # Chromium's install confirmation is a child of the application, beside the
@@ -282,16 +287,110 @@ module Tawb
       end
     end
 
+    # A one-shot watch for a chooser raised by a browser action but drawn by a
+    # different application. It is prepared before the action: the first scan
+    # records already-open choosers, then only a chooser appearing afterwards
+    # is offered.
+    class ExternalChooserWatch
+      @known : Set(String)
+
+      def initialize(@accessibility : Atspi::Accessibility,
+                     @browser_application : Atspi::Described,
+                     @interval : Time::Span = POLL_INTERVAL,
+                     @timeout : Time::Span = EXTERNAL_CHOOSER_TIMEOUT,
+                     @log : Log? = nil,
+                     &@handler : Request -> Nil)
+        @stopped = false
+        @known = scan.map { |found| NativePrompt.key_of(found[:dialog]) }.to_set
+        spawn { run }
+      end
+
+      def stop : Nil
+        @stopped = true
+      end
+
+      private def scan : Array(NamedTuple(application: Atspi::Described,
+                                          dialog: Atspi::Described))
+        found = [] of NamedTuple(application: Atspi::Described, dialog: Atspi::Described)
+        @accessibility.applications.each do |application|
+          next if application.bus == @browser_application.bus
+          nodes = NativePrompt.containers_of(@accessibility, application) rescue next
+          nodes.each do |node|
+            described = @accessibility.describe_node(node) rescue next
+            if described.role == "file chooser"
+              found << {application: application, dialog: described}
+            end
+          end
+        end
+        found
+      end
+
+      private def run : Nil
+        deadline = Time.instant + @timeout
+        until @stopped
+          sleep @interval
+          break if @stopped
+          found = scan rescue [] of NamedTuple(application: Atspi::Described,
+                                                dialog: Atspi::Described)
+          found.each do |entry|
+            key = NativePrompt.key_of(entry[:dialog])
+            next if @known.includes?(key)
+            @known << key
+            reading = @accessibility.read(entry[:dialog]) rescue next
+            next if reading.buttons.empty? && reading.lines.empty?
+            @stopped = true
+            @log.try(&.write("native.external-dialog", {
+              "application" => JSON::Any.new(entry[:application].name[0,
+                Math.min(entry[:application].name.size, 80)]),
+              "name" => JSON::Any.new(entry[:dialog].name[0,
+                Math.min(entry[:dialog].name.size, 80)]),
+            }))
+            @handler.call(Request.new(@accessibility, entry[:application],
+              entry[:dialog], reading))
+            return
+          end
+          if Time.instant >= deadline
+            @stopped = true
+            @log.try(&.write("native.external-expired", {} of String => JSON::Any))
+          end
+        end
+      rescue error
+        @log.try(&.write("native.external-unavailable", {
+          "error" => JSON::Any.new((error.message || "")[0, 160]),
+        }))
+      end
+    end
+
     # A watch, and the application the watch is on.
     class Armed
       getter application : Atspi::Described
 
       def initialize(@accessibility : Atspi::Accessibility, @application : Atspi::Described,
-                     @watch : Watch)
+                     @watch : Watch, @offer : Request -> Nil, @log : Log? = nil)
+        @external_watch = nil.as(ExternalChooserWatch?)
+        @stopped = false
+      end
+
+      def expect_external_file_chooser(
+        interval : Time::Span = POLL_INTERVAL,
+        timeout : Time::Span = EXTERNAL_CHOOSER_TIMEOUT,
+      ) : Bool
+        return false if @stopped
+        @external_watch.try(&.stop)
+        @external_watch = ExternalChooserWatch.new(@accessibility, @application,
+          interval, timeout, @log, &@offer)
+        true
+      rescue error
+        @log.try(&.write("native.external-unavailable", {
+          "error" => JSON::Any.new((error.message || "")[0, 160]),
+        }))
+        false
       end
 
       def stop : Nil
+        @stopped = true
         @watch.stop
+        @external_watch.try(&.stop)
         @accessibility.close
       end
     end
@@ -341,8 +440,12 @@ module Tawb
         "application" => JSON::Any.new(application.name),
         "bus"         => JSON::Any.new(application.bus),
       }))
-      watch = Watch.new(accessibility, application, interval, log, &handler)
-      Armed.new(accessibility, application, watch)
+      # Browser-owned and portal-owned questions share one terminal. A mutex
+      # keeps their handlers from racing each other onto it.
+      gate = Mutex.new
+      offer = ->(request : Request) { gate.synchronize { handler.call(request) } }
+      watch = Watch.new(accessibility, application, interval, log, &offer)
+      Armed.new(accessibility, application, watch, offer, log)
     end
   end
 end

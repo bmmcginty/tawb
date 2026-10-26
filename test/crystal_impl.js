@@ -2299,34 +2299,45 @@ async function nativeScenario({ nativePrompt, atspi }, socket, steps) {
   const results = [];
   const offered = [];
   let watch = null;
+  let externalWatch = null;
+  let application = null;
   let holding = false;
   let throwOnce = false;
   let release = null;
+  const offer = async (request) => {
+    if (throwOnce) {
+      throwOnce = false;
+      throw new Error('the terminal went away');
+    }
+    offered.push(request);
+    if (holding) await new Promise((resolve) => { release = resolve; });
+  };
   try {
     for (const step of steps) {
       try {
         if (step.type === 'arm') {
           holding = step.hold === true;
           throwOnce = step.throwFirst === true;
-          const application = await a11y.applicationFor({
+          application = await a11y.applicationFor({
             pid: step.pid ?? null,
             names: step.names || [],
           });
           if (!application) throw new Error('the browser is not describing its windows');
           watch = nativePrompt.watchNativeDialogs({
-            a11y,
-            application,
-            interval: step.intervalMs ?? 10,
-            onDialog: async (request) => {
-              if (throwOnce) {
-                throwOnce = false;
-                throw new Error('the terminal went away');
-              }
-              offered.push(request);
-              if (holding) await new Promise((resolve) => { release = resolve; });
-            },
+            a11y, application, interval: step.intervalMs ?? 10, onDialog: offer,
           });
           results.push(application.name);
+        } else if (step.type === 'expect_external_file_chooser') {
+          if (!application) throw new Error('the native watch is not armed');
+          if (externalWatch) externalWatch.stop();
+          externalWatch = await nativePrompt.watchExternalFileChooser({
+            a11y,
+            browserApplication: application,
+            interval: step.intervalMs ?? 10,
+            timeout: step.timeoutMs ?? 1000,
+            onDialog: offer,
+          });
+          results.push(true);
         } else if (step.type === 'set_tree') {
           await a11y.connection.call({
             destination: 'org.tawb.Control',
@@ -2397,6 +2408,7 @@ async function nativeScenario({ nativePrompt, atspi }, socket, steps) {
   } finally {
     if (release) release();
     if (watch) watch.stop();
+    if (externalWatch) externalWatch.stop();
     a11y.close();
   }
   return { results };

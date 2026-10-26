@@ -608,6 +608,10 @@ module Tawb
       else
         Reader.refresh(state, page, false, anchor, previous_texts)
       end
+      # The native watch runs independently of the page refresh. If it found a
+      # chooser while that refresh was in flight, the terminal now belongs to
+      # the dialog rather than to this completed page action.
+      return false if state.mode == "dialog"
 
       # A handle belongs to the old document after navigation and cannot be a
       # destination in the new one. Disposal is still owed even though it
@@ -758,6 +762,14 @@ module Tawb
           end
         end
 
+        # Firefox can delegate a browser-chrome chooser to an XDG portal. The
+        # chooser then belongs to another accessibility application, so take a
+        # one-shot desktop baseline before pressing a browser-owned button.
+        # Ordinary web file inputs were handled above and never reach it.
+        if Aria::BUTTON_ROLES.includes?(role) && page.url =~ /\A(?:about|chrome):/i
+          state.core.expect_external_file_chooser
+        end
+
         focus_watch = state.core.watch_activation_focus(item.not_nil!) rescue nil
         begin
           done = state.core.activate(item.not_nil!)
@@ -768,6 +780,10 @@ module Tawb
           raise err
         end
         focused = focus_watch ? (state.core.activation_focus(focus_watch) rescue nil) : nil
+        # The native watch can put the chooser on the terminal before this
+        # action's bookkeeping resumes. Do not repaint the page or overwrite
+        # the chooser's status while its handler owns the keyboard.
+        return if state.mode == "dialog"
         done_status = done.try(&.as_h?).try(&.["status"]?).try(&.as_s?)
         state.status_msg = done_status && !done_status.empty? ? done_status : "Activated: #{name}"
         # If this control says it opens something, follow it: the thing it
@@ -3356,7 +3372,13 @@ module Tawb
       anchor = state.core.anchor
       Reader.set_status(output, state, page.url, "Downloading \"#{name}\"…")
       begin
+        # Firefox's Alt-click Save As chooser may be owned by an XDG portal,
+        # not Firefox. Prepare the one-shot desktop watch before the gesture.
+        state.core.expect_external_file_chooser
         result = state.core.download_link(item.not_nil!)
+        # Save As is now the operation in progress; its answer, not the
+        # Alt-click that opened it, determines whether anything was added.
+        return if state.mode == "dialog"
         unless result.as_h["ok"]?.try(&.as_bool?)
           reason = result.as_h["reason"]?.try(&.as_s?) || "could not be found"
           Reader.set_status(output, state, page.url,

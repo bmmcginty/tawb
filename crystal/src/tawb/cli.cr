@@ -307,6 +307,7 @@ module Tawb
           ReaderKeys.answer_native_dialog(terminal, state, tabs.current_page, keyboard,
             Interactive::DialogBinding.new(request), logger)
         end
+        binding.native_watch = native
 
         # A window that changed shape: the lines were wrapped to the old
         # width and the rows counted to the old height, so neither describes

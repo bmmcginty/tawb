@@ -285,9 +285,14 @@ module Tawb
 
       # Every application currently on the bus.
       def applications : Array(Described)
+        buses = connections
+        answers = ::Channel(Described?).new(buses.size)
+        buses.each do |bus|
+          spawn { answers.send(application_at(bus)) }
+        end
         found = [] of Described
-        connections.each do |bus|
-          application = application_at(bus)
+        buses.size.times do
+          application = answers.receive
           found << application if application
         end
         found

@@ -34,6 +34,12 @@ const DIALOG_ROLES = new Set(['alert', 'dialog', 'file chooser']);
 // new appeared.
 const POLL_MS = 500;
 
+// A chooser delegated to an XDG portal belongs to the portal application,
+// not to the browser. It is watched only around a browser-owned action that
+// can raise one: long enough for a desktop portal to start, but not as a
+// permanent claim on every file chooser in the user's session.
+const EXTERNAL_CHOOSER_TIMEOUT_MS = 10000;
+
 // Where the two engines put a dialog, which is not the same place.
 //
 // Chromium's install confirmation is a child of the application, beside the
@@ -63,6 +69,47 @@ function defaultButton(buttons) {
     || null;
 }
 
+async function containersOf(a11y, application) {
+  const windows = await a11y.childrenOf(application);
+  const children = [...windows];
+  for (const window of windows.slice(0, MAX_CONTAINERS)) {
+    try {
+      children.push(...(await a11y.childrenOf(window)).slice(0, MAX_CHILDREN));
+    } catch {
+      // A window that closed while we were asking.
+    }
+  }
+  return children;
+}
+
+function requestFor(a11y, application, described, state) {
+  const key = `${described.bus}|${described.path}`;
+  return {
+    node: described,
+    role: described.role,
+    title: described.name || state.lines[0] || '',
+    lines: state.lines,
+    buttons: state.buttons,
+    toggles: state.toggles || [],
+    fields: state.fields || [],
+    defaultButton: defaultButton(state.buttons),
+    press: (button) => a11y.press(button),
+    toggle: async (control) => {
+      await a11y.press(control);
+      const states = await a11y.statesOf(control).catch(() => null);
+      return states ? states.checked : null;
+    },
+    reread: async () => requestFor(a11y, application, described, await a11y.read(described)),
+    stillOpen: async () => {
+      try {
+        return pathsOf(await containersOf(a11y, application)).includes(key);
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
 // Watch one application for dialogs it raises.
 //
 // `onDialog` is given what the dialog says and the buttons it offers, and is
@@ -82,9 +129,9 @@ function watchNativeDialogs({
 
   const tick = async () => {
     if (stopped) return;
-    let windows;
+    let children;
     try {
-      windows = await a11y.childrenOf(application);
+      children = await containersOf(a11y, application);
       failures = 0;
     } catch (err) {
       failures += 1;
@@ -95,18 +142,6 @@ function watchNativeDialogs({
       }
       schedule();
       return;
-    }
-
-    // Everything one level inside the application and one level inside each
-    // of its windows. Chromium puts a dialog in the first place, Firefox in
-    // the second.
-    const children = [...windows];
-    for (const window of windows.slice(0, MAX_CONTAINERS)) {
-      try {
-        children.push(...(await a11y.childrenOf(window)).slice(0, MAX_CHILDREN));
-      } catch {
-        // A window that closed while we were asking.
-      }
     }
 
     const present = new Set(pathsOf(children));
@@ -142,65 +177,8 @@ function watchNativeDialogs({
         buttons: read.buttons.map((button) => button.name).join(' / ').slice(0, 80),
       });
 
-      // What a reader is handed: what the dialog says, what it offers, and
-      // the two things they can do about it. Built from a fresh reading each
-      // time, so that coming back to a question the reader stepped away from
-      // asks the browser what it says *now*.
-      const requestFor = (state) => ({
-        node: described,
-        role: described.role,
-        title: described.name || state.lines[0] || '',
-        lines: state.lines,
-        buttons: state.buttons,
-        // Options the dialog offers alongside its answer, such as Firefox's
-        // "Allow extension to run in private windows".
-        toggles: state.toggles || [],
-        // What the dialog is about, where that lives in a control rather than
-        // in its words: the username and masked password in a "Save
-        // password?" prompt.
-        fields: state.fields || [],
-        defaultButton: defaultButton(state.buttons),
-        // Press a button, the way a screen reader's user activates the
-        // control they are on.
-        //
-        // Worth knowing if this is ever called by something other than a
-        // person: a press that lands within about half a second of the dialog
-        // appearing is discarded by Chromium's own protection against
-        // clickjacking, and discarded silently — the call still answers true
-        // and nothing happens. A reader taking the time to read the question
-        // is never near that window.
-        press: (button) => a11y.press(button),
-        // Tick or untick an option, and answer with what it is now. The
-        // browser owns the state; this reads it back rather than assuming the
-        // press did what it looks like it did.
-        toggle: async (control) => {
-          await a11y.press(control);
-          const states = await a11y.statesOf(control).catch(() => null);
-          return states ? states.checked : null;
-        },
-        // The same question, read again. A dialog the reader stepped away
-        // from may have changed while they were gone, and replaying what it
-        // said a minute ago would be putting words in the browser's mouth.
-        reread: async () => requestFor(await a11y.read(described)),
-        // Whether the browser is still asking. Membership rather than "does
-        // the object still answer": a dismissed dialog goes on answering for
-        // a moment after it has gone from the window.
-        stillOpen: async () => {
-          try {
-            const windows = await a11y.childrenOf(application);
-            const here = [...windows];
-            for (const window of windows.slice(0, MAX_CONTAINERS)) {
-              here.push(...await a11y.childrenOf(window).catch(() => []));
-            }
-            return pathsOf(here).includes(key);
-          } catch {
-            return false;
-          }
-        },
-      });
-
       try {
-        await onDialog(requestFor(read));
+        await onDialog(requestFor(a11y, application, described, read));
       } catch (err) {
         log('native.dialog.error', { error: String(err.message || err).slice(0, 160) });
       }
@@ -216,6 +194,91 @@ function watchNativeDialogs({
 
   schedule();
 
+  return {
+    stop() {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
+  };
+}
+
+// A one-shot watch for a chooser raised by a browser action but drawn by a
+// different application. GTK delegates to an XDG portal on many desktops;
+// the resulting accessibility tree belongs to that portal, so a watch rooted
+// at Firefox can never see it.
+//
+// This is deliberately prepared before the action. The first inventory is a
+// baseline of choosers that were already open, and the browser is not pressed
+// until it is complete. After that, only a newly appearing chooser is offered.
+// Thus an unrelated chooser that was already on the desktop cannot be taken
+// over, and TAWB is not permanently watching other applications.
+async function watchExternalFileChooser({
+  a11y, browserApplication, onDialog, interval = POLL_MS,
+  timeout = EXTERNAL_CHOOSER_TIMEOUT_MS, log = () => {},
+}) {
+  let stopped = false;
+  let timer = null;
+  const browserBus = browserApplication.bus;
+
+  const scan = async () => {
+    const found = [];
+    const applications = await a11y.applications();
+    for (const application of applications) {
+      if (application.bus === browserBus) continue;
+      let nodes;
+      try {
+        nodes = await containersOf(a11y, application);
+      } catch {
+        continue;
+      }
+      for (const node of nodes) {
+        try {
+          const described = await a11y.describeNode(node);
+          if (described.role === 'file chooser') found.push({ application, described });
+        } catch {
+          // An object that disappeared while the desktop was being inventoried.
+        }
+      }
+    }
+    return found;
+  };
+
+  const known = new Set((await scan()).map(({ described }) => (
+    `${described.bus}|${described.path}`
+  )));
+  const deadline = Date.now() + timeout;
+
+  const tick = async () => {
+    if (stopped) return;
+    let found = [];
+    try { found = await scan(); } catch { /* try again until the deadline */ }
+    for (const { application, described } of found) {
+      const key = `${described.bus}|${described.path}`;
+      if (known.has(key)) continue;
+      known.add(key);
+      let read;
+      try { read = await a11y.read(described); } catch { continue; }
+      if (!read.buttons.length && !read.lines.length) continue;
+      stopped = true;
+      log('native.external-dialog', {
+        application: String(application.name || '').slice(0, 80),
+        name: String(described.name || '').slice(0, 80),
+      });
+      await onDialog(requestFor(a11y, application, described, read));
+      return;
+    }
+    if (Date.now() >= deadline) {
+      stopped = true;
+      log('native.external-expired', {});
+      return;
+    }
+    timer = setTimeout(() => { tick().catch(() => {}); }, interval);
+    if (timer.unref) timer.unref();
+  };
+
+  timer = setTimeout(() => { tick().catch(() => {}); }, interval);
+  if (timer.unref) timer.unref();
   return {
     stop() {
       stopped = true;
@@ -254,16 +317,39 @@ async function armNativeDialogs({
     return null;
   }
   log('native.armed', { application: application.name, bus: application.bus });
-  const watch = watchNativeDialogs({ a11y, application, onDialog, log });
+  // Both watches feed one terminal. Serialize their offers so a portal
+  // chooser cannot race a browser-owned permission prompt onto it.
+  let offers = Promise.resolve();
+  const offer = (request) => {
+    offers = offers.catch(() => {}).then(() => onDialog(request));
+    return offers;
+  };
+  const watch = watchNativeDialogs({ a11y, application, onDialog: offer, log });
+  let externalWatch = null;
+  let stopped = false;
   return {
     application,
+    async expectExternalFileChooser() {
+      if (stopped) return false;
+      if (externalWatch) externalWatch.stop();
+      externalWatch = await watchExternalFileChooser({
+        a11y, browserApplication: application, onDialog: offer, log,
+      }).catch((err) => {
+        log('native.external-unavailable', { error: String(err.message || err).slice(0, 160) });
+        return null;
+      });
+      return !!externalWatch;
+    },
     stop() {
+      stopped = true;
       watch.stop();
+      if (externalWatch) externalWatch.stop();
       a11y.close();
     },
   };
 }
 
 module.exports = {
-  watchNativeDialogs, armNativeDialogs, defaultButton, DIALOG_ROLES, POLL_MS,
+  watchNativeDialogs, watchExternalFileChooser, armNativeDialogs,
+  defaultButton, DIALOG_ROLES, POLL_MS, EXTERNAL_CHOOSER_TIMEOUT_MS,
 };

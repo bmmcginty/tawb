@@ -278,6 +278,10 @@ module Tawb
       abstract def popup_at : Int64
       abstract def forget_popup : Nil
       abstract def activate(item : JSON::Any) : JSON::Any
+      # Prepare a one-shot desktop-wide chooser watch before an action in
+      # browser chrome. Scripted cores and browsers without accessibility have
+      # nothing to prepare.
+      def expect_external_file_chooser : Bool; false; end
       abstract def rescan : Nil
       abstract def anchor : JSON::Any
       abstract def restore(saved : JSON::Any) : Int32

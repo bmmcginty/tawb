@@ -4973,6 +4973,16 @@ module Tawb
       holding = false
       throw_once = false
       watch = nil.as(NativePrompt::Watch?)
+      external_watch = nil.as(NativePrompt::ExternalChooserWatch?)
+      application = nil.as(Atspi::Described?)
+      offer = ->(request : NativePrompt::Request) do
+        if throw_once
+          throw_once = false
+          raise Exception.new("the terminal went away")
+        end
+        offered << request
+        released.receive if holding
+      end
       begin
         (object["steps"]?.try(&.as_a?) || [] of JSON::Any).each do |raw|
           step = raw.as_h
@@ -4986,15 +4996,17 @@ module Tawb
                 names: (step["names"]?.try(&.as_a?) || [] of JSON::Any).map(&.as_s),
               ) || raise ArgumentError.new("the browser is not describing its windows")
               interval = (step["intervalMs"]?.try(&.as_i?) || 10).milliseconds
-              watch = NativePrompt::Watch.new(accessibility, application, interval) do |request|
-                if throw_once
-                  throw_once = false
-                  raise Exception.new("the terminal went away")
-                end
-                offered << request
-                released.receive if holding
-              end
-              results << JSON::Any.new(application.name)
+              watch = NativePrompt::Watch.new(accessibility, application.not_nil!,
+                interval, &offer)
+              results << JSON::Any.new(application.not_nil!.name)
+            when "expect_external_file_chooser"
+              current = application || raise ArgumentError.new("the native watch is not armed")
+              external_watch.try(&.stop)
+              interval = (step["intervalMs"]?.try(&.as_i?) || 10).milliseconds
+              timeout = (step["timeoutMs"]?.try(&.as_i?) || 1000).milliseconds
+              external_watch = NativePrompt::ExternalChooserWatch.new(
+                accessibility, current, interval, timeout, &offer)
+              results << JSON::Any.new(true)
             when "set_tree"
               control.call(
                 destination: "org.tawb.Control",
@@ -5065,6 +5077,7 @@ module Tawb
         end
       ensure
         watch.try(&.stop)
+        external_watch.try(&.stop)
         accessibility.close
       end
       JSON::Any.new({"results" => JSON::Any.new(results)})
