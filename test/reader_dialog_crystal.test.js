@@ -228,20 +228,34 @@ test('Enter on a line that is not an answer says which lines are', { skip }, asy
   assert.equal(result.results[0].value.pending, true);
 });
 
-test('a press the browser did not act on is not reported as answered', { skip }, async () => {
+test('a press that leaves the dialog open keeps the reader in it', { skip }, async () => {
+  const result = await both('a non-closing chooser control', state(), [
+    {
+      op: 'answerDialog',
+      dialog: {
+        role: 'file chooser', title: 'Choose Folder', lines: ['Places'],
+        buttons: [{ name: 'Home' }, { name: 'Open' }], toggles: [], fields: [],
+        staysOpenAfterPress: true,
+      },
+      // Home navigates and keeps the chooser open. Escape must still belong to
+      // that chooser rather than becoming a key on the underlying web page.
+      keys: [DOWN, DOWN, '\r', ESCAPE],
+    },
+  ]);
+  assert.deepEqual(result.results[0].value.pressed, ['Home']);
+  assert.equal(result.results[0].value.pending, true);
+});
+
+test('a press the browser did not act on leaves the question available', { skip }, async () => {
   const result = await both('a press the browser ignored', state(), [
     {
       op: 'answerDialog',
-      // Chromium discards a press that lands within about half a second of the
-      // dialog appearing, and discards it silently: the call still answers
-      // true and nothing happens. Telling the reader their answer went in when
-      // it did not is worse than telling them nothing.
       dialog: { ...SAVE_PASSWORD, staysOpenAfterPress: true },
-      keys: [DOWN, DOWN, DOWN, DOWN, '\r'],
+      keys: [DOWN, DOWN, DOWN, DOWN, '\r', ESCAPE],
     },
   ]);
   assert.deepEqual(result.results[0].value.pressed, ['Never']);
-  assert.match(result.state.statusMsg, /has not closed the dialog/);
+  assert.equal(result.results[0].value.pending, true);
 });
 
 test('a press the browser refuses outright is not reported as answered', { skip }, async () => {
@@ -249,11 +263,11 @@ test('a press the browser refuses outright is not reported as answered', { skip 
     {
       op: 'answerDialog',
       dialog: { ...SAVE_PASSWORD, pressRefuses: ['Never'] },
-      keys: [DOWN, DOWN, DOWN, DOWN, '\r'],
+      keys: [DOWN, DOWN, DOWN, DOWN, '\r', ESCAPE],
     },
   ]);
   assert.deepEqual(result.results[0].value.pressed, []);
-  assert.match(result.state.statusMsg, /has not closed the dialog/);
+  assert.equal(result.results[0].value.pending, true);
 });
 
 test('a keyboard that goes away leaves the browser holding its question', { skip }, async () => {

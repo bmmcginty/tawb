@@ -2756,6 +2756,22 @@ module Tawb
       answered
     end
 
+    private def self.keep_native_dialog_open(output : Screen::Output,
+                                             state : Reader::State,
+                                             page : Reader::PageEnv,
+                                             request : Reader::DialogEnv,
+                                             name : String) : Nil
+      current = begin
+        request.reread
+      rescue
+        nil
+      end || request
+      state.dialog_request = current
+      show_dialog(output, state, page, current, keep_place: state.cursor)
+      Reader.set_status(output, state, page.url,
+        "Pressed \"#{name}\"; the dialog is still open.")
+    end
+
     # Asks, and does not return until the dialog has been answered or the
     # reader has decided to leave it. The watch runs this and waits for it:
     # one question at a time is the only number a single terminal can put to
@@ -2809,6 +2825,7 @@ module Tawb
           end
           chunk = key.as(String)
           state.core.mark_input
+          current_request = state.dialog_request || request
           context = context_action(chunk, state)
 
           if key_is(chunk, "Escape", state) || context == "cancel"
@@ -2821,7 +2838,7 @@ module Tawb
             # A key that means "leave this alone" must leave it alone, so the
             # question stays open and the browser-question key comes back to
             # it.
-            state.pending_dialog = request
+            state.pending_dialog = current_request
             close_native_dialog(output, state, page,
               "Left the browser asking — nothing was pressed. " \
               "#{browser_question_key(state)} goes back to it.")
@@ -2832,9 +2849,9 @@ module Tawb
             block = Reader.current_block(state).try(&.as_h)
             toggle_index = block.try(&.["toggle"]?).try(&.as_i64?).try(&.to_i32)
             if toggle_index
-              name = request.toggles[toggle_index]?.try(&.name) || ""
+              name = current_request.toggles[toggle_index]?.try(&.name) || ""
               now = begin
-                request.toggle(toggle_index)
+                current_request.toggle(toggle_index)
               rescue
                 nil
               end
@@ -2847,13 +2864,13 @@ module Tawb
               # dialog is drawn again from the browser's own new state rather
               # than from what the press looked like it did.
               again = begin
-                request.reread
+                current_request.reread
               rescue
                 nil
               end
-              state.dialog_request = again || request
-              request = again || request
-              show_dialog(output, state, page, request, keep_place: state.cursor)
+              state.dialog_request = again || current_request
+              show_dialog(output, state, page, state.dialog_request.not_nil!,
+                keep_place: state.cursor)
               Reader.set_status(output, state, page.url, "#{name}: #{now ? "yes" : "no"}.")
               next
             end
@@ -2862,12 +2879,17 @@ module Tawb
               Reader.set_status(output, state, page.url, "Move to one of the answers first.")
               next
             end
-            name = request.buttons[button_index]?.try(&.name) || ""
-            pressed = press_dialog_button(request, button_index, log)
-            close_native_dialog(output, state, page, pressed ?
-              "Pressed \"#{name}\"." :
-              "Pressed \"#{name}\", but the browser has not closed the dialog.")
-            return
+            name = current_request.buttons[button_index]?.try(&.name) || ""
+            pressed = press_dialog_button(current_request, button_index, log)
+            if pressed
+              close_native_dialog(output, state, page, "Pressed \"#{name}\".")
+              return
+            end
+            # File choosers use buttons for navigation as well as answers.
+            # Home, Up Path, breadcrumbs and Create Folder deliberately leave
+            # the chooser open, so reread it and keep its keyboard claim.
+            keep_native_dialog_open(output, state, page, current_request, name)
+            next
           end
 
           last = state.lines.size - 1

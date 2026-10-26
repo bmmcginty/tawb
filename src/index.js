@@ -4308,10 +4308,26 @@ async function answerNativeDialog(state, dialog) {
           continue;
         }
         const pressed = await press(button, 'chosen');
-        closeNativeDialog(state, page, pressed
-          ? `Pressed "${button.name}".`
-          : `Pressed "${button.name}", but the browser has not closed the dialog.`);
-        return;
+        if (pressed) {
+          closeNativeDialog(state, page, `Pressed "${button.name}".`);
+          return;
+        }
+        // File choosers use buttons for navigation as well as answers. Home,
+        // Up Path, a breadcrumb, and Create Folder deliberately leave the
+        // chooser open. Read its new state and keep the keyboard here instead
+        // of dropping the reader back on the web page.
+        const again = await dialog.reread().catch(() => null);
+        dialog = again || dialog;
+        const at = state.cursor;
+        state.dialog = {
+          ...state.dialog, ...dialog, blocks: dialogBlocks(dialog),
+        };
+        state.title = dialog.title || 'The browser is asking';
+        relayout(state);
+        state.cursor = Math.min(at, Math.max(state.lines.length - 1, 0));
+        render(state, page, { force: true });
+        setStatus(state, `Pressed "${button.name}"; the dialog is still open.`);
+        continue;
       }
 
       const last = state.lines.length - 1;
