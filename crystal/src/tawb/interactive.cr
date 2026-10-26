@@ -6,6 +6,7 @@ require "./input"
 require "./library"
 require "./library_chromium"
 require "./native_prompt"
+require "./portal"
 require "./reader"
 require "./reader_keys"
 require "./runtime"
@@ -65,6 +66,7 @@ module Tawb
       include Reader::CoreEnv
       getter core : Core
       property native_watch : NativePrompt::Armed?
+      property portal : Portal::Service?
       @live : Hash(String, JSON::Any)
       @focus_tracker : Focus::Tracker?
 
@@ -73,6 +75,7 @@ module Tawb
         @focus_tracker = nil
         @activation_watch = nil.as(JSON::Any?)
         @native_watch = nil
+        @portal = nil
       end
 
       def source : String; @core.source; end

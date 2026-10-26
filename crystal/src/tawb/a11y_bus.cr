@@ -3,6 +3,7 @@ require "json"
 require "./dbus"
 require "./detach"
 require "./log"
+require "./portal"
 
 module Tawb
   # Somewhere for the browser to describe its own windows to.
@@ -234,6 +235,7 @@ module Tawb
                      @daemon_socket : String? = nil)
         @pid = @daemon.try(&.pid.to_i64)
         @released = false
+        @portal = nil.as(Portal::Service?)
       end
 
       def available? : Bool
@@ -246,9 +248,54 @@ module Tawb
         @owned
       end
 
+      # A file chooser for a browser that has nobody else to ask.
+      #
+      # Both engines delegate the chooser to `org.freedesktop.portal.Desktop`,
+      # and on a bus this program made there is no portal on it. Answering
+      # that name is only safe where the bus is this program's: on a desktop
+      # the real portal owns the name, and taking it would intercept every
+      # other application's file choosers too. So this does nothing at all
+      # unless the session bus was started here.
+      # Claim `org.freedesktop.portal.Desktop` on a bus this program made, and
+      # answer the file chooser both browsers ask for.
+      #
+      # The name is claimed here, while the bus is being made, rather than when
+      # the reader is ready: Chromium asks the bus once at startup whether a
+      # portal exists and never asks again, so a name claimed after that answer
+      # leaves it with no file dialog for the whole session.
+      #
+      # On a desktop nothing is claimed — the machine's own portal owns the
+      # name — which is why `owned?` is the condition and not `available?`.
+      def claim_portal(log : Log? = nil) : Portal::Service?
+        return nil unless @owned
+        return @portal if @portal
+        session = @session
+        return nil if session.nil?
+        claimed = session.request_name(Portal::PORTAL_NAME, 4_u32)
+        if claimed != NAME_PRIMARY_OWNER
+          log.try(&.write("portal.busy", {} of String => JSON::Any))
+          return nil
+        end
+        service = Portal::Service.new(session,
+          ->(_ask : Portal::Ask) { nil.as(Array(String)?) },
+          ->(_sender : String) { true }, log)
+        @portal = service
+        log.try(&.write("portal.served", {
+          "address" => JSON::Any.new(@address),
+          "version" => JSON::Any.new(Portal::VERSION.to_i64),
+        }))
+        service
+      rescue error
+        log.try(&.write("portal.unavailable", {
+          "error" => JSON::Any.new((error.message || "")[0, 120]),
+        }))
+        nil
+      end
+
       def close : Nil
         return if @released
         @released = true
+        @portal.try(&.stop)
         @session.try(&.close)
         stop_daemon
       end
@@ -421,7 +468,7 @@ module Tawb
         "address"    => JSON::Any.new(address),
         "ownSession" => JSON::Any.new(!daemon.nil?),
       }))
-      Opened.new(
+      opened = Opened.new(
         address: address,
         env: env,
         owned: !daemon.nil?,
@@ -429,6 +476,11 @@ module Tawb
         daemon: daemon,
         daemon_socket: daemon_socket,
       )
+      # Claim the portal name now, while the bus is being made, rather than
+      # when the reader is ready to answer: Chromium asks the bus once at
+      # startup whether a portal exists and never asks again.
+      opened.claim_portal(log)
+      opened
     end
   end
 end

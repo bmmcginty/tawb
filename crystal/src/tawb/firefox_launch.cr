@@ -176,6 +176,17 @@ module Tawb
       log.try(&.write("a11y.unavailable", {
         "reason" => JSON::Any.new(a11y.reason),
       })) unless a11y.available?
+      # On a bus this program made there is no desktop portal, and this
+      # program answers the portal's own file chooser. So the file picker is
+      # asked to go there after all — the opposite of the managed value, which
+      # exists because a portal on a *desktop* bus delegates to a backend that
+      # cannot start on this browser's private display.
+      if a11y.owned?
+        write_profile_prefs(profile_dir,
+          launch_preferences(marionette_port).merge({
+            "widget.use-xdg-desktop-portal.file-picker" => JSON::Any.new(1_i64),
+          }))
+      end
       arguments = [
         "--no-remote",
         "-profile", profile_dir,
@@ -199,7 +210,10 @@ module Tawb
       # terminal closing both spare a browser somebody may be reading, and so
       # close can take the browser's whole group down with the wrapper that
       # started it. See Detach.
-      spawned = Detach.spawn(command, arguments, path, env: a11y.env)
+      # GTK only asks the portal when it is told to. On a bus this program
+      # made, the portal is this program, so the ask is the point.
+      browser_env = a11y.owned? ? a11y.env.merge({"GTK_USE_PORTAL" => "1"}) : a11y.env
+      spawned = Detach.spawn(command, arguments, path, env: browser_env)
       process = spawned.process
       grouped = spawned.grouped
       deadline = Time.instant + timeout_ms.milliseconds

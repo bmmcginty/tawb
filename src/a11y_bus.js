@@ -32,6 +32,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { connect } = require('./dbus');
+const { serveFileChooser, PORTAL_NAME } = require('./portal');
 
 const A11Y_NAME = 'org.a11y.Bus';
 const A11Y_PATH = '/org/a11y/bus';
@@ -320,6 +321,41 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
   serveAccessibilityBus(session, sessionAddress);
   log('a11y.bus.served', { address: sessionAddress, ownSession: !!daemon });
   let released = false;
+  let portal = null;
+  let portalPromise = null;
+
+  // A file chooser for a browser that has nobody else to ask.
+  //
+  // Both engines delegate the chooser to `org.freedesktop.portal.Desktop`, and
+  // on a bus this program made there is no portal on it. Answering that name is
+  // only safe where the bus is this program's: on a desktop the real portal
+  // owns it, and taking it would intercept every other application's file
+  // choosers too.
+  //
+  // The name is claimed here rather than when the reader is ready, because
+  // Chromium asks the bus once, at startup, whether a portal exists and never
+  // asks again. A name claimed after that answer leaves it with no file dialog
+  // for the whole session.
+  if (daemon) {
+    portalPromise = (async () => {
+      let claimed;
+      try {
+        // Do not queue behind a portal that appears later: this is a bus with
+        // no services on it, and a name that is somehow taken is not ours.
+        claimed = await session.requestName(PORTAL_NAME, 4);
+      } catch (err) {
+        log('portal.unavailable', { error: String(err.message || err).slice(0, 120) });
+        return null;
+      }
+      if (claimed !== NAME_PRIMARY_OWNER) {
+        log('portal.busy', {});
+        return null;
+      }
+      portal = serveFileChooser(session, { log });
+      log('portal.served', { address: sessionAddress, version: portal.version });
+      return portal;
+    })();
+  }
   return {
     available: true,
     address: sessionAddress,
@@ -327,9 +363,18 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
     reason: null,
     owned: !!daemon,
     pid: daemon ? daemon.pid : null,
+    // Tell the chooser who is reading. Null on a desktop, where the machine's
+    // own portal answered the name before this program was started.
+    servePortal: async (options = {}) => {
+      if (!portalPromise) return null;
+      const service = await portalPromise;
+      if (service && options.ask) service.setAsk(options.ask);
+      return service;
+    },
     close: async () => {
       if (released) return;
       released = true;
+      if (portal) portal.stop();
       await stop(session);
     },
     // A kept browser still has DBUS_SESSION_BUS_ADDRESS and
@@ -340,6 +385,9 @@ async function openAccessibilityBus({ log = () => {} } = {}) {
     leaveRunning: async () => {
       if (released) return;
       released = true;
+      // The prompt is this reader's keyboard, so a kept browser loses its
+      // chooser with the reader that was answering it.
+      if (portal) portal.stop();
       session.close();
       if (daemon) {
         if (daemon.stdout && daemon.stdout.unref) daemon.stdout.unref();

@@ -309,6 +309,22 @@ module Tawb
         end
         binding.native_watch = native
 
+        # A file chooser the browser asks the desktop for. On a desktop the
+        # machine's own portal answers and this is nil; on a bus this program
+        # made there is nobody to ask, so the question comes here instead —
+        # where the answer is a path typed on the terminal rather than a
+        # chooser driven through somebody else's widgets.
+        if service = opened.a11y.try(&.claim_portal(logger))
+          service.ask = ->(ask : Portal::Ask) {
+            paths = ReaderKeys.ask_for_path(terminal, state, tabs.current_page, keyboard, ask)
+            # The browser asked while the reader was reading a page, so
+            # whatever the answer, the screen has to go back to being the page.
+            Reader.render(terminal, state, tabs.current_page.url, true) rescue nil
+            paths
+          }
+          binding.portal = service
+        end
+
         # A window that changed shape: the lines were wrapped to the old
         # width and the rows counted to the old height, so neither describes
         # what is on screen now. The wizard and the options screen draw their

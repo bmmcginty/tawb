@@ -1,3 +1,4 @@
+require "./portal"
 require "json"
 require "./reader"
 require "./edit"
@@ -608,10 +609,10 @@ module Tawb
       else
         Reader.refresh(state, page, false, anchor, previous_texts)
       end
-      # The native watch runs independently of the page refresh. If it found a
-      # chooser while that refresh was in flight, the terminal now belongs to
-      # the dialog rather than to this completed page action.
-      return false if state.mode == "dialog"
+      # A question can arrive while the refresh is in flight. When it does,
+      # the terminal belongs to the question rather than to this completed
+      # page action.
+      return false if prompting?(state)
 
       # A handle belongs to the old document after navigation and cannot be a
       # destination in the new one. Disposal is still owed even though it
@@ -673,6 +674,16 @@ module Tawb
       end
       "Attached #{list.size} files to \"#{asking}\": " +
         list.map { |file| file.as_h["name"]?.try(&.as_s?) || "" }.join(", ")
+    end
+
+    # A prompt of this program's own that is holding the terminal. A question
+    # can be raised from inside an action — a portal chooser, a password
+    # challenge, a path — and when one is up the action's own reporting must
+    # not repaint the page over it or write its status on top of the question.
+    PROMPT_MODES = Set{"dialog", "line", "auth", "files", "confirm", "find"}
+
+    def self.prompting?(state : Reader::State) : Bool
+      PROMPT_MODES.includes?(state.mode)
     end
 
     def self.activate_current(output : Screen::Output, state : Reader::State,
@@ -780,10 +791,10 @@ module Tawb
           raise err
         end
         focused = focus_watch ? (state.core.activation_focus(focus_watch) rescue nil) : nil
-        # The native watch can put the chooser on the terminal before this
-        # action's bookkeeping resumes. Do not repaint the page or overwrite
-        # the chooser's status while its handler owns the keyboard.
-        return if state.mode == "dialog"
+        # A question can arrive while the action is still finishing: a chooser
+        # a portal asked for, a native dialog, a path. Do not repaint the page
+        # or overwrite the question while its handler owns the keyboard.
+        return if prompting?(state)
         done_status = done.try(&.as_h?).try(&.["status"]?).try(&.as_s?)
         state.status_msg = done_status && !done_status.empty? ? done_status : "Activated: #{name}"
         # If this control says it opens something, follow it: the thing it
@@ -2500,6 +2511,111 @@ module Tawb
       end
     end
 
+    # The question a desktop portal would have drawn.
+    #
+    # Both browsers ask `org.freedesktop.portal.FileChooser` for a file or
+    # folder rather than drawing one. On a desktop the machine's own portal
+    # answers; on a bus this program made, the request arrives here and the
+    # reader types a path — the same prompt the file input already uses.
+    #
+    # What is returned is a path, and the browser does everything else:
+    # cookies, proxy, filename rules and download history all stay its business.
+    def self.ask_for_path(output : Screen::Output, state : Reader::State,
+                          page : Reader::PageEnv, keyboard : Keyboard?,
+                          ask : Portal::Ask) : Array(String)?
+      wanted_directory = ask.directory
+      initial = if !ask.name.empty? && !ask.initial.empty?
+                  File.join(ask.initial, ask.name)
+                elsif !ask.name.empty?
+                  ask.name
+                else
+                  ask.initial
+                end
+      label = wanted_directory ? "Folder" : (ask.saving ? "Save as" : "File")
+      hint = wanted_directory ?
+        "Choose a folder — Enter: use it  Esc: cancel." :
+        "Choose a file — Enter: use it  Esc: cancel."
+      answer = ask_line(output, state, page, keyboard, label, initial, hint)
+      if answer.nil?
+        Reader.set_status(output, state, page.url, "Nothing was chosen.")
+        return nil
+      end
+      chosen = expand_path(answer)
+      if chosen.empty?
+        Reader.set_status(output, state, page.url, "Nothing was chosen.")
+        return nil
+      end
+      directory = File.directory?(chosen)
+      if wanted_directory
+        unless directory
+          Reader.set_status(output, state, page.url, "#{chosen} is not a folder.")
+          return nil
+        end
+        Reader.set_status(output, state, page.url, "Chose #{chosen}.")
+        return [chosen]
+      end
+      # A name being saved does not have to exist yet, but the folder it is
+      # being saved into does — and the browser would fail later, silently, if
+      # this were allowed through.
+      if directory
+        Reader.set_status(output, state, page.url,
+          "#{chosen} is a folder; name a file inside it.")
+        return nil
+      end
+      unless File.directory?(File.dirname(chosen))
+        Reader.set_status(output, state, page.url,
+          "#{File.dirname(chosen)} is not a folder.")
+        return nil
+      end
+      Reader.set_status(output, state, page.url, "Chose #{chosen}.")
+      [chosen]
+    end
+
+    # One line typed for a prompt that has no other state to keep. Answers with
+    # the text, or nil when the reader declined.
+    private def self.ask_line(output : Screen::Output, state : Reader::State,
+                              page : Reader::PageEnv, keyboard : Keyboard?,
+                              label : String, initial : String,
+                              hint : String) : String?
+      return nil unless keyboard
+      previous_mode = state.mode
+      state.mode = "line"
+      state.line_prompt = Reader::LinePrompt.new(label, Reader::Buffer.new(initial, initial.size))
+      token = keyboard.claim
+      Reader.draw_hint(output, state, true)
+      Reader.set_status(output, state, page.url, hint)
+      Reader.draw_line_prompt(output, state)
+      begin
+        loop do
+          key = keyboard.next_key(token)
+          return nil if key.is_a?(Input::Eof)
+          chunk = key.as(String)
+          state.core.mark_input
+          return nil if key_is(chunk, "Escape", state)
+          return state.line_prompt.not_nil!.buffer.text if chunk == "\r" || chunk == "\n"
+          buffer = state.line_prompt.not_nil!.buffer
+          if editing = Edit.edit_action(chunk, keymap_for(state))
+            edited = Edit::Buffer.new(buffer.text, buffer.caret)
+            Edit.apply_buffer_edit(edited, editing)
+            buffer.text = edited.text
+            buffer.caret = edited.caret
+          elsif key_is(chunk, "Ctrl+L", state)
+            buffer.text = ""
+            buffer.caret = 0
+          elsif !chunk.starts_with?(ESC) && chunk >= " "
+            buffer.text = buffer.text[0, buffer.caret] + chunk + buffer.text[buffer.caret..]
+            buffer.caret += chunk.size
+          end
+          Reader.draw_line_prompt(output, state)
+        end
+      ensure
+        keyboard.release(token)
+        state.line_prompt = nil
+        state.mode = previous_mode
+        Reader.draw_hint(output, state, true)
+      end
+    end
+
     def self.bookmark_page(output : Screen::Output, state : Reader::State,
                            page : Reader::PageEnv, keyboard : Keyboard?) : Nil
       provider = state.browser_library
@@ -3528,7 +3644,7 @@ module Tawb
         result = state.core.download_link(item.not_nil!)
         # Save As is now the operation in progress; its answer, not the
         # Alt-click that opened it, determines whether anything was added.
-        return if state.mode == "dialog"
+        return if prompting?(state)
         unless result.as_h["ok"]?.try(&.as_bool?)
           reason = result.as_h["reason"]?.try(&.as_s?) || "could not be found"
           Reader.set_status(output, state, page.url,

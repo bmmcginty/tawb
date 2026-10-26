@@ -1579,6 +1579,72 @@ start, the chooser is a separate application and is watched separately (below).
 On a machine where it cannot, `chrome://settings/downloads` → `Change` produces
 no chooser at all, and no amount of accessibility reading will find one.
 
+### A chooser nobody drew: the portal this program answers
+
+On a bus this program made there is no portal on it, and both browsers ask
+`org.freedesktop.portal.FileChooser` rather than drawing a chooser. So the
+name is claimed there and answered from the terminal. It is a frontend rather
+than a backend: the callers only ever speak to
+`org.freedesktop.portal.Desktop`, and no backend is consulted.
+
+Three properties of the protocol are not this program's to choose:
+
+- the request path is built by the *client*, as
+  `/org/freedesktop/portal/desktop/request/<sender>/<handle_token>`, the sender
+  having lost its leading colon and gained underscores for dots. The client
+  subscribes to `Response` there *before* calling. A different path is a signal
+  nobody is listening for, which from outside is a chooser that never appears;
+- the call returns that path immediately and the answer arrives later as
+  `Response(u, a{sv})` carrying `uris`, because a person choosing a file takes
+  longer than a method call should;
+- cancellation is response code 1. Escape has to send it, or the browser waits
+  for ever.
+
+The name is claimed **while the bus is being made**, not when the reader is
+ready, because Chromium asks the bus once at startup whether a portal exists
+and never asks again — a name claimed after that answer leaves it with no file
+dialog for the whole session. It also registers itself through
+`org.freedesktop.host.portal.Registry`, and a portal that answers "unknown
+method" there is one Chromium concludes is not there at all. Both were found by
+watching a private bus rather than by reading the specification.
+
+What is implemented is `FileChooser` and the request object it answers with. A
+directory request becomes the folder prompt, a save becomes the file prompt
+seeded from `current_name` and `current_folder`, and what goes back is a
+`file://` URI — percent-encoded, because a name with a space in it is the
+ordinary case and an unescaped space is a name the browser cannot open. The
+browser does the write: cookies, proxy, filename rules and download history all
+stay its business. Everything else on the portal answers "unknown method",
+which is what a caller gets on a bus with no portal on it at all: Chromium
+reads `org.freedesktop.portal.Settings` for the colour scheme, does not get it,
+and falls back to the toolkit's own answer.
+
+Verified end to end, both engines, with `TAWB_A11Y_BUS=private`: Firefox's
+`Browse...` on `about:preferences#downloads` wrote
+`browser.download.dir = "/tmp/tawb-dl-target"` into its profile, and Chromium's
+`Change` on `chrome://settings/downloads` wrote
+`download.default_directory = "/tmp/tawb-dl-chrome"`.
+
+Two consequences worth stating. On such a bus Chromium has no `Settings`,
+`NetworkMonitor`, `Inhibit` or `OpenURI`, and screen sharing, camera and
+microphone through the portal are unavailable — which is why this is the
+deterministic/headless mode and not the default. And a kept browser
+(`--keep-browser`) loses its chooser with the reader that was answering it,
+because the prompt is that reader's keyboard.
+
+**Flatpak.** A Flatpak browser does not connect to the host bus: `flatpak run`
+starts an `xdg-dbus-proxy` for the sandbox, so on the host bus the caller is the
+proxy rather than the browser, and the sandbox's session bus address is chosen
+by flatpak rather than inherited. `flatpak run` does read
+`DBUS_SESSION_BUS_ADDRESS` from its own environment, which is the environment
+this program passes the browser process, so a private bus reaches the proxy —
+but the proxy has its own allowlist and the app then sees only the bus this
+program made, losing the desktop's `Settings`, `Documents`, `OpenURI` and
+notifications with it. Flatpak remains the case where the portal has to be the
+machine's own, which means either the desktop's GTK backend on a real display
+or a backend of this program's registered with the real frontend. Neither is
+implemented.
+
 ### A chooser the browser did not draw
 
 A browser that delegated the chooser to a portal has drawn nothing: the chooser

@@ -1294,6 +1294,14 @@ async function openFirefox({
       return nativeWatch;
     },
 
+    // The file chooser this browser asks the desktop for, answered here when
+    // there is no desktop to answer it. Null is the ordinary answer on a real
+    // desktop: the machine's own portal owns that name and is left to it.
+    async servePortal(options) {
+      if (!a11y || typeof a11y.servePortal !== 'function') return null;
+      return a11y.servePortal(options).catch(() => null);
+    },
+
     // The browser's own bookmarks, history and downloads.
     //
     // BiDi does not answer for these and no content page can: Places lives in

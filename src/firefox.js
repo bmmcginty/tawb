@@ -1107,7 +1107,16 @@ async function launchFirefox({
   const port = await freePort();
   const marionettePort = await freePort();
   writeProfilePrefs(profileDir, {
-    ...MEDIA_PREFS, ...PASSWORD_PREFS, ...DOWNLOAD_PREFS, 'marionette.port': marionettePort,
+    ...MEDIA_PREFS,
+    ...PASSWORD_PREFS,
+    ...DOWNLOAD_PREFS,
+    // On a bus this program made there is no desktop portal, and this
+    // program answers the portal's own file chooser. So the file picker is
+    // asked to go there after all — the opposite of the managed value, which
+    // exists because a portal on a *desktop* bus delegates to a backend that
+    // cannot start on this browser's private display.
+    ...(a11y.owned ? { 'widget.use-xdg-desktop-portal.file-picker': 1 } : {}),
+    'marionette.port': marionettePort,
   });
 
   const args = [
@@ -1137,7 +1146,13 @@ async function launchFirefox({
     detached: true,
     // Only ever an addition: the bus this session started, for a machine that
     // had none of its own.
-    env: { ...process.env, ...a11y.env },
+    env: {
+      ...process.env,
+      ...a11y.env,
+      // GTK only asks the portal when it is told to. On a bus this program
+      // made, the portal is this program, so the ask is the point.
+      ...(a11y.owned ? { GTK_USE_PORTAL: '1' } : {}),
+    },
   });
   const startup = watchChildStartup(child);
   child.unref();

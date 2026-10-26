@@ -2839,10 +2839,10 @@ async function activateCurrent(state, page) {
     focused = focusWatch
       ? await state.core.activationFocus(focusWatch).catch(() => null)
       : null;
-    // A native watch can put the chooser on the terminal before this action's
-    // bookkeeping resumes. Do not repaint the page or overwrite the chooser's
-    // status while its handler owns the keyboard.
-    if (state.mode === 'dialog') return;
+    // A question can arrive while the action is still finishing: a chooser a
+    // portal asked for, a native dialog, a path. Do not repaint the page or
+    // overwrite the question while its handler owns the keyboard.
+    if (prompting(state)) return;
     state.statusMsg = done.status || `Activated: ${item.name}`;
     // If this control says it opens something, follow it: the thing it opens
     // is very often rendered at the end of the document rather than here.
@@ -2906,10 +2906,9 @@ async function reportAfterAction(
   await refresh(state, page, navigated
     ? { resetCursor: true }
     : { anchor, previousTexts });
-  // The native watch runs independently of the page refresh. If it found a
-  // chooser while that refresh was in flight, its terminal buffer and status
-  // now belong to the dialog, not to this completed page action.
-  if (state.mode === 'dialog') return false;
+  // A question can arrive while the refresh is in flight. When it does, the
+  // terminal belongs to the question, not to this completed page action.
+  if (prompting(state)) return false;
 
   // A handle belongs to the old document after navigation and cannot be a
   // destination in the new one. Disposal is still owed even though it cannot
@@ -3976,6 +3975,75 @@ async function askForLine(
 }
 
 // ---------------------------------------------------------------------------
+// The file chooser a desktop portal would have drawn
+//
+// Both browsers ask `org.freedesktop.portal.FileChooser` for a file or folder
+// rather than drawing one. On a desktop the machine's own portal answers. On a
+// bus this program made for the browser there is nobody to ask, so the request
+// arrives here and the reader types a path — the same prompt the file input
+// already uses, which completes as far as it can without guessing.
+//
+// What is returned is a path, and the browser does everything else: cookies,
+// proxy, filename rules and download history all stay its business.
+// ---------------------------------------------------------------------------
+
+function askPortalPath(state, request) {
+  const wantedDirectory = !!request.directory;
+  const initial = request.name && request.initial
+    ? path.join(request.initial, request.name)
+    : request.name || request.initial || '';
+  const label = wantedDirectory ? 'Folder' : (request.saving ? 'Save as' : 'File');
+  const hint = wantedDirectory
+    ? 'Choose a folder — Enter: use it  Esc: cancel.'
+    : 'Choose a file — Enter: use it  Esc: cancel.';
+  const page = state.core.page;
+  // The browser asked while the reader was reading a page, so whatever the
+  // answer, the screen has to go back to being the page afterwards.
+  const settle = (note) => {
+    if (page) render(state, page, { force: true });
+    setStatus(state, note);
+  };
+  return askForLine(state, { label, initial, hint }).then((answer) => {
+    if (answer === null) {
+      settle('Nothing was chosen.');
+      return null;
+    }
+    const chosen = expandPath(answer);
+    if (!chosen) {
+      settle('Nothing was chosen.');
+      return null;
+    }
+    let stats = null;
+    try { stats = fs.statSync(chosen); } catch { stats = null; }
+    if (wantedDirectory) {
+      if (!stats || !stats.isDirectory()) {
+        settle(`${chosen} is not a folder.`);
+        return null;
+      }
+      settle(`Chose ${chosen}.`);
+      return [chosen];
+    }
+    // A name being saved does not have to exist yet, but the folder it is
+    // being saved into does — and the browser would fail later, silently,
+    // if this were allowed through.
+    if (stats && stats.isDirectory()) {
+      settle(`${chosen} is a folder; name a file inside it.`);
+      return null;
+    }
+    const parent = path.dirname(chosen);
+    let parentStats = null;
+    try { parentStats = fs.statSync(parent); } catch { parentStats = null; }
+    if (!parentStats || !parentStats.isDirectory()) {
+      settle(`${parent} is not a folder.`);
+      return null;
+    }
+    log('portal.path', { saving: !!request.saving, directory: wantedDirectory });
+    settle(`Chose ${chosen}.`);
+    return [chosen];
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Downloading the link under the cursor
 //
 // This is a browser action, not a Node fetch. The browser already owns the
@@ -4006,7 +4074,7 @@ async function downloadCurrentLink(state, page) {
     const result = await state.core.downloadLink(item, page);
     // Save As is now the operation in progress; its answer, not the Alt-click
     // that opened it, determines whether anything was added to downloads.
-    if (state.mode === 'dialog') return;
+    if (prompting(state)) return;
     if (!result.ok) {
       setStatus(state, `Could not download "${item.name}": ${result.reason}.`);
       return;
@@ -4140,6 +4208,16 @@ function attachedNote(files, asking) {
 // lines to move to and press — so the question can be read at whatever pace
 // reading takes, on a braille display or by ear, before anything is answered.
 // ---------------------------------------------------------------------------
+
+// A prompt of this program's own that is holding the terminal. A question can
+// be raised from inside an action — a portal chooser, a password challenge, a
+// path — and when one is up the action's own reporting must not repaint the
+// page over it or write its status on top of the question.
+const PROMPT_MODES = new Set(['dialog', 'line', 'auth', 'files', 'confirm', 'find']);
+
+function prompting(state) {
+  return PROMPT_MODES.has(state.mode);
+}
 
 // Escape presses the button the dialog itself has focused, and says which one
 // that was. On Chrome's install prompt that is Cancel, not Add: the browser's
@@ -5150,6 +5228,7 @@ async function main() {
     // A question the browser asked that the reader stepped away from, kept so
     // Alt+Q can go back to it. See answerNativeDialog().
     pendingDialog: null,
+    portal: null,
     // The watch that notices one. Null where the browser cannot describe its
     // own windows, which is not an error — see driver.watchNativeDialogs.
     nativeWatch: null,
@@ -5240,6 +5319,15 @@ async function main() {
   // at all.
   state.nativeWatch = driver.watchNativeDialogs
     ? await driver.watchNativeDialogs((dialog) => answerNativeDialog(state, dialog)).catch(() => null)
+    : null;
+
+  // A file chooser the browser asks the desktop for. On a desktop the
+  // machine's own portal answers and this is null; on a bus this program made
+  // there is nobody to ask, so the question comes here instead — where the
+  // answer is a path typed on the terminal rather than a chooser driven
+  // through somebody else's widgets.
+  state.portal = driver.servePortal
+    ? await driver.servePortal({ ask: (request) => askPortalPath(state, request) }).catch(() => null)
     : null;
 
   // Claim whichever tab we ended up on, including one we just opened and one
@@ -5339,6 +5427,7 @@ async function main() {
   }
 
   clearInterval(counterTimer);
+  if (state.portal) state.portal.stop();
   if (state.nativeWatch) state.nativeWatch.stop();
   keyReader.close();
   flushCounters({ refreshes: state.core.live.refreshes });
