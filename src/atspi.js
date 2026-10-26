@@ -47,6 +47,8 @@ const ROOT_PATH = '/org/a11y/atspi/accessible/root';
 const ACCESSIBLE = 'org.a11y.atspi.Accessible';
 const ACTION = 'org.a11y.atspi.Action';
 const TEXT = 'org.a11y.atspi.Text';
+const EDITABLE_TEXT = 'org.a11y.atspi.EditableText';
+const TABLE_CELL = 'org.a11y.atspi.TableCell';
 const PROPERTIES = 'org.freedesktop.DBus.Properties';
 
 // A dialog is not deep, and a page behind it can be. Both limits are here to
@@ -83,6 +85,7 @@ const VALUE_ROLES = new Set(['entry', 'password text', 'text', 'spin button']);
 // the dialog itself would press.
 const STATE_CHECKED = 4;
 const STATE_FOCUSED = 12;
+const STATE_SHOWING = 23;
 const STATE_IS_DEFAULT = 39;
 
 // Roles that hold no words of their own and only group what is inside them.
@@ -163,6 +166,7 @@ class Accessibility {
     return {
       checked: bit(STATE_CHECKED),
       focused: bit(STATE_FOCUSED),
+      showing: bit(STATE_SHOWING),
       isDefault: bit(STATE_IS_DEFAULT),
     };
   }
@@ -173,12 +177,45 @@ class Accessibility {
     return typeof text === 'string' ? text : '';
   }
 
+  async interfacesOf(node, timeout) {
+    const [interfaces] = await this.#call(node, ACCESSIBLE, 'GetInterfaces', '', [], timeout);
+    return Array.isArray(interfaces) ? interfaces : [];
+  }
+
+  async actionsOf(node, timeout) {
+    const [count] = await this.#call(
+      node, PROPERTIES, 'Get', 'ss', [ACTION, 'NActions'], timeout,
+    );
+    const actions = [];
+    for (let index = 0; index < Number(count || 0); index += 1) {
+      const [name] = await this.#call(node, ACTION, 'GetName', 'i', [index], timeout);
+      if (name) actions.push({ actionName: name, actionIndex: index });
+    }
+    return actions;
+  }
+
+  async tableCellPosition(node, timeout) {
+    const [position] = await this.#call(
+      node, PROPERTIES, 'Get', 'ss', [TABLE_CELL, 'Position'], timeout,
+    );
+    return Array.isArray(position) ? position : null;
+  }
+
+  async setText(node, text) {
+    const [done] = await this.#call(node, EDITABLE_TEXT, 'SetTextContents', 's', [text]);
+    return done === true;
+  }
+
+  async doAction(node, index = 0) {
+    const [done] = await this.#call(node, ACTION, 'DoAction', 'i', [index]);
+    return done === true;
+  }
+
   // Press a control. `DoAction(0)` is its first action, which for a button is
   // the press; the same call is what a screen reader makes when its user
   // activates the control it is on.
   async press(node) {
-    const [done] = await this.#call(node, ACTION, 'DoAction', 'i', [0]);
-    return done === true;
+    return this.doAction(node, 0);
   }
 
   // Everything holding a connection to the accessibility bus, minus our own.
@@ -282,9 +319,10 @@ class Accessibility {
     const buttons = [];
     const toggles = [];
     const fields = [];
+    const actions = [];
     let visited = 0;
 
-    const walk = async (current, depth, seen) => {
+    const walk = async (current, depth, seen, inheritedName = '') => {
       if (visited >= maxNodes) return;
       visited += 1;
       const name = String(current.name || '').trim();
@@ -292,7 +330,33 @@ class Accessibility {
       else if (TOGGLE_ROLES.has(current.role) && name) toggles.push({ ...current, name });
       else if (VALUE_ROLES.has(current.role)) {
         const value = await this.valueOf(current).catch(() => '');
-        if (name || value) fields.push({ ...current, name, value });
+        const interfaces = await this.interfacesOf(current).catch(() => []);
+        const editable = interfaces.includes(EDITABLE_TEXT);
+        const states = editable ? await this.statesOf(current).catch(() => null) : null;
+        // A GTK path bar keeps several location widgets stacked and shows one.
+        // The hidden ones have no name, no text and are neither focused nor
+        // showing; the visible one is focused the moment the chooser switches
+        // to typing a location. Offering the hidden ones would put three
+        // identical blank lines in front of the reader.
+        const visible = !editable || !states
+          || states.showing || states.focused || !!value || !!name;
+        const contextualName = String(inheritedName || '')
+          .replace(/\s+(?:layer|stack|revealer)$/i, '');
+        const fieldName = name || contextualName;
+        if (visible && (name || value || editable)) {
+          fields.push({ ...current, name: fieldName, value, editable });
+        }
+      } else if (current.role === 'file chooser') {
+        const offered = await this.actionsOf(current).catch(() => []);
+        const show = offered.find((action) => action.actionName === 'show_location');
+        if (show) actions.push({ ...current, name: 'Enter Location', ...show });
+      } else if (current.role === 'table cell' && name) {
+        const position = await this.tableCellPosition(current).catch(() => null);
+        if (position && Number(position[1]) === 0) {
+          const offered = await this.actionsOf(current).catch(() => []);
+          const activate = offered.find((action) => action.actionName === 'activate');
+          if (activate) actions.push({ ...current, name, ...activate });
+        }
       // A line already said by something this is inside of. A views dialog
       // nests a panel whose name is everything below it, so its children
       // repeat it whole or in pieces — the sentence about where passwords are
@@ -302,6 +366,7 @@ class Accessibility {
         lines.push(name);
       }
       const nowSeen = name ? new Set([...seen, name]) : seen;
+      const childContext = name || inheritedName;
       if (depth >= maxDepth) return;
       let children;
       try {
@@ -316,7 +381,7 @@ class Accessibility {
         } catch {
           continue;
         }
-        await walk(described, depth + 1, nowSeen);
+        await walk(described, depth + 1, nowSeen, childContext);
       }
     };
 
@@ -334,7 +399,8 @@ class Accessibility {
     // a list item that answers with the same name as the check box inside it,
     // which would otherwise be read out once as prose and once as a control.
     const controlNames = new Set(
-      [...buttons, ...toggles, ...fields].map((control) => control.name).filter(Boolean),
+      [...buttons, ...toggles, ...fields, ...actions]
+        .map((control) => control.name).filter(Boolean),
     );
     return {
       role: root.role,
@@ -343,6 +409,7 @@ class Accessibility {
       buttons,
       toggles,
       fields,
+      actions,
       truncated: visited >= maxNodes,
     };
   }
@@ -377,4 +444,5 @@ async function openAccessibility({
 
 module.exports = {
   openAccessibility, Accessibility, processGroupOf, nodeOf, BUTTON_ROLES, TOGGLE_ROLES,
+  EDITABLE_TEXT, TABLE_CELL,
 };

@@ -1886,6 +1886,8 @@ function readerImplementations(index, keysModule) {
             value = {
               pressed: dialog.pressed,
               toggled: dialog.toggled,
+              activated: dialog.activated,
+              entered: dialog.entered,
               pending: !!state.pendingDialog,
             };
           } else if (action.op === 'refresh') {
@@ -2191,6 +2193,8 @@ function scriptedDialog(payload) {
   );
   const pressed = [];
   const toggled = [];
+  const activated = [];
+  const entered = [];
   const refusedPresses = new Set(payload.pressRefuses ?? []);
   const refusedToggles = new Set(payload.toggleRefuses ?? []);
   let closed = false;
@@ -2198,6 +2202,8 @@ function scriptedDialog(payload) {
     const dialog = {
       pressed,
       toggled,
+      activated,
+      entered,
       role: shape.role ?? 'alert',
       title: shape.title ?? '',
       lines: shape.lines ?? [],
@@ -2211,8 +2217,9 @@ function scriptedDialog(payload) {
         checked: checked.get(toggle.name) === true,
       })),
       fields: (shape.fields ?? []).map((field) => ({
-        name: field.name ?? '', value: field.value ?? '',
+        name: field.name ?? '', value: field.value ?? '', editable: field.editable === true,
       })),
+      actions: (shape.actions ?? []).map((action) => ({ name: action.name })),
       async press(button) {
         if (refusedPresses.has(button.name)) throw new Error('the browser refused the press');
         pressed.push(button.name);
@@ -2227,6 +2234,16 @@ function scriptedDialog(payload) {
         toggled.push(control.name);
         checked.set(control.name, !(checked.get(control.name) === true));
         return checked.get(control.name);
+      },
+      async activate(action) {
+        activated.push(action.name);
+        closed = payload.staysOpenAfterAction !== true;
+        return true;
+      },
+      async enterField(field, text) {
+        entered.push({ name: field.name, text });
+        closed = payload.staysOpenAfterField !== true;
+        return true;
       },
       async reread() {
         if (payload.rereadFails === true) throw new Error('the dialog cannot be read again');
@@ -2290,6 +2307,7 @@ function nativeRequestShape(request) {
     buttons: request.buttons.map((button) => button.name),
     toggles: request.toggles.map((toggle) => toggle.name),
     fields: request.fields.map((field) => `${field.name}: ${field.value}`),
+    actions: (request.actions || []).map((action) => action.name),
     defaultButton: request.defaultButton ? request.defaultButton.name : null,
   };
 }

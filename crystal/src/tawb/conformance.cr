@@ -2166,10 +2166,14 @@ module Tawb
 
       getter pressed : Array(String)
       getter toggled : Array(String)
+      getter activated : Array(String)
+      getter entered : Array(Array(String))
 
       def initialize(@payload : Hash(String, JSON::Any))
         @pressed = [] of String
         @toggled = [] of String
+        @activated = [] of String
+        @entered = [] of Array(String)
         @checked = {} of String => Bool
         @closed = false
         (@payload["toggles"]?.try(&.as_a?) || [] of JSON::Any).each do |raw|
@@ -2212,8 +2216,29 @@ module Tawb
         (@payload["fields"]?.try(&.as_a?) || [] of JSON::Any).map do |raw|
           field = raw.as_h
           Reader::DialogField.new(field["name"]?.try(&.as_s?) || "",
-            field["value"]?.try(&.as_s?) || "")
+            field["value"]?.try(&.as_s?) || "",
+            field["editable"]?.try(&.as_bool?) || false)
         end
+      end
+
+      def actions : Array(Reader::DialogAction)
+        (@payload["actions"]?.try(&.as_a?) || [] of JSON::Any).map do |raw|
+          Reader::DialogAction.new(raw.as_h["name"].as_s)
+        end
+      end
+
+      def activate(index : Int32) : Bool
+        action = actions[index]? || raise ArgumentError.new("no action at #{index}")
+        @activated << action.name
+        @closed = !(@payload["staysOpenAfterAction"]?.try(&.as_bool?) || false)
+        true
+      end
+
+      def enter_field(index : Int32, text : String) : Bool
+        field = fields[index]? || raise ArgumentError.new("no field at #{index}")
+        @entered << [field.name, text]
+        @closed = !(@payload["staysOpenAfterField"]?.try(&.as_bool?) || false)
+        true
       end
 
       def press(index : Int32) : Bool
@@ -2257,6 +2282,8 @@ module Tawb
       protected def inherit(other : ScriptedDialog) : Nil
         @pressed = other.pressed
         @toggled = other.toggled
+        @activated = other.activated
+        @entered = other.entered
       end
     end
 
@@ -2545,8 +2572,12 @@ module Tawb
           ReaderKeys.answer_native_dialog(output, state, page.not_nil!, keyboard, dialog)
         end
         return JSON::Any.new({
-          "pressed" => JSON::Any.new(dialog.pressed.map { |name| JSON::Any.new(name) }),
-          "toggled" => JSON::Any.new(dialog.toggled.map { |name| JSON::Any.new(name) }),
+          "pressed"   => JSON::Any.new(dialog.pressed.map { |name| JSON::Any.new(name) }),
+          "toggled"   => JSON::Any.new(dialog.toggled.map { |name| JSON::Any.new(name) }),
+          "activated" => JSON::Any.new(dialog.activated.map { |name| JSON::Any.new(name) }),
+          "entered"   => JSON::Any.new(dialog.entered.map do |pair|
+            JSON::Any.new({"name" => JSON::Any.new(pair[0]?), "text" => JSON::Any.new(pair[1]?)})
+          end),
           "pending" => JSON::Any.new(!state.pending_dialog.nil?),
         })
       when "browseKey"
@@ -4949,6 +4980,9 @@ module Tawb
         "toggles"       => JSON::Any.new(request.toggles.map { |each| JSON::Any.new(each.name) }),
         "fields"        => JSON::Any.new(request.fields.map do |each|
           JSON::Any.new("#{each.name}: #{each.value}")
+        end),
+        "actions"       => JSON::Any.new(request.actions.map do |each|
+          JSON::Any.new(each.name)
         end),
         "defaultButton" => default ? JSON::Any.new(default.name) : JSON::Any.new(nil),
       })

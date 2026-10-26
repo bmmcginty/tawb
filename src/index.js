@@ -3930,14 +3930,17 @@ function drawLinePrompt(state) {
 // Answers with the line, or null when the reader pressed Escape. An empty
 // line is an answer in its own right where the caller wants one; callers that
 // do not are the ones that check.
-async function askForLine(state, { label, initial = '', hint = '' } = {}) {
+async function askForLine(
+  state, { label, initial = '', hint = '' } = {}, existingToken = null,
+) {
   if (!state.keyReader) return null;
   const previousMode = state.mode;
   const previousStatus = state.statusMsg;
   state.mode = 'line';
   state.line = { label, buffer: { text: initial, caret: initial.length } };
 
-  const token = state.keyReader.claim();
+  const token = existingToken || state.keyReader.claim();
+  const ownsToken = !existingToken;
   drawHint(state, { force: true });
   if (hint) setStatus(state, hint);
   drawLinePrompt(state);
@@ -3964,7 +3967,7 @@ async function askForLine(state, { label, initial = '', hint = '' } = {}) {
       drawLinePrompt(state);
     }
   } finally {
-    state.keyReader.release(token);
+    if (ownsToken) state.keyReader.release(token);
     state.mode = previousMode;
     state.line = null;
     state.statusMsg = previousStatus;
@@ -4150,7 +4153,9 @@ function toggleText(toggle) {
 }
 
 function dialogBlocks(dialog) {
-  const said = dialog.lines.map((text) => ({ text, item: null, button: null, toggle: null }));
+  const said = dialog.lines.map((text) => ({
+    text, item: null, button: null, toggle: null, field: null, action: null,
+  }));
   // What the dialog is about, when that lives in a control rather than in its
   // words — the username and password a "Save password?" prompt is offering
   // to keep. The browser masks the password itself, so what is shown here is
@@ -4159,9 +4164,12 @@ function dialogBlocks(dialog) {
     .filter((field) => field.name || field.value)
     .map((field) => ({
       text: field.name && field.value ? `${field.name}: ${field.value}` : (field.value || field.name),
-      item: null,
+      item: dialog.role === 'file chooser' && field.editable
+        ? { role: 'textbox', name: field.name || 'Location' } : null,
       button: null,
       toggle: null,
+      field: dialog.role === 'file chooser' && field.editable ? field : null,
+      action: null,
     }));
   // Options first, because they change what answering means: Firefox's
   // doorhanger offers "Allow extension to run in private windows", and that
@@ -4171,22 +4179,41 @@ function dialogBlocks(dialog) {
     item: { role: 'checkbox', name: toggle.name },
     button: null,
     toggle,
+    field: null,
+    action: null,
   }));
   const choices = dialog.buttons.map((button) => ({
     text: button.name,
     item: { role: 'button', name: button.name },
     button,
     toggle: null,
+    field: null,
+    action: null,
   }));
-  const gap = { text: '', item: null, button: null, toggle: null };
-  if (!choices.length && !options.length) {
+  const actions = (dialog.actions || []).map((action) => ({
+    text: action.name,
+    item: { role: 'button', name: action.name },
+    button: null,
+    toggle: null,
+    field: null,
+    action,
+  }));
+  const gap = {
+    text: '', item: null, button: null, toggle: null, field: null, action: null,
+  };
+  if (!choices.length && !options.length && !actions.length && !held.some((block) => block.field)) {
     return [...said, ...held, {
-      text: '(the browser offers nothing to press)', item: null, button: null, toggle: null,
+      text: '(the browser offers nothing to press)',
+      item: null, button: null, toggle: null, field: null, action: null,
     }];
   }
   return [
     ...said, ...held, gap,
-    ...options, ...(options.length && choices.length ? [gap] : []), ...choices,
+    ...options,
+    ...(options.length && (actions.length || choices.length) ? [gap] : []),
+    ...actions,
+    ...(actions.length && choices.length ? [gap] : []),
+    ...choices,
   ];
 }
 
@@ -4255,6 +4282,17 @@ async function answerNativeDialog(state, dialog) {
     log('native.answered', { button: button.name, how, answered });
     return answered;
   };
+  const keepOpen = async (note) => {
+    const again = await dialog.reread().catch(() => null);
+    dialog = again || dialog;
+    const at = state.cursor;
+    state.dialog = { ...state.dialog, ...dialog, blocks: dialogBlocks(dialog) };
+    state.title = dialog.title || 'The browser is asking';
+    relayout(state);
+    state.cursor = Math.min(at, Math.max(state.lines.length - 1, 0));
+    render(state, page, { force: true });
+    setStatus(state, note);
+  };
 
   try {
     for (;;) {
@@ -4285,6 +4323,44 @@ async function answerNativeDialog(state, dialog) {
 
       if (chunk === '\r' || chunk === '\n' || contextAction === 'accept') {
         const block = currentBlock(state);
+        if (block && block.field) {
+          const entered = await askForLine(state, {
+            label: block.field.name || 'Location',
+            initial: block.field.value || '',
+            hint: 'Enter a complete file or folder path; Ctrl+L empties it  Esc: cancel.',
+          }, token);
+          if (entered === null) {
+            render(state, page, { force: true });
+            setStatus(state, 'The path was not changed.');
+            continue;
+          }
+          let acted = false;
+          try { acted = await dialog.enterField(block.field, entered); } catch { acted = false; }
+          await new Promise((resolve) => setTimeout(resolve, PRESS_SETTLE_MS));
+          const open = await dialog.stillOpen().catch(() => false);
+          if (!open) {
+            closeNativeDialog(state, page, `Entered "${entered}".`);
+            return;
+          }
+          await keepOpen(acted
+            ? `Entered "${entered}"; the dialog is still open.`
+            : `The browser refused "${entered}".`);
+          continue;
+        }
+        if (block && block.action) {
+          let acted = false;
+          try { acted = await dialog.activate(block.action); } catch { acted = false; }
+          await new Promise((resolve) => setTimeout(resolve, PRESS_SETTLE_MS));
+          const open = await dialog.stillOpen().catch(() => false);
+          if (!open) {
+            closeNativeDialog(state, page, `Activated "${block.action.name}".`);
+            return;
+          }
+          await keepOpen(acted
+            ? `Activated "${block.action.name}"; the dialog is still open.`
+            : `Could not activate "${block.action.name}".`);
+          continue;
+        }
         // An option is ticked in place and the dialog stays up: it is part of
         // the question, not an answer to it.
         if (block && block.toggle) {
@@ -4316,17 +4392,7 @@ async function answerNativeDialog(state, dialog) {
         // Up Path, a breadcrumb, and Create Folder deliberately leave the
         // chooser open. Read its new state and keep the keyboard here instead
         // of dropping the reader back on the web page.
-        const again = await dialog.reread().catch(() => null);
-        dialog = again || dialog;
-        const at = state.cursor;
-        state.dialog = {
-          ...state.dialog, ...dialog, blocks: dialogBlocks(dialog),
-        };
-        state.title = dialog.title || 'The browser is asking';
-        relayout(state);
-        state.cursor = Math.min(at, Math.max(state.lines.length - 1, 0));
-        render(state, page, { force: true });
-        setStatus(state, `Pressed "${button.name}"; the dialog is still open.`);
+        await keepOpen(`Pressed "${button.name}"; the dialog is still open.`);
         continue;
       }
 

@@ -86,6 +86,19 @@ const SAVE_PASSWORD = {
   ],
 };
 
+// A GTK file chooser as the accessibility bus describes one: what it is
+// browsing, a location field that can be typed into, the widget's own
+// show-location action, and the two answers.
+const CHOOSER = {
+  role: 'file chooser',
+  title: 'Choose Download Folder',
+  lines: ['Places'],
+  buttons: [{ name: 'Cancel' }, { name: 'Open', focused: true, isDefault: true }],
+  toggles: [],
+  fields: [{ name: 'Location', value: '/home/reader', editable: true }],
+  actions: [{ name: 'Enter Location' }],
+};
+
 async function both(name, initial, actions, page = { url: PAGE, title: 'Chrome Web Store' }) {
   const out = [];
   for (const implementation of implementations) {
@@ -255,6 +268,61 @@ test('a press the browser did not act on leaves the question available', { skip 
     },
   ]);
   assert.deepEqual(result.results[0].value.pressed, ['Never']);
+  assert.equal(result.results[0].value.pending, true);
+});
+
+test('a chooser offers its location field and its own directory action', { skip }, async () => {
+  const result = await both('chooser blocks', state(), [
+    { op: 'dialogBlocks', dialog: CHOOSER },
+  ]);
+  // The location field is a line a reader can stand on, and the chooser's own
+  // show_location action is a line of its own rather than something a reader
+  // has to discover by pressing the right button in the right order.
+  assert.deepEqual(result.results[0].value.map((block) => block.text), [
+    'Places',
+    'Location: /home/reader',
+    '',
+    'Enter Location',
+    '',
+    'Cancel',
+    'Open',
+  ]);
+});
+
+test('a typed path goes into the chooser and keeps the reader there', { skip }, async () => {
+  const result = await both('typing a path into a chooser', state(), [
+    {
+      op: 'answerDialog',
+      dialog: { ...CHOOSER, staysOpenAfterField: true },
+      // Down onto the location field, Enter to edit it, the path typed, Enter
+      // to hand it to the chooser, then Escape without answering.
+      keys: [
+        DOWN, '\r', '\u000c',
+        '/', 'h', 'o', 'm', 'e', '/', 'r', 'e', 'a', 'd', 'e', 'r', '/', 'D',
+        'o', 'w', 'n', 'l', 'o', 'a', 'd', 's',
+        '\r', ESCAPE,
+      ],
+    },
+  ]);
+  assert.deepEqual(result.results[0].value.entered, [
+    { name: 'Location', text: '/home/reader/Downloads' },
+  ]);
+  // The chooser kept its claim: Escape was the chooser's Escape, not the
+  // page's, so the question is still pending.
+  assert.equal(result.results[0].value.pending, true);
+  assert.equal(result.state.mode, 'browse');
+});
+
+test('a chooser directory action is activated without leaving the chooser', { skip }, async () => {
+  const result = await both('activating a chooser action', state(), [
+    {
+      op: 'answerDialog',
+      dialog: { ...CHOOSER, staysOpenAfterAction: true },
+      // Down to the action, Enter to activate it, then Escape.
+      keys: [DOWN, DOWN, DOWN, '\r', ESCAPE],
+    },
+  ]);
+  assert.deepEqual(result.results[0].value.activated, ['Enter Location']);
   assert.equal(result.results[0].value.pending, true);
 });
 

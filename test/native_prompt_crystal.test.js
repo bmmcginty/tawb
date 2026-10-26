@@ -120,6 +120,7 @@ const INSTALL_READING = {
   buttons: ['Cancel', 'Add extension'],
   toggles: [],
   fields: [],
+  actions: [],
   defaultButton: 'Cancel',
 };
 
@@ -373,6 +374,77 @@ test('a portal file chooser is offered only after a browser-owned action expects
   assert.equal(outcome.results[5], 1);
   assert.equal(outcome.results[6].role, 'file chooser');
   assert.equal(outcome.results[6].title, 'Choose Download Folder');
+});
+
+// A GTK file chooser as the accessibility bus describes one. The location
+// field has no name of its own — the filler around it says "Location Layer" —
+// and the folder rows are table cells whose first action is `activate`. Both
+// are things a reader needs and neither is visible in the plain role/name
+// reading the dialog watch started with.
+function chooserTree() {
+  const tree = treeWith();
+  tree[`${BUS}|/window`].children = [[BUS, '/chooser']];
+  tree[`${BUS}|/chooser`] = {
+    role: 'file chooser',
+    name: 'Choose Download Folder',
+    interfaces: ['org.a11y.atspi.Action'],
+    properties: { 'org.a11y.atspi.Action.NActions': { signature: 'i', value: 1 } },
+    actions: ['show_location'],
+    children: [
+      [BUS, '/chooser/places'], [BUS, '/chooser/location-layer'],
+      [BUS, '/chooser/files'], [BUS, '/chooser/cancel'], [BUS, '/chooser/open'],
+    ],
+  };
+  tree[`${BUS}|/chooser/places`] = { role: 'list', name: 'Places', children: [] };
+  tree[`${BUS}|/chooser/location-layer`] = {
+    role: 'filler', name: 'Location Layer', children: [[BUS, '/chooser/location']],
+  };
+  tree[`${BUS}|/chooser/location`] = {
+    role: 'text',
+    name: '',
+    value: '/home/reader',
+    // Bit 23 is SHOWING: the field is the one on screen out of the chooser's
+    // several stacked location widgets.
+    state: [1 << 23, 0],
+    interfaces: ['org.a11y.atspi.EditableText', 'org.a11y.atspi.Text'],
+    properties: { 'org.a11y.atspi.Action.NActions': { signature: 'i', value: 1 } },
+    actions: ['activate'],
+    children: [],
+  };
+  tree[`${BUS}|/chooser/files`] = {
+    role: 'table', name: 'Files', children: [[BUS, '/chooser/folder-row']],
+  };
+  tree[`${BUS}|/chooser/folder-row`] = {
+    role: 'table cell',
+    name: 'Documents',
+    interfaces: ['org.a11y.atspi.Action', 'org.a11y.atspi.TableCell'],
+    properties: {
+      'org.a11y.atspi.Action.NActions': { signature: 'i', value: 1 },
+      'org.a11y.atspi.TableCell.Position': { signature: '(ii)', value: [0, 0] },
+    },
+    actions: ['activate'],
+    children: [],
+  };
+  tree[`${BUS}|/chooser/cancel`] = { role: 'push button', name: 'Cancel', children: [] };
+  tree[`${BUS}|/chooser/open`] = {
+    role: 'push button', name: 'Open', state: [1 << 12, 0], children: [],
+  };
+  return tree;
+}
+
+test('a chooser is read for its location field and the rows a reader can open', async () => {
+  const { outcome } = await compare('a file chooser with a location field', [
+    { type: 'arm', pid: 4242 },
+    setTree({ tree: chooserTree() }),
+    { type: 'await', count: 1 },
+    { type: 'dialog', index: 0 },
+  ]);
+  // The filler's name is what the unnamed text box is called, so a reader is
+  // told what the field is for rather than being handed a blank line.
+  assert.deepEqual(outcome.results[3].fields, ['Location: /home/reader']);
+  // The chooser's own show-location action and the folder rows are offered as
+  // things to press, not as prose about a chooser the reader cannot operate.
+  assert.deepEqual(outcome.results[3].actions, ['Enter Location', 'Documents']);
 });
 
 test('a panel with nothing to say and nothing to press is not a question', async () => {

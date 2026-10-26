@@ -530,7 +530,13 @@ module Tawb
       end
 
       def fields : Array(Reader::DialogField)
-        @request.fields.map { |field| Reader::DialogField.new(field.name, field.value) }
+        @request.fields.map do |field|
+          Reader::DialogField.new(field.name, field.value, field.editable)
+        end
+      end
+
+      def actions : Array(Reader::DialogAction)
+        @request.actions.map { |action| Reader::DialogAction.new(action.name) }
       end
 
       def press(index : Int32) : Bool
@@ -541,6 +547,16 @@ module Tawb
       def toggle(index : Int32) : Bool?
         control = @request.toggles[index]? || return nil
         @request.toggle(control)
+      end
+
+      def activate(index : Int32) : Bool
+        action = @request.actions[index]? || return false
+        @request.activate(action)
+      end
+
+      def enter_field(index : Int32, text : String) : Bool
+        field = @request.fields[index]? || return false
+        @request.enter_field(field, text)
       end
 
       def reread : Reader::DialogEnv?

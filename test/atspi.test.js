@@ -231,10 +231,10 @@ test('a connection that will not answer for a pid is passed over, not fatal', as
 test('AT-SPI state words are decoded by the bit AT-SPI defines', async () => {
   const a11y = new Accessibility(fakeBus());
   assert.deepEqual(await a11y.statesOf({ bus: ':1.1', path: '/dialog/cancel' }), {
-    checked: false, focused: true, isDefault: true,
+    checked: false, focused: true, showing: false, isDefault: true,
   });
   assert.deepEqual(await a11y.statesOf({ bus: ':1.1', path: '/dialog/add' }), {
-    checked: false, focused: false, isDefault: false,
+    checked: false, focused: false, showing: false, isDefault: false,
   });
 });
 

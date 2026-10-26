@@ -1529,6 +1529,71 @@ No thanks
 Save
 ```
 
+### The chooser a browser borrows
+
+A file or folder chooser is the same thing again, with one difference that
+matters: its buttons are not all answers. `Home`, `Up Path`, a breadcrumb and
+`Create Folder` navigate, and the chooser stays open afterwards. So a press
+that leaves the dialog up is not a refusal to be reported and walked away
+from — the chooser is read again and keeps the keyboard, and only a press that
+actually dismisses it returns the reader to the page.
+
+A chooser also offers more than buttons:
+
+- its **folder rows** are table cells whose first action is `activate`, so a
+  row a reader stands on can be opened rather than merely described. Only the
+  name column is offered; offering the size and date cells would put three
+  lines in front of the reader for every one file.
+- its **location field** is an `EditableText`. Activating it opens a line
+  prompt of this program's own, initialized with the path the chooser already
+  holds, and `Ctrl+L` empties it for a path typed from the root. Enter hands
+  the text to the chooser and presses the field's own `activate`; the reader is
+  told whether the chooser took it and stays where they are if it did not.
+- its **`show_location` action** is offered as a line of its own, because GTK
+  only reveals the location field once that action has been activated.
+
+The field has no name of its own — the filler around it is called
+`Location Layer` — so the name of the nearest named ancestor is what the field
+is called. A GTK path bar keeps several of these stacked and shows one, and
+the hidden ones are neither focused nor showing, which is how they are left
+out rather than put in front of the reader as blank lines.
+
+#### Which chooser a browser raises
+
+Firefox uses `GtkFileChooserNative`, and GTK delegates that to the desktop
+portal whenever the session bus has one. Under Xvfb it must not: the portal
+frontend takes the request (its `OpenFile` arrives with `directory=true` and
+the current folder, which is visible in `dbus-monitor`), its GTK backend cannot
+start on the browser's private display, and it answers "other error" without
+ever drawing anything. GTK does not fall back after that answer. So the
+launching profile manages `widget.use-xdg-desktop-portal.file-picker` and keeps
+file and folder choosers in Firefox's own GTK process, where they are readable —
+and that preference is specific to the file picker, so microphone, camera and
+screen sharing still go through the portal.
+
+Chromium is not the same case. This build contains only
+`select_file_dialog_linux_portal.cc`: there is no GTK chooser to fall back to,
+`GTK_USE_PORTAL=0` changes nothing, and the socket it opens is described by the
+portal protocol rather than by AT-SPI. On a desktop whose portal backend can
+start, the chooser is a separate application and is watched separately (below).
+On a machine where it cannot, `chrome://settings/downloads` → `Change` produces
+no chooser at all, and no amount of accessibility reading will find one.
+
+### A chooser the browser did not draw
+
+A browser that delegated the chooser to a portal has drawn nothing: the chooser
+belongs to `xdg-desktop-portal-gtk` (or gnome, or kde), a different
+application on the same accessibility bus. A watch rooted at the browser can
+never see it.
+
+So a bounded watch of the whole desktop is armed instead, and only around an
+action that can raise one: a button on an `about:` or `chrome:` page, or the
+explicit Alt-click download. It is armed rather than polled forever, and it
+takes an inventory first, so a chooser that was already open — somebody else's —
+is not claimed. Ten seconds is the budget. Portal prompts and the browser's own
+prompts share one terminal through a gate, so two questions cannot fight over
+it.
+
 A press is checked rather than trusted. The accessibility action answers "yes,
 pressed" whether or not anything happened, so after pressing, the dialog is
 looked for again: if it is still there, the reader is told the press did not

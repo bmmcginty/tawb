@@ -207,7 +207,8 @@ module Tawb
     # What a dialog is about where that lives in a control rather than in the
     # dialog's words: the username and the already-masked password a "Save
     # password?" prompt is offering to keep.
-    record DialogField, name : String, value : String
+    record DialogField, name : String, value : String, editable : Bool = false
+    record DialogAction, name : String
 
     # A question the browser drew for itself, as the key handlers see it.
     #
@@ -225,6 +226,7 @@ module Tawb
       abstract def buttons : Array(DialogControl)
       abstract def toggles : Array(DialogControl)
       abstract def fields : Array(DialogField)
+      abstract def actions : Array(DialogAction)
 
       # Press one of `buttons`, answering with whether the press went in.
       abstract def press(index : Int32) : Bool
@@ -232,6 +234,8 @@ module Tawb
       # Tick or untick one of `toggles`, answering with what the option is
       # now according to the browser, or nil when the browser would not say.
       abstract def toggle(index : Int32) : Bool?
+      abstract def activate(index : Int32) : Bool
+      abstract def enter_field(index : Int32, text : String) : Bool
 
       # The same question, read again, or nil when it cannot be read.
       abstract def reread : DialogEnv?

@@ -46,9 +46,11 @@ module Tawb
     # because the alternative was starting a daemon that is not needed.
     ROOT_PATH  = "/org/a11y/atspi/accessible/root"
     ACCESSIBLE = "org.a11y.atspi.Accessible"
-    ACTION     = "org.a11y.atspi.Action"
-    TEXT       = "org.a11y.atspi.Text"
-    PROPERTIES = "org.freedesktop.DBus.Properties"
+    ACTION        = "org.a11y.atspi.Action"
+    TEXT          = "org.a11y.atspi.Text"
+    EDITABLE_TEXT = "org.a11y.atspi.EditableText"
+    TABLE_CELL    = "org.a11y.atspi.TableCell"
+    PROPERTIES    = "org.freedesktop.DBus.Properties"
 
     # A dialog is not deep, and a page behind a dialog can be. Both limits are
     # here to keep a walk from turning into a tour of a document: what is being
@@ -84,6 +86,7 @@ module Tawb
     # the dialog: the button the dialog itself would press.
     STATE_CHECKED    =  4
     STATE_FOCUSED    = 12
+    STATE_SHOWING    = 23
     STATE_IS_DEFAULT = 39
 
     # Roles that hold no words of their own and only group what is inside them.
@@ -107,10 +110,16 @@ module Tawb
       property checked : Bool
       property focused : Bool
       property is_default : Bool
+      property showing : Bool
+      property editable : Bool
+      property action_name : String
+      property action_index : Int32
 
       def initialize(@bus : String, @path : String, @role : String, @name : String,
                      @value : String = "", @checked : Bool = false,
-                     @focused : Bool = false, @is_default : Bool = false)
+                     @focused : Bool = false, @is_default : Bool = false,
+                     @showing : Bool = false, @editable : Bool = false,
+                     @action_name : String = "", @action_index : Int32 = 0)
       end
 
       def node : Node
@@ -118,7 +127,7 @@ module Tawb
       end
     end
 
-    record States, checked : Bool, focused : Bool, is_default : Bool
+    record States, checked : Bool, focused : Bool, showing : Bool, is_default : Bool
 
     # Everything a dialog says, and everything a reader can answer the dialog
     # with.
@@ -129,6 +138,7 @@ module Tawb
       buttons : Array(Described),
       toggles : Array(Described),
       fields : Array(Described),
+      actions : Array(Described),
       truncated : Bool
 
     # Which process a pid belongs to the group of. The browser is not always a
@@ -222,6 +232,7 @@ module Tawb
         States.new(
           checked: state_bit(words, STATE_CHECKED),
           focused: state_bit(words, STATE_FOCUSED),
+          showing: state_bit(words, STATE_SHOWING),
           is_default: state_bit(words, STATE_IS_DEFAULT),
         )
       end
@@ -240,12 +251,65 @@ module Tawb
         text.is_a?(String) ? text : ""
       end
 
+      def interfaces_of(node : Node) : Array(String)
+        answered = call(node, ACCESSIBLE, "GetInterfaces")[0]?
+        return [] of String unless answered.is_a?(Array)
+        answered.compact_map(&.as?(String))
+      end
+
+      def actions_of(node : Node) : Array(NamedTuple(name: String, index: Int32))
+        count_value = call(node, PROPERTIES, "Get", "ss",
+          [ACTION.as(Dbus::Argument), "NActions".as(Dbus::Argument)])[0]?
+        count = case count_value
+                when Int32  then count_value
+                when Int64  then count_value.to_i32
+                when UInt32 then count_value.to_i32
+                when UInt64 then count_value.to_i32
+                else             0
+                end
+        actions = [] of NamedTuple(name: String, index: Int32)
+        count.times do |index|
+          name = call(node, ACTION, "GetName", "i",
+            [index.to_i64.as(Dbus::Argument)])[0]?
+          actions << {name: name, index: index} if name.is_a?(String) && !name.empty?
+        end
+        actions
+      end
+
+      def table_cell_position(node : Node) : Tuple(Int32, Int32)?
+        value = call(node, PROPERTIES, "Get", "ss",
+          [TABLE_CELL.as(Dbus::Argument), "Position".as(Dbus::Argument)])[0]?
+        return nil unless value.is_a?(Array)
+        row = value[0]?.try { |part| number_to_i32(part) }
+        column = value[1]?.try { |part| number_to_i32(part) }
+        row && column ? {row, column} : nil
+      end
+
+      private def number_to_i32(value : Dbus::Value) : Int32?
+        case value
+        when Int32  then value
+        when Int64  then value.to_i32
+        when UInt32 then value.to_i32
+        when UInt64 then value.to_i32
+        end
+      end
+
+      def set_text(node : Node, text : String) : Bool
+        done = call(node, EDITABLE_TEXT, "SetTextContents", "s",
+          [text.as(Dbus::Argument)])[0]?
+        done == true
+      end
+
+      def do_action(node : Node, index : Int32 = 0) : Bool
+        done = call(node, ACTION, "DoAction", "i", [index.to_i64.as(Dbus::Argument)])[0]?
+        done == true
+      end
+
       # Press a control. `DoAction(0)` is the control's first action, which for
       # a button is the press; the same call is what a screen reader makes when
       # the screen reader's user activates the control the user is on.
       def press(node : Node) : Bool
-        done = call(node, ACTION, "DoAction", "i", [0.to_i64.as(Dbus::Argument)])[0]?
-        done == true
+        do_action(node)
       end
 
       # Everything holding a connection to the accessibility bus, minus this
@@ -385,7 +449,7 @@ module Tawb
         # inside the list item, which would otherwise be read out once as prose
         # and once as a control.
         control_names = Set(String).new
-        (walk.buttons + walk.toggles + walk.fields).each do |control|
+        (walk.buttons + walk.toggles + walk.fields + walk.actions).each do |control|
           control_names << control.name unless control.name.empty?
         end
         Reading.new(
@@ -395,6 +459,7 @@ module Tawb
           buttons: walk.buttons,
           toggles: walk.toggles,
           fields: walk.fields,
+          actions: walk.actions,
           truncated: walk.visited >= max_nodes,
         )
       end
@@ -409,6 +474,7 @@ module Tawb
       getter buttons : Array(Described)
       getter toggles : Array(Described)
       getter fields : Array(Described)
+      getter actions : Array(Described)
       getter visited : Int32
 
       def initialize(@accessibility : Accessibility, @max_depth : Int32, @max_nodes : Int32)
@@ -416,10 +482,12 @@ module Tawb
         @buttons = [] of Described
         @toggles = [] of Described
         @fields = [] of Described
+        @actions = [] of Described
         @visited = 0
       end
 
-      def enter(current : Described, depth : Int32, seen : Set(String)) : Nil
+      def enter(current : Described, depth : Int32, seen : Set(String),
+                inherited_name : String = "") : Nil
         return if @visited >= @max_nodes
         @visited += 1
         name = current.name.strip
@@ -433,8 +501,36 @@ module Tawb
           rescue
             ""
           end
-          unless name.empty? && value.empty?
-            @fields << Described.new(current.bus, current.path, current.role, name, value)
+          interfaces = @accessibility.interfaces_of(current.node) rescue [] of String
+          editable = interfaces.includes?(EDITABLE_TEXT)
+          states = editable ? (@accessibility.states_of(current.node) rescue nil) : nil
+          contextual = inherited_name.gsub(/\s+(?:layer|stack|revealer)$/i, "")
+          field_name = name.empty? ? contextual : name
+          # A GTK path bar keeps several location widgets stacked and shows
+          # one. The hidden ones have no name, no text and are neither focused
+          # nor showing; the visible one is focused as soon as the chooser
+          # switches to typing a location.
+          visible = !editable || states.nil? ||
+                    states.not_nil!.showing || states.not_nil!.focused ||
+                    !value.empty? || !name.empty?
+          if visible && (!name.empty? || !value.empty? || editable)
+            @fields << Described.new(current.bus, current.path, current.role,
+              field_name, value, editable: editable, showing: states.try(&.showing) || false)
+          end
+        elsif current.role == "file chooser"
+          offered = @accessibility.actions_of(current.node) rescue [] of NamedTuple(name: String, index: Int32)
+          if show = offered.find { |action| action[:name] == "show_location" }
+            @actions << Described.new(current.bus, current.path, current.role,
+              "Enter Location", action_name: show[:name], action_index: show[:index])
+          end
+        elsif current.role == "table cell" && !name.empty?
+          position = @accessibility.table_cell_position(current.node) rescue nil
+          if position && position[1] == 0
+            offered = @accessibility.actions_of(current.node) rescue [] of NamedTuple(name: String, index: Int32)
+            if activate = offered.find { |action| action[:name] == "activate" }
+              @actions << Described.new(current.bus, current.path, current.role,
+                name, action_name: activate[:name], action_index: activate[:index])
+            end
           end
           # A line already said by something this node is inside of. A views
           # dialog nests a panel whose name is everything below the panel, so
@@ -446,6 +542,7 @@ module Tawb
           @lines << name
         end
         now_seen = name.empty? ? seen : seen.dup << name
+        child_context = name.empty? ? inherited_name : name
         return if depth >= @max_depth
         children = begin
           @accessibility.children_of(current.node)
@@ -458,7 +555,7 @@ module Tawb
           rescue
             next
           end
-          enter(described, depth + 1, now_seen)
+          enter(described, depth + 1, now_seen, child_context)
         end
       end
     end

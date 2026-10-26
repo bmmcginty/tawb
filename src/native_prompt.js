@@ -82,6 +82,10 @@ async function containersOf(a11y, application) {
   return children;
 }
 
+function readDialog(a11y, described) {
+  return a11y.read(described, described.role === 'file chooser' ? { maxNodes: 1200 } : {});
+}
+
 function requestFor(a11y, application, described, state) {
   const key = `${described.bus}|${described.path}`;
   return {
@@ -92,14 +96,22 @@ function requestFor(a11y, application, described, state) {
     buttons: state.buttons,
     toggles: state.toggles || [],
     fields: state.fields || [],
+    actions: state.actions || [],
     defaultButton: defaultButton(state.buttons),
     press: (button) => a11y.press(button),
+    activate: (action) => a11y.doAction(action, action.actionIndex || 0),
+    enterField: async (field, text) => {
+      if (!(await a11y.setText(field, text))) return false;
+      return a11y.doAction(field, 0);
+    },
     toggle: async (control) => {
       await a11y.press(control);
       const states = await a11y.statesOf(control).catch(() => null);
       return states ? states.checked : null;
     },
-    reread: async () => requestFor(a11y, application, described, await a11y.read(described)),
+    reread: async () => requestFor(
+      a11y, application, described, await readDialog(a11y, described),
+    ),
     stillOpen: async () => {
       try {
         return pathsOf(await containersOf(a11y, application)).includes(key);
@@ -164,12 +176,14 @@ function watchNativeDialogs({
 
       let read;
       try {
-        read = await a11y.read(described);
+        read = await readDialog(a11y, described);
       } catch {
         continue;
       }
-      // A window with nothing to say and nothing to press is not a question.
-      if (!read.buttons.length && !read.lines.length) continue;
+      // A window with nothing to say, nothing to press and nothing to type
+      // into is not a question.
+      if (!read.buttons.length && !read.lines.length
+        && !read.fields.length && !read.actions.length) continue;
 
       log('native.dialog', {
         role: described.role,
@@ -258,8 +272,11 @@ async function watchExternalFileChooser({
       if (known.has(key)) continue;
       known.add(key);
       let read;
-      try { read = await a11y.read(described); } catch { continue; }
-      if (!read.buttons.length && !read.lines.length) continue;
+      try { read = await readDialog(a11y, described); } catch { continue; }
+      // A window with nothing to say, nothing to press and nothing to type
+      // into is not a question.
+      if (!read.buttons.length && !read.lines.length
+        && !read.fields.length && !read.actions.length) continue;
       stopped = true;
       log('native.external-dialog', {
         application: String(application.name || '').slice(0, 80),

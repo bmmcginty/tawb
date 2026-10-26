@@ -2645,7 +2645,9 @@ module Tawb
       plain = ->(text : String) do
         JSON::Any.new({"text" => JSON::Any.new(text),
                        "button" => JSON::Any.new(nil),
-                       "toggle" => JSON::Any.new(nil)})
+                       "toggle" => JSON::Any.new(nil),
+                       "field"  => JSON::Any.new(nil),
+                       "action" => JSON::Any.new(nil)})
       end
       request.lines.each { |line| blocks << plain.call(line) }
       # What the dialog is about, when that lives in a control rather than in
@@ -2653,19 +2655,29 @@ module Tawb
       # prompt is offering to keep. The browser masks the password itself, so
       # what is shown here is what is on the screen a sighted user would be
       # looking at.
-      request.fields.each do |field|
+      request.fields.each_with_index do |field, index|
         next if field.name.empty? && field.value.empty?
         text = if !field.name.empty? && !field.value.empty?
                  "#{field.name}: #{field.value}"
                else
                  field.value.empty? ? field.name : field.value
                end
-        blocks << plain.call(text)
+        choosable = request.role == "file chooser" && field.editable
+        blocks << JSON::Any.new({
+          "text"   => JSON::Any.new(text),
+          "item"   => choosable ? JSON::Any.new({"role" => JSON::Any.new("textbox"),
+                                                 "name" => JSON::Any.new(field.name)}) : JSON::Any.new(nil),
+          "button" => JSON::Any.new(nil),
+          "toggle" => JSON::Any.new(nil),
+          "field"  => choosable ? JSON::Any.new(index.to_i64) : JSON::Any.new(nil),
+          "action" => JSON::Any.new(nil),
+        })
       end
 
       toggles = request.toggles
       buttons = request.buttons
-      if toggles.empty? && buttons.empty?
+      actions = request.actions
+      if toggles.empty? && buttons.empty? && actions.empty?
         blocks << plain.call("(the browser offers nothing to press)")
         return blocks
       end
@@ -2682,9 +2694,23 @@ module Tawb
                                      "name" => JSON::Any.new(toggle.name)}),
           "button" => JSON::Any.new(nil),
           "toggle" => JSON::Any.new(index.to_i64),
+          "field"  => JSON::Any.new(nil),
+          "action" => JSON::Any.new(nil),
         })
       end
-      blocks << plain.call("") unless toggles.empty? || buttons.empty?
+      blocks << plain.call("") unless toggles.empty? || (buttons.empty? && actions.empty?)
+      actions.each_with_index do |action, index|
+        blocks << JSON::Any.new({
+          "text"   => JSON::Any.new(action.name),
+          "item"   => JSON::Any.new({"role" => JSON::Any.new("button"),
+                                     "name" => JSON::Any.new(action.name)}),
+          "button" => JSON::Any.new(nil),
+          "toggle" => JSON::Any.new(nil),
+          "field"  => JSON::Any.new(nil),
+          "action" => JSON::Any.new(index.to_i64),
+        })
+      end
+      blocks << plain.call("") unless actions.empty? || buttons.empty?
       buttons.each_with_index do |button, index|
         blocks << JSON::Any.new({
           "text"   => JSON::Any.new(button.name),
@@ -2692,6 +2718,8 @@ module Tawb
                                      "name" => JSON::Any.new(button.name)}),
           "button" => JSON::Any.new(index.to_i64),
           "toggle" => JSON::Any.new(nil),
+          "field"  => JSON::Any.new(nil),
+          "action" => JSON::Any.new(nil),
         })
       end
       blocks
@@ -2760,7 +2788,7 @@ module Tawb
                                              state : Reader::State,
                                              page : Reader::PageEnv,
                                              request : Reader::DialogEnv,
-                                             name : String) : Nil
+                                             note : String) : Nil
       current = begin
         request.reread
       rescue
@@ -2768,8 +2796,53 @@ module Tawb
       end || request
       state.dialog_request = current
       show_dialog(output, state, page, current, keep_place: state.cursor)
+      Reader.set_status(output, state, page.url, note)
+    end
+
+    # One line typed while the dialog keeps the keyboard. The claim is the
+    # dialog's, so nothing here takes or releases it: giving it back would
+    # hand the reader's next keystroke to the page behind the chooser.
+    private def self.ask_dialog_line(output : Screen::Output, state : Reader::State,
+                                     page : Reader::PageEnv, keyboard : Keyboard,
+                                     token : Input::Token,
+                                     label : String, initial : String) : String?
+      previous_mode = state.mode
+      previous_status = state.status_msg
+      state.mode = "line"
+      state.line_prompt = Reader::LinePrompt.new(label, Reader::Buffer.new(initial, initial.size))
+      Reader.draw_hint(output, state, true)
       Reader.set_status(output, state, page.url,
-        "Pressed \"#{name}\"; the dialog is still open.")
+        "Enter a complete file or folder path; Ctrl+L empties it  Esc: cancel.")
+      Reader.draw_line_prompt(output, state)
+      begin
+        loop do
+          key = keyboard.next_key(token)
+          return nil if key.is_a?(Input::Eof)
+          chunk = key.as(String)
+          state.core.mark_input
+          return nil if key_is(chunk, "Escape", state)
+          return state.line_prompt.not_nil!.buffer.text if chunk == "\r" || chunk == "\n"
+          buffer = state.line_prompt.not_nil!.buffer
+          if editing = Edit.edit_action(chunk, keymap_for(state))
+            edited = Edit::Buffer.new(buffer.text, buffer.caret)
+            Edit.apply_buffer_edit(edited, editing)
+            buffer.text = edited.text
+            buffer.caret = edited.caret
+          elsif key_is(chunk, "Ctrl+L", state)
+            buffer.text = ""
+            buffer.caret = 0
+          elsif !chunk.starts_with?(ESC) && chunk >= " "
+            buffer.text = buffer.text[0, buffer.caret] + chunk + buffer.text[buffer.caret..]
+            buffer.caret += chunk.size
+          end
+          Reader.draw_line_prompt(output, state)
+        end
+      ensure
+        state.line_prompt = nil
+        state.mode = previous_mode
+        state.status_msg = previous_status
+        Reader.draw_hint(output, state, true)
+      end
     end
 
     # Asks, and does not return until the dialog has been answered or the
@@ -2874,6 +2947,60 @@ module Tawb
               Reader.set_status(output, state, page.url, "#{name}: #{now ? "yes" : "no"}.")
               next
             end
+            field_index = block.try(&.["field"]?).try(&.as_i64?).try(&.to_i32)
+            if field_index
+              field = current_request.fields[field_index]?
+              label = field.try(&.name) || "Location"
+              entered = ask_dialog_line(output, state, page, keyboard, token,
+                label, field.try(&.value) || "")
+              if entered.nil?
+                show_dialog(output, state, page, current_request, keep_place: state.cursor)
+                Reader.set_status(output, state, page.url, "The path was not changed.")
+                next
+              end
+              acted = begin
+                current_request.enter_field(field_index, entered)
+              rescue
+                false
+              end
+              sleep PRESS_SETTLE
+              open_now = begin
+                current_request.still_open?
+              rescue
+                false
+              end
+              unless open_now
+                close_native_dialog(output, state, page, "Entered \"#{entered}\".")
+                return
+              end
+              keep_native_dialog_open(output, state, page, current_request,
+                acted ? "Entered \"#{entered}\"; the dialog is still open." :
+                        "The browser refused \"#{entered}\".")
+              next
+            end
+            action_index = block.try(&.["action"]?).try(&.as_i64?).try(&.to_i32)
+            if action_index
+              action_name = current_request.actions[action_index]?.try(&.name) || ""
+              acted = begin
+                current_request.activate(action_index)
+              rescue
+                false
+              end
+              sleep PRESS_SETTLE
+              open_now = begin
+                current_request.still_open?
+              rescue
+                false
+              end
+              unless open_now
+                close_native_dialog(output, state, page, "Activated \"#{action_name}\".")
+                return
+              end
+              keep_native_dialog_open(output, state, page, current_request,
+                acted ? "Activated \"#{action_name}\"; the dialog is still open." :
+                        "Could not activate \"#{action_name}\".")
+              next
+            end
             button_index = block.try(&.["button"]?).try(&.as_i64?).try(&.to_i32)
             unless button_index
               Reader.set_status(output, state, page.url, "Move to one of the answers first.")
@@ -2888,7 +3015,8 @@ module Tawb
             # File choosers use buttons for navigation as well as answers.
             # Home, Up Path, breadcrumbs and Create Folder deliberately leave
             # the chooser open, so reread it and keep its keyboard claim.
-            keep_native_dialog_open(output, state, page, current_request, name)
+            keep_native_dialog_open(output, state, page, current_request,
+              "Pressed \"#{name}\"; the dialog is still open.")
             next
           end
 

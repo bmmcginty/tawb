@@ -118,6 +118,19 @@ module Tawb
         @reading.fields
       end
 
+      def actions : Array(Atspi::Described)
+        @reading.actions
+      end
+
+      def activate(action : Atspi::Described) : Bool
+        @accessibility.do_action(action.node, action.action_index)
+      end
+
+      def enter_field(field : Atspi::Described, text : String) : Bool
+        return false unless @accessibility.set_text(field.node, text)
+        @accessibility.do_action(field.node)
+      end
+
       def default_button : Atspi::Described?
         NativePrompt.default_button(@reading.buttons)
       end
@@ -150,7 +163,8 @@ module Tawb
       # may have changed while the reader was gone, and replaying what the
       # dialog said a minute ago would be putting words in the browser's mouth.
       def reread : Request
-        Request.new(@accessibility, @application, @node, @accessibility.read(@node))
+        Request.new(@accessibility, @application, @node,
+          @accessibility.read(@node, max_nodes: @node.role == "file chooser" ? 1200 : Atspi::MAX_NODES))
       end
 
       # Whether the browser is still asking. Membership rather than "does the
@@ -260,13 +274,15 @@ module Tawb
           end
           next unless DIALOG_ROLES.includes?(described.role)
           reading = begin
-            @accessibility.read(described)
+            @accessibility.read(described,
+              max_nodes: described.role == "file chooser" ? 1200 : Atspi::MAX_NODES)
           rescue
             next
           end
-          # A window with nothing to say and nothing to press is not a
-          # question.
-          next if reading.buttons.empty? && reading.lines.empty?
+          # A window with nothing to say, nothing to press and nothing to
+          # type into is not a question.
+          next if reading.buttons.empty? && reading.lines.empty? &&
+                  reading.fields.empty? && reading.actions.empty?
 
           @log.try(&.write("native.dialog", {
             "role"    => JSON::Any.new(described.role),
@@ -336,8 +352,11 @@ module Tawb
             key = NativePrompt.key_of(entry[:dialog])
             next if @known.includes?(key)
             @known << key
-            reading = @accessibility.read(entry[:dialog]) rescue next
-            next if reading.buttons.empty? && reading.lines.empty?
+            reading = @accessibility.read(entry[:dialog], max_nodes: 1200) rescue next
+            # A window with nothing to say, nothing to press and nothing to
+            # type into is not a question.
+            next if reading.buttons.empty? && reading.lines.empty? &&
+                    reading.fields.empty? && reading.actions.empty?
             @stopped = true
             @log.try(&.write("native.external-dialog", {
               "application" => JSON::Any.new(entry[:application].name[0,

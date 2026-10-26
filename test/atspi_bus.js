@@ -160,13 +160,33 @@ function serveTree({
       return reply('a(so)', [node.children]);
     }
     if (message.member === 'GetRoleName') return reply('s', [node.role]);
+    if (message.member === 'GetInterfaces') return reply('as', [node.interfaces || []]);
     if (message.iface === 'org.freedesktop.DBus.Properties' && message.member === 'Get') {
-      return reply('v', [{ signature: 's', value: node.name }]);
+      const [wanted, property] = message.body;
+      // A node answers for its own interfaces. Everything else keeps the
+      // original shape: an Accessible name, which is what a dialog read needs.
+      const held = (node.properties || {})[`${wanted}.${property}`];
+      if (held !== undefined) return reply('v', [held]);
+      if (wanted === 'org.a11y.atspi.Accessible' && property === 'Name') {
+        return reply('v', [{ signature: 's', value: node.name }]);
+      }
+      return refuse(UNKNOWN_METHOD, `no ${wanted}.${property} here`);
+    }
+    if (message.member === 'GetName' && message.iface === 'org.a11y.atspi.Action') {
+      const name = (node.actions || [])[message.body[0]];
+      if (name === undefined) return refuse(FAILED, 'no such action');
+      return reply('s', [name]);
+    }
+    if (message.member === 'SetTextContents') {
+      node.value = message.body[0];
+      (node.typed ||= []).push(message.body[0]);
+      return reply('b', [true]);
     }
     if (message.member === 'GetText') return reply('s', [node.value || '']);
     if (message.member === 'GetState') return reply('au', [node.state || [0, 0]]);
     if (message.member === 'DoAction') {
       pressed.push(key);
+      (node.did ||= []).push(message.body[0]);
       // The browser owns a control's state, and pressing a check box is what
       // changes it. A reader that assumed the press did what the press looks
       // like it did would be wrong here as often as the browser refuses one.
