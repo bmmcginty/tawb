@@ -199,3 +199,196 @@ test('a machine with no runtime directory has nowhere to mount one', async () =>
   });
   assert.equal(started, null);
 });
+
+// ---------------------------------------------------------------------------
+// Starting a browser flatpak installed.
+
+const firefox = require('../src/firefox');
+const chromium = require('../src/browser');
+
+// A flatpak installation under a home directory of its own: an export
+// directory with a launcher in it, and the application's own files where a
+// version is read from.
+function fakeInstall(appId, { milestone = '158.0.1', leaf = 'firefox' } = {}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tawb-flatpak-home-'));
+  const root = path.join(home, '.local', 'share', 'flatpak');
+  fs.mkdirSync(path.join(root, 'exports', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'exports', 'bin', appId), '#!/bin/sh\n', { mode: 0o755 });
+  const files = path.join(root, 'app', appId, 'current', 'active', 'files', 'lib', leaf);
+  fs.mkdirSync(files, { recursive: true });
+  fs.writeFileSync(path.join(files, 'platform.ini'), `[Build]\nMilestone=${milestone}\n`);
+  return { home, appId, remove: () => fs.rmSync(home, { recursive: true, force: true }) };
+}
+
+test('an application flatpak installed is found by its id', () => {
+  const install = fakeInstall('org.mozilla.firefox');
+  try {
+    const found = flatpak.installedApp('org.mozilla.firefox', install.home);
+    assert.ok(found, 'the launcher in the export directory was not found');
+    assert.equal(found.appId, 'org.mozilla.firefox');
+    assert.equal(
+      found.launcher,
+      path.join(install.home, '.local/share/flatpak/exports/bin/org.mozilla.firefox'),
+    );
+    assert.equal(flatpak.installedApp('com.example.Nothing', install.home), null);
+  } finally {
+    install.remove();
+  }
+});
+
+test('the version comes from the application files, not from the launcher', () => {
+  // The launcher is a shell script in an export directory with no platform.ini
+  // beside it, and asking it for `--version` would start a whole sandbox to
+  // read one string.
+  const install = fakeInstall('org.mozilla.firefox', { milestone: '158.0.1' });
+  const home = os.homedir;
+  try {
+    os.homedir = () => install.home;
+    assert.equal(flatpak.appFilesDirectory('org.mozilla.firefox'), path.join(
+      install.home, '.local/share/flatpak/app/org.mozilla.firefox/current/active/files',
+    ));
+    assert.equal(
+      firefox.installedFirefoxVersion('/unused', { appId: 'org.mozilla.firefox' }),
+      '158.0.1',
+    );
+  } finally {
+    os.homedir = home;
+    install.remove();
+  }
+});
+
+test('the only directory a sandbox shares with us is its own', () => {
+  const home = '/home/reader';
+  const own = flatpak.appDataDirectory('org.mozilla.firefox', home);
+  assert.equal(own, '/home/reader/.var/app/org.mozilla.firefox');
+  assert.equal(flatpak.appCanReach('org.mozilla.firefox', own, home), true);
+  assert.equal(flatpak.appCanReach('org.mozilla.firefox', `${own}/tawb/profile`, home), true);
+  assert.equal(flatpak.appCanReach('org.mozilla.firefox', '/home/reader/.local/share', home), false);
+  assert.equal(flatpak.appCanReach('org.mozilla.firefox', '/tmp/profile', home), false);
+  // A sibling whose name merely starts the same way is not inside it.
+  assert.equal(
+    flatpak.appCanReach('org.mozilla.firefox', '/home/reader/.var/app/org.mozilla.firefox-two', home),
+    false,
+  );
+});
+
+test('the two bus addresses are never passed into the sandbox', () => {
+  // flatpak proxies the session bus and the accessibility bus and sets the
+  // sandbox's own addresses to its proxies. An --env naming this program's
+  // socket would replace a working proxy path with one the sandbox cannot
+  // open — the single mistake that would make all of this fail quietly.
+  const built = flatpak.runCommand({
+    appId: 'org.mozilla.firefox',
+    args: ['--no-remote', 'about:blank'],
+    env: {
+      GNOME_ACCESSIBILITY: '1',
+      GTK_USE_PORTAL: '1',
+      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/tmp/tawb-a11y-1.sock',
+      AT_SPI_BUS_ADDRESS: 'unix:path=/tmp/tawb-a11y-1.sock',
+    },
+    filesystems: ['/home/reader/.var/app/org.mozilla.firefox'],
+    binary: '/usr/bin/flatpak',
+  });
+  assert.equal(built.command, '/usr/bin/flatpak');
+  assert.deepEqual(built.args, [
+    'run',
+    '--env=GNOME_ACCESSIBILITY=1',
+    '--env=GTK_USE_PORTAL=1',
+    '--filesystem=/home/reader/.var/app/org.mozilla.firefox',
+    'org.mozilla.firefox',
+    '--no-remote',
+    'about:blank',
+  ]);
+});
+
+test('a Flatpak browser keeps its profile where the sandbox can write', () => {
+  const home = os.homedir;
+  try {
+    os.homedir = () => '/home/reader';
+    assert.equal(
+      firefox.defaultProfileDir({ executable: '/x', flatpak: { appId: 'org.mozilla.firefox' } }),
+      '/home/reader/.var/app/org.mozilla.firefox/tawb/firefox-profile',
+    );
+    assert.equal(
+      chromium.defaultProfileDir({ executable: '/x', flatpak: { appId: 'org.chromium.Chromium' } }),
+      '/home/reader/.var/app/org.chromium.Chromium/tawb/profile',
+    );
+  } finally {
+    os.homedir = home;
+  }
+});
+
+test('a profile the sandbox cannot open is refused before the launch, not after', () => {
+  // Pointed at a directory it may not write, a Flatpak browser behaves the way
+  // a confined Snap does: it explains itself in a window on a virtual screen
+  // and the launcher waits out the whole timeout for a port that never opens.
+  const home = os.homedir;
+  try {
+    os.homedir = () => '/home/reader';
+    const found = {
+      executable: '/x', name: 'org.mozilla.firefox (flatpak)',
+      flatpak: { appId: 'org.mozilla.firefox' },
+    };
+    assert.throws(
+      () => firefox.requireReachableProfile(found, '/home/reader/.local/share/tawb/p'),
+      /flatpak sandbox/,
+    );
+    // Its own data directory is allowed, and says nothing.
+    firefox.requireReachableProfile(
+      found, '/home/reader/.var/app/org.mozilla.firefox/tawb/firefox-profile',
+    );
+  } finally {
+    os.homedir = home;
+  }
+});
+
+test('the command for a Flatpak browser is flatpak run, under Xvfb or not', () => {
+  const display = process.env.DISPLAY;
+  const found = { executable: '/x', flatpak: { appId: 'org.mozilla.firefox' } };
+  try {
+    process.env.DISPLAY = ':0';
+    const direct = firefox.buildCommand(found, ['about:blank'], {
+      env: { GNOME_ACCESSIBILITY: '1' },
+    });
+    assert.match(direct.command, /flatpak$/);
+    assert.deepEqual(direct.args, [
+      'run', '--env=GNOME_ACCESSIBILITY=1', 'org.mozilla.firefox', 'about:blank',
+    ]);
+
+    // A browser installed the ordinary way is still run as itself.
+    const native = firefox.buildCommand({ executable: '/usr/bin/firefox' }, ['about:blank']);
+    assert.equal(native.command, '/usr/bin/firefox');
+    assert.deepEqual(native.args, ['about:blank']);
+  } finally {
+    if (display === undefined) delete process.env.DISPLAY;
+    else process.env.DISPLAY = display;
+  }
+});
+
+test('with no display, Xvfb wraps the flatpak command rather than replacing it', () => {
+  const display = process.env.DISPLAY;
+  try {
+    delete process.env.DISPLAY;
+    let built;
+    try {
+      built = firefox.buildCommand(
+        { executable: '/x', flatpak: { appId: 'org.mozilla.firefox' } },
+        ['about:blank'],
+        { env: { GNOME_ACCESSIBILITY: '1' } },
+      );
+    } catch (err) {
+      // No xvfb-run on this machine: the refusal is the documented behaviour
+      // and there is nothing else to check here.
+      assert.match(err.message, /xvfb-run was not found/);
+      return;
+    }
+    assert.match(built.command, /xvfb-run$/);
+    // flatpak run is what xvfb-run was given, with the application last before
+    // its own arguments.
+    const joined = built.args.join(' ');
+    assert.match(joined, /flatpak run --env=GNOME_ACCESSIBILITY=1 org\.mozilla\.firefox about:blank$/);
+  } finally {
+    if (display === undefined) delete process.env.DISPLAY;
+    else process.env.DISPLAY = display;
+  }
+});

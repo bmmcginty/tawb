@@ -17,13 +17,19 @@
 #      actually open. The path the reader chose is not: the sandbox has a
 #      filesystem of its own. So the reader's path is seeded under
 #      `/tmp/outside`, which nothing grants the sandbox, and the probe reports
-#      whether what came back exists for it.
+#      whether what came back exists for it;
+#   5. can TAWB start the Flatpak browser at all, and then find it. The last
+#      step runs `launchFirefox` against the real org.mozilla.firefox and waits
+#      for its remote debugging port, which is what proves the command line,
+#      the profile location, the environment and the display came out right —
+#      and then looks for the browser on the accessibility bus by process,
+#      which is the match a proxy stands in the middle of.
 #
-# Everything runs in one container: TAWB's own private bus and portal outside
-# the Flatpak sandbox, and TAWB's own D-Bus client inside it. The sandboxed
-# side is a probe rather than Firefox because the question is what the proxy
-# carries, not what Firefox does with it — but it is the real `flatpak run`,
-# the real proxy, and the real org.mozilla.firefox sandbox and permissions.
+# Everything runs in one container. Steps 1 to 4 put TAWB's own D-Bus client
+# inside the real org.mozilla.firefox sandbox rather than Firefox, because what
+# is in question there is what the sandbox's proxy carries and not what Firefox
+# does with it; the sandbox, the proxy and the permissions are the real ones
+# either way. Step 5 is the real browser.
 #
 # Usage: containers/flatpak-portal/run.sh [--keep]
 #   --keep leaves the container running, so a failed run can be poked at.
@@ -47,7 +53,7 @@ docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 # Privileged because bubblewrap needs user namespaces and the runtime store
 # needs FUSE. The source is read-only: nothing in this test writes to it.
 docker run -d --name "$CONTAINER" --privileged --device /dev/fuse \
-  --memory=4g --memory-swap=4g \
+  --memory=6g --memory-swap=6g \
   -v "$VOLUME:/var/lib/flatpak" -v "$ROOT:/app:ro" -w /app \
   "$IMAGE" -c 'sleep infinity' >/dev/null
 
@@ -107,6 +113,17 @@ TARGET=$(run 'grep -o "\":1\.[0-9]*\"" /tmp/a11yapp.log | head -1 | tr -d "\""')
 printf 'application inside the sandbox: %s\n' "$TARGET"
 docker exec -e AT_SPI_BUS_ADDRESS="$ADDRESS" "$CONTAINER" \
   node /app/containers/flatpak-portal/a11y_reader.js "$TARGET"
+
+# The whole launcher, against the real browser. Everything above speaks D-Bus
+# to a probe; this starts org.mozilla.firefox through `launchFirefox` and waits
+# for its remote debugging port, which is the only thing that proves the
+# command line, the profile location, the environment and the display all came
+# out right. As `reader`, because TAWB refuses to launch a browser as root.
+say "TAWB launching the Flatpak browser for itself"
+run "mkdir -p /run/user/1100 && chown reader:reader /run/user/1100"
+docker exec --user reader -e HOME=/home/reader -e XDG_RUNTIME_DIR=/run/user/1100 \
+  -w /home/reader "$CONTAINER" \
+  node /app/containers/flatpak-portal/launch_probe.js
 
 say "what the portal saw"
 run "cat /tmp/portal.log"

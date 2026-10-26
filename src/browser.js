@@ -12,6 +12,7 @@ const {
   killProcessGroup, requireBrowserUser, watchChildStartup, browserStartupError,
   startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir, xvfbDisplayOption,
 } = require('./proc');
+const flatpak = require('./flatpak');
 const { recordBrowser, sweepStrandedBrowsers } = require('./registry');
 const { openAccessibilityBus } = require('./a11y_bus');
 
@@ -44,6 +45,13 @@ const CANDIDATE_BROWSERS = [
   'chromium-browser',
 ];
 
+// The same browsers, as flatpak names them. Looked for only after the ones on
+// PATH: a browser installed the ordinary way is the reader's own, and it is not
+// inside a sandbox that has to be reasoned about. On Ubuntu, though, Chromium
+// is a Snap and nothing else, so a reader who refused the Snap has the Flatpak
+// one — see flatpak.js.
+const CANDIDATE_FLATPAK_BROWSERS = ['org.chromium.Chromium', 'com.google.Chrome'];
+
 const STARTUP_TIMEOUT_MS = 25000;
 
 // What xvfb-run was told to do, kept so a failure can say whether the browser
@@ -53,8 +61,18 @@ let lastDisplayNote = null;
 // The profile a browser we start keeps its logins in. A Snap-packaged browser
 // cannot read the usual location — see the note on confinement in proc.js — so
 // one gets a directory inside the snap's own data area instead.
-function defaultProfileDir(executable = (findBrowserExecutable() || {}).executable) {
-  const snap = snapPackageName(executable);
+function defaultProfileDir(found = findBrowserExecutable() || {}) {
+  // Called with an executable path by older callers, and with the whole
+  // descriptor by the launcher. Both are accepted because the descriptor is
+  // the only thing that knows about a sandbox.
+  const held = typeof found === 'string' ? { executable: found, flatpak: null } : found;
+  if (held.flatpak) {
+    // A Flatpak browser can write its own data directory and, without a grant,
+    // nothing else. That directory is also the same path inside the sandbox
+    // and outside it, which is what lets this program name it to the browser.
+    return path.join(flatpak.appDataDirectory(held.flatpak.appId), 'tawb', 'profile');
+  }
+  const snap = snapPackageName(held.executable);
   if (snap) return snapProfileDir(snap, 'profile');
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
   return path.join(base, 'tawb', 'profile');
@@ -79,7 +97,17 @@ function which(command) {
 function findBrowserExecutable() {
   for (const name of CANDIDATE_BROWSERS) {
     const found = which(name);
+    // No `flatpak` key rather than a null one: this is the shape the Crystal
+    // port answers with too, and the differential compares the whole object.
     if (found) return { executable: found, name };
+  }
+  for (const appId of CANDIDATE_FLATPAK_BROWSERS) {
+    const app = flatpak.installedApp(appId);
+    if (!app) continue;
+    // The launcher names the install in a message; it is never what gets run.
+    // See flatpak.js: `flatpak run` has to be built by hand so the sandbox can
+    // be given an environment and a profile directory.
+    return { executable: app.launcher, name: `${appId} (flatpak)`, flatpak: app };
   }
   return null;
 }
@@ -96,10 +124,20 @@ const SCREEN = '1280x1024x24';
 // one fails it even when started normally. With no DISPLAY we therefore run
 // under Xvfb, which is a real browser rendering to a virtual screen rather
 // than a different mode of operation.
-function buildCommand(executable, args) {
+// `found` is the browser descriptor rather than a path, because a Flatpak
+// browser is not started by running a file: it is started by running `flatpak
+// run` with the sandbox's environment and the directories it may see. `env` is
+// what the browser has to be told, and for a Flatpak browser it cannot be
+// inherited — flatpak passes nothing through — so it becomes --env arguments.
+// Xvfb wraps whichever of the two the command turned out to be.
+function buildCommand(found, args, { env = {}, filesystems = [] } = {}) {
+  const held = typeof found === 'string' ? { executable: found, flatpak: null } : found;
+  const base = held.flatpak
+    ? flatpak.runCommand({ appId: held.flatpak.appId, args, env, filesystems })
+    : { command: held.executable, args };
   if (process.env.DISPLAY) {
     lastDisplayNote = `Display: ${process.env.DISPLAY}`;
-    return { command: executable, args };
+    return base;
   }
   const xvfb = which('xvfb-run');
   if (!xvfb) {
@@ -113,14 +151,30 @@ function buildCommand(executable, args) {
   // Which display-picking option this xvfb-run understands. See proc.js:
   // two browsers starting at once must not both be handed the same display.
   const display = xvfbDisplayOption(xvfb);
-  return { command: xvfb, args: [display, '-s', `-screen 0 ${SCREEN}`, executable, ...args] };
+  return {
+    command: xvfb,
+    args: [display, '-s', `-screen 0 ${SCREEN}`, base.command, ...base.args],
+  };
 }
 
 // A Snap-packaged browser can only reach a profile inside its own data area.
 // Told to use one it cannot open, it does not fail: it puts a message in a
 // window on a virtual screen nobody is looking at, and the launcher waits out
 // its whole timeout for a port that will never open. Say so before launching.
-function requireReachableProfile({ executable, name }, profileDir) {
+function requireReachableProfile({ executable, name, flatpak: app = null }, profileDir) {
+  // A Flatpak browser pointed at a profile outside its sandbox behaves the
+  // same way a confined Snap does: it cannot open the directory, says so in a
+  // window on a screen nobody is looking at, and the launcher waits out the
+  // whole timeout for a port that never opens.
+  if (app && !flatpak.appCanReach(app.appId, profileDir)) {
+    throw new Error(
+      `${name} runs inside a flatpak sandbox, and ${profileDir} is not a path it can open: `
+      + 'without a --filesystem grant an application may write only its own data directory. '
+      + `Use a profile it can reach, such as `
+      + `${path.join(flatpak.appDataDirectory(app.appId), 'tawb', 'profile')}, `
+      + 'or install a browser the ordinary way.',
+    );
+  }
   const snap = snapPackageName(executable);
   if (!snap || snapCanReach(profileDir)) return;
   throw new Error(
@@ -177,15 +231,20 @@ function recordedAccessibilityBus(record) {
 // running on this profile. The profile persists between runs, so logins and
 // cookies survive — which is most of what makes the web usable.
 async function launchOwnBrowser({
-  profileDir = defaultProfileDir(), browserTimeoutMs = null, log = () => {}, onStartup = () => {},
+  profileDir = null, browserTimeoutMs = null, log = () => {}, onStartup = () => {},
 } = {}) {
   const found = findBrowserExecutable();
   if (!found) {
     throw new Error(
-      `No browser found. Looked for: ${CANDIDATE_BROWSERS.join(', ')}. `
+      `No browser found. Looked for ${CANDIDATE_BROWSERS.join(', ')} on PATH, and for `
+      + `${CANDIDATE_FLATPAK_BROWSERS.join(' and ')} in flatpak. `
       + 'Install Chrome or Chromium, or use --connect to attach to one already running.',
     );
   }
+  // Where the profile goes depends on which browser this is: a Flatpak one can
+  // write only its own data directory. The default is therefore worked out
+  // after the browser is known rather than in the parameter list.
+  if (!profileDir) profileDir = defaultProfileDir(found);
 
   requireBrowserUser(found.name);
   requireReachableProfile(found, profileDir);
@@ -222,7 +281,11 @@ async function launchOwnBrowser({
   //
   // The flag is passed only when there is a bus to answer on, because
   // accessibility that nothing is reading is renderer work nobody wants.
-  const a11y = await openAccessibilityBus({ log });
+  // A Flatpak browser also needs the document portal, because a path chosen on
+  // this terminal is not a path inside its sandbox. It has to exist before the
+  // browser starts: flatpak binds its mount into the sandbox at launch. See
+  // flatpak.js.
+  const a11y = await openAccessibilityBus({ log, documents: !!found.flatpak });
   if (!a11y.available) log('a11y.unavailable', { reason: a11y.reason });
 
   const port = await freePort();
@@ -241,7 +304,16 @@ async function launchOwnBrowser({
     'about:blank',
   ];
 
-  const { command, args } = buildCommand(found.executable, browserArgs);
+  // What the browser has to be told. A browser started the ordinary way
+  // inherits this from the environment below; a Flatpak browser inherits
+  // nothing, so the same set is handed to `flatpak run` as --env arguments.
+  // The two bus addresses are deliberately not among them — flatpak proxies
+  // both and sets the sandbox's own addresses itself. See flatpak.js.
+  const browserEnv = {
+    GNOME_ACCESSIBILITY: a11y.env.GNOME_ACCESSIBILITY,
+    ...(a11y.owned ? { GTK_USE_PORTAL: '1' } : {}),
+  };
+  const { command, args } = buildCommand(found, browserArgs, { env: browserEnv });
   const displayNote = lastDisplayNote;
   try { onStartup('Starting Chromium…'); } catch { /* display only */ }
   log('browser.spawn', { executable: found.executable, name: found.name, port, profileDir });
@@ -256,8 +328,10 @@ async function launchOwnBrowser({
     detached: true,
     // Only ever an addition: the bus this session started, for a machine that
     // had none. Where the desktop has one already this is empty and the
-    // browser inherits the environment it would have had anyway.
-    env: { ...process.env, ...a11y.env },
+    // browser inherits the environment it would have had anyway. For a Flatpak
+    // browser this is the environment `flatpak run` itself reads, which is how
+    // its two proxies come to connect to this program's bus.
+    env: { ...process.env, ...a11y.env, ...browserEnv },
   });
   const startup = watchChildStartup(child);
   child.unref();
@@ -344,4 +418,6 @@ function normaliseEndpoint(value) {
 module.exports = {
   launchOwnBrowser, connectToBrowser, normaliseEndpoint, portOfEndpoint,
   findBrowserExecutable, defaultProfileDir, findRunningBrowser,
+  // Exported for the tests: see the note in firefox.js.
+  buildCommand, CANDIDATE_BROWSERS, CANDIDATE_FLATPAK_BROWSERS,
 };

@@ -45,7 +45,15 @@ TAWB currently targets Linux. To run it you need:
 - `xvfb-run` if no graphical `$DISPLAY` is available.
 
 On Debian and Ubuntu, `xvfb-run` is supplied by the `xvfb` package. Browser
-package names vary by distribution. The packaged `tawb` command is a static
+package names vary by distribution.
+
+A browser installed with flatpak is used when no browser is installed the
+ordinary way. TAWB looks for `org.mozilla.firefox` and
+`io.gitlab.librewolf-community` with `--browser firefox`, and for
+`org.chromium.Chromium` and `com.google.Chrome` with `--browser chromium`. A
+browser on `PATH` is always preferred. Ubuntu is why this exists: Ubuntu's own
+Firefox is a Snap and its Chromium is Snap-only, so a flatpak browser is often
+the one a reader actually has. The packaged `tawb` command is a static
 executable and does not need Node.js or another language runtime.
 
 ### Native static executable
@@ -503,8 +511,11 @@ npm start -- --profile ~/browser-profiles/tawb https://example.com
 ```
 
 Chrome and Firefox use separate default profile directories. Snap-packaged
-browsers can access only paths allowed by Snap confinement; TAWB chooses a
-reachable default automatically.
+browsers can access only paths allowed by Snap confinement, and a Flatpak
+browser can write only its own data directory under `~/.var/app/<app id>/`;
+TAWB chooses a reachable default automatically for both, and refuses a
+`--profile` the browser could not open rather than letting the launch time
+out.
 
 Leave a browser running for a faster next start:
 

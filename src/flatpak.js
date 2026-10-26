@@ -42,6 +42,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const { spawn, execFile } = require('node:child_process');
 
 // Where distributions put the document portal. Ubuntu and Debian use
@@ -291,8 +292,108 @@ async function exportedPathsFor(paths, {
   return held;
 }
 
+// ---------------------------------------------------------------------------
+// Starting a browser that flatpak installed.
+//
+// Ubuntu is the reason this exists. Ubuntu's own Firefox is a Snap and its
+// Chromium is Snap-only, and a reader who wants neither installs the Flatpak
+// one — so on Ubuntu, "the browser the reader actually uses" is a Flatpak
+// browser often enough to matter.
+
+// Flatpak keeps two installations by convention: one for the machine under
+// /var/lib/flatpak, one for the reader under the data home. An installation
+// publishes launchers under `exports/bin` and the application's own files
+// under `app/<id>/current/active/files`. A custom installation configured in
+// /etc/flatpak/installations.d is not looked for here.
+function installationRoots(home = os.homedir()) {
+  const dataHome = process.env.XDG_DATA_HOME || path.join(home, '.local', 'share');
+  return [path.join(dataHome, 'flatpak'), '/var/lib/flatpak'];
+}
+
+// An application flatpak has installed, by its id.
+//
+// The launcher found here is a short script that runs `flatpak run`, and it is
+// found rather than used: running the browser through it would leave nowhere
+// to put the arguments flatpak itself has to be given — the environment for
+// the sandbox, and the directories the sandbox may see.
+function installedApp(appId, home = os.homedir()) {
+  for (const root of installationRoots(home)) {
+    const launcher = path.join(root, 'exports', 'bin', appId);
+    try {
+      fs.accessSync(launcher, fs.constants.X_OK);
+      return { appId, launcher, root };
+    } catch { /* keep looking */ }
+  }
+  return null;
+}
+
+// Where flatpak put an application's own files. A Flatpak install has no
+// `platform.ini` beside its launcher, because its launcher is a script in an
+// export directory, so a version has to be read from here instead.
+function appFilesDirectory(appId, home = os.homedir()) {
+  for (const root of installationRoots(home)) {
+    const files = path.join(root, 'app', appId, 'current', 'active', 'files');
+    try {
+      fs.accessSync(files, fs.constants.R_OK);
+      return files;
+    } catch { /* keep looking */ }
+  }
+  return null;
+}
+
+// The application's own writable home. `~/.var/app/<id>` is the one directory
+// that is the same path inside the sandbox and outside it, which is what a
+// profile needs: this program writes the profile, and the browser opens it by
+// the same name. Measured, in both directions.
+function appDataDirectory(appId, home = os.homedir()) {
+  return path.join(home, '.var', 'app', appId);
+}
+
+// Whether a directory is one the application can open without being granted
+// anything. Its own data directory is; anything else has to be passed to
+// `flatpak run` with --filesystem, and a profile somewhere else is a profile
+// the browser silently cannot write.
+function appCanReach(appId, dir, home = os.homedir()) {
+  const own = appDataDirectory(appId, home);
+  const resolved = path.resolve(dir);
+  return resolved === own || resolved.startsWith(`${own}${path.sep}`);
+}
+
+// The two variables that must never be forwarded into the sandbox.
+//
+// flatpak makes an `xdg-dbus-proxy` for the session bus and another for the
+// accessibility bus. It reads the session bus from its own environment, finds
+// the accessibility bus by asking `org.a11y.Bus` on that session bus — which
+// this program answers — and sets the sandbox's own two addresses to the two
+// proxies. An --env naming this program's socket would overwrite a working
+// proxy path with a path the sandbox cannot open. Measured: with neither
+// variable forwarded, the sandbox still had an accessibility bus, and it
+// reached this program's.
+const PROXIED_BY_FLATPAK = ['DBUS_SESSION_BUS_ADDRESS', 'AT_SPI_BUS_ADDRESS'];
+
+// The command line that starts a Flatpak application.
+//
+// `env` is what the browser needs told, and it has to be told with --env:
+// flatpak does not pass its own environment through to the sandbox. The two
+// bus addresses are dropped here rather than at the call site, so that adding
+// a variable later cannot reintroduce the one mistake that matters.
+function runCommand({
+  appId, args = [], env = {}, filesystems = [], binary = flatpakBinary(),
+} = {}) {
+  const flags = [];
+  for (const [name, value] of Object.entries(env)) {
+    if (PROXIED_BY_FLATPAK.includes(name)) continue;
+    if (value == null) continue;
+    flags.push(`--env=${name}=${value}`);
+  }
+  for (const dir of filesystems) flags.push(`--filesystem=${dir}`);
+  return { command: binary || 'flatpak', args: ['run', ...flags, appId, ...args] };
+}
+
 module.exports = {
   flatpakBinary, documentPortalBinary, sandboxOf, fuseMountedAt,
+  installationRoots, installedApp, appFilesDirectory, appDataDirectory,
+  appCanReach, runCommand, PROXIED_BY_FLATPAK,
   startDocumentPortal, exportDocument, exportedPathsFor,
   DOCUMENTS_NAME, DOCUMENTS_PATH, DOCUMENT_PORTAL_BINARIES,
 };

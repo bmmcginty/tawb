@@ -1731,18 +1731,58 @@ a writable folder, and a save target whose parent the sandbox could write. The
 `.part`-then-rename sequence was run inside the sandbox and the result appeared
 on the real host path.
 
-One limit remains, and it is not in the portal: **this program cannot launch a
-Flatpak browser.** `findBrowserExecutable` in browser.js and `findFirefox` in
-firefox.js look on PATH for `firefox`, `firefox-esr`, `librewolf`,
-`google-chrome-stable`, `google-chrome`, `chromium` and `chromium-browser`. A
-Flatpak install exports `org.mozilla.firefox` rather than `firefox`. Launching
-a Flatpak browser also needs a profile directory the sandbox can open — which
-is the Snap confinement problem over again, and `~/.var/app/<app id>/` is the
-answer, being the same path inside the sandbox and outside it — and a version
-read from the flatpak install tree rather than from `platform.ini` beside the
-exported name. Measured along the way: a port opened inside the sandbox is
-reachable at `127.0.0.1` outside it, because flatpak browsers share the
-network namespace, so a remote debugging port needs nothing special.
+**Starting one.** A Flatpak browser is used when no browser is installed the
+ordinary way: `findFirefox` looks for `org.mozilla.firefox` and
+`io.gitlab.librewolf-community` after the names on PATH, and
+`findBrowserExecutable` for `org.chromium.Chromium` and `com.google.Chrome`.
+PATH wins, because a browser installed the ordinary way is the reader's own and
+is not inside a sandbox that has to be reasoned about. Ubuntu is why the
+flatpak case exists at all: Ubuntu's own Firefox is a Snap and its Chromium is
+Snap-only, so the reader who refused the Snap has the Flatpak one.
+
+What a launch has to do differently:
+
+- The launcher in `exports/bin` is found, not run. `flatpak run` has to be
+  built by hand, because that is the only place the sandbox's environment and
+  the directories it may see can be given — see `runCommand` in flatpak.js.
+- The two bus addresses are **not** passed with `--env`. flatpak makes an
+  `xdg-dbus-proxy` for the session bus and another for the accessibility bus,
+  reads the session bus from its own environment, finds the accessibility bus
+  by asking `org.a11y.Bus` on it — which this program answers — and sets the
+  sandbox's own two addresses to its proxies. An `--env` naming this program's
+  socket would replace a working proxy path with a path the sandbox cannot
+  open. Everything else the browser has to be told does need `--env`: flatpak
+  passes nothing else through. Measured both ways.
+- The profile goes in `~/.var/app/<app id>/tawb/…`, which is the one directory
+  that is the same path inside the sandbox and outside it. A profile anywhere
+  else is refused before the launch, exactly as a Snap's is: pointed at a
+  directory it may not write, the browser explains itself in a window on a
+  virtual screen and the launcher waits out the whole timeout.
+- The version is read from `<install>/app/<app id>/current/active/files/lib/…/
+  platform.ini`. A Flatpak install has no `platform.ini` beside its launcher,
+  and asking the launcher for `--version` would start a whole sandbox to read
+  one string.
+- Xvfb wraps `flatpak run` rather than the browser.
+- The remote debugging port needs nothing special: a port opened inside the
+  sandbox is reachable at `127.0.0.1` outside it, because a flatpak browser
+  shares the network namespace. Measured.
+
+And the thing that could have sunk it and did not: `applicationFor({ pid })`
+finds a Flatpak browser unchanged. The bus reports the **proxy's** pid for a
+sandboxed connection, not the browser's — but the proxy is in the process group
+of the `flatpak run` this program started, and that function already matches on
+the process group. Verified against the real browser: `launchFirefox` started
+org.mozilla.firefox under Xvfb, its remote debugging port opened, the
+automation flag was cleared through Marionette as usual, and the accessibility
+bus had one application on it called `Firefox` — found by pid. Real Firefox also
+asked the portal for `org.freedesktop.portal.Settings.ReadAll` and
+`OpenURI.SchemeSupported` on the way up, and carried on when it got "unknown
+method" for both.
+
+Not verified: a real Flatpak Firefox's own `Browse...` going through the
+chooser to a document-portal path. The exchange was verified with a real
+sandbox and a real document portal, and the launch was verified with the real
+browser, but the two have not been joined up by pressing the button.
 
 `flatpak run` needs a *system* bus and refuses to start an application without
 one. With `/run/dbus/system_bus_socket` absent, `flatpak run` fails with
@@ -2189,7 +2229,10 @@ and ARIA, not whether TAWB represented it correctly; use it alongside the
 ARIA-AT and WAI-ARIA checks rather than as a replacement for them.
 
 `containers/flatpak-portal/run.sh` is the Flatpak test, and it exists because
-no development machine here has flatpak on it. The script builds an Ubuntu
+no development machine here has flatpak on it. Its last step starts the real
+org.mozilla.firefox through `launchFirefox` as a non-root user and waits for
+the remote debugging port, so the command line, the profile location, the
+sandbox environment and the display are all checked against the real browser. The script builds an Ubuntu
 image with flatpak, bubblewrap and `xdg-dbus-proxy`, installs
 org.mozilla.firefox from Flathub into a Docker volume that a second run
 reuses, starts a system bus for `flatpak run` to proxy, starts this program's

@@ -38,8 +38,10 @@ RUN apt-get update \
       libglib2.0-bin \
       python3 \
       strace \
+      xauth \
       xdg-dbus-proxy \
       xdg-desktop-portal \
+      xvfb \
       xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
@@ -50,6 +52,14 @@ RUN curl --fail --silent --show-error --location https://deb.nodesource.com/setu
     && apt-get install -y --no-install-recommends nodejs \
     && rm -f /tmp/node.sh \
     && rm -rf /var/lib/apt/lists/*
+
+# TAWB refuses to launch a browser as root, because a browser's own sandbox
+# cannot run that way — see requireBrowserUser in proc.js. The probes that only
+# speak D-Bus run as root; the one that starts a real Firefox runs as this
+# reader, who can run a system-installed Flatpak application without being able
+# to modify it.
+# Ubuntu 24.04 already has a uid 1000, so the reader gets the next one.
+RUN useradd --create-home --uid 1100 --shell /bin/bash reader
 
 # The runtime store is the expensive part of this test. Keeping it on a volume
 # means a second run does not download a runtime again.

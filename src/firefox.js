@@ -12,6 +12,7 @@ const {
   killProcessGroup, requireBrowserUser, watchChildStartup, browserStartupError,
   startupTimeoutMs, snapPackageName, snapCanReach, snapProfileDir, xvfbDisplayOption,
 } = require('./proc');
+const flatpak = require('./flatpak');
 const { recordBrowser, sweepStrandedBrowsers } = require('./registry');
 const { openAccessibilityBus } = require('./a11y_bus');
 
@@ -66,6 +67,12 @@ const { openAccessibilityBus } = require('./a11y_bus');
 // first browser's session.
 
 const CANDIDATES = ['firefox', 'firefox-esr', 'librewolf'];
+// The same browsers, as flatpak names them. Looked for only after the ones on
+// PATH: a browser installed the ordinary way is the reader's own, with their
+// logins and their extensions in it, and it is not inside a sandbox that has
+// to be reasoned about. On Ubuntu, though, the ordinary way is a Snap, and a
+// reader who refused the Snap has the Flatpak one — see flatpak.js.
+const FLATPAK_CANDIDATES = ['org.mozilla.firefox', 'io.gitlab.librewolf-community'];
 const STARTUP_TIMEOUT_MS = 45000;
 // Firefox can expose its BiDi port before Marionette is ready to create and
 // run a privileged session, especially on a cold start on a slower machine.
@@ -341,8 +348,19 @@ function writeProfilePrefs(profileDir, prefs) {
 // Ubuntu's Firefox is a Snap, and a Snap cannot read ~/.local/share at all —
 // see the note on confinement in proc.js. Such a build gets its profile inside
 // the snap's own data area, which is the one place it is allowed to write.
-function defaultProfileDir(executable = (findFirefox() || {}).executable) {
-  const snap = snapPackageName(executable);
+function defaultProfileDir(found = findFirefox() || {}) {
+  // Called with an executable path by older callers, and with the whole
+  // descriptor by the launcher. Both are accepted because the descriptor is
+  // the only thing that knows about a sandbox.
+  const held = typeof found === 'string' ? { executable: found, flatpak: null } : found;
+  if (held.flatpak) {
+    // A Flatpak browser can write its own data directory and, without a grant,
+    // nothing else. That directory is also the same path inside the sandbox
+    // and outside it, which is what lets this program write the profile and
+    // the browser open it by the same name.
+    return path.join(flatpak.appDataDirectory(held.flatpak.appId), 'tawb', 'firefox-profile');
+  }
+  const snap = snapPackageName(held.executable);
   if (snap) return snapProfileDir(snap, 'firefox-profile');
   const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
   return path.join(base, 'tawb', 'firefox-profile');
@@ -352,7 +370,19 @@ function defaultProfileDir(executable = (findFirefox() || {}).executable) {
 // it opens a window explaining itself on a virtual screen nobody can see, and
 // the launcher waits out the whole timeout for a port that never opens. Say so
 // before launching rather than after 45 seconds of nothing.
-function requireReachableProfile({ executable, name }, profileDir) {
+function requireReachableProfile({ executable, name, flatpak: app = null }, profileDir) {
+  // A Flatpak browser pointed at a profile outside its sandbox behaves the
+  // same way a confined Snap does: it cannot open the directory, says so on a
+  // screen nobody is looking at, and the launcher waits out the timeout.
+  if (app && !flatpak.appCanReach(app.appId, profileDir)) {
+    throw new Error(
+      `${name} runs inside a flatpak sandbox, and ${profileDir} is not a path it can open: `
+      + 'without a --filesystem grant an application may write only its own data directory. '
+      + `Use a profile it can reach, such as `
+      + `${path.join(flatpak.appDataDirectory(app.appId), 'tawb', 'firefox-profile')}, `
+      + 'or install Firefox the ordinary way.',
+    );
+  }
   const snap = snapPackageName(executable);
   if (!snap || snapCanReach(profileDir)) return;
   throw new Error(
@@ -418,7 +448,21 @@ function profileLastVersion(profileDir) {
 // wrapper script whose directory has no platform.ini is asked directly
 // instead, which is one short subprocess on the startup path and only where
 // the file was not there to read.
-function installedFirefoxVersion(executable) {
+function installedFirefoxVersion(executable, app = null) {
+  // A Flatpak install keeps platform.ini with the application's own files, not
+  // beside the launcher — and asking the launcher for `--version` would start
+  // a whole sandbox to read one string.
+  if (app) {
+    const files = flatpak.appFilesDirectory(app.appId);
+    for (const leaf of ['firefox', 'librewolf']) {
+      try {
+        const text = fs.readFileSync(path.join(files, 'lib', leaf, 'platform.ini'), 'utf8');
+        const found = /^Milestone=(\S+)/m.exec(text);
+        if (found) return found[1];
+      } catch { /* try the other layout */ }
+    }
+    return null;
+  }
   try {
     const appDir = path.dirname(fs.realpathSync(executable));
     const text = fs.readFileSync(path.join(appDir, 'platform.ini'), 'utf8');
@@ -436,10 +480,10 @@ function installedFirefoxVersion(executable) {
   }
 }
 
-function requireCompatibleProfile({ executable, name }, profileDir) {
+function requireCompatibleProfile({ executable, name, flatpak: app = null }, profileDir) {
   const wroteItLast = profileLastVersion(profileDir);
   if (!wroteItLast) return;
-  const installed = installedFirefoxVersion(executable);
+  const installed = installedFirefoxVersion(executable, app);
   if (!installed) return;
   if (!firstVersionIsNewer(wroteItLast, installed)) return;
   throw new Error(
@@ -468,7 +512,17 @@ function which(command) {
 function findFirefox() {
   for (const name of CANDIDATES) {
     const found = which(name);
+    // No `flatpak` key rather than a null one: this is the shape the Crystal
+    // port answers with too, and the differential compares the whole object.
     if (found) return { executable: found, name };
+  }
+  for (const appId of FLATPAK_CANDIDATES) {
+    const app = flatpak.installedApp(appId);
+    if (!app) continue;
+    // The launcher is what identifies the install in a message; it is never
+    // what gets run. See flatpak.js: `flatpak run` has to be built by hand so
+    // that the sandbox can be given an environment and a profile directory.
+    return { executable: app.launcher, name: `${appId} (flatpak)`, flatpak: app };
   }
   return null;
 }
@@ -497,10 +551,20 @@ let lastDisplayNote = null;
 
 // A headless browser fails the checks a real one passes, so with no display we
 // run under Xvfb — a real browser drawing to a virtual screen.
-function buildCommand(executable, args) {
+// `found` is the browser descriptor rather than a path, because a Flatpak
+// browser is not started by running a file: it is started by running `flatpak
+// run` with the sandbox's environment and the directories it may see. `env` is
+// what the browser has to be told, and for a Flatpak browser it cannot be
+// inherited — flatpak passes nothing through — so it becomes --env arguments.
+// Xvfb wraps whichever of the two the command turned out to be.
+function buildCommand(found, args, { env = {}, filesystems = [] } = {}) {
+  const held = typeof found === 'string' ? { executable: found, flatpak: null } : found;
+  const base = held.flatpak
+    ? flatpak.runCommand({ appId: held.flatpak.appId, args, env, filesystems })
+    : { command: held.executable, args };
   if (process.env.DISPLAY) {
     lastDisplayNote = `Display: ${process.env.DISPLAY}`;
-    return { command: executable, args };
+    return base;
   }
   const xvfb = which('xvfb-run');
   if (!xvfb) {
@@ -514,7 +578,10 @@ function buildCommand(executable, args) {
   // Which display-picking option this xvfb-run understands. See proc.js:
   // two browsers starting at once must not both be handed the same display.
   const display = xvfbDisplayOption(xvfb);
-  return { command: xvfb, args: [display, '-s', `-screen 0 ${SCREEN}`, executable, ...args] };
+  return {
+    command: xvfb,
+    args: [display, '-s', `-screen 0 ${SCREEN}`, base.command, ...base.args],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1035,16 +1102,21 @@ function releaseStrandedSession(port, { timeout = MARIONETTE_TIMEOUT_MS } = {}) 
 // Starts an ordinary Firefox, silences the announcement, and returns where to
 // attach. The caller verifies from inside a page before trusting any of it.
 async function launchFirefox({
-  profileDir = defaultProfileDir(), keepBrowser = false, browserTimeoutMs = null,
+  profileDir = null, keepBrowser = false, browserTimeoutMs = null,
   log = () => {}, onStartup = () => {},
 } = {}) {
   const found = findFirefox();
   if (!found) {
     throw new Error(
-      `No Firefox found. Looked for: ${CANDIDATES.join(', ')}. `
+      `No Firefox found. Looked for ${CANDIDATES.join(', ')} on PATH, and for `
+      + `${FLATPAK_CANDIDATES.join(' and ')} in flatpak. `
       + 'Install Firefox, or use --browser chromium.',
     );
   }
+  // Where the profile goes depends on which Firefox this is: a Flatpak one can
+  // write only its own data directory. The default is therefore worked out
+  // after the browser is known rather than in the parameter list.
+  if (!profileDir) profileDir = defaultProfileDir(found);
 
   sayStartup(onStartup, 'Preparing Firefox profile…');
   log('firefox.environment', firefoxRuntimeInfo(found.executable));
@@ -1097,7 +1169,11 @@ async function launchFirefox({
   // no command-line flag for this, but a private headless bus also gives its
   // GTK bridge the standard GNOME_ACCESSIBILITY startup signal; otherwise no
   // AT-SPI tree is registered. See a11y_bus.js and native_prompt.js.
-  const a11y = await openAccessibilityBus({ log });
+  // A Flatpak browser also needs the document portal, because a path chosen on
+  // this terminal is not a path inside its sandbox. It has to exist before the
+  // browser starts: flatpak binds its mount into the sandbox at launch. See
+  // flatpak.js.
+  const a11y = await openAccessibilityBus({ log, documents: !!found.flatpak });
   if (!a11y.available) log('a11y.unavailable', { reason: a11y.reason });
 
   // Only the launch path asks this: a Firefox already serving the profile has
@@ -1130,7 +1206,18 @@ async function launchFirefox({
     'about:blank',
   ];
 
-  const { command, args: spawnArgs } = buildCommand(found.executable, args);
+  // What the browser has to be told. A browser started the ordinary way
+  // inherits this from the environment below; a Flatpak browser inherits
+  // nothing, so the same set is handed to `flatpak run` as --env arguments.
+  // The two bus addresses are deliberately not among them — flatpak proxies
+  // both and sets the sandbox's own addresses itself. See flatpak.js.
+  const browserEnv = {
+    GNOME_ACCESSIBILITY: a11y.env.GNOME_ACCESSIBILITY,
+    // GTK only asks the portal when it is told to. On a bus this program
+    // made, the portal is this program, so the ask is the point.
+    ...(a11y.owned ? { GTK_USE_PORTAL: '1' } : {}),
+  };
+  const { command, args: spawnArgs } = buildCommand(found, args, { env: browserEnv });
   const displayNote = lastDisplayNote;
   sayStartup(onStartup, 'Starting Firefox…');
   log('firefox.spawn', { executable: found.executable, port, marionette: marionettePort, profileDir });
@@ -1146,12 +1233,14 @@ async function launchFirefox({
     detached: true,
     // Only ever an addition: the bus this session started, for a machine that
     // had none of its own.
+    // Only ever an addition: the bus this session started, for a machine that
+    // had none of its own. For a Flatpak browser this is the environment
+    // `flatpak run` itself reads, which is how its two proxies come to connect
+    // to this program's bus rather than to a desktop's.
     env: {
       ...process.env,
       ...a11y.env,
-      // GTK only asks the portal when it is told to. On a bus this program
-      // made, the portal is this program, so the ask is the point.
-      ...(a11y.owned ? { GTK_USE_PORTAL: '1' } : {}),
+      ...browserEnv,
     },
   });
   const startup = watchChildStartup(child);
@@ -1248,4 +1337,8 @@ module.exports = {
   PIERCE_PARENT_SCRIPT, PIERCE_CHILD_SCRIPT,
   libraryParentScript, FIREFOX_ROOT_LABELS, MARIONETTE_TIMEOUT_MS,
   firefoxRuntimeInfo,
+  // Exported for the tests: a Flatpak browser is started by a command line
+  // built here, and the command line is the whole of what can be checked
+  // without a sandbox to start.
+  buildCommand, CANDIDATES, FLATPAK_CANDIDATES,
 };
