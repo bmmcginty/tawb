@@ -27,6 +27,11 @@ module Tawb
         "signon.rememberSignons"                   => JSON::Any.new(true),
         "signon.autofillForms"                     => JSON::Any.new(true),
         "browser.altClickSave"                     => JSON::Any.new(true),
+        # A portal file chooser can belong to another application, and under
+        # Xvfb its backend has no usable display at all. Keep only file and
+        # folder choosers in Firefox's own accessible GTK process; this does
+        # not disable microphone, camera or screen-sharing portals.
+        "widget.use-xdg-desktop-portal.file-picker" => JSON::Any.new(0_i64),
         "marionette.port"                          => JSON::Any.new(marionette_port.to_i64),
       }
     end

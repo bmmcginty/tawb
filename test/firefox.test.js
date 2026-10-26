@@ -440,6 +440,7 @@ for (const implementation of firefoxLaunchImplementations({
       'signon.rememberSignons': true,
       'signon.autofillForms': true,
       'browser.altClickSave': true,
+      'widget.use-xdg-desktop-portal.file-picker': 0,
       'marionette.port': 43210,
     });
     removeTempDir(bin);

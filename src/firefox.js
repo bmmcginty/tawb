@@ -311,8 +311,16 @@ const PASSWORD_PREFS = {
 // Alt-click is Firefox's browser-native save-target gesture, but a preference
 // can turn it into an ordinary click. TAWB uses that gesture for its explicit
 // download-link action, so the profile must leave its documented meaning on.
+//
+// Firefox's automatic file-picker backend can delegate to an XDG portal. A
+// browser TAWB put under Xvfb is not on the display known to the user's portal
+// service: the portal accepts OpenFile, then answers "other error" without
+// creating any chooser. Keep file and folder choosers in Firefox's own GTK
+// process instead. This preference is specific to file pickers; microphone,
+// camera and screen-sharing portals are unchanged.
 const DOWNLOAD_PREFS = {
   'browser.altClickSave': true,
+  'widget.use-xdg-desktop-portal.file-picker': 0,
 };
 
 // Firefox reads user.js at startup, so everything here has to be in the

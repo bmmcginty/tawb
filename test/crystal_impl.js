@@ -3154,6 +3154,7 @@ function firefoxLaunchImplementations(javascript) {
         ...javascript.MEDIA_PREFS,
         ...javascript.PASSWORD_PREFS,
         'browser.altClickSave': true,
+        'widget.use-xdg-desktop-portal.file-picker': 0,
         'marionette.port': port,
       };
     },
