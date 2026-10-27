@@ -47,6 +47,8 @@ module Tawb
       --profile <dir>               the browser profile to use
       --keep-browser                leave the browser running after quitting
       --browser-timeout <seconds>   how long to wait for the browser to start
+      --portal <tawb|system>        which portal answers a file chooser
+                                    (TAWB_PORTAL; system unless the bus is ours)
 
     Logging:
       --log                         write a diagnostic log
@@ -545,7 +547,8 @@ module Tawb
         if connected = options["connect"].as_s?
           firefox_endpoint(connected)
         else
-          launched = FirefoxLaunch.launch(profile, timeout, log: logger)
+          launched = FirefoxLaunch.launch(profile, timeout, log: logger,
+            portal: options["portal"]?.try(&.as_s?) || "system")
           launched.not_nil!.endpoint
         end
       rescue error
@@ -585,7 +588,8 @@ module Tawb
                                    logger : Log) : OpenedBrowser
       startup.update("Starting Chromium…")
       session = begin
-        Browser.open(chromium_endpoint(options["connect"].as_s?), profile, timeout, logger)
+        Browser.open(chromium_endpoint(options["connect"].as_s?), profile, timeout, logger,
+          options["portal"]?.try(&.as_s?) || "system")
       rescue error
         startup.finish
         raise error
@@ -627,7 +631,8 @@ module Tawb
       end
       target = Dump.resolve_target(options["url"].as_s?, search: options["search"].as_s)
       timeout = options["browserTimeoutMs"].as_i64?
-      session = Browser.open(options["connect"].as_s?, options["profile"].as_s?, timeout)
+      session = Browser.open(options["connect"].as_s?, options["profile"].as_s?, timeout, nil,
+        options["portal"]?.try(&.as_s?) || "system")
       browser = Cdp::BrowserSession.new(session.endpoint)
       page = nil
       begin

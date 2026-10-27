@@ -241,13 +241,21 @@ function serveAccessibilityBus(connection, address) {
 // `available: false` is an ordinary answer rather than a failure: a machine
 // without D-Bus is one where native dialogs cannot be read, and everything
 // else about the browser still works.
-async function openAccessibilityBus({ log = () => {}, documents = false } = {}) {
+async function openAccessibilityBus({
+  log = () => {}, documents = false, portalPolicy = 'system', isolated = null,
+} = {}) {
   const idle = {
     available: false, address: null, env: {}, reason: null, owned: false, pid: null,
-    close: async () => {}, leaveRunning: async () => {},
+    portal: false, close: async () => {}, leaveRunning: async () => {},
   };
 
-  let sessionAddress = isolatedSessionBus() ? null : sessionBusAddress();
+  // Asking for this program's own portal is asking for a bus of this
+  // program's own too: the machine's portal owns the name, and D-Bus allows
+  // one owner, so the browser has to be put somewhere that name is free.
+  const forced = isolated === null ? isolatedSessionBus() : !!isolated;
+  const wantsPortal = portalPolicy === 'tawb';
+  const isolate = forced || wantsPortal;
+  let sessionAddress = isolate ? null : sessionBusAddress();
   let daemon = null;
   let daemonSocket = null;
   const env = {};
@@ -412,7 +420,11 @@ async function openAccessibilityBus({ log = () => {}, documents = false } = {}) 
     });
   };
 
-  if (daemon) {
+  // With `--portal system` the machine's portal answers, and it is left alone
+  // even when this program made the bus. A machine with no portal at all is
+  // the one case where answering is not taking something away from anybody.
+  const claimPortal = wantsPortal || (!forced && !!daemon);
+  if (daemon && claimPortal) {
     portalPromise = (async () => {
       let claimed;
       try {
@@ -446,6 +458,10 @@ async function openAccessibilityBus({ log = () => {}, documents = false } = {}) 
     reason: null,
     owned: !!daemon,
     pid: daemon ? daemon.pid : null,
+    // Whether a file chooser asked for on this bus is answered here. The
+    // browser's own settings have to agree: GTK only asks a portal when it is
+    // told to, and Firefox's file-picker preference decides the same thing.
+    portal: claimPortal,
     // Tell the chooser who is reading. Null on a desktop, where the machine's
     // own portal answered the name before this program was started.
     servePortal: async (options = {}) => {

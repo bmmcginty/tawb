@@ -25,6 +25,8 @@ const BROWSER_OPTIONS = {
   log: { type: 'boolean' },
   'log-dir': { type: 'string' },
   'browser-timeout': { type: 'string' },
+  // Which portal answers a file chooser: the machine's own, or this program's.
+  portal: { type: 'string' },
 };
 
 // --browser-timeout takes seconds, like TAWB_BROWSER_TIMEOUT, and is kept as
@@ -36,6 +38,22 @@ function browserTimeoutMs(value) {
     throw new Error(`--browser-timeout needs a positive number of seconds, not ${value}`);
   }
   return Math.round(seconds * 1000);
+}
+
+// Where a file chooser comes from.
+//
+// `system` is the machine's own portal, which is what anybody on a desktop
+// expects. `tawb` is this program's own frontend, answered on the terminal —
+// which cannot coexist with the machine's, because both want the same bus
+// name, so asking for it puts the browser on a session bus this program made.
+const PORTALS = new Set(['tawb', 'system']);
+
+function portalName(value) {
+  const name = String(value || 'system').toLowerCase();
+  if (!PORTALS.has(name)) {
+    throw new Error(`Unknown portal ${value}; use tawb or system`);
+  }
+  return name;
 }
 
 // The front end is the program that runs: the full-screen reader, in either of
@@ -103,10 +121,11 @@ function resolveBrowserOptions(values, env = process.env) {
     log: values.log ?? false,
     logDir: values['log-dir'] || env.TAWB_LOG_DIR || null,
     browserTimeoutMs: browserTimeoutMs(values['browser-timeout']),
+    portal: portalName(values.portal || env.TAWB_PORTAL),
   };
 }
 
 module.exports = {
-  BROWSER_OPTIONS, EDB_OPTIONS, FRONT_ENDS, HELP_OPTION, browserTimeoutMs,
-  frontEndName, parseCommandLine, resolveBrowserOptions, resolveEdbOptions,
+  BROWSER_OPTIONS, EDB_OPTIONS, FRONT_ENDS, HELP_OPTION, PORTALS, browserTimeoutMs,
+  frontEndName, portalName, parseCommandLine, resolveBrowserOptions, resolveEdbOptions,
 };

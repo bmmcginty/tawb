@@ -407,7 +407,8 @@ module Tawb
         endpoint = if connected = options["connect"].as_s?
                      connected.starts_with?("ws") ? connected : "ws://127.0.0.1:#{connected}/session"
                    else
-                     launched = FirefoxLaunch.launch(profile, timeout, log: logger)
+                     launched = FirefoxLaunch.launch(profile, timeout, log: logger,
+                       portal: options["portal"]?.try(&.as_s?) || "system")
                      launched.not_nil!.endpoint
                    end
         session = FirefoxDriver::BrowserSession.new(Broker.ensure(profile, endpoint)[:url])

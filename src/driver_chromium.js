@@ -80,7 +80,7 @@ return { start, end: Math.max(start, end), size: isVertical ? root.height : root
 
 async function openChromium({
   connect = null, profile = null, keepBrowser = false, log = () => {}, onStartup = () => {},
-  browserTimeoutMs = null,
+  browserTimeoutMs = null, portal = 'system',
 } = {}) {
   let browser;
   let context;
@@ -102,7 +102,8 @@ async function openChromium({
     a11y = connected.a11y;
   } else {
     const started = await launchOwnBrowser({
-      profileDir: profile || defaultProfileDir(), browserTimeoutMs, log, onStartup,
+      profileDir: profile || defaultProfileDir(), browserTimeoutMs,
+      portal, log, onStartup,
     });
     ({ browser, context } = started);
     child = started.child;

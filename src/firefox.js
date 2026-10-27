@@ -1103,7 +1103,7 @@ function releaseStrandedSession(port, { timeout = MARIONETTE_TIMEOUT_MS } = {}) 
 // attach. The caller verifies from inside a page before trusting any of it.
 async function launchFirefox({
   profileDir = null, keepBrowser = false, browserTimeoutMs = null,
-  log = () => {}, onStartup = () => {},
+  portal = 'system', log = () => {}, onStartup = () => {},
 } = {}) {
   const found = findFirefox();
   if (!found) {
@@ -1173,7 +1173,9 @@ async function launchFirefox({
   // this terminal is not a path inside its sandbox. It has to exist before the
   // browser starts: flatpak binds its mount into the sandbox at launch. See
   // flatpak.js.
-  const a11y = await openAccessibilityBus({ log, documents: !!found.flatpak });
+  const a11y = await openAccessibilityBus({
+    log, documents: !!found.flatpak, portalPolicy: portal || 'system',
+  });
   if (!a11y.available) log('a11y.unavailable', { reason: a11y.reason });
 
   // Only the launch path asks this: a Firefox already serving the profile has
@@ -1191,7 +1193,7 @@ async function launchFirefox({
     // asked to go there after all — the opposite of the managed value, which
     // exists because a portal on a *desktop* bus delegates to a backend that
     // cannot start on this browser's private display.
-    ...(a11y.owned ? { 'widget.use-xdg-desktop-portal.file-picker': 1 } : {}),
+    ...(a11y.portal ? { 'widget.use-xdg-desktop-portal.file-picker': 1 } : {}),
     'marionette.port': marionettePort,
   });
 

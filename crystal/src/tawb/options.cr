@@ -20,6 +20,9 @@ module Tawb
       "log"             => Kind::Boolean,
       "log-dir"         => Kind::String,
       "browser-timeout" => Kind::String,
+      # Which portal answers a file chooser: the machine's own, or this
+      # program's.
+      "portal"          => Kind::String,
     }
     EDB    = {"port" => Kind::String}
     HELP   = {"help" => Kind::Boolean}
@@ -113,6 +116,19 @@ module Tawb
       })
     end
 
+    # Where a file chooser comes from. `system` is the machine's own portal,
+    # which is what anybody on a desktop expects. `tawb` is this program's own
+    # frontend, answered on the terminal — which cannot coexist with the
+    # machine's, because both want the same bus name, so asking for it puts the
+    # browser on a session bus this program made.
+    def self.portal_name(value : String?) : String
+      name = (value || "system").downcase
+      unless name == "tawb" || name == "system"
+        raise ArgumentError.new("Unknown portal #{value}; use tawb or system")
+      end
+      name
+    end
+
     private def self.shared(values : Hash(String, Value), env : Hash(String, String)) : Hash(String, JSON::Any)
       {
         "connect"          => json(string(values, "connect").try { |value| normalise_endpoint(value) }),
@@ -122,6 +138,7 @@ module Tawb
         "log"              => json(boolean(values, "log", false)),
         "logDir"           => json(string(values, "log-dir") || env["TAWB_LOG_DIR"]?),
         "browserTimeoutMs" => json(browser_timeout_ms(string(values, "browser-timeout"))),
+        "portal"           => json(portal_name(string(values, "portal") || env["TAWB_PORTAL"]?)),
       }
     end
 

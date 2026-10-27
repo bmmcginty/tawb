@@ -285,7 +285,9 @@ async function launchOwnBrowser({
   // this terminal is not a path inside its sandbox. It has to exist before the
   // browser starts: flatpak binds its mount into the sandbox at launch. See
   // flatpak.js.
-  const a11y = await openAccessibilityBus({ log, documents: !!found.flatpak });
+  const a11y = await openAccessibilityBus({
+    log, documents: !!found.flatpak, portalPolicy: portal || 'system',
+  });
   if (!a11y.available) log('a11y.unavailable', { reason: a11y.reason });
 
   const port = await freePort();
@@ -311,7 +313,7 @@ async function launchOwnBrowser({
   // both and sets the sandbox's own addresses itself. See flatpak.js.
   const browserEnv = {
     GNOME_ACCESSIBILITY: a11y.env.GNOME_ACCESSIBILITY,
-    ...(a11y.owned ? { GTK_USE_PORTAL: '1' } : {}),
+    ...(a11y.portal ? { GTK_USE_PORTAL: '1' } : {}),
   };
   const { command, args } = buildCommand(found, browserArgs, { env: browserEnv });
   const displayNote = lastDisplayNote;
@@ -400,7 +402,7 @@ async function connectToBrowser(endpoint, { log = () => {} } = {}) {
   // whether it describes its windows is their decision and not ours: the flag
   // is a startup one. The bus is still opened, because a desktop's browser is
   // routinely started with accessibility on and then this works anyway.
-  const a11y = await openAccessibilityBus({ log });
+  const a11y = await openAccessibilityBus({ log, portalPolicy: portal || 'system' });
   return {
     browser, context: contexts[0], child: null, owned: false, port: portOfEndpoint(endpoint), a11y,
   };

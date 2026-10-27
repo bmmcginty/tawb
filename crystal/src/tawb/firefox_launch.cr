@@ -140,7 +140,7 @@ module Tawb
 
     def self.launch(profile_dir : String, timeout_ms = 45000_i64,
                     path = ENV["PATH"]? || "", display = ENV["DISPLAY"]?,
-                    log : Log? = nil) : Started
+                    log : Log? = nil, portal : String = "system") : Started
       process : Process? = nil
       Dir.mkdir_p(profile_dir)
       # Sweep before looking for a browser to rejoin: a stranded browser still
@@ -155,7 +155,7 @@ module Tawb
           # A Firefox already running on this profile: the reader that started
           # it recorded the bus it was given, and that recorded address is the
           # one to read native windows on.
-          a11y: A11yBus.recorded(record) || A11yBus.open(log)
+          a11y: A11yBus.recorded(record) || A11yBus.open(log, portal)
         )
       end
 
@@ -172,7 +172,7 @@ module Tawb
       # flag for platform accessibility the way Chromium does — what Firefox's
       # GTK bridge waits for is GNOME_ACCESSIBILITY in the environment, which
       # `A11yBus.open` sets. See `a11y_bus.cr`.
-      a11y = A11yBus.open(log)
+      a11y = A11yBus.open(log, portal)
       log.try(&.write("a11y.unavailable", {
         "reason" => JSON::Any.new(a11y.reason),
       })) unless a11y.available?
@@ -181,7 +181,7 @@ module Tawb
       # asked to go there after all — the opposite of the managed value, which
       # exists because a portal on a *desktop* bus delegates to a backend that
       # cannot start on this browser's private display.
-      if a11y.owned?
+      if a11y.portal?
         write_profile_prefs(profile_dir,
           launch_preferences(marionette_port).merge({
             "widget.use-xdg-desktop-portal.file-picker" => JSON::Any.new(1_i64),
@@ -212,7 +212,7 @@ module Tawb
       # started it. See Detach.
       # GTK only asks the portal when it is told to. On a bus this program
       # made, the portal is this program, so the ask is the point.
-      browser_env = a11y.owned? ? a11y.env.merge({"GTK_USE_PORTAL" => "1"}) : a11y.env
+      browser_env = a11y.portal? ? a11y.env.merge({"GTK_USE_PORTAL" => "1"}) : a11y.env
       spawned = Detach.spawn(command, arguments, path, env: browser_env)
       process = spawned.process
       grouped = spawned.grouped

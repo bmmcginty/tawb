@@ -1662,6 +1662,23 @@ deterministic/headless mode and not the default. And a kept browser
 (`--keep-browser`) loses its chooser with the reader that was answering it,
 because the prompt is that reader's keyboard.
 
+### Choosing which portal answers
+
+`--portal system` (the default, and `TAWB_PORTAL`) is the machine's own portal,
+and it is left alone even when this program made the bus. `--portal tawb`
+answers the file chooser here instead, on the terminal.
+
+The two cannot coexist: both want `org.freedesktop.portal.Desktop`, and D-Bus
+allows one owner. So `--portal tawb` puts the browser on a session bus this
+program owns, which is the same thing `TAWB_A11Y_BUS=private` does — and with
+it the browser loses the desktop portal's other services: `Settings`,
+`Documents`, `OpenURI`, notifications, screen sharing, camera and microphone.
+That is why it is opt-in rather than the default, and why a desktop reader who
+is happy with the GTK chooser should leave it alone.
+
+A machine with no portal at all is the one case where `system` and `tawb`
+agree: there is nothing to leave alone, so the chooser is answered here.
+
 **Flatpak.** The portal works for a Flatpak browser as it is, which is not what
 was expected before it was tried. Verified against a real Flatpak sandbox,
 org.mozilla.firefox's own, inside an Ubuntu container;

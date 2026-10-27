@@ -232,7 +232,8 @@ module Tawb
                      @owned : Bool = false,
                      @session : Dbus::Connection? = nil,
                      @daemon : Process? = nil,
-                     @daemon_socket : String? = nil)
+                     @daemon_socket : String? = nil,
+                     @portal_wanted : Bool = false)
         @pid = @daemon.try(&.pid.to_i64)
         @released = false
         @portal = nil.as(Portal::Service?)
@@ -266,8 +267,15 @@ module Tawb
       #
       # On a desktop nothing is claimed — the machine's own portal owns the
       # name — which is why `owned?` is the condition and not `available?`.
+      # Whether a file chooser asked for on this bus is answered here. The
+      # browser's own settings have to agree: GTK only asks a portal when it is
+      # told to, and Firefox's file-picker preference decides the same thing.
+      def portal? : Bool
+        @portal_wanted
+      end
+
       def claim_portal(log : Log? = nil) : Portal::Service?
-        return nil unless @owned
+        return nil unless @owned && @portal_wanted
         return @portal if @portal
         session = @session
         return nil if session.nil?
@@ -276,6 +284,7 @@ module Tawb
           log.try(&.write("portal.busy", {} of String => JSON::Any))
           return nil
         end
+        @portal_wanted = true
         service = Portal::Service.new(session,
           ->(_ask : Portal::Ask) { nil.as(Array(String)?) },
           ->(_sender : String) { true }, log)
@@ -337,8 +346,15 @@ module Tawb
       Opened.new(address: address)
     end
 
-    def self.open(log : Log? = nil) : Opened
-      session_address = isolated? ? nil : session_bus_address
+    # `portal` is which portal answers a file chooser: "system" for the
+    # machine's own, "tawb" for this program's. Asking for this program's is
+    # asking for a bus of this program's own too, because the machine's portal
+    # owns the name and D-Bus allows one owner.
+    def self.open(log : Log? = nil, portal : String = "system") : Opened
+      forced = isolated?
+      wants_portal = portal == "tawb"
+      isolate = forced || wants_portal
+      session_address = isolate ? nil : session_bus_address
       daemon = nil.as(Process?)
       daemon_socket = nil.as(String?)
       env = {} of String => String
@@ -468,6 +484,11 @@ module Tawb
         "address"    => JSON::Any.new(address),
         "ownSession" => JSON::Any.new(!daemon.nil?),
       }))
+      # With `--portal system` the machine's portal answers, and it is left
+      # alone even when this program made the bus. A machine with no portal at
+      # all is the one case where answering is not taking something away from
+      # anybody.
+      claim = wants_portal || (!forced && !daemon.nil?)
       opened = Opened.new(
         address: address,
         env: env,
@@ -475,6 +496,7 @@ module Tawb
         session: session,
         daemon: daemon,
         daemon_socket: daemon_socket,
+        portal_wanted: claim,
       )
       # Claim the portal name now, while the bus is being made, rather than
       # when the reader is ready to answer: Chromium asks the bus once at

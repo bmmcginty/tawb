@@ -85,11 +85,11 @@ module Tawb
     end
 
     def self.open(connect : String?, profile : String?, timeout_ms : Int64?,
-                  log : Log? = nil) : Session
+                  log : Log? = nil, portal : String = "system") : Session
       # A browser somebody else started: this reader has no pid of its own to
       # match on the accessibility bus, so the application is found by name
       # instead. See `Atspi::Accessibility#application_for`.
-      return Session.new(connect.not_nil!, a11y: A11yBus.open(log)) if connect
+      return Session.new(connect.not_nil!, a11y: A11yBus.open(log, portal)) if connect
       profile_dir = profile || default_profile
       FileUtils.mkdir_p(profile_dir)
       # Sweep before looking for a browser to rejoin: a stranded browser still
@@ -100,7 +100,7 @@ module Tawb
         # the browser recorded the bus it was given, and that recorded address
         # is the one to read native windows on.
         record = JSON.parse(File.read(File.join(profile_dir, ENDPOINT_RECORD))).as_h rescue nil
-        return Session.new(endpoint, a11y: A11yBus.recorded(record) || A11yBus.open(log))
+        return Session.new(endpoint, a11y: A11yBus.recorded(record) || A11yBus.open(log, portal))
       end
       executable = find_executable || raise IO::Error.new(
         "No browser found. Looked for: #{CANDIDATES.join(", ")}. Install Chrome or Chromium."
@@ -109,7 +109,7 @@ module Tawb
       # Somewhere for Chromium to describe its own windows to, before Chromium
       # is started: the bus has to exist for the browser to register with, and
       # the browser's environment has to name it. See `a11y_bus.cr`.
-      a11y = A11yBus.open(log)
+      a11y = A11yBus.open(log, portal)
       log.try(&.write("a11y.unavailable", {
         "reason" => JSON::Any.new(a11y.reason),
       })) unless a11y.available?

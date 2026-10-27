@@ -71,6 +71,12 @@ const path = require('node:path');
 // --browser-timeout <seconds> is how long to wait for a browser to open its
 // port. It defaults to TAWB_BROWSER_TIMEOUT, which is the value a container or
 // a slow machine sets once; the flag is for overriding it for one run.
+// --portal <tawb|system> chooses where a file chooser comes from. Both browsers
+// ask a desktop portal rather than drawing one, and on a desktop that is the
+// machine's own. `tawb` answers it here instead, on the terminal — which needs
+// a session bus this program owns, because the machine's portal owns that bus
+// name, so asking for it puts the browser on a private bus and gives up the
+// desktop portal's other services with it.
 // The alternate screen is the default because it hands the terminal back,
 // scrollback and all, exactly as it was when the session ends — which is what
 // a parent full-screen program or a mailcap viewer wants. --no-alt-screen
@@ -5058,6 +5064,8 @@ const USAGE = [
   '  --keep-browser                leave the browser running after quitting',
   '  --no-keep-browser             close a browser the settings would keep',
   '  --browser-timeout <seconds>   how long to wait for the browser to start',
+  '  --portal <tawb|system>        which portal answers a file chooser',
+  '                                (TAWB_PORTAL; system unless the bus is ours)',
   '',
   'edb front end:',
   '  --port <number>               the port the edbrowse bridge listens on',
@@ -5146,6 +5154,7 @@ async function main() {
         profile: ARGS.profile,
         keepBrowser: ARGS.keepBrowser,
         browserTimeoutMs: ARGS.browserTimeoutMs,
+        portal: ARGS.portal,
         log,
         onStartup: startup.update,
       }));
