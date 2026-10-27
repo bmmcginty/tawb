@@ -447,6 +447,73 @@ test('a chooser is read for its location field and the rows a reader can open', 
   assert.deepEqual(outcome.results[3].actions, ['Enter Location', 'Documents']);
 });
 
+// The save dialog GTK actually draws: a Name field with no name of its own and
+// the word "Name:" beside it, then a listing of every file in the directory,
+// then the buttons that answer the dialog. Reading the listing node by node
+// spends the whole budget before reaching Save, so the answers have to come
+// from pruning the listing rather than from walking all of it.
+function saveAsTree() {
+  const tree = treeWith();
+  tree[`${BUS}|/window`].children = [[BUS, '/save']];
+  const rows = [];
+  for (let index = 0; index < 600; index += 1) {
+    const row = `/save/row${index}`;
+    tree[`${BUS}|${row}`] = {
+      role: 'table cell', name: '', children: [
+        [BUS, `${row}/icon`], [BUS, `${row}/name`], [BUS, `${row}/size`], [BUS, `${row}/date`],
+      ],
+    };
+    tree[`${BUS}|${row}/icon`] = { role: 'image', name: '', children: [] };
+    tree[`${BUS}|${row}/name`] = {
+      role: 'table cell', name: `file${index}.bin`, children: [],
+    };
+    tree[`${BUS}|${row}/size`] = { role: 'table cell', name: '1 kB', children: [] };
+    tree[`${BUS}|${row}/date`] = { role: 'table cell', name: '3 Oct', children: [] };
+    rows.push([BUS, row]);
+  }
+  tree[`${BUS}|/save`] = {
+    role: 'file chooser', name: 'Save As - Mozilla Firefox', children: [
+      [BUS, '/save/name-section'], [BUS, '/save/files'], [BUS, '/save/cancel'], [BUS, '/save/save'],
+    ],
+  };
+  tree[`${BUS}|/save/name-section`] = {
+    role: 'filler', name: '', children: [[BUS, '/save/name-panel']],
+  };
+  tree[`${BUS}|/save/name-panel`] = {
+    role: 'panel', name: '', children: [[BUS, '/save/name'], [BUS, '/save/name-label']],
+  };
+  // The field itself has no name; the label beside it is what it is called.
+  tree[`${BUS}|/save/name`] = {
+    role: 'text', name: '', value: 'guidedog.mp3',
+    interfaces: ['org.a11y.atspi.EditableText'],
+    properties: { 'org.a11y.atspi.Action.NActions': { signature: 'i', value: 1 } },
+    actions: ['activate'], children: [],
+  };
+  tree[`${BUS}|/save/name-label`] = { role: 'label', name: 'Name:', children: [] };
+  tree[`${BUS}|/save/files`] = { role: 'table', name: 'Files', children: rows };
+  tree[`${BUS}|/save/cancel`] = { role: 'push button', name: 'Cancel', children: [] };
+  tree[`${BUS}|/save/save`] = {
+    role: 'push button', name: 'Save', state: [1 << 12, 0], children: [],
+  };
+  return tree;
+}
+
+test('a save dialog is read for its name and its answers, not its listing', async () => {
+  const { outcome } = await compare('a save dialog with a large listing', [
+    { type: 'arm', pid: 4242 },
+    setTree({ tree: saveAsTree() }),
+    { type: 'await', count: 1 },
+    { type: 'dialog', index: 0 },
+  ]);
+  // The field is called what the label beside it calls it.
+  assert.deepEqual(outcome.results[3].fields, ['Name: guidedog.mp3']);
+  // And the answers come after the listing, so they are only reachable if the
+  // listing is not walked node by node.
+  assert.ok(outcome.results[3].buttons.includes('Save'),
+    'the Save button was lost inside the file listing');
+  assert.ok(outcome.results[3].buttons.includes('Cancel'));
+});
+
 test('a panel with nothing to say and nothing to press is not a question', async () => {
   const { outcome } = await compare('an empty dialog', [
     { type: 'arm', pid: 4242 },

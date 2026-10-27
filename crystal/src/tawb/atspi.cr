@@ -94,6 +94,18 @@ module Tawb
     # the two lines that matter.
     SILENT_ROLES = Set{"panel", "filler", "section", "redundant object", "unknown"}
 
+    # Roles that are never worth walking into. A file chooser's listing is
+    # thousands of nodes — a row, then a cell per column, then whatever the
+    # cell wraps — and the buttons that answer the dialog come *after* it.
+    # Walking the inside of a cell spends the whole budget on the listing and
+    # never reaches them, which is a save dialog with no Save button on it.
+    PRUNE_ROLES = Set{"table cell", "animation", "icon", "image", "separator",
+                      "scroll bar", "static"}
+
+    # How many rows of one table are read. A directory with more than this many
+    # entries is one the reader will type a path into rather than walk.
+    MAX_ROWS = 150
+
     # One node of an accessibility tree: which connection answers for the node,
     # and which object on that connection the node is.
     record Node, bus : String, path : String
@@ -487,7 +499,7 @@ module Tawb
       end
 
       def enter(current : Described, depth : Int32, seen : Set(String),
-                inherited_name : String = "") : Nil
+                inherited_name : String = "", beside : String = "") : Nil
         return if @visited >= @max_nodes
         @visited += 1
         name = current.name.strip
@@ -504,8 +516,11 @@ module Tawb
           interfaces = @accessibility.interfaces_of(current.node) rescue [] of String
           editable = interfaces.includes?(EDITABLE_TEXT)
           states = editable ? (@accessibility.states_of(current.node) rescue nil) : nil
+          # A GTK entry is often named by a label beside it rather than by an
+          # ancestor: the save dialog's Name field is a blank text box whose
+          # next sibling is the word "Name:".
           contextual = inherited_name.gsub(/\s+(?:layer|stack|revealer)$/i, "")
-          field_name = name.empty? ? contextual : name
+          field_name = name.empty? ? (beside.empty? ? contextual : beside) : name
           # A GTK path bar keeps several location widgets stacked and shows
           # one. The hidden ones have no name, no text and are neither focused
           # nor showing; the visible one is focused as soon as the chooser
@@ -544,19 +559,37 @@ module Tawb
         now_seen = name.empty? ? seen : seen.dup << name
         child_context = name.empty? ? inherited_name : name
         return if depth >= @max_depth
+        # A named cell is the name a reader needed; the cells around it are
+        # columns of sizes and dates. An unnamed one is the row wrapper the
+        # name cell lives inside, so that one is walked.
+        prune = PRUNE_ROLES.includes?(current.role) &&
+                !(current.role == "table cell" && name.empty?)
+        return if prune
         children = begin
           @accessibility.children_of(current.node)
         rescue
           return
         end
-        children.each do |child|
+        among = current.role == "table" ? children.first(MAX_ROWS) : children
+        # One child of lookahead, so a control can be named by the label beside
+        # it. Describing each child once, as the walk already did, is what
+        # makes this free.
+        pending = nil.as(Described?)
+        among.each do |child|
           described = begin
             @accessibility.describe_node(child)
           rescue
             next
           end
-          enter(described, depth + 1, now_seen, child_context)
+          unless pending.nil?
+            beside = described.role == "label" ?
+              described.name.gsub(/[:\s]+\z/, "") : ""
+            enter(pending.not_nil!, depth + 1, now_seen, child_context, beside)
+            pending = nil
+          end
+          pending = described
         end
+        enter(pending.not_nil!, depth + 1, now_seen, child_context) unless pending.nil?
       end
     end
 

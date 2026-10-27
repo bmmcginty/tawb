@@ -93,6 +93,20 @@ const STATE_IS_DEFAULT = 39;
 // that matter.
 const SILENT_ROLES = new Set(['panel', 'filler', 'section', 'redundant object', 'unknown']);
 
+// Roles that are never worth walking into. A file chooser's listing is
+// thousands of nodes — a row, then a cell per column, then whatever the cell
+// wraps — and the buttons that answer the dialog come *after* it. Walking the
+// inside of a cell spends the whole budget on the listing and never reaches
+// them, which is a save dialog with no Save button on it.
+const PRUNE_ROLES = new Set([
+  'table cell', 'animation', 'icon', 'image', 'separator', 'scroll bar', 'static',
+]);
+
+// How many rows of one table are read. A directory with more than this many
+// entries is one the reader will type a path into rather than walk, and a
+// listing that long is not worth the reading time it costs.
+const MAX_ROWS = 150;
+
 // Which process a pid belongs to the group of. The browser is not always our
 // own child — with no display it is started under xvfb-run and is that
 // shell's child — so the process group is what identifies the browser we
@@ -322,7 +336,7 @@ class Accessibility {
     const actions = [];
     let visited = 0;
 
-    const walk = async (current, depth, seen, inheritedName = '') => {
+    const walk = async (current, depth, seen, inheritedName = '', beside = '') => {
       if (visited >= maxNodes) return;
       visited += 1;
       const name = String(current.name || '').trim();
@@ -340,9 +354,12 @@ class Accessibility {
         // identical blank lines in front of the reader.
         const visible = !editable || !states
           || states.showing || states.focused || !!value || !!name;
+        // A GTK entry is often named by a label beside it rather than by an
+        // ancestor: the save dialog's Name field is a blank text box whose
+        // next sibling is the word "Name:".
         const contextualName = String(inheritedName || '')
           .replace(/\s+(?:layer|stack|revealer)$/i, '');
-        const fieldName = name || contextualName;
+        const fieldName = name || String(beside || '').trim() || contextualName;
         if (visible && (name || value || editable)) {
           fields.push({ ...current, name: fieldName, value, editable });
         }
@@ -368,21 +385,41 @@ class Accessibility {
       const nowSeen = name ? new Set([...seen, name]) : seen;
       const childContext = name || inheritedName;
       if (depth >= maxDepth) return;
+      // A named cell is the name a reader needed; the cells around it are
+      // columns of sizes and dates. An unnamed one is the row wrapper the
+      // name cell lives inside, so that one is walked.
+      const prune = PRUNE_ROLES.has(current.role)
+        && !(current.role === 'table cell' && !name);
+      if (prune) return;
       let children;
       try {
         children = await this.childrenOf(current);
       } catch {
         return;
       }
-      for (const child of children) {
+      const among = current.role === 'table' ? children.slice(0, MAX_ROWS) : children;
+      // One child of lookahead, so a control can be named by the label beside
+      // it. Describing each child once, as the walk already did, is what makes
+      // this free.
+      let pending = null;
+      for (const child of among) {
         let described;
         try {
           described = await this.describeNode(child);
         } catch {
           continue;
         }
-        await walk(described, depth + 1, nowSeen, childContext);
+        if (pending) {
+          // The child being looked at now is what the one before it is
+          // labelled by, when it is a label.
+          const beside = described.role === 'label'
+            ? String(described.name || '').replace(/[:\s]+$/, '') : '';
+          await walk(pending.node, depth + 1, nowSeen, childContext, beside);
+          pending = null;
+        }
+        pending = { node: described };
       }
+      if (pending) await walk(pending.node, depth + 1, nowSeen, childContext, '');
     };
 
     await walk(root, 0, new Set());
@@ -444,5 +481,5 @@ async function openAccessibility({
 
 module.exports = {
   openAccessibility, Accessibility, processGroupOf, nodeOf, BUTTON_ROLES, TOGGLE_ROLES,
-  EDITABLE_TEXT, TABLE_CELL,
+  EDITABLE_TEXT, TABLE_CELL, PRUNE_ROLES, MAX_ROWS,
 };

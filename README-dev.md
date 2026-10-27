@@ -1538,7 +1538,15 @@ that leaves the dialog up is not a refusal to be reported and walked away
 from — the chooser is read again and keeps the keyboard, and only a press that
 actually dismisses it returns the reader to the page.
 
-A chooser also offers more than buttons:
+A chooser also offers more than buttons, and what it offers is why the walk
+is pruned rather than exhaustive. GTK's save dialog holds a listing of every
+file in the directory — a row, then a cell per column, then whatever the cell
+wraps — and the buttons that answer the dialog come *after* it. Walking the
+inside of each cell spent the whole node budget on the listing and never
+reached Save, which from the reader's side was a save dialog with no answers
+on it and no way to name the file. So a named cell is read and not walked into,
+an unnamed one is the row wrapper and is, and a table stops after a hundred
+and fifty rows: a listing longer than that is one to type a path into.
 
 - its **folder rows** are table cells whose first action is `activate`, so a
   row a reader stands on can be opened rather than merely described. Only the
@@ -1551,6 +1559,10 @@ A chooser also offers more than buttons:
   told whether the chooser took it and stays where they are if it did not.
 - its **`show_location` action** is offered as a line of its own, because GTK
   only reveals the location field once that action has been activated.
+
+A field with no name of its own takes the name of a label beside it, which is
+how GTK names the save dialog's `Name` box: a blank entry whose next sibling is
+the word `Name:`.
 
 The field has no name of its own — the filler around it is called
 `Location Layer` — so the name of the nearest named ancestor is what the field
