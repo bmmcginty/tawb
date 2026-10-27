@@ -1506,6 +1506,19 @@ saved a password the reader was trying to walk away from. A key that means
 `Alt+Q` goes back to it, re-read rather than replayed in case the browser has
 changed what it says.
 
+A dialog's controls are written in the same vocabulary as a page's, because a
+dialog is not a different kind of thing from a page and a reader who has
+learned one should not have to learn the other: `[*Name]` is something you
+press, `[Name: value]` holds a value, and a chooser's rows are the options of a
+list box, so they read `[*name]` rather than as bare words with no sign that
+they can be opened.
+
+A chooser also leads with its controls — the name it is saving under, the rows
+of its list, the two answers — and puts its prose after them. That is the one
+dialog where the words are incidental: read first, they are the Places list,
+the file-type filter and the whole Other Locations panel, which is a screenful
+before the reader reaches anything they can use.
+
 Which button a dialog has focused is still worth knowing, and it is still
 read — it is why driving these dialogs with synthetic keystrokes is a bad
 idea. Pressing Return at Chrome's install prompt with xdotool dismisses it and

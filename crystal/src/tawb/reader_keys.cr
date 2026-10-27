@@ -1,6 +1,7 @@
 require "./portal"
 require "json"
 require "./reader"
+require "./aria"
 require "./edit"
 require "./quicknav"
 require "./lynx_actions"
@@ -2750,14 +2751,25 @@ module Tawb
     # press did anything.
     PRESS_SETTLE = 400.milliseconds
 
+    # One control, in the vocabulary every other line of this program uses:
+    # `[*Name]` is something you press, `[Name: value]` holds a value, `{Name}`
+    # is something you go to. A dialog is not a different kind of thing from a
+    # page, and a reader who has learned one should not have to learn the other.
+    def self.choice_text(item : JSON::Any) : String
+      Aria.render_line(item)
+    end
+
     private def self.toggle_text(toggle : Reader::DialogControl) : String
-      "[#{toggle.checked ? "x" : " "}] #{toggle.name}"
+      choice_text(JSON::Any.new({
+        "role"    => JSON::Any.new("checkbox"),
+        "name"    => JSON::Any.new(toggle.name),
+        "checked" => JSON::Any.new(toggle.checked),
+      }))
     end
 
     # The dialog as lines. A block carries the index of the control the block
     # stands for, so pressing Enter on a line knows what the line is.
     def self.dialog_blocks(request : Reader::DialogEnv) : Array(JSON::Any)
-      blocks = [] of JSON::Any
       plain = ->(text : String) do
         JSON::Any.new({"text" => JSON::Any.new(text),
                        "button" => JSON::Any.new(nil),
@@ -2765,24 +2777,25 @@ module Tawb
                        "field"  => JSON::Any.new(nil),
                        "action" => JSON::Any.new(nil)})
       end
-      request.lines.each { |line| blocks << plain.call(line) }
+      said = request.lines.map { |line| plain.call(line) }
+
       # What the dialog is about, when that lives in a control rather than in
       # the dialog's words — the username and password a "Save password?"
-      # prompt is offering to keep. The browser masks the password itself, so
-      # what is shown here is what is on the screen a sighted user would be
-      # looking at.
+      # prompt is offering to keep, and the name a save dialog will write
+      # under.
+      held = [] of JSON::Any
       request.fields.each_with_index do |field, index|
         next if field.name.empty? && field.value.empty?
-        text = if !field.name.empty? && !field.value.empty?
-                 "#{field.name}: #{field.value}"
-               else
-                 field.value.empty? ? field.name : field.value
-               end
         choosable = request.role == "file chooser" && field.editable
-        blocks << JSON::Any.new({
-          "text"   => JSON::Any.new(text),
-          "item"   => choosable ? JSON::Any.new({"role" => JSON::Any.new("textbox"),
-                                                 "name" => JSON::Any.new(field.name)}) : JSON::Any.new(nil),
+        held << JSON::Any.new({
+          "text" => JSON::Any.new(choice_text(JSON::Any.new({
+            "role"     => JSON::Any.new("textbox"),
+            "name"     => JSON::Any.new(field.name),
+            "value"    => JSON::Any.new(field.value),
+            "readonly" => JSON::Any.new(request.role == "file chooser" && !field.editable),
+          }))),
+          "item" => choosable ? JSON::Any.new({"role" => JSON::Any.new("textbox"),
+                                               "name" => JSON::Any.new(field.name)}) : JSON::Any.new(nil),
           "button" => JSON::Any.new(nil),
           "toggle" => JSON::Any.new(nil),
           "field"  => choosable ? JSON::Any.new(index.to_i64) : JSON::Any.new(nil),
@@ -2793,18 +2806,17 @@ module Tawb
       toggles = request.toggles
       buttons = request.buttons
       actions = request.actions
-      if toggles.empty? && buttons.empty? && actions.empty?
-        blocks << plain.call("(the browser offers nothing to press)")
-        return blocks
+      if toggles.empty? && buttons.empty? && actions.empty? && held.empty?
+        return said + [plain.call("(the browser offers nothing to press)")]
       end
 
-      blocks << plain.call("")
       # Options first, because an option changes what answering means:
       # Firefox's doorhanger offers "Allow extension to run in private
       # windows", and that is a decision made before the answer rather than
       # after it.
+      options = [] of JSON::Any
       toggles.each_with_index do |toggle, index|
-        blocks << JSON::Any.new({
+        options << JSON::Any.new({
           "text"   => JSON::Any.new(toggle_text(toggle)),
           "item"   => JSON::Any.new({"role" => JSON::Any.new("checkbox"),
                                      "name" => JSON::Any.new(toggle.name)}),
@@ -2814,11 +2826,15 @@ module Tawb
           "action" => JSON::Any.new(nil),
         })
       end
-      blocks << plain.call("") unless toggles.empty? || (buttons.empty? && actions.empty?)
+      # A chooser's rows are a list box and its own actions are items in it, so
+      # they read the way an option on a page reads rather than as bare words.
+      items = [] of JSON::Any
       actions.each_with_index do |action, index|
-        blocks << JSON::Any.new({
-          "text"   => JSON::Any.new(action.name),
-          "item"   => JSON::Any.new({"role" => JSON::Any.new("button"),
+        items << JSON::Any.new({
+          "text"   => JSON::Any.new(choice_text(JSON::Any.new({
+            "role" => JSON::Any.new("option"), "name" => JSON::Any.new(action.name),
+          }))),
+          "item"   => JSON::Any.new({"role" => JSON::Any.new("option"),
                                      "name" => JSON::Any.new(action.name)}),
           "button" => JSON::Any.new(nil),
           "toggle" => JSON::Any.new(nil),
@@ -2826,10 +2842,12 @@ module Tawb
           "action" => JSON::Any.new(index.to_i64),
         })
       end
-      blocks << plain.call("") unless actions.empty? || buttons.empty?
+      choices = [] of JSON::Any
       buttons.each_with_index do |button, index|
-        blocks << JSON::Any.new({
-          "text"   => JSON::Any.new(button.name),
+        choices << JSON::Any.new({
+          "text"   => JSON::Any.new(choice_text(JSON::Any.new({
+            "role" => JSON::Any.new("button"), "name" => JSON::Any.new(button.name),
+          }))),
           "item"   => JSON::Any.new({"role" => JSON::Any.new("button"),
                                      "name" => JSON::Any.new(button.name)}),
           "button" => JSON::Any.new(index.to_i64),
@@ -2838,7 +2856,36 @@ module Tawb
           "action" => JSON::Any.new(nil),
         })
       end
-      blocks
+
+      # A chooser leads with what can be done, because its prose — the Places
+      # list, the file-type filter, the Other Locations panel — is a screenful
+      # before anything usable. Everything else keeps the question before the
+      # answer, with the fields that are part of the question read along with
+      # it. One section per kind of control, with a gap between the ones that
+      # are there and nothing at either end: a leading blank line moves the
+      # reader's first Down onto nothing.
+      # A dialog with nothing to press says so rather than offering nothing: a
+      # window with a sentence in it and no way to answer is worth reporting as
+      # exactly that.
+      if toggles.empty? && buttons.empty? && actions.empty? && held.empty?
+        return said + [plain.call("(the browser offers nothing to press)")]
+      end
+
+      sections = request.role == "file chooser" ?
+        [held, options, items, choices] :
+        [said + held, options, items, choices]
+      gap = plain.call("")
+      controls = [] of JSON::Any
+      sections.each do |section|
+        next if section.empty?
+        controls << gap unless controls.empty?
+        controls.concat(section)
+      end
+      if request.role == "file chooser"
+        said.empty? || controls.empty? ? controls + said : controls + [gap] + said
+      else
+        controls
+      end
     end
 
     private def self.show_dialog(output : Screen::Output, state : Reader::State,

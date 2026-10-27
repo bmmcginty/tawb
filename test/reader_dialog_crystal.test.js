@@ -119,15 +119,22 @@ test('a dialog becomes the lines it says and the choices it offers', { skip }, a
   // The words first, then what the dialog is about, then a gap, then the
   // option, then a gap, then the answers. The option comes before the answers
   // because an option changes what answering means.
+  // The prose first, then the option and the answers in the vocabulary every
+  // other line of this program uses: [*Name] is something you press,
+  // [Name: value] holds a value.
   assert.deepEqual(result.results[0].value, [
     { text: 'Add "uBlock Origin Lite"?', button: null, toggle: null },
     { text: 'It can:', button: null, toggle: null },
     { text: 'Read and change all your data on all websites', button: null, toggle: null },
     { text: '', button: null, toggle: null },
-    { text: '[ ] Allow it in private windows', button: null, toggle: 'Allow it in private windows' },
+    {
+      text: '[*Allow it in private windows, not checked]',
+      button: null,
+      toggle: 'Allow it in private windows',
+    },
     { text: '', button: null, toggle: null },
-    { text: 'Cancel', button: 'Cancel', toggle: null },
-    { text: 'Add extension', button: 'Add extension', toggle: null },
+    { text: '[*Cancel]', button: 'Cancel', toggle: null },
+    { text: '[*Add extension]', button: 'Add extension', toggle: null },
   ]);
 });
 
@@ -140,11 +147,11 @@ test('a save-password prompt shows what it is about to keep', { skip }, async ()
   // masks it.
   assert.deepEqual(result.results[0].value.map((block) => block.text), [
     'Save password?',
-    'Username: reader',
-    'Password: MASKED',
+    '[Username: reader]',
+    '[Password: MASKED]',
     '',
-    'Never',
-    'Save',
+    '[*Never]',
+    '[*Save]',
   ]);
 });
 
@@ -250,9 +257,10 @@ test('a press that leaves the dialog open keeps the reader in it', { skip }, asy
         buttons: [{ name: 'Home' }, { name: 'Open' }], toggles: [], fields: [],
         staysOpenAfterPress: true,
       },
-      // Home navigates and keeps the chooser open. Escape must still belong to
-      // that chooser rather than becoming a key on the underlying web page.
-      keys: [DOWN, DOWN, '\r', ESCAPE],
+      // A chooser leads with its answers, so Home is the first line: Enter
+      // presses it, it navigates and keeps the chooser open, and Escape must
+      // still belong to that chooser rather than to the page behind it.
+      keys: ['\r', ESCAPE],
     },
   ]);
   assert.deepEqual(result.results[0].value.pressed, ['Home']);
@@ -278,14 +286,19 @@ test('a chooser offers its location field and its own directory action', { skip 
   // The location field is a line a reader can stand on, and the chooser's own
   // show_location action is a line of its own rather than something a reader
   // has to discover by pressing the right button in the right order.
+  // A chooser leads with what can be done: the name it is saving under, the
+  // rows of its list box, and the two answers. Its prose — the Places list,
+  // the file-type filter, the Other Locations panel — comes after, because
+  // read first it is a screenful before anything usable.
   assert.deepEqual(result.results[0].value.map((block) => block.text), [
+    '[Location: /home/reader]',
+    '',
+    '[*Enter Location]',
+    '',
+    '[*Cancel]',
+    '[*Open]',
+    '',
     'Places',
-    'Location: /home/reader',
-    '',
-    'Enter Location',
-    '',
-    'Cancel',
-    'Open',
   ]);
 });
 
@@ -294,10 +307,10 @@ test('a typed path goes into the chooser and keeps the reader there', { skip }, 
     {
       op: 'answerDialog',
       dialog: { ...CHOOSER, staysOpenAfterField: true },
-      // Down onto the location field, Enter to edit it, the path typed, Enter
-      // to hand it to the chooser, then Escape without answering.
+      // The location field is the first line of a chooser, so Enter edits it,
+      // the path is typed, Enter hands it to the chooser, then Escape.
       keys: [
-        DOWN, '\r', '\u000c',
+        '\r', '\u000c',
         '/', 'h', 'o', 'm', 'e', '/', 'r', 'e', 'a', 'd', 'e', 'r', '/', 'D',
         'o', 'w', 'n', 'l', 'o', 'a', 'd', 's',
         '\r', ESCAPE,
@@ -318,8 +331,8 @@ test('a chooser directory action is activated without leaving the chooser', { sk
     {
       op: 'answerDialog',
       dialog: { ...CHOOSER, staysOpenAfterAction: true },
-      // Down to the action, Enter to activate it, then Escape.
-      keys: [DOWN, DOWN, DOWN, '\r', ESCAPE],
+      // The field, a gap, then the action: Down twice and Enter.
+      keys: [DOWN, DOWN, '\r', ESCAPE],
     },
   ]);
   assert.deepEqual(result.results[0].value.activated, ['Enter Location']);

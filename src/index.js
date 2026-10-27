@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
-const { FIELD_ROLES, LINK_ROLES, BUTTON_ROLES, FOCUSABLE_ROLES } = require('./aria');
+const {
+  FIELD_ROLES, LINK_ROLES, BUTTON_ROLES, FOCUSABLE_ROLES, renderLine,
+} = require('./aria');
 const { itemAtOffset } = require('./blocks');
 const {
   Core, ALL_SOURCES, SOURCE_LABELS, DOM_SOURCES,
@@ -4226,8 +4228,12 @@ function prompting(state) {
 // How long to let the browser act on a press before deciding whether it did.
 const PRESS_SETTLE_MS = 400;
 
-function toggleText(toggle) {
-  return `[${toggle.checked ? 'x' : ' '}] ${toggle.name}`;
+// One control, in the vocabulary every other line of this program uses:
+// `[*Name]` is something you press, `[Name: value]` holds a value, `{Name}` is
+// something you go to. A dialog is not a different kind of thing from a page,
+// and a reader who has learned one should not have to learn the other.
+function choiceText(item) {
+  return renderLine(item);
 }
 
 function dialogBlocks(dialog) {
@@ -4241,7 +4247,14 @@ function dialogBlocks(dialog) {
   const held = (dialog.fields || [])
     .filter((field) => field.name || field.value)
     .map((field) => ({
-      text: field.name && field.value ? `${field.name}: ${field.value}` : (field.value || field.name),
+      // A field reads the way a field on a page reads, and says so when it
+      // cannot be typed into.
+      text: choiceText({
+        role: 'textbox',
+        name: field.name,
+        value: field.value,
+        readonly: dialog.role === 'file chooser' && !field.editable,
+      }),
       item: dialog.role === 'file chooser' && field.editable
         ? { role: 'textbox', name: field.name || 'Location' } : null,
       button: null,
@@ -4253,7 +4266,7 @@ function dialogBlocks(dialog) {
   // doorhanger offers "Allow extension to run in private windows", and that
   // is a decision made before the answer rather than after it.
   const options = (dialog.toggles || []).map((toggle) => ({
-    text: toggleText(toggle),
+    text: choiceText({ role: 'checkbox', name: toggle.name, checked: toggle.checked }),
     item: { role: 'checkbox', name: toggle.name },
     button: null,
     toggle,
@@ -4261,16 +4274,18 @@ function dialogBlocks(dialog) {
     action: null,
   }));
   const choices = dialog.buttons.map((button) => ({
-    text: button.name,
+    text: choiceText({ role: 'button', name: button.name }),
     item: { role: 'button', name: button.name },
     button,
     toggle: null,
     field: null,
     action: null,
   }));
+  // A chooser's rows are a list box and its own actions are items in it, so
+  // they read the way an option on a page reads rather than as bare words.
   const actions = (dialog.actions || []).map((action) => ({
-    text: action.name,
-    item: { role: 'button', name: action.name },
+    text: choiceText({ role: 'option', name: action.name }),
+    item: { role: 'option', name: action.name },
     button: null,
     toggle: null,
     field: null,
@@ -4279,20 +4294,35 @@ function dialogBlocks(dialog) {
   const gap = {
     text: '', item: null, button: null, toggle: null, field: null, action: null,
   };
-  if (!choices.length && !options.length && !actions.length && !held.some((block) => block.field)) {
-    return [...said, ...held, {
+  // One section per kind of control, with a gap between the ones that are
+  // there and nothing at either end: a leading blank line moves the reader's
+  // first Down onto nothing. A chooser leads with what can be done, because
+  // its prose — the Places list, the file-type filter, the Other Locations
+  // panel — is a screenful before anything usable. Everything else keeps the
+  // question before the answer, with the fields that are part of the question
+  // read along with it.
+  // A dialog with nothing to press says so rather than offering nothing: a
+  // window with a sentence in it and no way to answer is worth reporting as
+  // exactly that.
+  if (!choices.length && !options.length && !actions.length && !held.length) {
+    return [...said, {
       text: '(the browser offers nothing to press)',
       item: null, button: null, toggle: null, field: null, action: null,
     }];
   }
-  return [
-    ...said, ...held, gap,
-    ...options,
-    ...(options.length && (actions.length || choices.length) ? [gap] : []),
-    ...actions,
-    ...(actions.length && choices.length ? [gap] : []),
-    ...choices,
-  ];
+  const sections = dialog.role === 'file chooser'
+    ? [held, options, actions, choices]
+    : [[...said, ...held], options, actions, choices];
+  const controls = [];
+  for (const section of sections) {
+    if (!section.length) continue;
+    if (controls.length) controls.push(gap);
+    controls.push(...section);
+  }
+  if (dialog.role !== 'file chooser') return controls;
+  return said.length && controls.length
+    ? [...controls, gap, ...said]
+    : [...controls, ...said];
 }
 
 function closeNativeDialog(state, page, note) {
@@ -4448,7 +4478,9 @@ async function answerNativeDialog(state, dialog) {
             continue;
           }
           block.toggle.checked = now;
-          block.text = toggleText(block.toggle);
+          block.text = choiceText({
+            role: 'checkbox', name: block.toggle.name, checked: now,
+          });
           const at = state.cursor;
           relayout(state);
           state.cursor = Math.min(at, Math.max(state.lines.length - 1, 0));

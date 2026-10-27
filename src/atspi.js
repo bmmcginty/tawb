@@ -91,7 +91,16 @@ const STATE_IS_DEFAULT = 39;
 // Roles that hold no words of their own and only group what is inside them.
 // A dialog is mostly these, and reading them out would bury the two lines
 // that matter.
-const SILENT_ROLES = new Set(['panel', 'filler', 'section', 'redundant object', 'unknown']);
+const SILENT_ROLES = new Set([
+  'panel', 'filler', 'section', 'redundant object', 'unknown',
+  // A table's column headings name columns of a listing that is offered as a
+  // list box, so read out they are four words of noise before the list.
+  'table column header', 'table row header',
+  // A chooser's Places list is a spinner, a label and an icon per row, and
+  // only the label is anything a reader wants: "Spinner" spoken once per
+  // bookmark is a dozen words of nothing.
+  'animation', 'icon', 'image',
+]);
 
 // Roles that are never worth walking into. A file chooser's listing is
 // thousands of nodes — a row, then a cell per column, then whatever the cell
