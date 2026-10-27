@@ -2947,11 +2947,28 @@ module Tawb
       answered
     end
 
+    # The field labels a dialog was showing, so a reread can say which of them
+    # is new.
+    private def self.dialog_field_labels(state : Reader::State,
+                                         fields : Array(Reader::DialogField)) : Set(String)
+      labels = Set(String).new
+      blocks = state.dialog.try(&.as_h?).try(&.["blocks"]?).try(&.as_a?)
+      (blocks || [] of JSON::Any).each do |raw|
+        object = raw.as_h?
+        next if object.nil?
+        index = object["field"]?.try(&.as_i64?)
+        next if index.nil?
+        labels << (fields[index.to_i]?.try(&.name) || "")
+      end
+      labels
+    end
+
     private def self.keep_native_dialog_open(output : Screen::Output,
                                              state : Reader::State,
                                              page : Reader::PageEnv,
                                              request : Reader::DialogEnv,
                                              note : String) : Nil
+      fields_before = dialog_field_labels(state, request.fields)
       current = begin
         request.reread
       rescue
@@ -2959,7 +2976,33 @@ module Tawb
       end || request
       state.dialog_request = current
       show_dialog(output, state, page, current, keep_place: state.cursor)
-      Reader.set_status(output, state, page.url, note)
+
+      # A press that opens something new — Create Folder reveals a folder name
+      # — puts the new control wherever the browser decided, which for GTK is
+      # above everything else. Leaving the cursor where it was makes the press
+      # look like it did nothing, so a field that was not there before is what
+      # the reader is moved to, and told about.
+      blocks = state.dialog.try(&.as_h?).try(&.["blocks"]?).try(&.as_a?) || [] of JSON::Any
+      appeared = -1
+      moved = nil.as(String?)
+      blocks.each_with_index do |raw, index|
+        object = raw.as_h?
+        next if object.nil?
+        field_index = object["field"]?.try(&.as_i64?)
+        next if field_index.nil?
+        label = current.fields[field_index.to_i]?.try(&.name) || ""
+        next if fields_before.includes?(label)
+        appeared = index
+        moved = label.empty? ? "a new field" : label
+        break
+      end
+      if appeared >= 0
+        Reader.move_selection(output, state, page.url, appeared)
+        Reader.set_status(output, state, page.url,
+          "#{note.rchop('.')} — moved to \"#{moved}\".")
+      else
+        Reader.set_status(output, state, page.url, note)
+      end
     end
 
     # One line typed while the dialog keeps the keyboard. The claim is the

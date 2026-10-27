@@ -267,6 +267,34 @@ test('a press that leaves the dialog open keeps the reader in it', { skip }, asy
   assert.equal(result.results[0].value.pending, true);
 });
 
+test('a press that reveals a control moves the reader to it', { skip }, async () => {
+  // Create Folder is a toggle: pressing it opens a name entry, which GTK puts
+  // above everything else in the dialog. A reader left where they pressed has
+  // seen the press do nothing at all.
+  const opened = {
+    ...CHOOSER,
+    buttons: [{ name: 'Create Folder' }, { name: 'Cancel' }],
+    fields: [],
+    actions: [],
+    reread: {
+      ...CHOOSER,
+      buttons: [{ name: 'Create Folder' }, { name: 'Cancel' }],
+      actions: [],
+      fields: [{ name: 'Folder Name', value: '', editable: true }],
+    },
+    staysOpenAfterPress: true,
+  };
+  const result = await both('a press that reveals a field', state(), [
+    // The keyboard going away leaves the question open and says nothing, so
+    // what these assertions read is the status the press itself produced.
+    { op: 'answerDialog', dialog: opened, keys: ['\r', '<eof>'] },
+  ]);
+  assert.deepEqual(result.results[0].value.pressed, ['Create Folder']);
+  // The reader is told where it went rather than only what was pressed; the
+  // cursor itself is put back with the page when the dialog is left.
+  assert.match(result.state.statusMsg, /moved to "Folder Name"/);
+});
+
 test('a press the browser did not act on leaves the question available', { skip }, async () => {
   const result = await both('a press the browser ignored', state(), [
     {

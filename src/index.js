@@ -4397,6 +4397,10 @@ async function answerNativeDialog(state, dialog) {
     return answered;
   };
   const keepOpen = async (note) => {
+    const before = state.dialog.blocks || [];
+    const fieldsBefore = new Set(
+      before.filter((block) => block.field).map((block) => block.field.name || ''),
+    );
     const again = await dialog.reread().catch(() => null);
     dialog = again || dialog;
     const at = state.cursor;
@@ -4404,8 +4408,26 @@ async function answerNativeDialog(state, dialog) {
     state.title = dialog.title || 'The browser is asking';
     relayout(state);
     state.cursor = Math.min(at, Math.max(state.lines.length - 1, 0));
+
+    // A press that opens something new — Create Folder reveals a folder name —
+    // puts the new control wherever the browser decided, which for GTK is
+    // above everything else. Leaving the cursor where it was makes the press
+    // look like it did nothing, so a field that was not there before is what
+    // the reader is moved to, and told about.
+    const appeared = (state.dialog.blocks || [])
+      .findIndex((block) => block.field
+        && !fieldsBefore.has(block.field.name || ''));
+    let moved = null;
+    if (appeared >= 0) {
+      moved = state.dialog.blocks[appeared].field.name || 'a new field';
+      state.cursor = Math.min(appeared, Math.max(state.lines.length - 1, 0));
+      state.col = 0;
+      clampScroll(state);
+    }
     render(state, page, { force: true });
-    setStatus(state, note);
+    setStatus(state, moved
+      ? `${String(note).replace(/\.$/, '')} — moved to "${moved}".`
+      : note);
   };
 
   try {
