@@ -1722,7 +1722,7 @@ async function runLiveRefresh(state, page) {
   // over a half-typed password would take the prompt off the screen with the
   // reader still typing into it. The same is true of every prompt that takes
   // the keyboard for itself: a path being completed, a bookmark being named.
-  if (state.mode === 'auth' || state.mode === 'files' || state.mode === 'line') return;
+  if (prompting(state)) return;
 
   const cycle = Date.now();
   const wasNavigation = live.navigated;

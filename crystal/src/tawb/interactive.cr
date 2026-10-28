@@ -320,6 +320,16 @@ module Tawb
         return if follow_settled_tab(now)
 
         page = @core.page || return
+        # A prompt of this program's own holds the terminal: a password being
+        # typed, a path being completed, a chooser a portal asked for, a
+        # question the browser is holding open. The ticker runs on a clock, not
+        # on the reader's keystrokes, so a rebuild here repaints the page under
+        # the prompt and moves the cursor off it — the prompt's own words stay
+        # on the status row, which makes the result look like a caret in the
+        # wrong place rather than like a repaint. Nothing is lost by waiting:
+        # the pulse has already recorded what changed, and the next tick after
+        # the prompt closes applies it.
+        return if ReaderKeys.prompting?(@state)
         wrapper = @tabs.current_page
         case @core.external_navigation(page.url)
         when :navigated

@@ -1662,6 +1662,16 @@ deterministic/headless mode and not the default. And a kept browser
 (`--keep-browser`) loses its chooser with the reader that was answering it,
 because the prompt is that reader's keyboard.
 
+The live ticker runs on a clock rather than on the reader's keystrokes, so it
+has to be told when a prompt holds the terminal. A rebuild under a prompt
+repaints the page and moves the cursor to the reader's place on it, and because
+the prompt's own words live on the status row they survive the repaint — the
+visible result is a caret in the wrong place rather than anything obviously
+rebuilt. That is what a save prompt looked like when it first worked in the
+Crystal runtime: the words were right and the cursor was on line five of the
+page. Any mode that has taken the keyboard for itself holds the ticker off, and
+the pulse that arrived meanwhile is applied by the next tick after it closes.
+
 ### Choosing which portal answers
 
 `--portal system` (the default, and `TAWB_PORTAL`) is the machine's own portal,
