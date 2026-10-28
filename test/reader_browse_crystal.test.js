@@ -220,12 +220,22 @@ test('moving past the end asks a feed for more', { skip: needsCrystal }, async (
   assert.equal(failed.state.statusMsg, 'Could not ask the page for more.');
 });
 
-test('where says where the reader is', { skip: needsCrystal }, async () => {
+test('where says where the reader is, and only until they move', { skip: needsCrystal }, async () => {
   const state = stateFor(BUTTONS, { cursor: 1, col: 2 });
   const result = await runBoth('where', state, [
     { op: 'browseKey', chunk: '=' },
   ], { url: PAGE_URL });
-  assert.equal(result.state.statusMsg, 'Line 2 of 3, column 3 — button.');
+  assert.equal(result.state.statusMsg, 'line 2/3, column 3 — button.');
+  // A readout is news, not an answer: the row falls back to it whenever the
+  // cursor is not on a link, so leaving it in the buffer would offer a line
+  // number from three keystrokes ago as though it were current.
+  assert.equal(result.state.transientStatus, true);
+  const moved = await runBoth('where, then a move', stateFor(BUTTONS, { cursor: 1, col: 2 }), [
+    { op: 'browseKey', chunk: '=' },
+    { op: 'browseKey', chunk: 'j' },
+  ], { url: PAGE_URL });
+  assert.equal(moved.state.statusMsg, '');
+  assert.equal(moved.state.transientStatus, false);
 });
 
 test('the toggles answer with their own state', { skip: needsCrystal }, async () => {

@@ -1632,6 +1632,7 @@ function readerImplementations(index, keysModule) {
     drawn: { ...state.drawn },
     scroll: state.scroll, col: state.col, cursor: state.cursor,
     statusMsg: state.statusMsg,
+    transientStatus: !!state.transientStatus,
     lines: state.lines.map((line) => ({
       text: line.text, blockIndex: line.blockIndex,
       continuation: !!line.continuation,

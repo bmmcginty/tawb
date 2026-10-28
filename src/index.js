@@ -994,8 +994,22 @@ function writeStatusRow(state, text) {
 
 function setStatus(state, msg) {
   state.statusMsg = msg;
+  // Anything said through here is the answer to what the reader just did, and
+  // it stays until something else is said. A readout that is about to be out
+  // of date the moment they move is the exception; see setTransientStatus.
+  state.transientStatus = false;
   writeStatusRow(state, msg);
   parkCursor(state);
+}
+
+// News rather than an answer: true for the instant it is asked, and gone the
+// moment the reader does anything else. `statusMsg` is what the row falls back
+// to whenever the cursor is not standing on a link, so a readout kept there
+// would keep coming back — a line number from three keystrokes ago, offered
+// again as though it were current.
+function setTransientStatus(state, msg) {
+  setStatus(state, msg);
+  state.transientStatus = true;
 }
 
 // Where the link under the cursor goes, said as the reader arrives on it.
@@ -1684,9 +1698,15 @@ async function onExternalNavigation(state, page) {
   setStatus(state, `Page changed: ${url}`);
 }
 
+// A key arrived. Returns true when a message that was only ever news has been
+// taken off the row, so the caller can put whatever belongs there now.
 function markInput(state) {
   state.inputSeen = true;
   if (state.core) state.core.markInput();
+  if (!state.transientStatus) return false;
+  state.transientStatus = false;
+  state.statusMsg = '';
+  return true;
 }
 
 function keepLivePlace(state, wasNavigation) {
@@ -2578,7 +2598,9 @@ async function handleBrowseKey(chunk, state, page) {
     const block = currentBlock(state);
     const total = state.lines.length;
     const role = block && block.item ? block.item.role : 'nothing';
-    setStatus(state, `Line ${state.cursor + 1} of ${total}, column ${state.col + 1} — ${role}.`);
+    setTransientStatus(
+      state, `line ${state.cursor + 1}/${total}, column ${state.col + 1} — ${role}.`,
+    );
     return;
   }
 
@@ -5272,6 +5294,9 @@ async function main() {
     col: 0,
     scroll: 0,
     statusMsg: '',
+    // Whether the row is holding something that was only true when it was
+    // asked for. See setTransientStatus.
+    transientStatus: false,
     // 'browse' | 'choose' | 'library' | 'type' | 'control' | 'page' | 'address'
     // | 'field-command' | 'find' | 'number' | 'auth' | 'dialog' | 'line' | 'keyboard'
     mode: 'browse',
@@ -5453,7 +5478,7 @@ async function main() {
     // same door as `q` is what makes the browser be told, the tab claim be
     // given back and the terminal be put right.
     if (chunk === EOF) { log('input.eof', {}); running = false; break; }
-    markInput(state);
+    if (markInput(state)) drawStatus(state, state.core.page);
 
     const t0 = Date.now();
     let result;

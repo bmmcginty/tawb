@@ -195,7 +195,7 @@ module Tawb
 
     def self.handle_page_key(output : Screen::Output, state : Reader::State,
                              page : Reader::PageEnv, chunk : String, now : Int64) : Nil
-      state.core.mark_input
+      Reader.note_input(state)
       keys = keymap_for(state)
 
       # The same configurable key enters and leaves this mode. Everything
@@ -443,7 +443,7 @@ module Tawb
           # reading loop is awaiting finishes. The loop is given the same
           # news a moment later.
           break if chunk.is_a?(Input::Eof)
-          state.core.mark_input
+          Reader.note_input(state)
           step = handle_auth_key(state, chunk.as(String))
           unless step.is_a?(AuthStep)
             answer = step.as?(JSON::Any)
@@ -472,7 +472,7 @@ module Tawb
 
     def self.handle_find_key(output : Screen::Output, state : Reader::State,
                              page_url : String, chunk : String) : Nil
-      state.core.mark_input
+      Reader.note_input(state)
       find = state.find
       return unless find
 
@@ -940,7 +940,7 @@ module Tawb
 
     def self.handle_choose_key(output : Screen::Output, state : Reader::State,
                                page : Reader::PageEnv, chunk : String) : Nil
-      state.core.mark_input
+      Reader.note_input(state)
       chooser = state.core.chooser
       unless chooser
         state.mode = "browse"
@@ -1211,7 +1211,7 @@ module Tawb
             break
           end
           chunk = chunk.as(String)
-          state.core.mark_input
+          Reader.note_input(state)
           buffer = Edit::Buffer.new(
             files_object["buffer"].as_h["text"]?.try(&.as_s?) || "",
             (files_object["buffer"].as_h["caret"]?.try(&.as_i64?) || 0).to_i32)
@@ -1358,7 +1358,7 @@ module Tawb
     def self.handle_number_key(output : Screen::Output, state : Reader::State,
                                page : Reader::PageEnv, keyboard : Keyboard?,
                                chunk : String) : Nil
-      state.core.mark_input
+      Reader.note_input(state)
       prompt = state.link_number
       unless prompt
         state.mode = "browse"
@@ -1691,7 +1691,7 @@ module Tawb
 
     def self.handle_type_key(output : Screen::Output, state : Reader::State,
                              page : Reader::PageEnv, chunk : String) : Nil
-      state.core.mark_input
+      Reader.note_input(state)
       typing = state.typing
       unless typing
         state.mode = "browse"
@@ -1830,7 +1830,7 @@ module Tawb
 
     def self.handle_field_command_key(output : Screen::Output, state : Reader::State,
                                       page : Reader::PageEnv, chunk : String) : Nil
-      state.core.mark_input
+      Reader.note_input(state)
       typing = state.typing
       unless typing
         state.mode = "browse"
@@ -1869,7 +1869,7 @@ module Tawb
     def self.handle_forms_key(output : Screen::Output, state : Reader::State,
                               page : Reader::PageEnv, keyboard : Keyboard?,
                               chunk : String) : Nil
-      state.core.mark_input
+      Reader.note_input(state)
       action = context_action(chunk, state)
       if key_is(chunk, "Escape", state) || action == "cancel"
         state.mode = "browse"
@@ -1914,7 +1914,7 @@ module Tawb
 
     def self.handle_control_key(output : Screen::Output, state : Reader::State,
                                 page : Reader::PageEnv, chunk : String) : Nil
-      state.core.mark_input
+      Reader.note_input(state)
       controlling = state.controlling
       unless controlling
         state.mode = "browse"
@@ -2023,7 +2023,7 @@ module Tawb
           keyboard.release(token)
           return {ok: false, fault: nil, cancelled: true}
         end
-        state.core.mark_input
+        Reader.note_input(state)
         chunk = key.as(String)
         action = keymap_for(state).action_for(chunk)
         next unless key_is(chunk, "Escape", state) || action == "interrupt"
@@ -2091,7 +2091,7 @@ module Tawb
     def self.handle_address_key(output : Screen::Output, state : Reader::State,
                                 page : Reader::PageEnv, keyboard : Keyboard?,
                                 chunk : String) : Nil
-      state.core.mark_input
+      Reader.note_input(state)
       bar = state.address.not_nil!
 
       if key_is(chunk, "Escape", state)
@@ -2479,7 +2479,7 @@ module Tawb
                                        page : Reader::PageEnv, keyboard : Keyboard?,
                                        initial : String) : String?
       return nil unless keyboard
-      state.core.mark_input
+      Reader.note_input(state)
       previous_mode = state.mode
       state.mode = "line"
       state.line_prompt = Reader::LinePrompt.new("Bookmark", Reader::Buffer.new(initial, initial.size))
@@ -2591,7 +2591,7 @@ module Tawb
           key = keyboard.next_key(token)
           return nil if key.is_a?(Input::Eof)
           chunk = key.as(String)
-          state.core.mark_input
+          Reader.note_input(state)
           return nil if key_is(chunk, "Escape", state)
           return state.line_prompt.not_nil!.buffer.text if chunk == "\r" || chunk == "\n"
           buffer = state.line_prompt.not_nil!.buffer
@@ -2652,7 +2652,7 @@ module Tawb
 
     def self.handle_library_key(output : Screen::Output, state : Reader::State,
                                 page : Reader::PageEnv, keyboard : Keyboard?, chunk : String) : String?
-      state.core.mark_input
+      Reader.note_input(state)
       library = state.library
       unless library
         state.mode = "browse"
@@ -3025,7 +3025,7 @@ module Tawb
           key = keyboard.next_key(token)
           return nil if key.is_a?(Input::Eof)
           chunk = key.as(String)
-          state.core.mark_input
+          Reader.note_input(state)
           return nil if key_is(chunk, "Escape", state)
           return state.line_prompt.not_nil!.buffer.text if chunk == "\r" || chunk == "\n"
           buffer = state.line_prompt.not_nil!.buffer
@@ -3103,7 +3103,7 @@ module Tawb
             return
           end
           chunk = key.as(String)
-          state.core.mark_input
+          Reader.note_input(state)
           current_request = state.dialog_request || request
           context = context_action(chunk, state)
 
@@ -3788,7 +3788,7 @@ module Tawb
     def self.handle_browse_key(output : Screen::Output, state : Reader::State,
                                page : Reader::PageEnv, keyboard : Keyboard?,
                                chunk : String, now : Int64 = 0_i64) : String?
-      state.core.mark_input
+      Reader.note_input(state)
       actions = mode_actions(output, page.url, keyboard)
       if actions.digit?(chunk, lynx_view(state))
         return nil
@@ -4018,8 +4018,8 @@ module Tawb
         block = Reader.current_block(state)
         total = state.lines.size
         role = block.try(&.as_h).try(&.["item"]?).try(&.as_h).try(&.["role"]?) || "nothing"
-        Reader.set_status(output, state, page.url,
-          "Line #{state.cursor + 1} of #{total}, column #{state.col + 1} — #{role}.")
+        Reader.set_transient_status(output, state, page.url,
+          "line #{state.cursor + 1}/#{total}, column #{state.col + 1} — #{role}.")
         return nil
       end
 

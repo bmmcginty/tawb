@@ -1672,6 +1672,27 @@ Crystal runtime: the words were right and the cursor was on line five of the
 page. Any mode that has taken the keyboard for itself holds the ticker off, and
 the pulse that arrived meanwhile is applied by the next tick after it closes.
 
+### The status row: answers and news
+
+The row holds one string, `statusMsg`, and `drawStatus` shows `linkTarget ||
+statusMsg` — so a message wins while it is news, and the address of the link
+under the cursor wins over an older message. Both of those are wanted: a
+message is the answer to what the reader just did, and a link's address is
+what the row is for while the cursor is on one.
+
+What does not work is re-showing a message that has gone out of date. `=`
+reports the position, the reader moves three lines, and the row says
+`line 5/56` again because the new line has no link for the address to win
+with — a readout from three keystrokes ago, offered as though it were current.
+
+So a message is one of two things. An **answer** stays until something else is
+said: `Activated: ...`, `Pressed "Save"`, an error, a toggle's new state. A
+**readout** is true only for the instant it is asked for, and is cleared by the
+next keystroke before anything else is handled. `setTransientStatus` marks the
+second kind, and `markInput` (the same call that records that the reader has
+touched the page, which is what stops a live rebuild moving them) is where it
+is taken off.
+
 ### Choosing which portal answers
 
 `--portal system` (the default, and `TAWB_PORTAL`) is the machine's own portal,

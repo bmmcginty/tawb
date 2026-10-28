@@ -2798,6 +2798,7 @@ module Tawb
         "col"        => JSON::Any.new(state.col.to_i64),
         "cursor"     => JSON::Any.new(state.cursor.to_i64),
         "statusMsg"  => JSON::Any.new(state.status_msg),
+        "transientStatus" => JSON::Any.new(state.transient_status),
         "address"    => address,
         "typing"     => typing,
         "auth"       => auth,

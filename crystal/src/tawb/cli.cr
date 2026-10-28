@@ -357,6 +357,11 @@ module Tawb
           break if key.is_a?(Input::Eof)
           chunk = key.as(String)
           break if chunk == ReaderKeys::ALWAYS_QUIT
+          # A readout that was only true when it was asked for comes off the
+          # row as soon as anything else happens. Marking the input also
+          # records that the reader has touched the page, which is what keeps
+          # a live rebuild from moving them.
+          Reader.draw_status(terminal, state, tabs.current_page.url) if Reader.note_input(state)
           current = tabs.current_page
           verdict = case state.mode
                     when "library"

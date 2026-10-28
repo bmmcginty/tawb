@@ -869,6 +869,9 @@ module Tawb
       property short_links : Bool
       property link_address : Bool
       property status_msg : String
+      # Whether the row is holding something that was only true when it was
+      # asked for. See `set_transient_status`.
+      property transient_status : Bool
       property cursor : Int32
       property col : Int32
       property scroll : Int32
@@ -945,6 +948,7 @@ module Tawb
         @short_links = false
         @link_address = true
         @status_msg = ""
+        @transient_status = false
         @cursor = 0
         @col = 0
         @scroll = 0
@@ -983,6 +987,18 @@ module Tawb
         @home_url = "https://www.google.com"
         @loading_more = false
       end
+    end
+
+    # A key arrived. Answers whether a message that was only ever news has been
+    # taken off the row, so the caller can put whatever belongs there now.
+    def self.note_input(state : State) : Bool
+      cleared = state.transient_status
+      if cleared
+        state.transient_status = false
+        state.status_msg = ""
+      end
+      state.core.mark_input
+      cleared
     end
 
     def self.lynx_active?(state : State) : Bool
@@ -1687,8 +1703,24 @@ module Tawb
     def self.set_status(output : Screen::Output, state : State, page_url : String,
                         msg : String) : Nil
       state.status_msg = msg
+      # Anything said through here is the answer to what the reader just did,
+      # and it stays until something else is said. A readout that is about to
+      # be out of date the moment they move is the exception; see
+      # `set_transient_status`.
+      state.transient_status = false
       write_status_row(output, state, msg)
       park_cursor(output, state, page_url)
+    end
+
+    # News rather than an answer: true for the instant it is asked, and gone
+    # the moment the reader does anything else. `status_msg` is what the row
+    # falls back to whenever the cursor is not standing on a link, so a readout
+    # kept there would keep coming back — a line number from three keystrokes
+    # ago, offered again as though it were current.
+    def self.set_transient_status(output : Screen::Output, state : State,
+                                  page_url : String, msg : String) : Nil
+      set_status(output, state, page_url, msg)
+      state.transient_status = true
     end
 
     # The link the reader is standing on, and where it goes, said as the
