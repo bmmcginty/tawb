@@ -226,16 +226,16 @@ test('where says where the reader is, and only until they move', { skip: needsCr
     { op: 'browseKey', chunk: '=' },
   ], { url: PAGE_URL });
   assert.equal(result.state.statusMsg, 'line 2/3, column 3 — button.');
-  // A readout is news, not an answer: the row falls back to it whenever the
-  // cursor is not on a link, so leaving it in the buffer would offer a line
-  // number from three keystrokes ago as though it were current.
-  assert.equal(result.state.transientStatus, true);
+  // The row is about now, so the next keystroke takes the readout off it. It is
+  // not lost: everything the row says is kept, newest first, for the Messages
+  // screen.
+  assert.deepEqual(result.state.messages, ['line 2/3, column 3 — button.']);
   const moved = await runBoth('where, then a move', stateFor(BUTTONS, { cursor: 1, col: 2 }), [
     { op: 'browseKey', chunk: '=' },
     { op: 'browseKey', chunk: 'j' },
   ], { url: PAGE_URL });
   assert.equal(moved.state.statusMsg, '');
-  assert.equal(moved.state.transientStatus, false);
+  assert.deepEqual(moved.state.messages, ['line 2/3, column 3 — button.']);
 });
 
 test('the toggles answer with their own state', { skip: needsCrystal }, async () => {

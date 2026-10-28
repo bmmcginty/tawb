@@ -116,6 +116,10 @@ const ACTIONS = [
   ['next-change', 'Next changed area', ['c']],
   ['previous-change', 'Previous changed area', ['C']],
   ['where', 'Report position', ['=']],
+  // Everything the status row has said, newest first. The row itself is cleared
+  // by the next keystroke — it is about now — so this is where a message that
+  // arrived while the reader was busy can be read afterwards.
+  ['messages', 'Messages and status history', ['M']],
   ['document-info', 'Information about current document', []],
   ['options', 'Options', []],
   ['link-number', 'Follow a link or page number', []],

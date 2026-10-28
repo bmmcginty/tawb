@@ -1672,26 +1672,35 @@ Crystal runtime: the words were right and the cursor was on line five of the
 page. Any mode that has taken the keyboard for itself holds the ticker off, and
 the pulse that arrived meanwhile is applied by the next tick after it closes.
 
-### The status row: answers and news
+### The status row and the message buffer
 
-The row holds one string, `statusMsg`, and `drawStatus` shows `linkTarget ||
-statusMsg` — so a message wins while it is news, and the address of the link
-under the cursor wins over an older message. Both of those are wanted: a
-message is the answer to what the reader just did, and a link's address is
-what the row is for while the cursor is on one.
+The row holds one string, `statusMsg`, and shows `linkTarget || statusMsg`: the
+address of the link under the cursor, or a message, or nothing. Links are not
+messages — they are what the cursor is standing on, and moving back
+regenerates them.
 
-What does not work is re-showing a message that has gone out of date. `=`
-reports the position, the reader moves three lines, and the row says
-`line 5/56` again because the new line has no link for the address to win
-with — a readout from three keystrokes ago, offered as though it were current.
+The row is about **now**. A message is written there so the reader hears it the
+moment it happens, and it is taken off by the next keystroke, before that
+keystroke is handled — `beginKeystroke`, which is a boundary rather than a
+general "input happened" hook, because a handler can note input more than once
+while carrying out one key and a message written in the middle of that is the
+answer to this keystroke. Without it, a message came back every time the cursor
+left a link, because the row falls back to `statusMsg` on a line with nothing
+to say — a line number from three keystrokes ago, offered as though it were
+current.
 
-So a message is one of two things. An **answer** stays until something else is
-said: `Activated: ...`, `Pressed "Save"`, an error, a toggle's new state. A
-**readout** is true only for the instant it is asked for, and is cleared by the
-next keystroke before anything else is handled. `setTransientStatus` marks the
-second kind, and `markInput` (the same call that records that the reader has
-touched the page, which is what stops a live rebuild moving them) is where it
-is taken off.
+Nothing is lost by clearing the row: everything written through `set_status` is
+also kept, newest first, in `state.messages`, a hundred of them, and `M` opens
+them as a list the way the address screens do. Enter and Escape both leave it,
+because there is nothing behind a message to open. A page that repeats itself —
+a live region saying the same thing every second — does not fill the buffer
+with one sentence, because the newest entry is not duplicated.
+
+The words a screen puts on the row about *itself* are not messages: a list's
+`2 messages.` or `5 entries — type to filter.` is painted with `paint_row`,
+which neither records it nor leaves it behind when the list closes. Prompt
+hints are not written at all: the prompt itself writes the same row a line
+later, so a hint would be replaced before it could be read.
 
 ### Choosing which portal answers
 

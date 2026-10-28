@@ -27,6 +27,7 @@ const EXTENSION_FUNCTIONS = {
   TAWB_NEXT_TAB: 'next-tab',
   TAWB_PREVIOUS_TAB: 'previous-tab',
   TAWB_CLOSE_TAB: 'close-tab',
+  TAWB_MESSAGES: 'messages',
 };
 
 const FUNCTION_ACTIONS = { ...BROWSE_FUNCTIONS, ...EDIT_FUNCTIONS, ...EXTENSION_FUNCTIONS };

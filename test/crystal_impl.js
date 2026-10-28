@@ -1632,7 +1632,7 @@ function readerImplementations(index, keysModule) {
     drawn: { ...state.drawn },
     scroll: state.scroll, col: state.col, cursor: state.cursor,
     statusMsg: state.statusMsg,
-    transientStatus: !!state.transientStatus,
+    messages: (state.messages ?? []).slice(),
     lines: state.lines.map((line) => ({
       text: line.text, blockIndex: line.blockIndex,
       continuation: !!line.continuation,
@@ -1799,6 +1799,9 @@ function readerImplementations(index, keysModule) {
         for (const action of args.actions ?? []) {
           const current = [];
           const entry = {};
+          // One keystroke begins: the row goes back to being about where the
+          // reader is, exactly as the terminal loop does before dispatching.
+          if (action.chunk !== undefined) index.beginKeystroke(state);
           const value = drawingStore.run(current, () => runReaderAction(action, state, page));
           if (value !== undefined) {
             // Sparse arrays come back with nulls where the JavaScript
@@ -1866,6 +1869,8 @@ function readerImplementations(index, keysModule) {
           page = state.core.page;
           const current = [];
           const entry = {};
+          // One keystroke begins; see the synchronous runner above.
+          if (action.chunk !== undefined) index.beginKeystroke(state);
           let value;
           // Everything the action does, and everything the action waits for,
           // runs inside this one store, which is how a write is told apart

@@ -361,7 +361,8 @@ module Tawb
           # row as soon as anything else happens. Marking the input also
           # records that the reader has touched the page, which is what keeps
           # a live rebuild from moving them.
-          Reader.draw_status(terminal, state, tabs.current_page.url) if Reader.note_input(state)
+          Reader.note_input(state)
+          Reader.draw_status(terminal, state, tabs.current_page.url) if Reader.begin_keystroke(state)
           current = tabs.current_page
           verdict = case state.mode
                     when "library"

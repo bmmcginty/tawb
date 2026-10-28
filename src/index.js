@@ -875,6 +875,9 @@ function hintText(state) {
   if (state.mode === 'number') return 'Follow link number — Enter: follow  g: move  Esc: cancel';
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
   if (state.mode === 'library') {
+    if (state.library.kind === 'messages') {
+      return `${state.library.label} — j/k: move  Enter or Esc: back to the page`;
+    }
     return `${state.library.label} — type: filter  Enter: open  Esc: close`;
   }
   if (state.mode === 'line') return `${state.line.label} — Enter: save  Esc: cancel`;
@@ -992,24 +995,41 @@ function writeStatusRow(state, text) {
   writeLine(statusRow(), rendered);
 }
 
-function setStatus(state, msg) {
-  state.statusMsg = msg;
-  // Anything said through here is the answer to what the reader just did, and
-  // it stays until something else is said. A readout that is about to be out
-  // of date the moment they move is the exception; see setTransientStatus.
-  state.transientStatus = false;
+// How many messages are kept. Enough to hold a session's worth of answers and
+// surprisingly few to read; the oldest fall off the end.
+const MAX_MESSAGES = 100;
+
+// The row is about now. A message is written there so the reader hears it the
+// moment it happens, and it is taken off by the next keystroke — see
+// markInput. What a message must not do is come back later; the row falls back
+// to `statusMsg` whenever the cursor is not on a link, so a message kept there
+// would resurface as though it were current.
+//
+// Everything written here is also kept, newest first, in `state.messages`, so a
+// message that arrived while the reader was busy can still be read. Links are
+// not messages: they are what the cursor is standing on, and moving back
+// regenerates them.
+// Writes the row without saying anything: no message buffer, no status held
+// for the next redraw. For the words a screen puts on the row about itself.
+function paintRow(state, msg) {
   writeStatusRow(state, msg);
   parkCursor(state);
 }
 
-// News rather than an answer: true for the instant it is asked, and gone the
-// moment the reader does anything else. `statusMsg` is what the row falls back
-// to whenever the cursor is not standing on a link, so a readout kept there
-// would keep coming back — a line number from three keystrokes ago, offered
-// again as though it were current.
-function setTransientStatus(state, msg) {
-  setStatus(state, msg);
-  state.transientStatus = true;
+function setStatus(state, msg) {
+  state.statusMsg = msg;
+  if (msg) rememberMessage(state, msg);
+  writeStatusRow(state, msg);
+  parkCursor(state);
+}
+
+function rememberMessage(state, msg) {
+  if (!Array.isArray(state.messages)) state.messages = [];
+  // A page that repeats itself — a live region saying the same thing every
+  // second — would otherwise fill the buffer with one sentence.
+  if (state.messages[0] === msg) return;
+  state.messages.unshift(msg);
+  if (state.messages.length > MAX_MESSAGES) state.messages.length = MAX_MESSAGES;
 }
 
 // Where the link under the cursor goes, said as the reader arrives on it.
@@ -1698,13 +1718,24 @@ async function onExternalNavigation(state, page) {
   setStatus(state, `Page changed: ${url}`);
 }
 
-// A key arrived. Returns true when a message that was only ever news has been
-// taken off the row, so the caller can put whatever belongs there now.
+// Records that the reader touched the page, which is what keeps a live
+// rebuild from swapping the buffer under them. Called from the handlers as
+// well as the loop, so it says nothing about the row.
 function markInput(state) {
   state.inputSeen = true;
   if (state.core) state.core.markInput();
-  if (!state.transientStatus) return false;
-  state.transientStatus = false;
+}
+
+// One keystroke begins. The row goes back to being about where the reader is:
+// what the cursor is standing on, or nothing. The message is kept in the
+// buffer, and read again with the Messages key. Answers whether the row was
+// cleared, so the caller can put back what belongs there now.
+//
+// This is a keystroke boundary and not a general "input happened" hook: a
+// handler may note input more than once while carrying out one key, and a
+// status written in the middle of that is the answer to this keystroke.
+function beginKeystroke(state) {
+  if (!state.statusMsg) return false;
   state.statusMsg = '';
   return true;
 }
@@ -2572,6 +2603,8 @@ async function handleBrowseKey(chunk, state, page) {
 
   if (action === 'bookmarks') return openLibrary(state, page, 'bookmarks');
   if (action === 'add-bookmark') return bookmarkPage(state, page);
+  if (action === 'messages') return openMessages(state, page);
+
   if (action === 'visited-links') return openVisitedLinks(state, page);
   if (action === 'session-history') return openSessionHistory(state, page);
   if (action === 'delete-bookmark') {
@@ -2598,7 +2631,7 @@ async function handleBrowseKey(chunk, state, page) {
     const block = currentBlock(state);
     const total = state.lines.length;
     const role = block && block.item ? block.item.role : 'nothing';
-    setTransientStatus(
+    setStatus(
       state, `line ${state.cursor + 1}/${total}, column ${state.col + 1} — ${role}.`,
     );
     return;
@@ -3296,9 +3329,10 @@ function refilter(state, page, filter) {
 // ---------------------------------------------------------------------------
 
 function libraryStatus(state) {
-  const { rows, blocks, filter, empty } = state.library;
+  const { rows, blocks, filter, empty, kind } = state.library;
   if (empty) return filter ? `Nothing matching "${filter}".` : 'Nothing here yet.';
   if (filter) return `${blocks.length} of ${rows.length} matching "${filter}".`;
+  if (kind === 'messages') return `${rows.length} message${rows.length === 1 ? '' : 's'}.`;
   return `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} — type to filter.`;
 }
 
@@ -3326,7 +3360,10 @@ function showLibrary(state, page, filter) {
   state.scroll = 0;
   relayout(state);
   render(state, page, { force: true });
-  setStatus(state, libraryStatus(state));
+  // The count is furniture for this screen rather than something the reader
+  // asked for: it is painted on the row and not kept, so it neither lands in
+  // the message buffer nor outlives the list it describes.
+  paintRow(state, libraryStatus(state));
 }
 
 // Lynx's TRACE_TOGGLE: TAWB's own private NDJSON trace, not Lynx's parser
@@ -3498,6 +3535,18 @@ function openAddressList(state, page, { kind, label, rows, empty }) {
   showLibrary(state, page, '');
 }
 
+// Everything the row has said, newest first. The same list the address screens
+// use, because a reader already knows how to move through one; Enter and Escape
+// both leave it, since there is nothing here to open.
+function openMessages(state, page) {
+  openAddressList(state, page, {
+    kind: 'messages',
+    label: 'Messages',
+    empty: 'No messages yet.',
+    rows: (state.messages || []).map((text) => ({ text, entry: null })),
+  });
+}
+
 function openVisitedLinks(state, page) {
   openAddressList(state, page, {
     kind: 'visited',
@@ -3656,6 +3705,11 @@ async function handleLibraryKey(chunk, state, page) {
   }
 
   if (chunk === '\r' || chunk === '\n' || contextAction === 'accept') {
+    // A message is read, not opened: there is nothing behind one to go to.
+    if (lib.kind === 'messages') {
+      closeLibrary(state, page, null);
+      return;
+    }
     const block = currentBlock(state);
     const entry = block && block.entry;
     if (!entry) {
@@ -3847,9 +3901,8 @@ async function askForFilePaths(state, { asking, multiple = false, accept = '' } 
 
   const token = state.keyReader.claim();
   drawHint(state, { force: true });
-  setStatus(state, accept
-    ? `${asking || 'This page'} asks for a file (${accept}). Tab completes, Esc cancels.`
-    : `${asking || 'This page'} asks for a file. Tab completes, Esc cancels.`);
+  // The prompt writes the row itself; a message here would be replaced on the
+  // same row a line later.
   drawFilePrompt(state);
 
   try {
@@ -3971,7 +4024,9 @@ async function askForLine(
   const token = existingToken || state.keyReader.claim();
   const ownsToken = !existingToken;
   drawHint(state, { force: true });
-  if (hint) setStatus(state, hint);
+  // `hint` is not written: the prompt below writes the same row, so a hint
+  // would be replaced before it could be read. What the row says while it is
+  // being typed into is the label and the buffer.
   drawLinePrompt(state);
 
   try {
@@ -5294,9 +5349,8 @@ async function main() {
     col: 0,
     scroll: 0,
     statusMsg: '',
-    // Whether the row is holding something that was only true when it was
-    // asked for. See setTransientStatus.
-    transientStatus: false,
+    // Everything the row has said this session, newest first. See setStatus.
+    messages: [],
     // 'browse' | 'choose' | 'library' | 'type' | 'control' | 'page' | 'address'
     // | 'field-command' | 'find' | 'number' | 'auth' | 'dialog' | 'line' | 'keyboard'
     mode: 'browse',
@@ -5478,7 +5532,8 @@ async function main() {
     // same door as `q` is what makes the browser be told, the tab claim be
     // given back and the terminal be put right.
     if (chunk === EOF) { log('input.eof', {}); running = false; break; }
-    if (markInput(state)) drawStatus(state, state.core.page);
+    const clearedStatus = beginKeystroke(state);
+    if (clearedStatus) drawStatus(state, state.core.page);
 
     const t0 = Date.now();
     let result;
@@ -5681,5 +5736,5 @@ module.exports = {
   answerNativeDialog, reopenPendingDialog, dialogBlocks, closeNativeDialog,
   handleChooseKey,
   askForLine, askYesNo, bookmarkPage, deleteLibraryBookmark,
-  downloadCurrentLink, drawLinePrompt,
+  downloadCurrentLink, drawLinePrompt, beginKeystroke,
 };

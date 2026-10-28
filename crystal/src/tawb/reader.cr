@@ -869,9 +869,9 @@ module Tawb
       property short_links : Bool
       property link_address : Bool
       property status_msg : String
-      # Whether the row is holding something that was only true when it was
-      # asked for. See `set_transient_status`.
-      property transient_status : Bool
+      # Everything the row has said this session, newest first. See
+      # `set_status`.
+      getter messages : Array(String)
       property cursor : Int32
       property col : Int32
       property scroll : Int32
@@ -948,7 +948,7 @@ module Tawb
         @short_links = false
         @link_address = true
         @status_msg = ""
-        @transient_status = false
+        @messages = [] of String
         @cursor = 0
         @col = 0
         @scroll = 0
@@ -989,15 +989,24 @@ module Tawb
       end
     end
 
-    # A key arrived. Answers whether a message that was only ever news has been
-    # taken off the row, so the caller can put whatever belongs there now.
-    def self.note_input(state : State) : Bool
-      cleared = state.transient_status
-      if cleared
-        state.transient_status = false
-        state.status_msg = ""
-      end
+    # Records that the reader touched the page, which is what keeps a live
+    # rebuild from swapping the buffer under them. Called from the handlers as
+    # well as the loop, so it says nothing about the row.
+    def self.note_input(state : State) : Nil
       state.core.mark_input
+    end
+
+    # One keystroke begins. The row goes back to being about where the reader
+    # is: what the cursor is standing on, or nothing. The message is kept in
+    # the buffer, and read again with the Messages key. Answers whether the row
+    # was cleared, so the caller can put back what belongs there now.
+    #
+    # This is a keystroke boundary and not a general "input happened" hook: a
+    # handler may note input more than once while carrying out one key, and a
+    # status written in the middle of that is the answer to this keystroke.
+    def self.begin_keystroke(state : State) : Bool
+      cleared = !state.status_msg.empty?
+      state.status_msg = "" if cleared
       cleared
     end
 
@@ -1637,7 +1646,11 @@ module Tawb
       elsif mode == "choose"
         return "Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel"
       elsif mode == "library"
-        label = state.library.try(&.as_h).try(&.["label"]?.try(&.as_s?)) || ""
+        library = state.library.try(&.as_h)
+        label = library.try(&.["label"]?.try(&.as_s?)) || ""
+        if library.try(&.["kind"]?.try(&.as_s?)) == "messages"
+          return "#{label} — j/k: move  Enter or Esc: back to the page"
+        end
         return "#{label} — type: filter  Enter: open  Esc: close"
       elsif mode == "line"
         return "#{state.line_prompt.try(&.label)} — Enter: save  Esc: cancel"
@@ -1700,27 +1713,45 @@ module Tawb
       Screen.write_line(output, status_row(state), rendered)
     end
 
-    def self.set_status(output : Screen::Output, state : State, page_url : String,
-                        msg : String) : Nil
-      state.status_msg = msg
-      # Anything said through here is the answer to what the reader just did,
-      # and it stays until something else is said. A readout that is about to
-      # be out of date the moment they move is the exception; see
-      # `set_transient_status`.
-      state.transient_status = false
+    # How many messages are kept. Enough to hold a session's worth of answers
+    # and surprisingly few to read; the oldest fall off the end.
+    MAX_MESSAGES = 100
+
+    # The row is about now. A message is written there so the reader hears it
+    # the moment it happens, and it is taken off by the next keystroke — see
+    # `note_input`. What a message must not do is come back later; the row falls
+    # back to `status_msg` whenever the cursor is not on a link, so a message
+    # kept there would resurface as though it were current.
+    #
+    # Everything written here is also kept, newest first, in `state.messages`,
+    # so a message that arrived while the reader was busy can still be read.
+    # Links are not messages: they are what the cursor is standing on, and
+    # moving back regenerates them.
+    # Writes the row without saying anything: no message buffer, no status held
+    # for the next redraw. For the words a screen puts on the row about itself.
+    def self.paint_row(output : Screen::Output, state : State, page_url : String,
+                       msg : String) : Nil
       write_status_row(output, state, msg)
       park_cursor(output, state, page_url)
     end
 
-    # News rather than an answer: true for the instant it is asked, and gone
-    # the moment the reader does anything else. `status_msg` is what the row
-    # falls back to whenever the cursor is not standing on a link, so a readout
-    # kept there would keep coming back — a line number from three keystrokes
-    # ago, offered again as though it were current.
-    def self.set_transient_status(output : Screen::Output, state : State,
-                                  page_url : String, msg : String) : Nil
-      set_status(output, state, page_url, msg)
-      state.transient_status = true
+    def self.set_status(output : Screen::Output, state : State, page_url : String,
+                        msg : String) : Nil
+      state.status_msg = msg
+      remember_message(state, msg)
+      write_status_row(output, state, msg)
+      park_cursor(output, state, page_url)
+    end
+
+    def self.remember_message(state : State, msg : String) : Nil
+      return if msg.empty?
+      # A page that repeats itself — a live region saying the same thing every
+      # second — would otherwise fill the buffer with one sentence.
+      return if state.messages.first? == msg
+      state.messages.unshift(msg)
+      while state.messages.size > MAX_MESSAGES
+        state.messages.pop
+      end
     end
 
     # The link the reader is standing on, and where it goes, said as the

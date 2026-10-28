@@ -91,9 +91,10 @@ test('a link number with g moves and says so', { skip: needsCrystal }, async () 
   ]);
   const result = await runBoth('move', state, [
     { op: 'openNumberPrompt' },
+    // `g` is the go command and acts on its own; a further Enter would be a
+    // keystroke after the action, which is exactly what clears the row.
     { op: 'numberKey', chunk: '2' },
     { op: 'numberKey', chunk: 'g' },
-    { op: 'numberKey', chunk: '\r' },
   ], { url: PAGE_URL });
   assert.equal(result.state.mode, 'browse');
   assert.equal(result.state.cursor, 1);

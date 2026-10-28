@@ -2339,6 +2339,9 @@ module Tawb
                                    page_url : String,
                                    page : ScriptedPage? = nil) : JSON::Any?
       op = action["op"]?.try(&.as_s?) || ""
+      # One keystroke begins: the row goes back to being about where the reader
+      # is, exactly as the terminal loop does before dispatching.
+      Reader.begin_keystroke(state) if action["chunk"]?
       force = action["force"]?.try(&.as_bool?) || false
       case op
       when "drawTitle"
@@ -2798,7 +2801,7 @@ module Tawb
         "col"        => JSON::Any.new(state.col.to_i64),
         "cursor"     => JSON::Any.new(state.cursor.to_i64),
         "statusMsg"  => JSON::Any.new(state.status_msg),
-        "transientStatus" => JSON::Any.new(state.transient_status),
+        "messages"  => JSON::Any.new(state.messages.map { |each| JSON::Any.new(each) }),
         "address"    => address,
         "typing"     => typing,
         "auth"       => auth,

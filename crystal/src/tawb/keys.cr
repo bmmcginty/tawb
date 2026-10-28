@@ -101,6 +101,10 @@ module Tawb
       {id: "next-change", label: "Next changed area", defaults: ["c"]},
       {id: "previous-change", label: "Previous changed area", defaults: ["C"]},
       {id: "where", label: "Report position", defaults: ["="]},
+      # Everything the status row has said, newest first. The row itself is
+      # cleared by the next keystroke — it is about now — so this is where a
+      # message that arrived while the reader was busy can be read afterwards.
+      {id: "messages", label: "Messages and status history", defaults: ["M"]},
       {id: "document-info", label: "Information about current document", defaults: [] of String},
       {id: "options", label: "Options", defaults: [] of String},
       {id: "link-number", label: "Follow a link or page number", defaults: [] of String},

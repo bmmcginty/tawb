@@ -25,6 +25,7 @@ module Tawb
       "TAWB_NEXT_TAB"         => "next-tab",
       "TAWB_PREVIOUS_TAB"     => "previous-tab",
       "TAWB_CLOSE_TAB"        => "close-tab",
+      "TAWB_MESSAGES"         => "messages",
     }
 
     # Every Lynx function the interface acts on, plus the extensions. Later

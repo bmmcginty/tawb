@@ -1197,7 +1197,8 @@ module Tawb
                  else
                    "#{who} asks for a file (#{accept}). Tab completes, Esc cancels."
                  end
-      Reader.set_status(output, state, page_url, question)
+      # The prompt writes the row itself; a message here would be replaced on
+      # the same row a line later.
       draw_file_prompt(output, state)
 
       answer = nil
@@ -2335,6 +2336,21 @@ module Tawb
     # Browser libraries
     # ------------------------------------------------------------------
 
+    # What the list has to say about itself, which is also the message the row
+    # carries while the list is open: how many entries there are, how many of
+    # them the filter admits, or that nothing is left.
+    def self.library_status(object : Hash(String, JSON::Any), count : Int32) : String
+      kind = object["kind"]?.try(&.as_s?) || ""
+      total = object["rows"].as_a.size
+      filter = object["filter"]?.try(&.as_s?) || ""
+      if count.zero?
+        return filter.empty? ? "Nothing here yet." : "Nothing matching \"#{filter}\"."
+      end
+      return "#{count} of #{total} matching \"#{filter}\"." unless filter.empty?
+      return "#{total} message#{"s" unless total == 1}." if kind == "messages"
+      "#{total} entr#{total == 1 ? "y" : "ies"} — type to filter."
+    end
+
     def self.show_library(output : Screen::Output, state : Reader::State,
                           page : Reader::PageEnv, filter : String) : Nil
       library = state.library || return
@@ -2343,19 +2359,24 @@ module Tawb
       rows = object["rows"].as_a.select do |row|
         Library.matches?(row.as_h["text"].as_s, filter)
       end
-      object["blocks"] = JSON::Any.new(rows.map do |row|
+      blocks = rows.map do |row|
         JSON::Any.new({"text" => row.as_h["text"],
                        "entry" => row.as_h["entry"]? || JSON::Any.new(nil)})
-      end)
+      end
+      if blocks.empty?
+        blocks = [JSON::Any.new({"text" => JSON::Any.new(library_status(object, 0)),
+                                 "entry" => JSON::Any.new(nil)})]
+      end
+      object["blocks"] = JSON::Any.new(blocks)
       state.cursor = 0
       state.col = 0
       state.scroll = 0
       Reader.relayout(state)
       Reader.render(output, state, page.url, true)
-      if rows.empty?
-        Reader.set_status(output, state, page.url,
-          filter.empty? ? "No entries." : "No entries match \"#{filter}\".")
-      end
+      # The count is furniture for this screen rather than something the reader
+      # asked for: it is painted on the row and not kept, so it neither lands in
+      # the message buffer nor outlives the list it describes.
+      Reader.paint_row(output, state, page.url, library_status(object, rows.size))
     end
 
     def self.open_internal_rows(output : Screen::Output, state : Reader::State,
@@ -2382,6 +2403,15 @@ module Tawb
       state.mode = "library"
       state.title = "#{label} — #{rows.size}"
       show_library(output, state, page, "")
+    end
+
+    # Everything the row has said, newest first. The same list the address
+    # screens use, because a reader already knows how to move through one;
+    # Enter and Escape both leave it, since there is nothing here to open.
+    def self.open_messages(output : Screen::Output, state : Reader::State,
+                           page : Reader::PageEnv) : Nil
+      rows = state.messages.map { |text| LynxPages::Row.new(text: text, entry: nil) }
+      open_internal_rows(output, state, page, "messages", "Messages", rows, "No messages yet.")
     end
 
     def self.open_session_list(output : Screen::Output, state : Reader::State,
@@ -2584,7 +2614,8 @@ module Tawb
       state.line_prompt = Reader::LinePrompt.new(label, Reader::Buffer.new(initial, initial.size))
       token = keyboard.claim
       Reader.draw_hint(output, state, true)
-      Reader.set_status(output, state, page.url, hint)
+      # `hint` is not written: the prompt below writes the same row, so a hint
+      # would be replaced before it could be read.
       Reader.draw_line_prompt(output, state)
       begin
         loop do
@@ -2636,6 +2667,7 @@ module Tawb
         Reader.set_status(output, state, page.url, "Not bookmarked.")
         return
       end
+      Reader.set_status(output, state, page.url, "Filing it…")
       begin
         saved = provider.save(page.url, name.strip.empty? ? suggested : name.strip).as_h
         title = saved["title"]?.try(&.as_s?) || suggested
@@ -2677,6 +2709,10 @@ module Tawb
         Reader.move_screen(output, state, -1, page.url); return nil
       end
       if (chunk == "\r" || chunk == "\n")
+        if object["kind"].as_s == "messages"
+          close_library(output, state, page, nil)
+          return nil
+        end
         entry = Reader.current_block(state).try(&.as_h).try(&.["entry"]?)
         if entry && (object["kind"].as_s == "links" || object["kind"].as_s == "addresses")
           target = entry.as_h["block"]?
@@ -3017,8 +3053,8 @@ module Tawb
       state.mode = "line"
       state.line_prompt = Reader::LinePrompt.new(label, Reader::Buffer.new(initial, initial.size))
       Reader.draw_hint(output, state, true)
-      Reader.set_status(output, state, page.url,
-        "Enter a complete file or folder path; Ctrl+L empties it  Esc: cancel.")
+      # The hint is not written: the prompt below writes the same row, so a
+      # hint would be replaced before it could be read.
       Reader.draw_line_prompt(output, state)
       begin
         loop do
@@ -3963,6 +3999,10 @@ module Tawb
         bookmark_page(output, state, page, keyboard)
         return nil
       end
+      if action == "messages"
+        open_messages(output, state, page)
+        return nil
+      end
       if action == "visited-links" || action == "session-history"
         open_session_list(output, state, page, action == "visited-links")
         return nil
@@ -4018,7 +4058,7 @@ module Tawb
         block = Reader.current_block(state)
         total = state.lines.size
         role = block.try(&.as_h).try(&.["item"]?).try(&.as_h).try(&.["role"]?) || "nothing"
-        Reader.set_transient_status(output, state, page.url,
+        Reader.set_status(output, state, page.url,
           "line #{state.cursor + 1}/#{total}, column #{state.col + 1} — #{role}.")
         return nil
       end
