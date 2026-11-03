@@ -681,7 +681,7 @@ module Tawb
     # can be raised from inside an action — a portal chooser, a password
     # challenge, a path — and when one is up the action's own reporting must
     # not repaint the page over it or write its status on top of the question.
-    PROMPT_MODES = Set{"dialog", "line", "auth", "files", "confirm", "find"}
+    PROMPT_MODES = Set{"dialog", "line", "auth", "files", "confirm", "find", "command"}
 
     def self.prompting?(state : Reader::State) : Bool
       PROMPT_MODES.includes?(state.mode)
@@ -2158,6 +2158,164 @@ module Tawb
       end
 
       Reader.draw_address(output, state, page.url, false, true)
+    end
+
+    # ------------------------------------------------------------------
+    # Running a command by name
+    #
+    # The keyboard screen lists every action the interface offers, including
+    # the ones a reader has not bound. `:` opens the same list as a typed line:
+    # Tab completes a prefix, Enter runs the action, and the action is then
+    # dispatched through the browse map as though its key had been pressed.
+    # ------------------------------------------------------------------
+
+    alias CommandChoice = NamedTuple(name: String, id: String, aliases: Array(String))
+
+    # The name the keyboard screen leads a row with, with the action's id and
+    # label accepted as aliases. That is what "names found in the keyboard
+    # wizard" means for either interface: a Lynx function name there, an action
+    # label in the ordinary interface.
+    def self.command_choices(keymap : Keys::Keymap) : Array(CommandChoice)
+      keymap.actions.map do |action|
+        name = keymap.function_names[action.id]? || action.label
+        {name: name, id: action.id, aliases: [action.label, action.id]}
+      end
+    end
+
+    def self.command_matches(keymap : Keys::Keymap, text : String) : Array(CommandChoice)
+      needle = text.strip.downcase
+      return [] of CommandChoice if needle.empty?
+      choices = command_choices(keymap)
+      matches = choices.select { |choice| choice[:name].downcase.starts_with?(needle) }
+      return matches unless matches.empty?
+      choices.select do |choice|
+        choice[:aliases].any? { |alias_name| alias_name.downcase.starts_with?(needle) }
+      end
+    end
+
+    private def self.command_exact(keymap : Keys::Keymap, text : String) : CommandChoice?
+      needle = text.strip.downcase
+      choices = command_choices(keymap)
+      choices.find { |choice| choice[:name].downcase == needle } ||
+        choices.find { |choice| choice[:aliases].any? { |alias_name| alias_name.downcase == needle } }
+    end
+
+    private def self.common_prefix(left : String, right : String) : String
+      limit = Math.min(left.size, right.size)
+      index = 0
+      while index < limit && left[index] == right[index]
+        index += 1
+      end
+      left[0, index]
+    end
+
+    # What Tab fills in: the whole name when one action matches, otherwise the
+    # part every matching name shares. Aliases are a fallback, so a prefix of
+    # an id still finds its action when no displayed name starts that way.
+    def self.command_completion(keymap : Keys::Keymap, text : String) : NamedTuple(text: String, matches: Array(String))
+      matches = command_matches(keymap, text)
+      names = matches.map(&.[:name]).uniq
+      return {text: text, matches: [] of String} if names.empty?
+      return {text: names.first, matches: names} if names.size == 1
+      prefix = names.reduce { |left, right| common_prefix(left, right) }
+      {text: prefix.size > text.size ? prefix : text, matches: names}
+    end
+
+    def self.focus_command_line(output : Screen::Output, state : Reader::State) : Nil
+      state.mode = "command"
+      state.line_prompt = Reader::LinePrompt.new("Command", Reader::Buffer.new)
+      state.command_note = nil
+      Reader.draw_hint(output, state)
+      Reader.draw_line_prompt(output, state)
+    end
+
+    # One key for the command line. The line is not a browse key: it edits its
+    # own buffer, completes on Tab, and only hands control back to the browse
+    # map once Enter has resolved the name to an action.
+    def self.handle_command_key(output : Screen::Output, state : Reader::State,
+                                page : Reader::PageEnv, keyboard : Keyboard?,
+                                chunk : String, now : Int64 = 0_i64) : String?
+      Reader.note_input(state)
+      prompt = state.line_prompt
+      unless prompt
+        state.mode = "browse"
+        return nil
+      end
+      buffer = prompt.buffer
+
+      if key_is(chunk, "Escape", state) || key_is(chunk, "Ctrl+C", state)
+        state.mode = "browse"
+        state.line_prompt = nil
+        state.command_note = nil
+        Reader.draw_hint(output, state)
+        Reader.set_status(output, state, page.url, "Command cancelled.")
+        return nil
+      end
+
+      if chunk == "\t"
+        completion = command_completion(keymap_for(state), buffer.text)
+        buffer.text = completion[:text]
+        buffer.caret = completion[:text].size
+        state.command_note = if completion[:matches].size > 1
+                               "Matches: #{completion[:matches].join(", ")}"
+                             elsif completion[:matches].empty?
+                               buffer.text.strip.empty? ?
+                                 "Type a command name." :
+                                 "No command starts with \"#{buffer.text}\"."
+                             end
+        Reader.draw_hint(output, state)
+        Reader.draw_line_prompt(output, state)
+        return nil
+      end
+
+      if chunk == "\r" || chunk == "\n"
+        text = buffer.text.strip
+        keymap = keymap_for(state)
+        choice = command_exact(keymap, text)
+        matches = command_matches(keymap, text)
+        choice ||= matches.first if matches.size == 1
+        unless choice
+          state.command_note = if text.empty?
+                                 "Type a command name."
+                               elsif matches.empty?
+                                 "No command starts with \"#{text}\"."
+                               else
+                                 "Matches: #{matches.map(&.[:name]).join(", ")}"
+                               end
+          Reader.draw_hint(output, state)
+          Reader.draw_line_prompt(output, state)
+          return nil
+        end
+
+        state.mode = "browse"
+        state.line_prompt = nil
+        state.command_note = nil
+        Reader.draw_hint(output, state)
+        if choice[:id].starts_with?("edit-")
+          Reader.set_status(output, state, page.url,
+            "#{choice[:name]} is only available while editing.")
+          return nil
+        end
+        return handle_browse_key(output, state, page, keyboard, "", now, choice[:id])
+      end
+
+      state.command_note = nil
+      editing = Edit.edit_action(chunk, keymap_for(state))
+      if editing
+        edit_buffer = Edit::Buffer.new(buffer.text, buffer.caret)
+        Edit.apply_buffer_edit(edit_buffer, editing)
+        buffer.text = edit_buffer.text
+        buffer.caret = edit_buffer.caret
+      elsif key_is(chunk, "Ctrl+L", state)
+        buffer.text = ""
+        buffer.caret = 0
+      elsif !chunk.starts_with?(ESC) && chunk >= " "
+        buffer.text = buffer.text[0, buffer.caret] + chunk + buffer.text[buffer.caret..]
+        buffer.caret += chunk.size
+      end
+      Reader.draw_hint(output, state)
+      Reader.draw_line_prompt(output, state)
+      nil
     end
 
     # ------------------------------------------------------------------
@@ -3823,13 +3981,14 @@ module Tawb
 
     def self.handle_browse_key(output : Screen::Output, state : Reader::State,
                                page : Reader::PageEnv, keyboard : Keyboard?,
-                               chunk : String, now : Int64 = 0_i64) : String?
+                               chunk : String, now : Int64 = 0_i64,
+                               action_override : String? = nil) : String?
       Reader.note_input(state)
       actions = mode_actions(output, page.url, keyboard)
-      if actions.digit?(chunk, lynx_view(state))
+      if action_override.nil? && actions.digit?(chunk, lynx_view(state))
         return nil
       end
-      action = keymap_for(state).action_for(chunk)
+      action = action_override || keymap_for(state).action_for(chunk)
       if Reader.popup_is_open(state)
         context_action = context_action(chunk, state)
         verdict = popup_key(action, chunk, context_action,
@@ -3879,6 +4038,11 @@ module Tawb
           return nil
         end
         focus_address_bar(output, state, page, href)
+        return nil
+      end
+
+      if action == "command"
+        focus_command_line(output, state)
         return nil
       end
 

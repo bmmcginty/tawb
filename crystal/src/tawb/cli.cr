@@ -377,6 +377,9 @@ module Tawb
                       ReaderKeys.handle_choose_key(terminal, state, current, chunk); nil
                     when "type"
                       ReaderKeys.handle_type_key(terminal, state, current, chunk); nil
+                    when "command"
+                      ReaderKeys.handle_command_key(terminal, state, current, keyboard, chunk,
+                        Time.utc.to_unix_ms)
                     when "field-command"
                       ReaderKeys.handle_field_command_key(terminal, state, current, chunk); nil
                     when "forms"

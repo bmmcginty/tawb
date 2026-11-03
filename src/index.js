@@ -872,6 +872,10 @@ function hintText(state) {
     return `Webpage keyboard — every other key goes to the page  ${actionKeyLabel(state, 'page-keyboard', 'Alt+K')}: stop`;
   }
   if (state.mode === 'find') return 'Find — Enter: search  Esc: cancel';
+  if (state.mode === 'command') {
+    return state.commandNote
+      || 'Command — Tab: complete  Enter: run  Esc: cancel';
+  }
   if (state.mode === 'number') return 'Follow link number — Enter: follow  g: move  Esc: cancel';
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
   if (state.mode === 'library') {
@@ -1068,6 +1072,10 @@ function parkCursor(state) {
   }
   if (state.mode === 'find') {
     drawFind(state);
+    return;
+  }
+  if (state.mode === 'command') {
+    drawLinePrompt(state);
     return;
   }
   if (state.mode === 'field-command') {
@@ -2428,10 +2436,148 @@ function popupKey({ action, chunk, contextAction, escape = false }) {
   return null;
 }
 
-async function handleBrowseKey(chunk, state, page) {
+// ---------------------------------------------------------------------------
+// Running a command by name
+//
+// The keyboard screen lists every action the interface offers, including the
+// ones a reader has not bound. `:` opens the same list as a typed line: Tab
+// completes a prefix, Enter runs the action, and the action is then dispatched
+// through the browse map as though its key had been pressed.
+// ---------------------------------------------------------------------------
+
+function commandChoices(keys) {
+  const names = keys.functionNames || new Map();
+  return keys.actions.map((action) => ({
+    name: names.get(action.id) || action.label,
+    id: action.id,
+    aliases: [action.label, action.id],
+  }));
+}
+
+function commandMatches(keys, text) {
+  const needle = text.trim().toLowerCase();
+  if (!needle) return [];
+  const choices = commandChoices(keys);
+  const matches = choices.filter((choice) => choice.name.toLowerCase().startsWith(needle));
+  if (matches.length) return matches;
+  return choices.filter((choice) =>
+    choice.aliases.some((alias) => alias.toLowerCase().startsWith(needle)));
+}
+
+function commandExact(keys, text) {
+  const needle = text.trim().toLowerCase();
+  const choices = commandChoices(keys);
+  return choices.find((choice) => choice.name.toLowerCase() === needle)
+    || choices.find((choice) =>
+      choice.aliases.some((alias) => alias.toLowerCase() === needle))
+    || null;
+}
+
+function commonPrefix(left, right) {
+  let index = 0;
+  while (index < left.length && index < right.length && left[index] === right[index]) {
+    index += 1;
+  }
+  return left.slice(0, index);
+}
+
+// What Tab fills in: the whole name when one action matches, otherwise the
+// part every matching name shares. Aliases are a fallback, so a prefix of an
+// id still finds its action when no displayed name starts that way.
+function commandCompletion(keys, text) {
+  const matches = commandMatches(keys, text);
+  const names = [...new Set(matches.map((choice) => choice.name))];
+  if (!names.length) return { text, matches: [] };
+  if (names.length === 1) return { text: names[0], matches: names };
+  const prefix = names.reduce((left, right) => commonPrefix(left, right));
+  return { text: prefix.length > text.length ? prefix : text, matches: names };
+}
+
+function focusCommandLine(state) {
+  state.mode = 'command';
+  state.line = { label: 'Command', buffer: { text: '', caret: 0 } };
+  state.commandNote = null;
+  drawHint(state);
+  drawLinePrompt(state);
+}
+
+async function handleCommandKey(chunk, state, page) {
   markInput(state);
-  if (LYNX_ACTIONS.digit(chunk, state)) return;
-  const action = (state.keys || FALLBACK_KEYMAP).actionFor(chunk);
+  const prompt = state.line;
+  if (!prompt) { state.mode = 'browse'; return; }
+  const buffer = prompt.buffer;
+  const keys = state.keys || FALLBACK_KEYMAP;
+
+  if (keyIs(chunk, 'Escape', state) || keyIs(chunk, 'Ctrl+C', state)) {
+    state.mode = 'browse';
+    state.line = null;
+    state.commandNote = null;
+    drawHint(state);
+    setStatus(state, 'Command cancelled.');
+    return;
+  }
+
+  if (chunk === '\t') {
+    const completion = commandCompletion(keys, buffer.text);
+    buffer.text = completion.text;
+    buffer.caret = completion.text.length;
+    if (completion.matches.length > 1) {
+      state.commandNote = `Matches: ${completion.matches.join(', ')}`;
+    } else if (!completion.matches.length) {
+      state.commandNote = buffer.text.trim()
+        ? `No command starts with "${buffer.text}".`
+        : 'Type a command name.';
+    } else {
+      state.commandNote = null;
+    }
+    drawHint(state);
+    drawLinePrompt(state);
+    return;
+  }
+
+  if (chunk === '\r' || chunk === '\n') {
+    const text = buffer.text.trim();
+    let choice = commandExact(keys, text);
+    const matches = commandMatches(keys, text);
+    if (!choice && matches.length === 1) choice = matches[0];
+    if (!choice) {
+      if (!text) state.commandNote = 'Type a command name.';
+      else if (!matches.length) state.commandNote = `No command starts with "${text}".`;
+      else state.commandNote = `Matches: ${matches.map((entry) => entry.name).join(', ')}`;
+      drawHint(state);
+      drawLinePrompt(state);
+      return;
+    }
+
+    state.mode = 'browse';
+    state.line = null;
+    state.commandNote = null;
+    drawHint(state);
+    if (choice.id.startsWith('edit-')) {
+      setStatus(state, `${choice.name} is only available while editing.`);
+      return;
+    }
+    return handleBrowseKey('', state, page, choice.id);
+  }
+
+  state.commandNote = null;
+  const editing = editAction(chunk, keys);
+  if (editing) applyBufferEdit(buffer, editing);
+  else if (keyIs(chunk, 'Ctrl+L', state)) {
+    buffer.text = '';
+    buffer.caret = 0;
+  } else if (!chunk.startsWith(ESC) && chunk >= ' ') {
+    buffer.text = buffer.text.slice(0, buffer.caret) + chunk + buffer.text.slice(buffer.caret);
+    buffer.caret += chunk.length;
+  }
+  drawHint(state);
+  drawLinePrompt(state);
+}
+
+async function handleBrowseKey(chunk, state, page, actionOverride = null) {
+  markInput(state);
+  if (!actionOverride && LYNX_ACTIONS.digit(chunk, state)) return;
+  const action = actionOverride || (state.keys || FALLBACK_KEYMAP).actionFor(chunk);
   if (popupIsOpen(state)) {
     const contextAction = contextNavigationAction(chunk, state);
     const popup = popupKey({
@@ -2470,6 +2616,11 @@ async function handleBrowseKey(chunk, state, page) {
       return;
     }
     focusAddressBar(state, page, item.href);
+    return;
+  }
+
+  if (action === 'command') {
+    focusCommandLine(state);
     return;
   }
 
@@ -4298,7 +4449,7 @@ function attachedNote(files, asking) {
 // be raised from inside an action — a portal chooser, a password challenge, a
 // path — and when one is up the action's own reporting must not repaint the
 // page over it or write its status on top of the question.
-const PROMPT_MODES = new Set(['dialog', 'line', 'auth', 'files', 'confirm', 'find']);
+const PROMPT_MODES = new Set(['dialog', 'line', 'auth', 'files', 'confirm', 'find', 'command']);
 
 function prompting(state) {
   return PROMPT_MODES.has(state.mode);
@@ -5553,6 +5704,7 @@ async function main() {
     else if (state.mode === 'page') result = await handlePageKey(chunk, state, current);
     else if (state.mode === 'address') result = await handleAddressKey(chunk, state, current);
     else if (state.mode === 'find') result = await handleFindKey(chunk, state, current);
+    else if (state.mode === 'command') result = await handleCommandKey(chunk, state, current);
     else if (state.mode === 'number') result = await handleNumberKey(chunk, state, current);
     else result = await handleBrowseKey(chunk, state, current);
     const ms = Date.now() - t0;
@@ -5695,7 +5847,7 @@ module.exports = {
   runCli,
   handleBrowseKey, handleTypeKey, handleFieldCommandKey,
   handleFormsKey, handleControlKey, handlePageKey,
-  handleAddressKey, handleFindKey, handleNumberKey, openLinkNumberPrompt,
+  handleAddressKey, handleFindKey, handleNumberKey, handleCommandKey, openLinkNumberPrompt,
   parseLynxNumberExpression, relativeLinkNumber,
   browserKeyForTerminalSequence, contextNavigationAction,
   findText, runSearch,

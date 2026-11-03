@@ -57,6 +57,7 @@ module Tawb
       {id: "goto", label: "Enter a new address", defaults: [] of String},
       {id: "location-edit", label: "Edit the current address", defaults: [] of String},
       {id: "link-address", label: "Edit the current link's address", defaults: [] of String},
+      {id: "command", label: "Run a command by name", defaults: [":"]},
       {id: "history-back", label: "Back in page history", defaults: ["Alt+-"]},
       {id: "history-forward", label: "Forward in page history", defaults: ["Alt++"]},
       {id: "activate", label: "Activate", defaults: ["Enter"]},

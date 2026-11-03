@@ -14,11 +14,11 @@ const { BROWSE_FUNCTIONS, EDIT_FUNCTIONS } = require('../src/lynx_config');
 const EXTENSION_FUNCTIONS = [
   'TAWB_CYCLE_VIEW', 'TAWB_PAGE_KEYBOARD', 'TAWB_REAL_CLICK', 'TAWB_HOVER_LINE',
   'TAWB_BROWSER_QUESTION', 'TAWB_CLOSE_POPUP', 'TAWB_NEW_TAB', 'TAWB_NEXT_TAB',
-  'TAWB_PREVIOUS_TAB', 'TAWB_CLOSE_TAB',
+  'TAWB_PREVIOUS_TAB', 'TAWB_CLOSE_TAB', 'TAWB_COMMAND',
 ];
 const EXTENSION_ACTIONS = [
   'cycle-view', 'page-keyboard', 'real-click', 'hover-line', 'browser-question',
-  'close-popup', 'new-tab', 'next-tab', 'previous-tab', 'close-tab',
+  'close-popup', 'new-tab', 'next-tab', 'previous-tab', 'close-tab', 'command',
 ];
 
 for (const implementation of lynxKeymapImplementations(lynxKeymap)) {

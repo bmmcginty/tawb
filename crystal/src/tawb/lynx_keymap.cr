@@ -15,6 +15,7 @@ module Tawb
   # rather than two of each, and says plainly which entries are not Lynx's.
   module LynxKeymap
     EXTENSION_FUNCTIONS = {
+      "TAWB_COMMAND"          => "command",
       "TAWB_CYCLE_VIEW"       => "cycle-view",
       "TAWB_PAGE_KEYBOARD"    => "page-keyboard",
       "TAWB_REAL_CLICK"       => "real-click",

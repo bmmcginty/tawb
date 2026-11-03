@@ -17,6 +17,7 @@ const LYNX_BINDINGS = {
   goto: ['g'],
   'location-edit': ['G'],
   'link-address': ['E'],
+  command: [':'],
   'history-back': ['ArrowLeft', 'u'],
   'history-forward': ['Ctrl+U'],
   activate: ['Enter', 'ArrowRight'],

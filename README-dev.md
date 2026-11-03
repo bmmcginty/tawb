@@ -709,6 +709,14 @@ capture, and `Backspace` during replacement leaves the action unbound. A new
 binding is removed from any other action on the same keyboard, so one key never
 silently performs two actions in the same mode.
 
+Press `:` while reading to open a command line over the same action list.
+Type the name the wizard shows for the action, press `Tab` to complete a
+prefix, and press `Enter` to run it. A name may be an action label or, in the
+Lynx interface, the function name the wizard leads the row with. This is the
+escape hatch for an action whose key was unbound or belongs to another
+keyboard. `Esc` cancels. Actions that only exist while editing are named but
+report that they are unavailable outside a field.
+
 Browsing and editing are two keyboards on the same keys, and the wizard treats
 the two keyboards separately. An action prefixed `edit-` is reachable only
 while a field is being edited. Every other action is reachable only while a
@@ -789,6 +797,7 @@ mute/unmute.
 | `Ctrl+L` | Address bar — an address, or words to search for (`Esc` cancels)  |
 | `Alt+-` / `Alt++` | Back / forward in this tab's page history              |
 | `Alt+?`  | Open the keyboard binding wizard                               |
+| `:`      | Run any keyboard-wizard action by name                         |
 | `Alt+K` / `Ctrl+\\` | Toggle webpage keyboard mode (other keys go to the page) |
 | `\`      | Cycle view: AX → PAGE → INSPECT → SOURCE                         |
 | `Ctrl+T` | Open and follow a new tab                                        |

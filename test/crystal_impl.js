@@ -1425,6 +1425,7 @@ function readerImplementations(index, keysModule) {
         label: spec.line.label ?? '',
         buffer: { text: spec.line.buffer?.text ?? '', caret: spec.line.buffer?.caret ?? 0 },
       } : null,
+      commandNote: spec.commandNote ?? null,
       files: spec.files ?? null,
       library: spec.library ?? null, dialog: spec.dialog ?? null,
       options: spec.options ?? null,
@@ -1650,6 +1651,14 @@ function readerImplementations(index, keysModule) {
     address: state.address
       ? { text: state.address.text, caret: state.address.caret, scroll: state.address.scroll }
       : null,
+    line: state.line ? {
+      label: state.line.label ?? '',
+      buffer: {
+        text: state.line.buffer?.text ?? '',
+        caret: state.line.buffer?.caret ?? 0,
+      },
+    } : null,
+    commandNote: state.commandNote ?? null,
     typing: state.typing ? { text: state.typing.text, caret: state.typing.caret } : null,
     auth: state.auth ? {
       stage: state.auth.stage,
@@ -1922,6 +1931,9 @@ function readerImplementations(index, keysModule) {
             if (action.keys) state.keyReader = scriptedKeyReader(action.keys);
             await index.handleFormsKey(action.chunk, state, page);
             value = undefined;
+          } else if (action.op === 'commandKey') {
+            if (action.keys) state.keyReader = scriptedKeyReader(action.keys);
+            value = await index.handleCommandKey(action.chunk, state, page) ?? null;
           } else if (action.op === 'browseKey') {
             if (action.keys) state.keyReader = scriptedKeyReader(action.keys);
             value = await index.handleBrowseKey(action.chunk, state, page) ?? null;

@@ -117,6 +117,45 @@ test('the address commands open the address bar on the right text', { skip: need
   assert.equal(moved.state.statusMsg, 'Move to a link before editing its address.');
 });
 
+test('a colon opens a command line and Tab completes a wizard name',
+  { skip: needsCrystal }, async () => {
+    const opened = await runBoth('command line', stateFor(BUTTONS), [
+      { op: 'browseKey', chunk: ':' },
+    ], { url: PAGE_URL });
+    assert.equal(opened.state.mode, 'command');
+    assert.deepEqual(opened.state.line, {
+      label: 'Command', buffer: { text: '', caret: 0 },
+    });
+    assert.match(opened.state.drawn.hint, /Tab: complete/);
+
+    const completed = await runBoth('command completion', stateFor(BUTTONS), [
+      { op: 'browseKey', chunk: ':' },
+      ...Array.from('next par', (chunk) => ({ op: 'commandKey', chunk })),
+      { op: 'commandKey', chunk: '\t' },
+    ], { url: PAGE_URL });
+    assert.equal(completed.state.line.buffer.text, 'Next paragraph');
+    assert.equal(completed.state.commandNote, null);
+
+    const lynx = await runBoth('lynx command completion', stateFor(BUTTONS, LYNX), [
+      { op: 'browseKey', chunk: ':' },
+      ...Array.from('NEXT_LI', (chunk) => ({ op: 'commandKey', chunk })),
+      { op: 'commandKey', chunk: '\t' },
+    ], { url: PAGE_URL });
+    assert.equal(lynx.state.line.buffer.text, 'NEXT_LINK');
+  });
+
+test('a command name runs an action that has no key bound', { skip: needsCrystal }, async () => {
+  const state = stateFor(BUTTONS, { keys: { bindings: { where: [] } } });
+  const executed = await runBoth('command execution', state, [
+    { op: 'browseKey', chunk: ':' },
+    ...Array.from('Report position', (chunk) => ({ op: 'commandKey', chunk })),
+    { op: 'commandKey', chunk: '\r' },
+  ], { url: PAGE_URL });
+  assert.equal(executed.state.mode, 'browse');
+  assert.equal(executed.state.line, null);
+  assert.equal(executed.state.statusMsg, 'line 2/3, column 1 — button.');
+});
+
 test('refresh rescans and says so', { skip: needsCrystal }, async () => {
   const fresh = [
     { text: '[First]', item: { role: 'button', name: 'First' } },

@@ -2182,6 +2182,7 @@ module Tawb
             buffer.try(&.["text"]?).try(&.as_s?) || "",
             (buffer.try(&.["caret"]?).try(&.as_i64?) || 0).to_i32))
       end
+      state.command_note = object["commandNote"]?.try(&.as_s?)
       state.files = scripted_value(object, "files")
       state.library = object["library"]?
       if provider = object["browserLibrary"]?.try(&.as_h?)
@@ -2623,6 +2624,19 @@ module Tawb
           end),
           "pending" => JSON::Any.new(!state.pending_dialog.nil?),
         })
+      when "commandKey"
+        return JSON::Any.new(nil) unless page
+        keyboard = nil
+        if keys = action["keys"]?.try(&.as_a?)
+          keyboard = ScriptedKeyboard.new(keys.map do |key|
+            text = key.as_s
+            text == "<eof>" ? Input::EOF.as(Input::Key) : text.as(Input::Key)
+          end)
+        end
+        verdict = ReaderKeys.handle_command_key(output, state, page.not_nil!, keyboard,
+          action["chunk"].as_s, action["now"]?.try(&.as_i64?) || 0_i64)
+        return JSON::Any.new(verdict) if verdict
+        return JSON::Any.new(nil)
       when "browseKey"
         return JSON::Any.new(nil) unless page
         keyboard = nil
@@ -2748,6 +2762,14 @@ module Tawb
         "caret"  => JSON::Any.new(state.address.not_nil!.caret.to_i64),
         "scroll" => JSON::Any.new(state.address.not_nil!.scroll.to_i64),
       }) : JSON::Any.new(nil)
+      line = if prompt = state.line_prompt
+               JSON::Any.new({
+                 "label"  => JSON::Any.new(prompt.label),
+                 "buffer" => reader_buffer_json(prompt.buffer),
+               })
+             else
+               JSON::Any.new(nil)
+             end
       typing = state.typing ? JSON::Any.new({
         "text"  => JSON::Any.new(state.typing.not_nil!.text),
         "caret" => JSON::Any.new(state.typing.not_nil!.caret.to_i64),
@@ -2803,6 +2825,8 @@ module Tawb
         "statusMsg"  => JSON::Any.new(state.status_msg),
         "messages"  => JSON::Any.new(state.messages.map { |each| JSON::Any.new(each) }),
         "address"    => address,
+        "line"       => line,
+        "commandNote" => JSON::Any.new(state.command_note),
         "typing"     => typing,
         "auth"       => auth,
         "find"       => find,

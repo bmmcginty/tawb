@@ -51,6 +51,7 @@ const ACTIONS = [
   ['goto', 'Enter a new address', []],
   ['location-edit', 'Edit the current address', []],
   ['link-address', "Edit the current link's address", []],
+  ['command', 'Run a command by name', [':']],
   ['history-back', 'Back in page history', ['Alt+-']],
   ['history-forward', 'Forward in page history', ['Alt++']],
   ['activate', 'Activate', ['Enter']],

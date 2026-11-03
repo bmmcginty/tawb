@@ -888,6 +888,10 @@ module Tawb
       property auth : Auth?
       property find : Find?
       property line_prompt : LinePrompt?
+      # A note about the command line itself — what a prefix matched, or why
+      # Enter could not run it. It lives on the hint row rather than replacing
+      # the line the reader is typing into.
+      property command_note : String?
       property files : JSON::Any?
       property library : JSON::Any?
       property dialog : JSON::Any?
@@ -965,6 +969,7 @@ module Tawb
         @auth = nil
         @find = nil
         @line_prompt = nil
+        @command_note = nil
         @files = nil
         @library = nil
         @dialog = nil
@@ -1641,6 +1646,10 @@ module Tawb
           action_key_label(state, "page-keyboard", "Alt+K") + ": stop"
       elsif mode == "find"
         return "Find — Enter: search  Esc: cancel"
+      elsif mode == "command"
+        note = state.command_note
+        return note if note && !note.empty?
+        return "Command — Tab: complete  Enter: run  Esc: cancel"
       elsif mode == "number"
         return "Follow link number — Enter: follow  g: move  Esc: cancel"
       elsif mode == "choose"
@@ -2029,6 +2038,10 @@ module Tawb
       end
       if state.mode == "find"
         draw_find(output, state)
+        return
+      end
+      if state.mode == "command"
+        draw_line_prompt(output, state)
         return
       end
       if state.mode == "field-command"

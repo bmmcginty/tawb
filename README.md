@@ -170,6 +170,7 @@ if you would rather not hear an address on every link. Start with these keys:
 | `r` | Rescan TAWB's view without reloading the page |
 | `F5` | Reload the page in the browser |
 | `Alt+?` | Open keyboard help and change bindings |
+| `:` | Run any keyboard-wizard action by name |
 | `Alt+K` / `Ctrl+\\` | Toggle webpage keyboard mode |
 | `q` | Quit |
 
@@ -225,6 +226,12 @@ All browse and editing bindings are configurable. Press `Alt+?`, select an
 action, and replace or add a key. TAWB stores the result in
 `$XDG_CONFIG_HOME/tawb/keys.json`, or `~/.config/tawb/keys.json` when
 `XDG_CONFIG_HOME` is not set.
+
+Press `:` while reading to run any action listed in that keyboard screen,
+including one that has no key bound. Type its name, or part of it, and press
+`Tab` to complete the shared prefix; `Enter` runs it and `Esc` cancels. The
+names are the ones the keyboard screen shows, so Lynx sessions use names such
+as `NEXT_LINK` and the default interface uses labels such as `Next link`.
 
 ## Lynx interface
 
@@ -297,6 +304,7 @@ The common Lynx commands include:
 | `h`, `H`, `?` | Lynx help |
 | `F1` | Help for the control under the cursor |
 | `k`, `K` | Lynx-profile keymap and keyboard bindings |
+| `:` | Run any keyboard-wizard action by name |
 | `m`, `M` | Return to the main screen |
 | `x`, `X` | Reload without using the browser cache |
 | `z`, `Z` | Stop a load in progress |
