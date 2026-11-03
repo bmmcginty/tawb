@@ -71,7 +71,13 @@ tools/build_crystal.sh
 ```
 
 The build writes `bin/tawb` and rejects an output that has an ELF
-interpreter or any `DT_NEEDED` entries. Its browser-backed commands are:
+interpreter or any `DT_NEEDED` entries. When the source uses an HTTP client,
+the build also compiles the pinned static OpenSSL and zlib from
+`tools/deps.yml`; the first such build needs a C compiler, Perl, Make, and
+network access, and later builds reuse the cache under `build/deps`. See
+`tools/build_deps.sh` and set `TAWB_DEPS_DIR` to put that cache elsewhere.
+
+Its browser-backed commands are:
 
 ```sh
 # Read a page in the terminal, through either engine.

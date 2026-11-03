@@ -24,3 +24,6 @@ edbrowse-plugin/
 # Upstream Lynx source kept beside TAWB while the compatibility interface is
 # implemented and checked. It is a reference checkout, not vendored code.
 lynx/
+
+# Static dependency cache built by tools/build_deps.sh.
+build/

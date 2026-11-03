@@ -2492,13 +2492,20 @@ remains in the tree as the differential reference.
 
 Two things in the native build are hand-written where the standard library
 would have done, and for the same reason the protocols are: a dependency the
-static build cannot have. `crystal/src/tawb/dbus.cr` speaks the D-Bus wire
-format over `UNIXSocket` rather than linking `libdbus`, and the edbrowse
-server answers http over `TCPServer` rather than through `HTTP::Server` —
-`require "http/server"` links libssl, libcrypto and libz, because an
-`HTTP::Server` can serve TLS, and `tools/build_crystal.sh` then refuses the
-output. The same goes for the request the route differential makes:
-`HTTP::Client` links the same three.
+static build does not otherwise carry. `crystal/src/tawb/dbus.cr` speaks the
+D-Bus wire format over `UNIXSocket` rather than linking `libdbus`, and the
+edbrowse server answers http over `TCPServer` rather than through
+`HTTP::Server`.
+
+HTTP is different now that the build can supply its dependencies. When the
+Crystal source requires an HTTP client, TLS, compression, or OpenSSL,
+`tools/build_crystal.sh` runs `tools/build_deps.sh`. That reads
+`tools/deps.yml`, verifies the pinned source archives, and builds static
+OpenSSL and zlib under `build/deps` before the Crystal link. The libraries are
+cached; `TAWB_DEPS_DIR` moves the cache, `TAWB_DEPS_REBUILD=1` rebuilds it, and
+`TAWB_WITH_HTTP=1` forces the same path for a build that has not added the
+require yet. The first build needs network access, a C compiler, Perl, Make,
+and `pkg-config`.
 
 `crystal/src/tawb/engine.cr` is where the two engines meet. JavaScript gets
 that seam for nothing — a page is whatever answers `url()`, which is what
@@ -2567,6 +2574,7 @@ different questions.
 
 ```
 tools/build_crystal.sh                  # bin/tawb
+tools/build_deps.sh                     # static OpenSSL/zlib for HTTP builds
 tools/test_crystal.sh                   # every ported specification, both runtimes
 tools/test_crystal.sh test/place_crystal.test.js
 tools/test_crystal_browser.sh           # the differentials that need a real browser
