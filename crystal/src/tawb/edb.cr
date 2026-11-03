@@ -444,6 +444,7 @@ module Tawb
       --log                         write a diagnostic log
       --log-dir <dir>               where to write it (TAWB_LOG_DIR)
       --version                     print the version and its source commit
+      --check-updates               check for and install a newer release
       -h, --help                    show this help and exit
 
     TEXT

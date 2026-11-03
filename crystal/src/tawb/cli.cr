@@ -17,6 +17,7 @@ require "./options"
 require "./runtime"
 require "./settings"
 require "./startup"
+require "./update"
 require "./unicode_text"
 
 module Tawb
@@ -57,6 +58,7 @@ module Tawb
 
     Other:
       --version                     print the version and its source commit
+      --check-updates               check for and install a newer release
       -h, --help                    show this help and exit
 
     The native Crystal reader reads pages interactively through Firefox and
@@ -89,6 +91,10 @@ module Tawb
       end
       if options["version"].as_bool
         STDOUT << Revision.summary << '\n'
+        return
+      end
+      if options["checkUpdates"].as_bool
+        Update.run
         return
       end
       if options["keyboard"].as_bool && options["dump"].as_bool
@@ -521,6 +527,10 @@ module Tawb
       end
       if options["version"].as_bool
         STDOUT << Revision.summary << '\n'
+        return
+      end
+      if options["checkUpdates"].as_bool
+        Update.run
         return
       end
       logger = Log.new

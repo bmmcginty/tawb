@@ -498,6 +498,21 @@ be fetched, just as they are during an interactive TAWB session.
 `tawb --help` prints the options and exits. The same options can be given on
 the command line, in the settings file, or, where noted, in the environment.
 
+### Checking for updates
+
+`tawb --check-updates` asks GitHub for the latest release and compares it with
+the version embedded in the running binary. It always reports the running
+binary's path and whether that path and its directory are writable, even when
+no update exists or the binary cannot be replaced.
+
+If a newer release exists and the binary is writable, TAWB downloads the asset
+for this machine, verifies its published SHA-256 digest, and replaces only the
+canonical destination binary. A symlink used to launch TAWB is left in place.
+The replacement is written through a temporary file in the destination
+directory and removed if any step fails. A read-only binary is still checked
+for updates, then reported and left unchanged with a non-zero exit status.
+Network, download, checksum, and replacement failures also exit non-zero.
+
 ### Defaults for every run
 
 Put command-line options in `$XDG_CONFIG_HOME/tawb/settings`, or

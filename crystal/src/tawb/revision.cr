@@ -56,5 +56,11 @@ module Tawb
       line = VERSION_FILE.lines.find(&.starts_with?("version:"))
       line.try(&.split(':', 2).last.strip) || "unknown"
     end
+
+    # The release number alone, without the commit suffix a development build
+    # carries. The update check compares this with the latest release tag.
+    def self.version : String
+      summary.split.first? || "unknown"
+    end
   end
 end

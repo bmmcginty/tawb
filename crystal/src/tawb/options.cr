@@ -25,7 +25,7 @@ module Tawb
       "portal"          => Kind::String,
     }
     EDB    = {"port" => Kind::String}
-    HELP   = {"help" => Kind::Boolean, "version" => Kind::Boolean}
+    HELP   = {"help" => Kind::Boolean, "version" => Kind::Boolean, "check-updates" => Kind::Boolean}
     READER = {
       "keyboard"                  => Kind::Boolean,
       "dump"                      => Kind::Boolean,
@@ -102,6 +102,7 @@ module Tawb
         "closeInitialTabOnExit" => json(boolean(values, "close-initial-tab-on-exit", false)),
         "help"                  => json(boolean(values, "help", false)),
         "version"               => json(boolean(values, "version", false)),
+        "checkUpdates"          => json(boolean(values, "check-updates", false)),
         "port"                  => json(port_number(string(values, "port"))),
       })
     end
@@ -110,11 +111,12 @@ module Tawb
       values, url = parse_command_line(argv, BROWSER.merge(EDB).merge(HELP))
       shared(values, env).merge({
         "port"    => json(port_number(string(values, "port"))),
-        "help"    => json(boolean(values, "help", false)),
-        "version" => json(boolean(values, "version", false)),
+        "help"         => json(boolean(values, "help", false)),
+        "version"      => json(boolean(values, "version", false)),
+        "checkUpdates" => json(boolean(values, "check-updates", false)),
         # The address to open on the way up, which the bridge turns into a
         # tab and prints the address of.
-        "url"  => json(url),
+        "url"          => json(url),
       })
     end
 

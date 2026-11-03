@@ -2406,6 +2406,19 @@ names the commit and when that commit was made,
 `1.2.7 +abcd (2026-10-03 08:51:00)`. The date is the commit's, not the build's,
 and a bare `crystal build` records the same summary as a release build.
 
+`tawb --check-updates` reads
+`https://api.github.com/repos/bmmcginty/tawb/releases/latest`, compares its
+`tag_name` with the embedded version, and reports the running executable's
+canonical path as writable or not. It checks the release before deciding
+whether it can update, so a read-only installation still learns that a newer
+release exists and exits non-zero. When an update exists and the path is
+writable, it downloads the matching `tawb-<tag>-linux-<machine>` asset, verifies
+GitHub's `sha256:` digest, preserves the old mode, and atomically renames a
+temporary file over the canonical destination. Symlinks stay symlinks. Any
+failure removes the temporary file and leaves the old binary in place.
+`TAWB_UPDATE_API` overrides the API URL for the tests; it is not part of the
+normal user interface.
+
 A version command refuses to run if any tracked file has uncommitted changes,
 or if `crystal/` or `src/` contains an untracked file. Untracked scratch files
 elsewhere in the checkout do not block it. It then changes only `version.yml`,
