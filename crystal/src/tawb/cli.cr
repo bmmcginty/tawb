@@ -58,7 +58,7 @@ module Tawb
 
     Other:
       --version                     print the version and its source commit
-      --check-updates               check for and install a newer release
+      --update                      check for and install a newer release
       -h, --help                    show this help and exit
 
     The native Crystal reader reads pages interactively through Firefox and
@@ -93,7 +93,7 @@ module Tawb
         STDOUT << Revision.summary << '\n'
         return
       end
-      if options["checkUpdates"].as_bool
+      if options["update"].as_bool
         Update.run
         return
       end
@@ -529,7 +529,7 @@ module Tawb
         STDOUT << Revision.summary << '\n'
         return
       end
-      if options["checkUpdates"].as_bool
+      if options["update"].as_bool
         Update.run
         return
       end

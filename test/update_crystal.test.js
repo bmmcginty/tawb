@@ -21,6 +21,11 @@ const binary = process.env.TAWB_CRYSTAL_BIN
   || path.join(__dirname, '..', 'bin', 'tawb');
 const machine = spawnSync('uname', ['-m'], { encoding: 'utf8' }).stdout.trim();
 const asRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+const currentVersion = spawnSync(binary, ['--version'], { encoding: 'utf8' })
+  .stdout.trim().split(/\s+/)[0] || require('../package.json').version;
+const nextVersion = currentVersion.replace(/\.(\d+)$/, (_, patch) => `.${Number(patch) + 1}`);
+const currentTag = `v${currentVersion}`;
+const nextTag = `v${nextVersion}`;
 
 function sha256(data) {
   return crypto.createHash('sha256').update(data).digest('hex');
@@ -74,7 +79,7 @@ function copyBinary(destination) {
 
 function run(found, executable) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ['--check-updates'], {
+    const child = spawn(executable, ['--update'], {
       env: { ...process.env, TAWB_UPDATE_API: found.api },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -106,7 +111,7 @@ function tempFiles(directory) {
 test('the update check works out whether a newer release exists', { skip }, async (t) => {
   const root = tempDir('tawb-update-current-');
   t.after(() => removeTempDir(root));
-  const found = await releaseFor('v1.2.8', Buffer.from('same release\n'));
+  const found = await releaseFor(currentTag, Buffer.from('same release\n'));
   t.after(() => new Promise((resolve) => found.server.close(resolve)));
 
   const executable = path.join(root, 'tawb');
@@ -114,7 +119,7 @@ test('the update check works out whether a newer release exists', { skip }, asyn
   const result = await run(found, executable);
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /^Latest release: v1\.2\.8$/m);
+  assert.match(result.stdout, new RegExp(`^Latest release: ${currentTag}$`, 'm'));
   assert.match(result.stdout, new RegExp(`Running binary: ${executable} \\(writable\\)`));
   assert.match(result.stdout, /No update available/);
 });
@@ -124,7 +129,7 @@ test('an update follows the asset redirect and replaces the symlink destination'
     const root = tempDir('tawb-update-install-');
     t.after(() => removeTempDir(root));
     const replacement = Buffer.from('replacement binary\n');
-    const found = await releaseFor('v1.2.9', replacement);
+    const found = await releaseFor(nextTag, replacement);
     t.after(() => new Promise((resolve) => found.server.close(resolve)));
 
     const destination = path.join(root, 'real', 'tawb');
@@ -136,8 +141,8 @@ test('an update follows the asset redirect and replaces the symlink destination'
     const result = await run(found, link);
 
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /Update available: 1\.2\.9/);
-    assert.match(result.stdout, new RegExp(`Updated ${destination} to 1\\.2\\.9`));
+    assert.match(result.stdout, new RegExp(`Update available: ${nextVersion}`));
+    assert.ok(result.stdout.includes(`Updated ${destination} to ${nextVersion}`), result.stdout);
     assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'the symlink is left alone');
     assert.deepEqual(fs.readFileSync(destination), replacement);
     assert.equal(fs.statSync(destination).mode & 0o777, 0o755, 'mode is preserved');
@@ -148,7 +153,7 @@ test('a read-only binary still reports the update, then fails without changing i
   { skip: skip || (asRoot ? 'root can write read-only paths' : false) }, async (t) => {
     const root = tempDir('tawb-update-readonly-');
     t.after(() => removeTempDir(root));
-    const found = await releaseFor('v1.2.9', Buffer.from('not installed\n'));
+    const found = await releaseFor(nextTag, Buffer.from('not installed\n'));
     t.after(() => new Promise((resolve) => found.server.close(resolve)));
 
     const executable = path.join(root, 'tawb');
@@ -159,7 +164,7 @@ test('a read-only binary still reports the update, then fails without changing i
     const result = await run(found, executable);
 
     assert.notEqual(result.status, 0);
-    assert.match(result.stdout, /Update available: 1\.2\.9/);
+    assert.match(result.stdout, new RegExp(`Update available: ${nextVersion}`));
     assert.match(result.stdout, /\(not writable\)/);
     assert.match(result.stderr, /cannot update .*not writable/);
     assert.deepEqual(fs.readFileSync(executable), before);
@@ -170,7 +175,7 @@ test('a bad digest fails and leaves neither the old binary changed nor a temp fi
   { skip }, async (t) => {
     const root = tempDir('tawb-update-digest-');
     t.after(() => removeTempDir(root));
-    const found = await releaseFor('v1.2.9', Buffer.from('wrong digest\n'), {
+    const found = await releaseFor(nextTag, Buffer.from('wrong digest\n'), {
       digest: '0'.repeat(64),
     });
     t.after(() => new Promise((resolve) => found.server.close(resolve)));

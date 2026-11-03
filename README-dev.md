@@ -2406,7 +2406,7 @@ names the commit and when that commit was made,
 `1.2.7 +abcd (2026-10-03 08:51:00)`. The date is the commit's, not the build's,
 and a bare `crystal build` records the same summary as a release build.
 
-`tawb --check-updates` reads
+`tawb --update` reads
 `https://api.github.com/repos/bmmcginty/tawb/releases/latest`, compares its
 `tag_name` with the embedded version, and reports the running executable's
 canonical path as writable or not. It checks the release before deciding

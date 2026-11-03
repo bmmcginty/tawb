@@ -498,9 +498,9 @@ be fetched, just as they are during an interactive TAWB session.
 `tawb --help` prints the options and exits. The same options can be given on
 the command line, in the settings file, or, where noted, in the environment.
 
-### Checking for updates
+### Updating
 
-`tawb --check-updates` asks GitHub for the latest release and compares it with
+`tawb --update` asks GitHub for the latest release and compares it with
 the version embedded in the running binary. It always reports the running
 binary's path and whether that path and its directory are writable, even when
 no update exists or the binary cannot be replaced.
