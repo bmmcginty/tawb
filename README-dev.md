@@ -2523,6 +2523,15 @@ dependency revision; `TAWB_DEPS_DIR` moves the cache,
 for a build that has not added the require yet. The first build needs network
 access, a C compiler, Perl, Make, and `pkg-config`.
 
+The update check does not use `getaddrinfo`. A static glibc program cannot give
+a `dlopen`ed NSS module a working general-dynamic TLS block, and
+`libnss_resolve.so.2` dereferences one while resolving `api.github.com`.
+`crystal/src/tawb/update.cr` therefore uses `res_search` directly and parses the
+DNS answer itself, then connects to the returned address and performs TLS with
+the original hostname for SNI and certificate verification. This keeps the
+update check independent of `/etc/nsswitch.conf` and avoids loading any NSS
+module.
+
 `crystal/src/tawb/engine.cr` is where the two engines meet. JavaScript gets
 that seam for nothing — a page is whatever answers `url()`, which is what
 `src/driver.js` says in prose — while a typed port has to name it, and names
