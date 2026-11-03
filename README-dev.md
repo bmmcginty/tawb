@@ -2391,6 +2391,12 @@ make version VERSION=1.2.3   # the same, without the positional Make goal
 make release                 # publish the tagged HEAD on GitHub
 ```
 
+`tawb --version` prints what the executable was built from. On the commit a
+release was tagged at that is the version alone, `1.2.7`; anywhere else it
+names the commit and when that commit was made,
+`1.2.7 +abcd (2026-10-03 08:51:00)`. The date is the commit's, not the build's,
+and a bare `crystal build` records the same summary as a release build.
+
 A version command refuses to run if any tracked file has uncommitted changes,
 or if `crystal/` or `src/` contains an untracked file. Untracked scratch files
 elsewhere in the checkout do not block it. It then changes only `version.yml`,

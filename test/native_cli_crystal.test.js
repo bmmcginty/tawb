@@ -26,6 +26,19 @@ test('the native CLI says which engines it reads interactively', {
   assert.match(help.stdout, /edb front end hands the same browser to edbrowse/);
 });
 
+test('the native CLI prints the version its build carries', {
+  skip: enabled ? false : 'the Crystal runtime is not enabled',
+}, () => {
+  const pkg = require('../package.json');
+  const version = spawnSync(binary, ['--version'], { encoding: 'utf8' });
+  assert.equal(version.status, 0, version.stderr);
+  assert.ok(version.stdout.startsWith(`${pkg.version}`), version.stdout);
+
+  const edb = spawnSync(binary, ['--front-end', 'edb', '--version'], { encoding: 'utf8' });
+  assert.equal(edb.status, 0, edb.stderr);
+  assert.equal(edb.stdout, version.stdout);
+});
+
 test('the native CLI includes the edbrowse front end', {
   skip: enabled ? false : 'the Crystal runtime is not enabled',
 }, () => {

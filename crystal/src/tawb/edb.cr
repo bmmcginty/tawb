@@ -443,6 +443,7 @@ module Tawb
       --port <number>               the port to listen on
       --log                         write a diagnostic log
       --log-dir <dir>               where to write it (TAWB_LOG_DIR)
+      --version                     print the version and its source commit
       -h, --help                    show this help and exit
 
     TEXT

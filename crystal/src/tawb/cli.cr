@@ -12,6 +12,7 @@ require "./library_chromium"
 require "./lynx_settings"
 require "./lynx_state"
 require "./log"
+require "./revision"
 require "./options"
 require "./runtime"
 require "./settings"
@@ -55,6 +56,7 @@ module Tawb
       --log-dir <dir>               where to write it (TAWB_LOG_DIR)
 
     Other:
+      --version                     print the version and its source commit
       -h, --help                    show this help and exit
 
     The native Crystal reader reads pages interactively through Firefox and
@@ -83,6 +85,10 @@ module Tawb
       options = Options.parse_reader(argv, env)
       if options["help"].as_bool
         STDOUT << USAGE
+        return
+      end
+      if options["version"].as_bool
+        STDOUT << Revision.summary << '\n'
         return
       end
       if options["keyboard"].as_bool && options["dump"].as_bool
@@ -508,6 +514,10 @@ module Tawb
       options = Options.parse_edb(without_front_end(argv), env)
       if options["help"].as_bool
         STDOUT << Edb::USAGE
+        return
+      end
+      if options["version"].as_bool
+        STDOUT << Revision.summary << '\n'
         return
       end
       logger = Log.new
