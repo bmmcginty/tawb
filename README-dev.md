@@ -2514,11 +2514,14 @@ HTTP is different now that the build can supply its dependencies. When the
 Crystal source requires an HTTP client, TLS, compression, or OpenSSL,
 `tools/build_crystal.sh` runs `tools/build_deps.sh`. That reads
 `tools/deps.yml`, verifies the pinned source archives, and builds static
-OpenSSL and zlib under `build/deps` before the Crystal link. The libraries are
-cached; `TAWB_DEPS_DIR` moves the cache, `TAWB_DEPS_REBUILD=1` rebuilds it, and
-`TAWB_WITH_HTTP=1` forces the same path for a build that has not added the
-require yet. The first build needs network access, a C compiler, Perl, Make,
-and `pkg-config`.
+OpenSSL and zlib under `build/deps` before the Crystal link. OpenSSL is built
+without dynamic provider modules and with configuration autoloading disabled,
+so the shipped static binary cannot load a provider or `openssl.cnf` from the
+machine that built it. The libraries are cached under a path that includes the
+dependency revision; `TAWB_DEPS_DIR` moves the cache,
+`TAWB_DEPS_REBUILD=1` rebuilds it, and `TAWB_WITH_HTTP=1` forces the same path
+for a build that has not added the require yet. The first build needs network
+access, a C compiler, Perl, Make, and `pkg-config`.
 
 `crystal/src/tawb/engine.cr` is where the two engines meet. JavaScript gets
 that seam for nothing — a page is whatever answers `url()`, which is what

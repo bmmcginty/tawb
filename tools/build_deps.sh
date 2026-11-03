@@ -67,17 +67,28 @@ dep_field() {
   ' "$DEPS_FILE"
 }
 
+dep_revision() {
+  name=$1
+  version=$(dep_field "$name" version)
+  revision=$(dep_field "$name" revision)
+  if [ -n "$revision" ]; then
+    printf '%s-r%s\n' "$name-$version" "$revision"
+  else
+    printf '%s-%s\n' "$name" "$version"
+  fi
+}
+
 dep_prefix() {
   name=$1
   version=$(dep_field "$name" version)
   [ -n "$version" ] || die "$name has no version in $DEPS_FILE"
-  printf '%s/prefix/%s-%s\n' "$DEPS_DIR" "$name" "$version"
+  printf '%s/prefix/%s\n' "$DEPS_DIR" "$(dep_revision "$name")"
 }
 
 dep_source() {
   name=$1
   version=$(dep_field "$name" version)
-  printf '%s/src/%s-%s\n' "$DEPS_DIR" "$name" "$version"
+  printf '%s/src/%s\n' "$DEPS_DIR" "$(dep_revision "$name")"
 }
 
 dep_libdir() {

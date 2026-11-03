@@ -7,16 +7,20 @@
 
 openssl:
   version: "3.6.3"
+  # Bump this when configure flags change, even if the version does not. It is
+  # part of the cache path so an old build is not silently reused.
+  revision: "2"
   url: "https://www.openssl.org/source/openssl-3.6.3.tar.gz"
   sha256: "243a86649cf6f23eeb6a2ff2456e09e5d77dd9018a54d3d96b0c6bdd6ba6c7f1"
   # The target is chosen by tools/build_deps.sh from uname -m. These flags
-  # build only the libraries, without apps, tests, docs, or extra compression
-  # backends. That keeps the static link small and avoids dependencies on
-  # libbrotli and libzstd.
-  configure: "no-shared no-tests no-apps no-docs no-comp no-zlib no-brotli no-zstd"
+  # build only the libraries, without apps, tests, docs, extra compression
+  # backends, or dynamic provider modules. A static TAWB must not load an
+  # OpenSSL module from the machine that happened to build it.
+  configure: "no-shared no-tests no-apps no-docs no-module no-autoload-config no-comp no-zlib no-brotli no-zstd"
 
 zlib:
   version: "1.3.2"
+  revision: "2"
   url: "https://zlib.net/fossils/zlib-1.3.2.tar.gz"
   sha256: "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"
   configure: "--static"
