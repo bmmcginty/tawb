@@ -325,6 +325,45 @@ def release(root: Path) -> None:
             raise VersionError(f"gh release create {name} failed")
 
 
+# What `--version` says. On the commit a release was tagged at, the version
+# alone is the whole truth: that is the release. Anywhere else the version in
+# version.yml is where the source is heading, so the commit that was actually
+# built says it and when it was made.
+COMMIT_SHORT = 4
+COMMIT_TIME = "%Y-%m-%d %H:%M:%S"
+
+
+def git_output(root: Path, *arguments: str) -> str:
+    """Git's answer with surrounding whitespace removed, or ""."""
+    try:
+        done = subprocess.run(
+            ["git", *arguments], cwd=root, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return ""
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+def revision_text(root: Path = ROOT) -> str:
+    """The version, and the commit too when this tree is not that release."""
+    version = read_version(root)
+    if not (root / ".git").exists():
+        return version
+    tagged = set(git_output(root, "tag", "--points-at", "HEAD").splitlines())
+    if f"v{version}" in tagged or version in tagged:
+        return version
+    commit = git_output(root, "rev-parse", f"--short={COMMIT_SHORT}", "HEAD")
+    made = git_output(root, "show", "-s", f"--format=%cd", f"--date=format:{COMMIT_TIME}", "HEAD")
+    if not commit:
+        return version
+    return f"{version} +{commit} ({made})" if made else f"{version} +{commit}"
+
+
+def revision(root: Path = ROOT) -> None:
+    print(revision_text(root))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tools/version.py",
@@ -332,6 +371,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("show", help="print the current version")
+    commands.add_parser("revision", help="print the version and, where it applies, the commit")
     commands.add_parser("bump", help="increase the patch version, commit and tag")
     set_parser = commands.add_parser("set", help="set an explicit version, commit and tag")
     set_parser.add_argument("version", metavar="X.Y.Z")
@@ -345,6 +385,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "show":
             show(ROOT)
+        elif args.command == "revision":
+            revision(ROOT)
         elif args.command == "bump":
             change_version(ROOT, bump_patch(read_version(ROOT)))
         elif args.command == "set":

@@ -91,6 +91,39 @@ test('show-version prints the canonical version', () => {
   assert.equal(result.stdout, '1.2.0\n');
 });
 
+test('revision is just the version at the release commit', () => {
+  const root = makeRepository('1.2.0');
+  git(root, ['tag', '-a', 'v1.2.0', '-m', 'Release v1.2.0']);
+
+  const result = run(root, ['revision']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, '1.2.0\n');
+});
+
+test('revision names the commit and when it was made after a release', () => {
+  const root = makeRepository('1.2.0');
+  git(root, ['tag', '-a', 'v1.2.0', '-m', 'Release v1.2.0']);
+  git(root, ['commit', '-q', '--allow-empty', '-m', 'after the release']);
+
+  const commit = git(root, ['rev-parse', '--short=4', 'HEAD']).trim();
+  const made = git(root, [
+    'show', '-s', '--format=%cd', '--date=format:%Y-%m-%d %H:%M:%S', 'HEAD',
+  ]).trim();
+
+  const result = run(root, ['revision']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, `1.2.0 +${commit} (${made})\n`);
+});
+
+test('revision falls back to version.yml without a Git checkout', () => {
+  const root = makeRepository('1.2.0');
+  fs.rmSync(path.join(root, '.git'), { recursive: true, force: true });
+
+  const result = run(root, ['revision']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, '1.2.0\n');
+});
+
 test('bump increments the patch, updates every manifest, commits and tags', () => {
   const root = makeRepository('1.2.0');
   const result = run(root, ['bump']);
