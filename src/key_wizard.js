@@ -47,7 +47,7 @@ const MOVE_ACTIONS = {
 function actionText(action, keymap) {
   const bindings = action.bindings.length
     ? action.bindings.map((binding) => keymap.display(binding)).join(', ')
-    : '(unbound)';
+    : 'no key assigned';
   // In an interface that names its functions the row leads with the function
   // it acts on, so a reader can find their own entry by name.
   const functionName = keymap.functionNames && keymap.functionNames.get(action.id);
@@ -69,6 +69,10 @@ function actionRow(action, keymap) {
 
 function pinnedRows() {
   return [
+    {
+      type: 'heading', label: 'Keyboard wizard actions', key: 'cmd:heading',
+      text: 'Keyboard wizard actions', search: 'Keyboard wizard actions',
+    },
     {
       type: 'reset', label: 'Restore default bindings', key: 'cmd:reset',
       text: 'Restore default bindings', search: 'Restore default bindings',
@@ -225,7 +229,7 @@ async function runKeyWizard({
       drawn.list = [];
     }
 
-    const heading = (keymap.labels && keymap.labels.keyboardTitle) || 'Keyboard bindings';
+    const heading = (keymap.labels && keymap.labels.keyboardTitle) || 'Keyboard shortcuts';
     if (drawn.heading !== heading) {
       line(output, 1, heading);
       drawn.heading = heading;
@@ -443,6 +447,8 @@ async function runKeyWizard({
       } else if (action === 'activate') {
         if (entry && entry.kind === 'heading') {
           status = entry.title;
+        } else if (row && row.type === 'heading') {
+          status = row.label;
         } else if (row && row.type === 'action') {
           capturing = 'replace';
           status = `Press the replacement for ${row.action.label}; Backspace unbinds it.`;

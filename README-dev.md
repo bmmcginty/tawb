@@ -703,7 +703,7 @@ npm start -- --keyboard
 The wizard uses a temporary terminal screen, so leaving it restores exactly
 what was underneath rather than dropping into an empty window. It lists every
 browse-mode and editing action with its bindings, grouped into sections by the
-screen and feature they belong to. The section order is a display table in
+reader's task. The section order is a display table in
 `src/wizard_order.js`, kept apart from the order in `keys.js`, which decides
 which action wins a shared key; an action the table does not name falls into a
 trailing Other section rather than vanishing.

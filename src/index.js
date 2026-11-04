@@ -2651,7 +2651,7 @@ async function handleBrowseKey(chunk, state, page, actionOverride = null) {
     relayout(state);
     writeTerminal('\x1b[2J');
     render(state, page, { force: true });
-    setStatus(state, saved ? 'Keyboard bindings saved.' : 'Keyboard bindings unchanged.');
+    setStatus(state, saved ? 'Keyboard shortcuts saved.' : 'Keyboard shortcuts unchanged.');
     return;
   }
 

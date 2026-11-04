@@ -50,7 +50,7 @@ for (const implementation of interfaceImplementations(interfaces)) {
   check('the ordinary interface owns no extra keys and no file format', () => {
     assert.deepEqual(implementation.keyPolicy('default'), {
       key_definitions: null,
-      labels: { keyboardTitle: 'Keyboard bindings' },
+      labels: { keyboardTitle: 'Keyboard shortcuts' },
       has_key_file: false,
     });
   });
@@ -59,7 +59,7 @@ for (const implementation of interfaceImplementations(interfaces)) {
     const policy = implementation.keyPolicy('lynx');
     assert.deepEqual(policy.key_definitions, interfaces.LYNX_KEY_DEFINITIONS);
     assert.deepEqual(policy.labels, {
-      keyboardTitle: 'Lynx keyboard bindings',
+      keyboardTitle: 'Lynx keyboard shortcuts',
       unsupportedHeading: 'Lynx commands with no TAWB equivalent (cannot be bound):',
       unsupportedPrefix: 'Imported Lynx command',
     });

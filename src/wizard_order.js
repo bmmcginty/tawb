@@ -5,7 +5,7 @@
 // This is a display order, not the order in keys.js. ACTIONS is ordered so a
 // shared key resolves to the right action; moving a row there would change
 // which action a key reaches. The wizard follows this table instead, grouping
-// actions by the screen they belong to and then by what they do.
+// actions by what the reader is trying to do.
 //
 // An action that is not named here still appears: it goes into a trailing
 // "Other" section rather than vanishing, which is what keeps a newly added
@@ -13,16 +13,11 @@
 
 const WIZARD_SECTIONS = [
   {
-    key: 'leave',
-    title: 'Leave, and run a command',
-    actions: ['quit', 'confirm-quit', 'abort', 'command'],
-  },
-  {
-    key: 'move',
-    title: 'Page: move',
+    key: 'reading',
+    title: 'Reading and movement',
     actions: [
-      'next-character', 'previous-character',
       'next-line', 'previous-line',
+      'next-character', 'previous-character',
       'next-half-screen', 'previous-half-screen',
       'next-screen', 'previous-screen',
       'top', 'bottom',
@@ -31,7 +26,7 @@ const WIZARD_SECTIONS = [
   },
   {
     key: 'jump',
-    title: 'Page: jump by feature',
+    title: 'Jump to page content',
     actions: [
       'next-heading', 'previous-heading',
       'next-link', 'previous-link',
@@ -46,45 +41,46 @@ const WIZARD_SECTIONS = [
     ],
   },
   {
-    key: 'act',
-    title: 'Page: act on the current line',
-    actions: [
-      'activate', 'real-click', 'hover-line', 'close-popup',
-      'download-link', 'page-keyboard', 'link-number',
-    ],
-  },
-  {
     key: 'find',
-    title: 'Page: find',
+    title: 'Find text',
     actions: [
       'find-forward', 'find-backward',
       'repeat-find', 'repeat-find-forward', 'repeat-find-backward',
     ],
   },
   {
-    key: 'where',
-    title: 'Page: address, history and tabs',
+    key: 'use',
+    title: 'Use the current item',
+    actions: [
+      'activate', 'real-click', 'hover-line', 'close-popup',
+      'download-link', 'page-keyboard', 'link-number',
+    ],
+  },
+  {
+    key: 'browser',
+    title: 'Browser navigation',
     actions: [
       'location-bar', 'goto', 'location-edit', 'link-address',
       'history-back', 'history-forward', 'main-menu',
       'new-tab', 'next-tab', 'previous-tab', 'close-tab',
+      'browser-question',
     ],
   },
   {
-    key: 'view',
-    title: 'Page: view, refresh and status',
+    key: 'views',
+    title: 'Views and updates',
     actions: [
       'cycle-view', 'source-view',
       'refresh', 'reload-page', 'reload-no-cache', 'interrupt',
       'next-change', 'previous-change',
-      'where', 'messages', 'document-info',
       'toggle-live', 'toggle-link-address', 'toggle-short-links',
     ],
   },
   {
-    key: 'lists',
-    title: 'Lists: page references and browser data',
+    key: 'information',
+    title: 'Information and saved items',
     actions: [
+      'where', 'messages', 'document-info',
       'list-links', 'list-addresses',
       'bookmarks', 'add-bookmark', 'delete-bookmark',
       'history', 'downloads',
@@ -92,13 +88,8 @@ const WIZARD_SECTIONS = [
     ],
   },
   {
-    key: 'dialogs',
-    title: 'Browser dialogs',
-    actions: ['browser-question'],
-  },
-  {
     key: 'editing',
-    title: 'Editing a field',
+    title: 'Text editing',
     actions: [
       'edit-previous-character', 'edit-next-character',
       'edit-backspace', 'edit-delete',
@@ -111,11 +102,18 @@ const WIZARD_SECTIONS = [
   },
   {
     key: 'help',
-    title: 'Help, setup and diagnostics',
-    actions: [
-      'help', 'context-help', 'options', 'keyboard-wizard',
-      'toggle-trace', 'trace-log',
-    ],
+    title: 'Help and settings',
+    actions: ['help', 'context-help', 'options', 'keyboard-wizard'],
+  },
+  {
+    key: 'diagnostics',
+    title: 'Diagnostics',
+    actions: ['toggle-trace', 'trace-log'],
+  },
+  {
+    key: 'commands',
+    title: 'Commands and exit',
+    actions: ['command', 'quit', 'confirm-quit', 'abort'],
   },
 ];
 

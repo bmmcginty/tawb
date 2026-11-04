@@ -87,7 +87,7 @@ module Tawb
     # it, and a reader who remembers part of the name does not need the key.
     def self.action_text(action : Keys::Action, keymap : Keys::Keymap) : String
       bindings = if action.bindings.empty?
-        "(unbound)"
+        "no key assigned"
       else
         action.bindings.map { |binding| keymap.display(binding) }.join(", ")
       end
@@ -107,6 +107,8 @@ module Tawb
 
     def self.pinned_rows : Array(Row)
       [
+        Row.new("heading", nil, "Keyboard wizard actions", "cmd:heading",
+          "Keyboard wizard actions", "Keyboard wizard actions"),
         Row.new("reset", nil, "Restore default bindings", "cmd:reset",
           "Restore default bindings", "Restore default bindings"),
         Row.new("exit", nil, "Exit keyboard wizard", "cmd:exit",
@@ -265,7 +267,7 @@ module Tawb
           drawn.list = [] of String?
         end
 
-        heading = keymap.labels["keyboardTitle"]? || "Keyboard bindings"
+        heading = keymap.labels["keyboardTitle"]? || "Keyboard shortcuts"
         if drawn.heading != heading
           draw_line(output, 1, heading, output.columns)
           drawn.heading = heading
@@ -485,6 +487,8 @@ module Tawb
         elsif action == "activate"
           if entry && entry.kind == "heading"
             status = entry.title || ""
+          elsif row && row.type == "heading"
+            status = row.label || ""
           elsif row && row.type == "action"
             capturing = "replace"
             status = "Press the replacement for #{row.action.not_nil!.label}; Backspace unbinds it."

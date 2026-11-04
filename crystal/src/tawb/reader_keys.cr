@@ -2426,7 +2426,7 @@ module Tawb
       output.write("\e[2J")
       Reader.render(output, state, page.url, true)
       Reader.set_status(output, state, page.url,
-        saved ? "Keyboard bindings saved." : "Keyboard bindings unchanged.")
+        saved ? "Keyboard shortcuts saved." : "Keyboard shortcuts unchanged.")
     end
 
     # ------------------------------------------------------------------

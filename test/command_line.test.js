@@ -76,7 +76,7 @@ test('Enter runs an action whose key was unbound', async () => {
   assert.equal(state.keys.actionFor('='), null);
   await quietly(async () => {
     await index.handleBrowseKey(':', state, page);
-    await type(state, 'Report position');
+    await type(state, 'Read current position');
     await index.handleCommandKey('\r', state, page);
   });
   assert.equal(state.mode, 'browse');

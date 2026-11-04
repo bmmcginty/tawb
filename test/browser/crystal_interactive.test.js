@@ -1072,12 +1072,12 @@ async function wizardRun(root, runtime, address, idleMs) {
     await reader.start({ ready: 'First page' });
     const before = reader.drawn();
     await reader.press('w');
-    const opened = await waitForRow(reader, 'Keyboard bindings', 10000);
+    const opened = await waitForRow(reader, 'Keyboard shortcuts', 10000);
     const wizard = reader.drawn();
     if (idleMs) await sleep(idleMs);
     await reader.press('Escape');
     await reader.press('n');
-    const returned = await waitForRow(reader, 'Keyboard bindings unchanged', 10000);
+    const returned = await waitForRow(reader, 'Keyboard shortcuts unchanged', 10000);
     // Movement can be answered from the lines the reader already holds; only
     // following the link asks the browser anything, so it is what proves the
     // session outlived the quiet window.

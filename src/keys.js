@@ -54,7 +54,7 @@ const ACTIONS = [
   ['command', 'Run a command by name', [':']],
   ['history-back', 'Back in page history', ['Alt+-']],
   ['history-forward', 'Forward in page history', ['Alt++']],
-  ['activate', 'Activate', ['Enter']],
+  ['activate', 'Open or activate current item', ['Enter']],
   ['next-line', 'Next line', ['ArrowDown', 'j']],
   ['previous-line', 'Previous line', ['ArrowUp', 'k']],
   ['next-character', 'Next character', ['ArrowRight']],
@@ -114,13 +114,13 @@ const ACTIONS = [
   // A question the browser asked and the reader stepped away from. Escaping
   // one of those dialogs answers nothing — it is not this program's place to
   // press a button nobody chose — so there has to be a way back to it.
-  ['browser-question', 'Answer the browser again', ['Alt+Q']],
+  ['browser-question', 'Return to pending browser dialog', ['Alt+Q']],
   ['next-tab', 'Next tab', ['>']],
   ['previous-tab', 'Previous tab', ['<']],
   ['close-tab', 'Close tab', ['Shift+F4']],
   ['next-change', 'Next changed area', ['c']],
   ['previous-change', 'Previous changed area', ['C']],
-  ['where', 'Report position', ['=']],
+  ['where', 'Read current position', ['=']],
   // Everything the status row has said, newest first. The row itself is cleared
   // by the next keystroke — it is about now — so this is where a message that
   // arrived while the reader was busy can be read afterwards.
@@ -139,17 +139,17 @@ const ACTIONS = [
   // alone. Uppercase of the switch that turns the row on, because it is the
   // same row said a shorter way.
   ['toggle-short-links', 'Toggle short link addresses', ['U']],
-  ['real-click', 'Real click', ['m']],
+  ['real-click', 'Click current item with the pointer', ['m']],
   // The other half of what a mouse does, and on a dropdown menu the half that
   // has to come first: a submenu's contents are not in the page at all until
   // the pointer is over the item above them. Alt of the click key, because it
   // is the same pointer doing the other thing with it.
-  ['hover-line', 'Hover the line under the cursor', ['Alt+M']],
+  ['hover-line', 'Hover/mouse over current item', ['Alt+M']],
   // Browse mode must keep letters for reading commands, while some web
   // applications only expose parts of their interface through their own
   // keyboard handlers. This switches to a separate keyboard where every key
   // except this toggle belongs to the page.
-  ['page-keyboard', 'Send keys to the webpage', ['Alt+K', 'Ctrl+\\']],
+  ['page-keyboard', 'Toggle direct-to-webpage keyboard mode', ['Alt+K', 'Ctrl+\\']],
   ['find-forward', 'Find forward', ['/']],
   ['find-backward', 'Find backward', ['?']],
   ['repeat-find', 'Repeat find', ['Ctrl+G']],
@@ -195,7 +195,7 @@ const ACTIONS = [
   ['previous-text', 'Previous non-link text', ['N']],
   ['next-paragraph', 'Next paragraph', ['p']],
   ['previous-paragraph', 'Previous paragraph', ['P']],
-  ['close-popup', 'Close open popup', ['Escape']],
+  ['close-popup', 'Dismiss popup', ['Escape']],
 ].map(([id, label, defaults]) => ({ id, label, defaults }));
 
 // Which actions mean anything while a field is being edited.

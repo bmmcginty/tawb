@@ -148,7 +148,7 @@ test('a command name runs an action that has no key bound', { skip: needsCrystal
   const state = stateFor(BUTTONS, { keys: { bindings: { where: [] } } });
   const executed = await runBoth('command execution', state, [
     { op: 'browseKey', chunk: ':' },
-    ...Array.from('Report position', (chunk) => ({ op: 'commandKey', chunk })),
+    ...Array.from('Read current position', (chunk) => ({ op: 'commandKey', chunk })),
     { op: 'commandKey', chunk: '\r' },
   ], { url: PAGE_URL });
   assert.equal(executed.state.mode, 'browse');
@@ -575,7 +575,7 @@ test('the keyboard screen takes the reader\'s screen and gives it back',
       { op: 'browseKey', chunk: 'w', keys: ['\x1b', 'n'] },
     ], { url: PAGE_URL });
     assert.equal(result.state.mode, 'browse', 'the page has the screen again');
-    assert.equal(result.state.statusMsg, 'Keyboard bindings unchanged.');
+    assert.equal(result.state.statusMsg, 'Keyboard shortcuts unchanged.');
     assert.equal(result.state.live.refreshing, false,
       'and the live ticker is let go of again');
   });

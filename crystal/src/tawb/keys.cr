@@ -45,10 +45,9 @@ module Tawb
 
     # Every action the reader can be told to do, with the words it is named
     # by and the keys it starts with on the ordinary interface. The order is
-    # the order the keyboard screen lists them in, and the order a shared key
-    # resolves in: when two actions on one keyboard would take the same
-    # sequence, the later one wins, which is why the movements the wizard
-    # relies on come late.
+    # the order a shared key resolves in: when two actions on one keyboard
+    # would take the same sequence, the later one wins. The keyboard screen's
+    # independent display order lives in wizard_order.cr.
     ACTIONS = [
       {id: "quit", label: "Quit", defaults: ["Ctrl+C", "q"]},
       {id: "confirm-quit", label: "Quit, asking first", defaults: [] of String},
@@ -60,7 +59,7 @@ module Tawb
       {id: "command", label: "Run a command by name", defaults: [":"]},
       {id: "history-back", label: "Back in page history", defaults: ["Alt+-"]},
       {id: "history-forward", label: "Forward in page history", defaults: ["Alt++"]},
-      {id: "activate", label: "Activate", defaults: ["Enter"]},
+      {id: "activate", label: "Open or activate current item", defaults: ["Enter"]},
       {id: "next-line", label: "Next line", defaults: ["ArrowDown", "j"]},
       {id: "previous-line", label: "Previous line", defaults: ["ArrowUp", "k"]},
       {id: "next-character", label: "Next character", defaults: ["ArrowRight"]},
@@ -95,13 +94,13 @@ module Tawb
       {id: "list-links", label: "List page links", defaults: [] of String},
       {id: "list-addresses", label: "List page link addresses", defaults: [] of String},
       {id: "download-link", label: "Download link under the cursor", defaults: ["Alt+D"]},
-      {id: "browser-question", label: "Answer the browser again", defaults: ["Alt+Q"]},
+      {id: "browser-question", label: "Return to pending browser dialog", defaults: ["Alt+Q"]},
       {id: "next-tab", label: "Next tab", defaults: [">"]},
       {id: "previous-tab", label: "Previous tab", defaults: ["<"]},
       {id: "close-tab", label: "Close tab", defaults: ["Shift+F4"]},
       {id: "next-change", label: "Next changed area", defaults: ["c"]},
       {id: "previous-change", label: "Previous changed area", defaults: ["C"]},
-      {id: "where", label: "Report position", defaults: ["="]},
+      {id: "where", label: "Read current position", defaults: ["="]},
       # Everything the status row has said, newest first. The row itself is
       # cleared by the next keystroke — it is about now — so this is where a
       # message that arrived while the reader was busy can be read afterwards.
@@ -112,9 +111,9 @@ module Tawb
       {id: "toggle-live", label: "Toggle live updates", defaults: ["L"]},
       {id: "toggle-link-address", label: "Toggle link addresses", defaults: ["u"]},
       {id: "toggle-short-links", label: "Toggle short link addresses", defaults: ["U"]},
-      {id: "real-click", label: "Real click", defaults: ["m"]},
-      {id: "hover-line", label: "Hover the line under the cursor", defaults: ["Alt+M"]},
-      {id: "page-keyboard", label: "Send keys to the webpage", defaults: ["Alt+K", "Ctrl+\\"]},
+      {id: "real-click", label: "Click current item with the pointer", defaults: ["m"]},
+      {id: "hover-line", label: "Hover/mouse over current item", defaults: ["Alt+M"]},
+      {id: "page-keyboard", label: "Toggle direct-to-webpage keyboard mode", defaults: ["Alt+K", "Ctrl+\\"]},
       {id: "find-forward", label: "Find forward", defaults: ["/"]},
       {id: "find-backward", label: "Find backward", defaults: ["?"]},
       {id: "repeat-find", label: "Repeat find", defaults: ["Ctrl+G"]},
@@ -154,7 +153,7 @@ module Tawb
       {id: "previous-text", label: "Previous non-link text", defaults: ["N"]},
       {id: "next-paragraph", label: "Next paragraph", defaults: ["p"]},
       {id: "previous-paragraph", label: "Previous paragraph", defaults: ["P"]},
-      {id: "close-popup", label: "Close open popup", defaults: ["Escape"]},
+      {id: "close-popup", label: "Dismiss popup", defaults: ["Escape"]},
     ]
 
     # Which actions mean anything while a field is being edited.

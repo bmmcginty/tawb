@@ -81,7 +81,7 @@ test('the wizard words come from the interface policy', () => {
   const lynx = new Keymap({
     terminfo: {}, profile: 'lynx', load: false, unsupported: ['SHELL'],
   });
-  assert.equal(lynx.labels.keyboardTitle, 'Lynx keyboard bindings');
+  assert.equal(lynx.labels.keyboardTitle, 'Lynx keyboard shortcuts');
   const heading = wizardRows(lynx).find((row) => row.type === 'heading'
     && row.label === 'Lynx commands with no TAWB equivalent (cannot be bound):');
   assert.ok(heading, 'the unsupported commands have their own heading');
@@ -92,5 +92,5 @@ test('the wizard words come from the interface policy', () => {
   assert.match(rowText(list, lynx), /^LIST — /);
 
   const ordinary = new Keymap({ terminfo: {}, load: false });
-  assert.equal(ordinary.labels.keyboardTitle, 'Keyboard bindings');
+  assert.equal(ordinary.labels.keyboardTitle, 'Keyboard shortcuts');
 });

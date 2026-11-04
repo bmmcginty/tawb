@@ -286,9 +286,9 @@ for (const implementation of keymapImplementations(keysModule)) {
 
   check('the keyboard screen labels come from the policy', () => {
     assert.deepEqual(implementation.snapshot(ORDINARY).labels,
-      { keyboardTitle: 'Keyboard bindings' });
+      { keyboardTitle: 'Keyboard shortcuts' });
     assert.deepEqual(implementation.snapshot(LYNX).labels, {
-      keyboardTitle: 'Lynx keyboard bindings',
+      keyboardTitle: 'Lynx keyboard shortcuts',
       unsupportedHeading: 'Lynx commands with no TAWB equivalent (cannot be bound):',
       unsupportedPrefix: 'Imported Lynx command',
     });

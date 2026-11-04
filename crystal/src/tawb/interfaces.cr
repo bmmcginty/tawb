@@ -176,11 +176,11 @@ module Tawb
     ])
 
     DEFAULT_LABELS = {
-      keyboardTitle: "Keyboard bindings",
+      keyboardTitle: "Keyboard shortcuts",
     }
 
     LYNX_LABELS = {
-      keyboardTitle:      "Lynx keyboard bindings",
+      keyboardTitle:      "Lynx keyboard shortcuts",
       unsupportedHeading: "Lynx commands with no TAWB equivalent (cannot be bound):",
       unsupportedPrefix:  "Imported Lynx command",
     }

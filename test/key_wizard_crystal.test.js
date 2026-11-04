@@ -66,7 +66,7 @@ for (const implementation of implementations) {
     const file = path.join(tempDir(`tweb-wizard-keyboards-${implementation.name}-`), 'keys.json');
     const result = await implementation.run({
       file, rows: 12, cols: 200, probe: ['\x01'], editingProbe: ['\x01'],
-      keys: ['\r', '\x01', '\x01', 'y'],
+      keys: [...'quit', '\r', '\x01', '\x01', 'y'],
     });
 
     assert.equal(result.saved, true);
@@ -80,7 +80,7 @@ for (const implementation of implementations) {
   });
 
   test(`${implementation.name}: the wizard names the interface whose keys it edits`, async () => {
-    for (const [profile, heading] of [['default', 'Keyboard bindings'], ['lynx', 'Lynx keyboard bindings']]) {
+    for (const [profile, heading] of [['default', 'Keyboard shortcuts'], ['lynx', 'Lynx keyboard shortcuts']]) {
       const result = await implementation.run({ profile, rows: 12, cols: 200, keys: ['\x1b', 'n'] });
       assert.ok(painted(result).includes(heading), `${profile} wizard heading`);
     }
@@ -120,7 +120,7 @@ for (const implementation of implementations) {
 
   test(`${implementation.name}: the cursor follows every prompt that consumes the next key`, async () => {
     const result = await implementation.run({
-      rows: 12, cols: 200, keys: ['\r', 'j', 'n', '\x1b', 'n'],
+      rows: 12, cols: 200, keys: [...'quit', '\r', 'j', 'n', '\x1b', 'n'],
     });
     const replacement = 'Press the replacement for Quit; Backspace unbinds it.';
     const conflict = 'j is assigned to Next line; rebind to Quit? y/n';
@@ -131,9 +131,9 @@ for (const implementation of implementations) {
       const list = result.writes.filter((write) => write.key === key);
       return list.length ? list.at(-1).text : '';
     };
-    assert.equal(lastWrite(1), `\x1b[12;${replacement.length + 1}H`);
-    assert.equal(lastWrite(2), `\x1b[12;${conflict.length + 1}H`);
-    assert.equal(lastWrite(4), `\x1b[12;${save.length + 1}H`);
+    assert.equal(lastWrite(5), `\x1b[12;${replacement.length + 1}H`);
+    assert.equal(lastWrite(6), `\x1b[12;${conflict.length + 1}H`);
+    assert.equal(lastWrite(8), `\x1b[12;${save.length + 1}H`);
   });
 
   test(`${implementation.name}: declining to save restores the bindings used before the wizard`, async () => {
@@ -182,12 +182,12 @@ for (const implementation of implementations) {
   test(`${implementation.name}: rebinding a key another action holds is confirmed first`, async () => {
     const file = path.join(tempDir(`tweb-wizard-clash-${implementation.name}-`), 'keys.json');
     const rows = await implementation.rows({ file });
-    assert.equal(rows.find((row) => row.type === 'action').actionId, 'quit');
+    assert.ok(rows.some((row) => row.type === 'action' && row.actionId === 'quit'));
 
-    //  Enter j n  refuses the swap, Enter j y  accepts it, Escape y  saves.
+    // Find Quit; Enter j n refuses the swap, Enter j y accepts it, and Escape y saves.
     const result = await implementation.run({
       file, rows: 12, cols: 200, probe: ['j'],
-      keys: ['\r', 'j', 'n', '\r', 'j', 'y', '\x1b', 'y'],
+      keys: [...'quit', '\r', 'j', 'n', '\r', 'j', 'y', '\x1b', 'y'],
     });
     assert.equal(result.saved, true);
 

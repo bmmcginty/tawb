@@ -195,9 +195,9 @@ function needsLayoutMetadata(profile) {
 // The words an interface uses on the keyboard screen. The ordinary interface
 // has only a title; Lynx names its own functions and lists imported commands
 // it cannot bind.
-const DEFAULT_LABELS = { keyboardTitle: 'Keyboard bindings' };
+const DEFAULT_LABELS = { keyboardTitle: 'Keyboard shortcuts' };
 const LYNX_LABELS = {
-  keyboardTitle: 'Lynx keyboard bindings',
+  keyboardTitle: 'Lynx keyboard shortcuts',
   unsupportedHeading: 'Lynx commands with no TAWB equivalent (cannot be bound):',
   unsupportedPrefix: 'Imported Lynx command',
 };

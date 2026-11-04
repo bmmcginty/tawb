@@ -35,29 +35,27 @@ test('no action is named twice', () => {
 test('a profile sees only its own actions, in the table order and without empty headings', () => {
   const ordinary = sectionsFor(ACTIONS.filter((action) => profilesFor(action.id).includes('default')));
   assert.deepEqual(ordinary.map((section) => section.title), [
-    'Leave, and run a command',
-    'Page: move',
-    'Page: jump by feature',
-    'Page: act on the current line',
-    'Page: find',
-    'Page: address, history and tabs',
-    'Page: view, refresh and status',
-    'Lists: page references and browser data',
-    'Browser dialogs',
-    'Editing a field',
-    'Help, setup and diagnostics',
+    'Reading and movement',
+    'Jump to page content',
+    'Find text',
+    'Use the current item',
+    'Browser navigation',
+    'Views and updates',
+    'Information and saved items',
+    'Text editing',
+    'Help and settings',
+    'Commands and exit',
   ]);
-  // The reader's order from the move section: character before line.
-  assert.deepEqual(ordinary[1].rows.map((action) => action.id).slice(0, 4),
-    ['next-character', 'previous-character', 'next-line', 'previous-line']);
-  // Download precedes the webpage keyboard, as asked.
+  assert.deepEqual(ordinary[0].rows.map((action) => action.id).slice(0, 4),
+    ['next-line', 'previous-line', 'next-character', 'previous-character']);
   assert.deepEqual(ordinary[3].rows.map((action) => action.id),
     ['activate', 'real-click', 'hover-line', 'close-popup',
       'download-link', 'page-keyboard']);
+  assert.equal(ordinary[4].rows.some((action) => action.id === 'browser-question'), true);
 
   const lynx = sectionsFor(ACTIONS.filter((action) => profilesFor(action.id).includes('lynx')));
-  assert.equal(lynx.some((section) => section.title === 'Browser dialogs'), true);
-  assert.equal(lynx.find((section) => section.title === 'Page: move')
+  assert.equal(lynx.some((section) => section.title === 'Diagnostics'), true);
+  assert.equal(lynx.find((section) => section.title === 'Reading and movement')
     .rows.some((action) => action.id === 'next-half-screen'), true);
 });
 
@@ -67,7 +65,7 @@ test('an action the table does not name is kept in a trailing section', () => {
     { id: 'future-action', label: 'Something new' },
   ];
   assert.deepEqual(sectionsFor(actions).map((section) => [section.key, section.rows.map((row) => row.id)]), [
-    ['leave', ['quit']],
+    ['commands', ['quit']],
     ['other', ['future-action']],
   ]);
 });

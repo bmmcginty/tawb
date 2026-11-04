@@ -67,6 +67,6 @@ test('the keyboard screen opens without a browser and leaves what it found', {
     encoding: 'utf8', input: '', timeout: 20000,
   });
   assert.equal(wizard.status, 0, wizard.stderr);
-  assert.match(wizard.stdout, /Keyboard bindings/, 'it drew its own screen');
+  assert.match(wizard.stdout, /Keyboard shortcuts/, 'it drew its own screen');
   assert.doesNotMatch(wizard.stderr, /not connected/);
 });

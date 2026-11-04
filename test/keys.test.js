@@ -133,12 +133,38 @@ test('the keyboard screen filters by name, action id and binding, and keeps its 
     ['delete-bookmark', 'download-link', 'edit-delete-word']);
   for (const filter of ['quit', 'alt+d', 'zzz']) {
     const rows = filtered(filter);
-    assert.deepEqual(rows.slice(-2).map((row) => row.type), ['reset', 'exit'],
-      `the pinned rows survive the "${filter}" filter`);
+    assert.deepEqual(rows.slice(-3).map((row) => row.type), ['heading', 'reset', 'exit'],
+      `the pinned wizard actions survive the "${filter}" filter`);
   }
-  // Sections with no matching row lose their heading too.
+  // Sections with no matching row lose their heading; the pinned wizard
+  // actions keep theirs.
   const noMatch = filtered('zzz');
-  assert.equal(noMatch.some((row) => row.type === 'heading'), false);
+  assert.deepEqual(noMatch.map((row) => row.label),
+    ['Keyboard wizard actions', 'Restore default bindings', 'Exit keyboard wizard']);
+});
+
+test('the keyboard screen uses the reader-facing action labels', () => {
+  const keymap = new Keymap({ terminfo: {}, load: false });
+  const labels = Object.fromEntries(keymap.actions.map((action) => [action.id, action.label]));
+  assert.deepEqual({
+    activate: labels.activate,
+    'real-click': labels['real-click'],
+    'hover-line': labels['hover-line'],
+    'close-popup': labels['close-popup'],
+    'page-keyboard': labels['page-keyboard'],
+    where: labels.where,
+    'browser-question': labels['browser-question'],
+  }, {
+    activate: 'Open or activate current item',
+    'real-click': 'Click current item with the pointer',
+    'hover-line': 'Hover/mouse over current item',
+    'close-popup': 'Dismiss popup',
+    'page-keyboard': 'Toggle direct-to-webpage keyboard mode',
+    where: 'Read current position',
+    'browser-question': 'Return to pending browser dialog',
+  });
+  assert.match(wizardRows(keymap, { filter: 'previous-link' })
+    .find((row) => row.type === 'action').text, /, no key assigned$/);
 });
 
 test('typing filters the keyboard screen, and a rebind clears the filter', async () => {
@@ -329,9 +355,9 @@ test('the wizard does not ask about a key held only by the other keyboard', asyn
   const write = output.write.bind(output);
   output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
 
-  // Quit is the first row. Replace its binding with Ctrl+A, which only
-  // edit-line-start holds, then use the new binding to leave and save.
-  const queued = ['\r', '\x01', '\x01', 'y'];
+  // Find Quit, replace its binding with Ctrl+A, which only edit-line-start
+  // holds, then use the new binding to leave and save.
+  const queued = [...'quit', '\r', '\x01', '\x01', 'y'];
   const reader = { next: () => Promise.resolve(queued.shift()) };
 
   const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
@@ -346,7 +372,7 @@ test('the wizard does not ask about a key held only by the other keyboard', asyn
 });
 
 test('the wizard names the interface whose keys it edits', async () => {
-  for (const [profile, heading] of [['default', 'Keyboard bindings'], ['lynx', 'Lynx keyboard bindings']]) {
+  for (const [profile, heading] of [['default', 'Keyboard shortcuts'], ['lynx', 'Lynx keyboard shortcuts']]) {
     const keymap = new Keymap({ terminfo: {}, profile, load: false });
     const output = new PassThrough();
     output.rows = 12;
@@ -450,7 +476,7 @@ test('the cursor follows every prompt that consumes the next key', async () => {
   const write = output.write.bind(output);
   output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
 
-  const queued = ['\r', 'j', 'n', '\x1b', 'n'];
+  const queued = [...'quit', '\r', 'j', 'n', '\x1b', 'n'];
   const beforeKey = [];
   const reader = {
     next: () => {
@@ -464,9 +490,9 @@ test('the cursor follows every prompt that consumes the next key', async () => {
   const replacement = 'Press the replacement for Quit; Backspace unbinds it.';
   const conflict = 'j is assigned to Next line; rebind to Quit? y/n';
   const save = 'Save keyboard changes? y/n';
-  assert.equal(beforeKey[1], `\x1b[12;${replacement.length + 1}H`);
-  assert.equal(beforeKey[2], `\x1b[12;${conflict.length + 1}H`);
-  assert.equal(beforeKey[4], `\x1b[12;${save.length + 1}H`);
+  assert.equal(beforeKey[5], `\x1b[12;${replacement.length + 1}H`);
+  assert.equal(beforeKey[6], `\x1b[12;${conflict.length + 1}H`);
+  assert.equal(beforeKey[8], `\x1b[12;${save.length + 1}H`);
 });
 
 test('declining to save restores the bindings used before the wizard', async () => {
@@ -545,7 +571,7 @@ test('rebinding a key another action holds is confirmed first', async () => {
   const directory = tempDir('tweb-wizard-clash-');
   const file = path.join(directory, 'keys.json');
   const keymap = new Keymap({ terminfo: {}, file, load: false });
-  assert.equal(wizardRows(keymap).find((row) => row.type === 'action').action.id, 'quit');
+  assert.ok(wizardRows(keymap).some((row) => row.type === 'action' && row.action.id === 'quit'));
 
   const output = new PassThrough();
   output.rows = 12;
@@ -554,8 +580,8 @@ test('rebinding a key another action holds is confirmed first', async () => {
   const write = output.write.bind(output);
   output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
 
-  //  Enter j n  refuses the swap, Enter j y  accepts it, Escape y  saves.
-  const queued = ['\r', 'j', 'n', '\r', 'j', 'y', '\x1b', 'y'];
+  // Find Quit; Enter j n refuses the swap, Enter j y accepts it, and Escape y saves.
+  const queued = [...'quit', '\r', 'j', 'n', '\r', 'j', 'y', '\x1b', 'y'];
   const reader = { next: () => Promise.resolve(queued.shift()) };
 
   const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
@@ -579,7 +605,7 @@ test('a key nothing else holds is bound without a question', async () => {
   const write = output.write.bind(output);
   output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
 
-  const queued = ['\r', 'z', '\x1b', 'n'];
+  const queued = [...'quit', '\r', 'z', '\x1b', 'n'];
   const reader = { next: () => Promise.resolve(queued.shift()) };
 
   await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
@@ -614,5 +640,5 @@ test('the arrows, Enter and Escape work in the wizard whatever they are bound to
 
   const painted = writes.join('');
   assert.ok(painted.includes('Item 3 of'), 'Down still moved the selection');
-  assert.ok(painted.includes('Alt+Z assigned to Run a command by name.'), 'Enter still activated the row');
+  assert.ok(painted.includes('Alt+Z assigned to Previous line.'), 'Enter still activated the row');
 });
