@@ -31,20 +31,25 @@ async function withEndpoint(onMessage, run) {
   }
 }
 
-function remoteItems(role, name) {
-  return {
-    type: 'success',
-    result: {
-      type: 'array',
-      value: [{
-        type: 'object',
-        value: [
-          ['role', { type: 'string', value: role }],
-          ['name', { type: 'string', value: name }],
-        ],
-      }],
-    },
-  };
+function remoteItems(role, name, { childFrame = false } = {}) {
+  const value = [{
+    type: 'object',
+    value: [
+      ['role', { type: 'string', value: role }],
+      ['name', { type: 'string', value: name }],
+    ],
+  }];
+  if (childFrame) {
+    value.push({
+      type: 'object',
+      value: [
+        ['role', { type: 'string', value: 'iframe' }],
+        ['name', { type: 'string', value: 'Child frame' }],
+        ['frameIndex', { type: 'number', value: 0 }],
+      ],
+    });
+  }
+  return { type: 'success', result: { type: 'array', value } };
 }
 
 for (const implementation of firefoxPageImplementations({
@@ -84,6 +89,7 @@ for (const implementation of firefoxPageImplementations({
           result = remoteItems(
             context === 'top-context' ? 'document' : 'paragraph',
             context === 'top-context' ? 'Main' : 'Child',
+            { childFrame: context === 'top-context' },
           );
           break;
         }
@@ -127,7 +133,10 @@ for (const implementation of firefoxPageImplementations({
         childFrames: [{ frame: { id: 'child-context', url: 'https://frame.test/' } }],
       },
       documents: {
-        'top-context': [{ role: 'document', name: 'Main' }],
+        'top-context': [
+          { role: 'document', name: 'Main' },
+          { role: 'iframe', name: 'Child frame', frameIndex: 0 },
+        ],
         'child-context': [{ role: 'paragraph', name: 'Child' }],
       },
       created: 'created-context',
