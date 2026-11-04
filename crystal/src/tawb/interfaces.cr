@@ -51,7 +51,7 @@ module Tawb
       "new-tab"                 => [] of String,
       "bookmarks"               => ["v"],
       "add-bookmark"            => ["a"],
-      "delete-bookmark"         => ["r", "R", "Alt+D"],
+      "delete-bookmark"         => ["Alt+D"],
       "visited-links"           => ["V"],
       "session-history"         => ["Backspace", "Ctrl+H"],
       "downloads"               => [] of String,

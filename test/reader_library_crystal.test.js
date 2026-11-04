@@ -66,6 +66,33 @@ test('Alt+D removes the selected bookmark from the bookmarks list', { skip }, as
   assert.equal(result.state.statusMsg, 'Removed bookmark "Crystal".');
 });
 
+test('a printable letter filters a Lynx list instead of quitting', { skip }, async () => {
+  const result = await both('lynx list filter', state({
+    interface: 'lynx',
+    keys: { profile: 'lynx', bindings: { bookmarks: ['v'] } },
+  }, {
+    bookmarks: [{ title: 'Crystal', url: 'https://crystal-lang.org/', folder: 'Tools' }],
+  }), [
+    { op: 'browseKey', chunk: 'v' },
+    { op: 'libraryKey', chunk: 'q' },
+  ], false);
+  assert.equal(result.state.mode, 'library', 'q did not quit');
+  assert.equal(result.state.lines[0].text, 'Nothing matching "q".');
+
+  // Del is the filter's Backspace, not a character above space.
+  const erased = await both('lynx list erase', state({
+    interface: 'lynx',
+    keys: { profile: 'lynx', bindings: { bookmarks: ['v'] } },
+  }, {
+    bookmarks: [{ title: 'Crystal', url: 'https://crystal-lang.org/', folder: 'Tools' }],
+  }), [
+    { op: 'browseKey', chunk: 'v' },
+    { op: 'libraryKey', chunk: 'q' },
+    { op: 'libraryKey', chunk: '\x7f' },
+  ], false);
+  assert.equal(erased.state.library.rows.length, 1);
+});
+
 test('browser library failures are spoken without leaving the page', { skip }, async () => {
   const result = await both('library failure', state({}, { failure: 'agent unavailable' }), [
     { op: 'browseKey', chunk: 'H' },

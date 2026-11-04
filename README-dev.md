@@ -946,6 +946,11 @@ activate whichever unrelated block inherited that index. Links continue
 through `activateCurrent`. Numbered form controls and the `g` suffix only move
 the terminal selection.
 
+While one of the browser's lists is open, a printable character is always
+filter text, whatever the page keyboard binds it to. List commands therefore
+live on the navigation keys and Alt chords: `Alt+D` removes a bookmark, and
+`Esc` closes the list.
+
 The reference, information, and Lynx help commands reuse the internal-list
 buffer while holding live rebuilds. Help is a read-only internal page, while
 `k`/`K` retain the configurable keymap wizard. `m`/`M` loads the same initial

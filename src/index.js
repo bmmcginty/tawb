@@ -3838,6 +3838,21 @@ async function handleLibraryKey(chunk, state, page) {
   const libraryAction = (state.keys || FALLBACK_KEYMAP).libraryActionFor(chunk);
 
   if (lib.kind === 'options') return handleOptionsKey(chunk, state, page);
+
+  // A list is a filter box. Whatever letter the reader presses is text for
+  // the filter, even when that letter is a command out on the page: q quits a
+  // page and is a letter here, and in the Lynx interface r removes a bookmark
+  // and is a letter here too. The commands a list does have are the ones this
+  // keyboard keeps off letters — the arrows and paging keys, Enter, Backspace,
+  // Escape and Alt chords.
+  // Del is a control character the terminal happens to encode above space,
+  // and it is this list's Backspace; it is excluded here so it reaches the
+  // editing key below rather than becoming a character of the filter.
+  if (chunk >= ' ' && chunk !== '\x7f' && !chunk.startsWith(ESC)) {
+    showLibrary(state, page, lib.filter + chunk);
+    return;
+  }
+
   if (lib.kind === 'bookmarks' && libraryAction === 'delete-bookmark') {
     return deleteLibraryBookmark(state, page);
   }
@@ -3916,18 +3931,13 @@ async function handleLibraryKey(chunk, state, page) {
   if (keyIs(chunk, 'Home', state) || contextAction === 'first') return moveSelection(state, 0, page);
   if (keyIs(chunk, 'End', state) || contextAction === 'last') return moveSelection(state, last, page);
 
-  // A Lynx internal page uses the Lynx browse map. Printable commands must
-  // not unexpectedly become TAWB's list filter; commands without an internal
-  // page equivalent simply do nothing here.
-  if (LYNX_ACTIONS.libraryKeepsBrowseMap(state)) return;
-
+  // Backspace is the one editing key a filter box needs. Everything else
+  // that reaches here is an escape sequence or control chord this list has no
+  // use for, which is the same as doing nothing.
   if (keyIs(chunk, 'Backspace', state)) {
     if (!lib.filter) return;
     showLibrary(state, page, lib.filter.slice(0, -1));
-    return;
   }
-  if (chunk.startsWith(ESC)) return; // an escape sequence this list has no use for
-  if (chunk >= ' ') showLibrary(state, page, lib.filter + chunk);
 }
 
 // ---------------------------------------------------------------------------

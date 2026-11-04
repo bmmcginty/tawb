@@ -439,8 +439,10 @@ copies:
 | `Alt+J` | Downloads |
 | `Alt+D` | Download the link under the cursor, or remove the selected bookmark while the bookmarks list is open |
 
-Typing in one of these lists filters it. Press `Enter` to open the selected
-entry or `Escape` to return to the page. Out on a page, `Alt+D` uses the
+Typing in one of these lists filters it. Every printable character is filter
+text, including letters that are commands while reading a page — `q` in a
+list is a letter, not Quit. Press `Enter` to open the selected entry or
+`Escape` to return to the page. Out on a page, `Alt+D` uses the
 browser's own download manager, so authenticated requests, filenames, and
 download history behave as they do for an Alt-click in the graphical browser.
 Inside the bookmarks list it removes the selected bookmark instead, after

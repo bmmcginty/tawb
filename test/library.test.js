@@ -273,8 +273,10 @@ test('a Lynx reference list keeps page order, names, addresses, and numbers', as
   ]);
   await quietly(() => handleLibraryKey('\x1b[B', state, PAGE));
   assert.equal(state.cursor, 1);
-  assert.equal(state.library.filter, '', 'Lynx commands do not become filter text');
-  assert.equal(await quietly(() => handleLibraryKey('q', state, PAGE)), 'quit');
+  assert.equal(state.library.filter, '');
+  // q is a letter in a list, not the page's Quit, even in the Lynx profile.
+  assert.equal(await quietly(() => handleLibraryKey('q', state, PAGE)), undefined);
+  assert.equal(state.library.filter, 'q');
   await quietly(() => handleLibraryKey('\x1b[D', state, PAGE));
   assert.equal(state.mode, 'browse');
 });
@@ -294,7 +296,7 @@ test('opening a list replaces the buffer with what the browser answered', async 
 // A browser that cannot answer — an older Firefox, or one this session only
 // attached to — must say so on the status line and leave the reader where they
 // were, not drop them into an empty list.
-test('r removes the selected bookmark through the browser after confirmation', async () => {
+test('Alt+D removes the selected bookmark through the browser after confirmation', async () => {
   const entry = {
     bookmarkId: '42', title: 'Braille', url: 'https://example.test/braille', folder: 'Reading',
   };
@@ -305,7 +307,7 @@ test('r removes the selected bookmark through the browser after confirmation', a
   const removed = [];
   state.driver.deleteBookmark = async (selected) => removed.push(selected);
   await quietly(() => openLibrary(state, PAGE, 'bookmarks'));
-  await quietly(() => handleLibraryKey('r', state, PAGE));
+  await quietly(() => handleLibraryKey('\x1bd', state, PAGE));
   assert.deepEqual(removed, [entry]);
   assert.equal(state.library.rows.length, 0);
   assert.equal(state.library.empty, true);
@@ -328,6 +330,31 @@ test('Alt+D removes the selected bookmark in the ordinary interface', async () =
   assert.equal(state.statusMsg, 'Removed bookmark "Braille".');
 });
 
+test('a letter in a Lynx bookmark list is filter text, not a command', async () => {
+  const entry = { title: 'Braille', url: 'https://example.test/braille' };
+  const state = readerAt([entry]);
+  state.interface = 'lynx';
+  state.keys = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  state.driver.deleteBookmark = async () => assert.fail('a letter reached the browser');
+  await quietly(() => openLibrary(state, PAGE, 'bookmarks'));
+
+  // r and R still name removal in an imported Lynx map, but the list is a
+  // filter box first: they are typed, and the row is still there.
+  assert.equal(await quietly(() => handleLibraryKey('r', state, PAGE)), undefined);
+  assert.equal(state.library.filter, 'r');
+  assert.equal(state.library.rows.length, 1);
+  assert.equal(await quietly(() => handleLibraryKey('R', state, PAGE)), undefined);
+  assert.equal(state.library.filter, 'rR');
+  assert.equal(state.library.rows.length, 1);
+
+  // Del is the filter's Backspace, not a character above space in the filter.
+  assert.equal(await quietly(() => handleLibraryKey('\x7f', state, PAGE)), undefined);
+  assert.equal(state.library.filter, 'r');
+
+  // A control chord is still a command: only printable characters became text.
+  assert.equal(await quietly(() => handleLibraryKey('\x04', state, PAGE)), 'quit');
+});
+
 test('a declined bookmark deletion leaves the browser and list unchanged', async () => {
   const entry = { title: 'Braille', url: 'https://example.test/braille' };
   const state = readerAt([entry]);
@@ -336,7 +363,7 @@ test('a declined bookmark deletion leaves the browser and list unchanged', async
   state.keyReader = keyboard(['n']);
   state.driver.deleteBookmark = async () => assert.fail('declined deletion reached the browser');
   await quietly(() => openLibrary(state, PAGE, 'bookmarks'));
-  await quietly(() => handleLibraryKey('R', state, PAGE));
+  await quietly(() => handleLibraryKey('\x1bd', state, PAGE));
   assert.equal(state.library.rows.length, 1);
   assert.equal(state.statusMsg, 'Bookmark not removed.');
 });

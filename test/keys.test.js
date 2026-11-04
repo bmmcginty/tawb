@@ -49,7 +49,7 @@ test('a list of the browser\'s own has its own keyboard', () => {
 
   const lynx = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
   assert.equal(lynx.actionFor('r'), null, 'removal is not a page command');
-  assert.equal(lynx.libraryActionFor('r'), 'delete-bookmark');
+  assert.equal(lynx.libraryActionFor('r'), null, 'nor may a letter remove from a list');
   assert.equal(lynx.libraryActionFor('\x1bd'), 'delete-bookmark');
 });
 

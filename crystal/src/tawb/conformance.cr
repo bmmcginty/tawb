@@ -3068,8 +3068,6 @@ module Tawb
                 actions.search_case(state)
               when "library_action"
                 actions.library_action(state, chunk.call)
-              when "library_keeps_browse_map"
-                actions.library_keeps_browse_map?(state)
               when "tab_arrow"
                 actions.tab_arrow?(state, chunk.call)
               when "tab_needs_activation"

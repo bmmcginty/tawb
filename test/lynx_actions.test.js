@@ -134,11 +134,14 @@ test('the popup close hint and searching type are per interface', () => {
   assert.equal(actions.searchCase({ interface: 'lynx' }), null);
 });
 
-test('a Lynx internal list keeps the browse map and reads its own bindings', () => {
+test('a Lynx internal list reads the control keys of its browse map', () => {
   const { actions } = harness();
   const state = reader('lynx');
-  state.keys = keymap({ browse: { q: 'confirm-quit' } });
-  assert.equal(actions.libraryKeepsBrowseMap(state), true);
+  state.keys = keymap({ browse: { '\x04': 'abort', q: 'confirm-quit' } });
+  assert.equal(actions.libraryAction(state, '\x04'), 'abort');
+  // A printable key is the filter's by the time the list handler asks, so it
+  // never reaches this question in a real session; the module still answers
+  // what the map says, which is what keeps the Lynx policy in one place.
   assert.equal(actions.libraryAction(state, 'q'), 'confirm-quit');
   assert.equal(actions.libraryAction(reader('default'), 'q'), null);
 });

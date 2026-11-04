@@ -104,11 +104,15 @@ for (const implementation of implementations) {
     assert.equal(h.searchCase(h.reader('lynx')), null);
   });
 
-  test(`${implementation.name}: a Lynx internal list keeps the browse map and reads its own bindings`, () => {
+  test(`${implementation.name}: a Lynx internal list reads the control keys of its browse map`, () => {
     const h = implementation.harness();
     const state = h.reader('lynx');
-    h.setKeys(state, h.keymap({ browse: { q: 'confirm-quit' } }));
-    assert.equal(h.libraryKeepsBrowseMap(state), true);
+    h.setKeys(state, h.keymap({ browse: { '\x04': 'abort', q: 'confirm-quit' } }));
+    assert.equal(h.libraryAction(state, '\x04'), 'abort');
+    // A printable key is the filter's by the time the list handler asks, so
+    // it never reaches this question in a real session; the module still
+    // answers what the map says, which is what keeps the Lynx policy in one
+    // place.
     assert.equal(h.libraryAction(state, 'q'), 'confirm-quit');
     h.reader('default');
     assert.equal(h.libraryAction({}, 'q'), null);

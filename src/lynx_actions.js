@@ -6,8 +6,8 @@
 // Nothing here draws a page or reads a buffer on its own: every operation it
 // needs comes from the host the terminal loop hands in. What lives here is the
 // Lynx decision — which action opens a Lynx screen, when a digit starts the
-// number prompt, when Tab between fields enters typing, when a list keeps the
-// browse map rather than filtering, and the words the reader hears for each.
+// number prompt, when Tab between fields enters typing, which of a list's
+// non-printing keys are commands, and the words the reader hears for each.
 //
 // The gate is always the interface, never the keymap. A Lynx keymap loaded on
 // a default-interface state derives nothing from these keys, which is the
@@ -82,17 +82,13 @@ function createLynxActions(host) {
       return preferences ? preferences.searchCase : null;
     },
 
-    // Which action, if any, this list key names. Read through the browse map
-    // as well, because a Lynx internal page is navigated with it.
+    // Which action, if any, this non-printing list key names. Read through
+    // the browse map, because a Lynx internal page's control keys are the
+    // browse map's; the letters are already the filter by the time this is
+    // asked.
     libraryAction(state, chunk) {
       if (state.interface !== 'lynx') return null;
       return actionFor(state, chunk);
-    },
-
-    // A Lynx internal page keeps the browse map, so printable commands must
-    // not become TAWB's list filter.
-    libraryKeepsBrowseMap(state) {
-      return state.interface === 'lynx';
     },
 
     // Up and Down move off a field in Lynx, where the ordinary interface

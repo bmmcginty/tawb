@@ -2854,6 +2854,21 @@ module Tawb
         close_library(output, state, page, "Closed #{label.downcase}.")
         return nil
       end
+
+      # A list is a filter box. Whatever letter the reader presses is text for
+      # the filter, even when that letter is a command out on the page: q
+      # quits a page and is a letter here, and in the Lynx interface r removes
+      # a bookmark and is a letter here too. The commands a list does have are
+      # the ones this keyboard keeps off letters — the arrows and paging keys,
+      # Enter, Backspace, Escape and Alt chords.
+      # Del is a control character the terminal happens to encode above space,
+      # and it is this list's Backspace; it is excluded here so it reaches the
+      # editing key below rather than becoming a character of the filter.
+      if !chunk.starts_with?(ESC) && chunk != "\x7f" && chunk >= " "
+        show_library(output, state, page, object["filter"].as_s + chunk)
+        return nil
+      end
+
       action = keymap_for(state).action_for(chunk)
       library_action = keymap_for(state).library_action_for(chunk)
       return "quit" if action == "quit" || action == "abort"
@@ -2910,11 +2925,12 @@ module Tawb
         end
         return nil
       end
-      filter = object["filter"].as_s
+      # Backspace is the one editing key a filter box needs. Everything else
+      # that reaches here is an escape sequence or control chord this list has
+      # no use for, which is the same as doing nothing.
       if key_is(chunk, "Backspace", state)
+        filter = object["filter"].as_s
         show_library(output, state, page, filter.empty? ? filter : filter[0, filter.size - 1])
-      elsif !chunk.starts_with?(ESC) && chunk >= " "
-        show_library(output, state, page, filter + chunk)
       end
       nil
     end
