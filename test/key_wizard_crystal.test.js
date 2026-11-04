@@ -66,7 +66,7 @@ for (const implementation of implementations) {
     const file = path.join(tempDir(`tweb-wizard-keyboards-${implementation.name}-`), 'keys.json');
     const result = await implementation.run({
       file, rows: 12, cols: 200, probe: ['\x01'], editingProbe: ['\x01'],
-      keys: [...'quit', '\r', '\x01', '\x01', 'y'],
+      keys: ['/', ...'quit', '\x1b', '\r', '\x01', '\x01', 'y'],
     });
 
     assert.equal(result.saved, true);
@@ -120,7 +120,8 @@ for (const implementation of implementations) {
 
   test(`${implementation.name}: the cursor follows every prompt that consumes the next key`, async () => {
     const result = await implementation.run({
-      rows: 12, cols: 200, keys: [...'quit', '\r', 'j', 'n', '\x1b', 'n'],
+      rows: 12, cols: 200,
+      keys: ['/', ...'quit', '\x1b', '\r', 'j', 'n', '\x1b', 'n'],
     });
     const replacement = 'Press the replacement for Quit; Backspace unbinds it.';
     const conflict = 'j is assigned to Next line; rebind to Quit? y/n';
@@ -131,9 +132,11 @@ for (const implementation of implementations) {
       const list = result.writes.filter((write) => write.key === key);
       return list.length ? list.at(-1).text : '';
     };
-    assert.equal(lastWrite(5), `\x1b[12;${replacement.length + 1}H`);
-    assert.equal(lastWrite(6), `\x1b[12;${conflict.length + 1}H`);
-    assert.equal(lastWrite(8), `\x1b[12;${save.length + 1}H`);
+    assert.equal(lastWrite(1), '\x1b[2;9H', 'filter input moved the cursor after its prompt');
+    assert.equal(lastWrite(2), '\x1b[2;10H', 'typed filter text kept the cursor with the prompt');
+    assert.equal(lastWrite(7), `\x1b[12;${replacement.length + 1}H`);
+    assert.equal(lastWrite(8), `\x1b[12;${conflict.length + 1}H`);
+    assert.equal(lastWrite(10), `\x1b[12;${save.length + 1}H`);
   });
 
   test(`${implementation.name}: declining to save restores the bindings used before the wizard`, async () => {
@@ -187,7 +190,7 @@ for (const implementation of implementations) {
     // Find Quit; Enter j n refuses the swap, Enter j y accepts it, and Escape y saves.
     const result = await implementation.run({
       file, rows: 12, cols: 200, probe: ['j'],
-      keys: [...'quit', '\r', 'j', 'n', '\r', 'j', 'y', '\x1b', 'y'],
+      keys: ['/', ...'quit', '\x1b', '\r', 'j', 'n', '\r', 'j', 'y', '\x1b', 'y'],
     });
     assert.equal(result.saved, true);
 
@@ -200,12 +203,12 @@ for (const implementation of implementations) {
     assert.deepEqual(byId['next-line'], ['ArrowDown']);
   });
 
-  test(`${implementation.name}: typing filters the screen, and a rebind clears the filter`, async () => {
-    // Filter to the three actions holding Alt+D, Enter on the first, assign z,
-    // then leave without saving. The row is still on screen after the rebind
-    // because the filter is cleared rather than left matching the old key.
+  test(`${implementation.name}: slash filters the screen, and a rebind clears the filter`, async () => {
+    // Filter to the actions holding Alt+D, leave filter input on the first
+    // result, replace its binding with z, then leave without saving.
     const result = await implementation.run({
-      rows: 24, cols: 200, keys: [...'alt+d', '\r', 'z', '\x1b', 'n'],
+      rows: 24, cols: 200,
+      keys: ['/', ...'alt+d', '\r', '\r', 'z', '\x1b', 'n'],
     });
     const screen = painted(result);
     assert.ok(screen.includes('matching "alt+d"'), 'the filter was applied');
@@ -215,13 +218,27 @@ for (const implementation of implementations) {
       'the rebound row is still on screen after the filter was cleared');
   });
 
-  test(`${implementation.name}: backspace broadens the filter without moving off the selected row`, async () => {
-    // Filter to the delete actions, move to "Delete previous character",
-    // then erase one character. "delet" still matches that row, so it must
-    // stay selected rather than jumping to the first match.
+  test(`${implementation.name}: j and k navigate until slash opens filter input`, async () => {
     const result = await implementation.run({
       rows: 24, cols: 200, bindings: { where: ['Ctrl+W'] },
-      keys: [...'delete', '\x1b[B', '\x1b[B', '\x7f', '\x17', '\x1b', 'n'],
+      keys: ['j', '\x17', 'k', '\x17', '/', ...'zzzz', '\x15', 'j', '\x1b',
+        '\x17', '\x1b', 'n'],
+    });
+    const screen = painted(result);
+    assert.ok(screen.includes('Item 3 of'), 'j moved to the next row');
+    assert.ok(screen.includes('Item 2 of'), 'k moved back to the previous row');
+    assert.ok(screen.includes('Nothing matching "zzzz".'), 'slash entered filter input');
+    assert.ok(screen.includes('matching "j"'), 'Ctrl+U cleared the filter before j was typed');
+  });
+
+  test(`${implementation.name}: backspace broadens the filter without moving off the selected row`, async () => {
+    // Filter to the delete actions, move to "Delete previous character", then
+    // reopen the filter and erase one character. "delet" still matches that
+    // row, so it must remain selected.
+    const result = await implementation.run({
+      rows: 24, cols: 200, bindings: { where: ['Ctrl+W'] },
+      keys: ['/', ...'delete', '\x1b', '\x1b[B', '\x1b[B', '/', '\x7f',
+        '\x1b', '\x17', '\x1b', 'n'],
     });
     assert.ok(painted(result).includes(
       '— Delete previous character while editing, Backspace, Ctrl+H.'),

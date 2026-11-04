@@ -10,6 +10,7 @@ const { sectionsFor } = require('./wizard_order');
 const ESC = '\x1b';
 const BACKSPACE = new Set(['\x7f', '\x08']);
 const ALT_A = new Set(['\x1ba', '\x1bA']);
+const CLEAR_FILTER = '\x15';
 
 function size(output) {
   return { rows: output.rows || 24, cols: output.columns || 80 };
@@ -142,9 +143,9 @@ function entryText(entry, keymap) {
   return rowText(entry.row, keymap);
 }
 
-// A printable character belongs to the filter before it belongs to any
-// binding. Del is a control character the terminal encodes above space and is
-// this screen's Backspace, so it is excluded explicitly.
+// Once / has opened the filter, every printable character belongs to it.
+// Del is a control character the terminal encodes above space and is this
+// screen's Backspace, so it is excluded explicitly.
 function isFilterCharacter(chunk) {
   return chunk >= ' ' && chunk !== '\x7f' && !chunk.startsWith(ESC);
 }
@@ -171,8 +172,9 @@ async function runKeyWizard({
   const original = new Map(keymap.actions.map((action) => [action.id, [...action.bindings]]));
   let selectedKey = null;
   let filter = '';
+  let filtering = false;
   let scroll = 0;
-  let status = 'Enter replaces a binding; Alt+A adds one. Type to filter.';
+  let status = 'Enter replaces a binding; Alt+A adds one. Press / to filter.';
   let capturing = null;
   let pending = null;
   let saving = false;
@@ -242,11 +244,14 @@ async function runKeyWizard({
       : '';
     const hint = capturing
       ? `${capturing === 'add' ? 'Adding to' : 'Replacing'} ${selectedLabel}: press one key; Esc cancels.`
-      : filter
-        ? `Filter: ${filter}  Backspace: erase  ${keyLabel('quit', 'Escape')}: exit`
-        : `${keyLabel('previous-line', 'Up')}/${keyLabel('next-line', 'Down')}: move`
-          + `  ${keyLabel('activate', 'Enter')}: replace  Alt+A: add`
-          + `  type: filter  ${keyLabel('quit', 'Escape')}: exit`;
+      : filtering
+        ? `Filter: ${filter}  Enter/Esc: browse results  Ctrl+U: clear`
+        : filter
+          ? `Filter: ${filter}  /: edit  ${keyLabel('previous-line', 'Up')}/${keyLabel('next-line', 'Down')}: move`
+            + `  ${keyLabel('quit', 'Escape')}: exit`
+          : `${keyLabel('previous-line', 'Up')}/${keyLabel('next-line', 'Down')}: move`
+            + `  ${keyLabel('activate', 'Enter')}: replace  Alt+A: add`
+            + `  /: filter  ${keyLabel('quit', 'Escape')}: exit`;
     if (drawn.hint !== hint) {
       line(output, 2, hint);
       drawn.hint = hint;
@@ -270,11 +275,13 @@ async function runKeyWizard({
     }
 
     // The cursor marks the place the next key will affect. Ordinarily that is
-    // the selected row. While a question is waiting for one key or a y/n
-    // answer, it is the answer position at the end of that prompt instead —
-    // otherwise a screen reader keeps reporting the list item while input is
-    // being consumed somewhere else entirely. This must be the final write.
-    if (capturing || pending || saving) {
+    // the selected row. While the filter or a question is consuming input, it
+    // moves to that prompt instead, so a screen reader does not keep reporting
+    // a list item whose binding is not receiving the key. This must be the
+    // final write.
+    if (filtering) {
+      move(output, 2, Math.min(`Filter: ${filter}`.length + 1, size(output).cols));
+    } else if (capturing || pending || saving) {
       move(output, size(output).rows, Math.min(status.length + 1, size(output).cols));
     } else {
       move(output, 3 + Math.max(selected, 0) - scroll, 1);
@@ -397,23 +404,21 @@ async function runKeyWizard({
         continue;
       }
 
-      // A list is a filter box first. Printable input is text for the filter,
-      // even where the same key is a command out on the page; Del is a control
-      // character the terminal encodes above space and stays Backspace.
-      if (isFilterCharacter(key)) {
-        filter = appendFilter(filter, key);
-        selectedKey = selectionKey(visibleEntries(wizardList(keymap, filter)), selectedKey);
-        status = filterStatus(keymap, filter);
-        render();
-        continue;
-      }
-      if (BACKSPACE.has(key)) {
-        if (!filter) {
-          status = 'The filter is empty.';
-          render();
+      // Filtering is an explicit input mode so printable movement bindings —
+      // especially j and k — remain usable while browsing the list. Enter or
+      // Escape returns to navigation without discarding the narrowed results.
+      if (filtering) {
+        if (key === ESC || keymap.isKey(key, 'Enter')) {
+          filtering = false;
+        } else if (key === CLEAR_FILTER) {
+          filter = '';
+        } else if (BACKSPACE.has(key)) {
+          filter = backspaceFilter(filter);
+        } else if (isFilterCharacter(key)) {
+          filter = appendFilter(filter, key);
+        } else {
           continue;
         }
-        filter = backspaceFilter(filter);
         selectedKey = selectionKey(visibleEntries(wizardList(keymap, filter)), selectedKey);
         status = filterStatus(keymap, filter);
         render();
@@ -437,6 +442,12 @@ async function runKeyWizard({
       // whatever moves the reader down a line, to the top, or out of the
       // browser does the same thing to this list.
       const action = wizardAction(key);
+      if (key === '/' || action === 'find-forward') {
+        filtering = true;
+        status = filterStatus(keymap, filter);
+        render();
+        continue;
+      }
       const screen = Math.max(1, size(output).rows - 4);
       const movement = MOVE_ACTIONS[action];
 

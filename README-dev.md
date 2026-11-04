@@ -708,16 +708,18 @@ reader's task. The section order is a display table in
 which action wins a shared key; an action the table does not name falls into a
 trailing Other section rather than vanishing.
 
-Type to filter. Every term must appear in the row, so a label, an action id, a
-Lynx function name and the current bindings are all searchable; a key the
-reader remembers is enough. Sections with no matching row lose their heading,
-while Restore default bindings and Exit keyboard wizard stay pinned at the
-bottom. Move with the arrows, page keys, Home and End — a printable key is
-filter text, so `j` and `k` are letters here, not movement. Press `Enter` to
-replace an action's binding, or `Alt+A` to add another. `Backspace` edits the
-filter, or during replacement leaves the action unbound. `Esc` leaves. A
-rebind clears the filter and keeps that action selected, so the row cannot
-disappear under the reader because its new binding no longer matches.
+Press `/` to filter. Every term must appear in the row, so a label, an action
+id, a Lynx function name and the current bindings are all searchable; a key
+the reader remembers is enough. Sections with no matching row lose their
+heading, while Restore default bindings and Exit keyboard wizard stay pinned
+at the bottom. While filtering, `Backspace` erases and `Ctrl+U` clears; press
+`Enter` or `Esc` to keep the filter and browse its results. Outside that input
+mode the configured movement keys work, including `j` and `k`, along with the
+arrow, page, Home and End fallbacks. Press `Enter` to replace an action's
+binding, or `Alt+A` to add another; `Backspace` during replacement leaves the
+action unbound, and `Esc` leaves. A rebind clears the filter and keeps that
+action selected, so the row cannot disappear under the reader because its new
+binding no longer matches.
 
 Press `:` while reading to open a command line over the same action list.
 Type the name the wizard shows for the action, press `Tab` to complete a

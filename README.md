@@ -231,9 +231,11 @@ remain reachable even when a site incorrectly nests them inside another
 button or field.
 
 All browse and editing bindings are configurable. Press `Alt+?` to open the
-keyboard wizard. Its actions are grouped in sections, and typing filters them
-by name, action or current key; the arrows move, `Enter` replaces, `Alt+A`
-adds, and `Esc` leaves. TAWB stores the result in
+keyboard wizard. Its actions are grouped in sections; press `/` and type to
+filter them by name, action or current key. Press `Enter` or `Esc` to browse
+the filtered results. The configured movement keys, including `j` and `k`,
+move between rows, `Enter` replaces, `Alt+A` adds, and `Esc` leaves. TAWB
+stores the result in
 `$XDG_CONFIG_HOME/tawb/keys.json`, or `~/.config/tawb/keys.json` when
 `XDG_CONFIG_HOME` is not set.
 

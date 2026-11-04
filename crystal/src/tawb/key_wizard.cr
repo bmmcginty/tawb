@@ -10,12 +10,13 @@ module Tawb
   # stays usable while they change under it — a non-printing key whose action
   # means nothing to a list falls back to what the key itself does here, and a
   # key being captured for a binding is read raw, so the arrows and Enter can
-  # still be assigned to anything. Printable keys are filter text first, which
-  # is why the list's movement is the arrows and paging keys.
+  # still be assigned to anything. Slash opens a separate filter input mode,
+  # leaving printable movement bindings available while browsing the list.
   module KeyWizard
-    ESC       = "\e"
-    BACKSPACE = Set.new(["\x7f", "\x08"])
-    ALT_A     = Set.new(["\ea", "\eA"])
+    ESC          = "\e"
+    BACKSPACE    = Set.new(["\x7f", "\x08"])
+    ALT_A        = Set.new(["\ea", "\eA"])
+    CLEAR_FILTER = "\x15"
 
     # What this list can be told to do. Any other action — refresh, next tab,
     # find — has no meaning against a list of bindings.
@@ -172,9 +173,9 @@ module Tawb
       row_text(entry.row.not_nil!, keymap)
     end
 
-    # A printable character belongs to the filter before it belongs to any
-    # binding. Del is a control character the terminal encodes above space and
-    # is this screen's Backspace, so it is excluded explicitly.
+    # Once / has opened the filter, every printable character belongs to it.
+    # Del is a control character the terminal encodes above space and is this
+    # screen's Backspace, so it is excluded explicitly.
     def self.filter_character?(chunk : String) : Bool
       !chunk.starts_with?(ESC) && chunk != "\x7f" && chunk >= " "
     end
@@ -199,8 +200,9 @@ module Tawb
       original = keymap.actions.to_h { |action| {action.id, action.bindings.dup} }
       selected_key : String? = nil
       filter = ""
+      filtering = false
       scroll = 0
-      status = "Enter replaces a binding; Alt+A adds one. Type to filter."
+      status = "Enter replaces a binding; Alt+A adds one. Press / to filter."
       capturing : String? = nil
       pending : NamedTuple(id: String, label: String, key: String, add: Bool)? = nil
       saving = false
@@ -280,12 +282,16 @@ module Tawb
         hint = if capturing
           "#{capturing == "add" ? "Adding to" : "Replacing"} " \
             "#{selected_label}: press one key; Esc cancels."
+        elsif filtering
+          "Filter: #{filter}  Enter/Esc: browse results  Ctrl+U: clear"
         elsif filter.empty?
           "#{key_label.call("previous-line", "Up")}/#{key_label.call("next-line", "Down")}: move" \
             "  #{key_label.call("activate", "Enter")}: replace  Alt+A: add" \
-            "  type: filter  #{key_label.call("quit", "Escape")}: exit"
+            "  /: filter  #{key_label.call("quit", "Escape")}: exit"
         else
-          "Filter: #{filter}  Backspace: erase  #{key_label.call("quit", "Escape")}: exit"
+          "Filter: #{filter}  /: edit  " \
+            "#{key_label.call("previous-line", "Up")}/#{key_label.call("next-line", "Down")}: move" \
+            "  #{key_label.call("quit", "Escape")}: exit"
         end
         if drawn.hint != hint
           draw_line(output, 2, hint, output.columns)
@@ -316,12 +322,14 @@ module Tawb
         end
 
         # The cursor marks the place the next key will affect. Ordinarily
-        # that is the selected row. While a question is waiting for one key
-        # or a y/n answer, it is the answer position at the end of that
-        # prompt instead — otherwise a screen reader keeps reporting the list
-        # item while input is being consumed somewhere else entirely. This
-        # must be the final write.
-        if capturing || pending || saving
+        # that is the selected row. While the filter or a question is
+        # consuming input, it moves to that prompt instead, so a screen reader
+        # does not keep reporting a list item whose binding is not receiving
+        # the key. This must be the final write.
+        if filtering
+          column = Math.min("Filter: #{filter}".size + 1, output.columns)
+          output.write("\e[2;#{column}H")
+        elsif capturing || pending || saving
           output.write("\e[#{output.rows};#{Math.min(status.size + 1, output.columns)}H")
         else
           output.write("\e[#{3 + Math.max(selected, 0) - scroll};1H")
@@ -437,25 +445,23 @@ module Tawb
           next
         end
 
-        # A list is a filter box first. Printable input is text for the
-        # filter, even where the same key is a command out on the page; Del is
-        # a control character the terminal encodes above space and stays
-        # Backspace.
-        if filter_character?(key)
-          filter = ListModel.append_filter(filter, key)
+        # Filtering is an explicit input mode so printable movement bindings —
+        # especially j and k — remain usable while browsing the list. Enter or
+        # Escape returns to navigation without discarding the narrowed results.
+        if filtering
+          if key == ESC || keymap.is_key(key, "Enter")
+            filtering = false
+          elsif key == CLEAR_FILTER
+            filter = ""
+          elsif BACKSPACE.includes?(key)
+            filter = ListModel.backspace_filter(filter)
+          elsif filter_character?(key)
+            filter = ListModel.append_filter(filter, key)
+          else
+            next
+          end
           selected_key = ListModel.selection_key(wizard_entries(keymap, filter), selected_key)
           status = filter_status(keymap, filter)
-          render.call(false)
-          next
-        end
-        if BACKSPACE.includes?(key)
-          if filter.empty?
-            status = "The filter is empty."
-          else
-            filter = ListModel.backspace_filter(filter)
-            selected_key = ListModel.selection_key(wizard_entries(keymap, filter), selected_key)
-            status = filter_status(keymap, filter)
-          end
           render.call(false)
           next
         end
@@ -477,6 +483,12 @@ module Tawb
         # so whatever moves the reader down a line, to the top, or out of the
         # browser does the same thing to this list.
         action = wizard_action(keymap, key)
+        if key == "/" || action == "find-forward"
+          filtering = true
+          status = filter_status(keymap, filter)
+          render.call(false)
+          next
+        end
         screen = Math.max(1, output.rows - 4)
         movement = MOVE_ACTIONS[action]?
 

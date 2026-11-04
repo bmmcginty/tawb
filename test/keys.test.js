@@ -167,7 +167,7 @@ test('the keyboard screen uses the reader-facing action labels', () => {
     .find((row) => row.type === 'action').text, /, no key assigned$/);
 });
 
-test('typing filters the keyboard screen, and a rebind clears the filter', async () => {
+test('slash filters the keyboard screen, and a rebind clears the filter', async () => {
   const keymap = new Keymap({ terminfo: {}, load: false });
   const output = new PassThrough();
   output.rows = 24;
@@ -176,10 +176,9 @@ test('typing filters the keyboard screen, and a rebind clears the filter', async
   const write = output.write.bind(output);
   output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
 
-  // Filter to the two actions holding Alt+D, Enter on the first (download),
-  // assign z, then leave without saving. Printable keys are filter text, so
-  // the whole word reaches the filter before any action gets a look at it.
-  const queued = [...'alt+d', '\r', 'z', '\x1b', 'n'];
+  // Filter to the actions holding Alt+D, leave filter input on the first
+  // result, replace its binding with z, then leave without saving.
+  const queued = ['/', ...'alt+d', '\r', '\r', 'z', '\x1b', 'n'];
   const reader = { next: () => Promise.resolve(queued.shift()) };
 
   const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
@@ -193,6 +192,28 @@ test('typing filters the keyboard screen, and a rebind clears the filter', async
     'the rebound row is still on screen after the filter was cleared');
 });
 
+test('j and k navigate until slash opens filter input', async () => {
+  const keymap = new Keymap({ terminfo: {}, load: false });
+  keymap.assign('where', '\x17');
+  const output = new PassThrough();
+  output.rows = 24;
+  output.columns = 200;
+  const writes = [];
+  const write = output.write.bind(output);
+  output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
+
+  const queued = ['j', '\x17', 'k', '\x17', '/', ...'zzzz', '\x15', 'j', '\x1b',
+    '\x17', '\x1b', 'n'];
+  const reader = { next: () => Promise.resolve(queued.shift()) };
+
+  await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
+  const painted = writes.join('');
+  assert.ok(painted.includes('Item 3 of'), 'j moved to the next row');
+  assert.ok(painted.includes('Item 2 of'), 'k moved back to the previous row');
+  assert.ok(painted.includes('Nothing matching "zzzz".'), 'slash entered filter input');
+  assert.ok(painted.includes('matching "j"'), 'Ctrl+U cleared the filter before j was typed');
+});
+
 test('backspace broadens the filter without moving off the selected row', async () => {
   const keymap = new Keymap({ terminfo: {}, load: false });
   keymap.assign('where', '\x17');
@@ -204,9 +225,10 @@ test('backspace broadens the filter without moving off the selected row', async 
   output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
 
   // Filter to the delete actions, move to "Delete previous character", then
-  // erase one character of the filter. "delet" still matches that row, so it
-  // must stay selected rather than jumping to the first match.
-  const queued = [...'delete', '\x1b[B', '\x1b[B', '\x7f', '\x17', '\x1b', 'n'];
+  // reopen the filter and erase one character. "delet" still matches that
+  // row, so it must remain selected.
+  const queued = ['/', ...'delete', '\x1b', '\x1b[B', '\x1b[B',
+    '/', '\x7f', '\x1b', '\x17', '\x1b', 'n'];
   const reader = { next: () => Promise.resolve(queued.shift()) };
 
   const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
@@ -357,7 +379,7 @@ test('the wizard does not ask about a key held only by the other keyboard', asyn
 
   // Find Quit, replace its binding with Ctrl+A, which only edit-line-start
   // holds, then use the new binding to leave and save.
-  const queued = [...'quit', '\r', '\x01', '\x01', 'y'];
+  const queued = ['/', ...'quit', '\x1b', '\r', '\x01', '\x01', 'y'];
   const reader = { next: () => Promise.resolve(queued.shift()) };
 
   const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
@@ -476,7 +498,7 @@ test('the cursor follows every prompt that consumes the next key', async () => {
   const write = output.write.bind(output);
   output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
 
-  const queued = [...'quit', '\r', 'j', 'n', '\x1b', 'n'];
+  const queued = ['/', ...'quit', '\x1b', '\r', 'j', 'n', '\x1b', 'n'];
   const beforeKey = [];
   const reader = {
     next: () => {
@@ -490,9 +512,11 @@ test('the cursor follows every prompt that consumes the next key', async () => {
   const replacement = 'Press the replacement for Quit; Backspace unbinds it.';
   const conflict = 'j is assigned to Next line; rebind to Quit? y/n';
   const save = 'Save keyboard changes? y/n';
-  assert.equal(beforeKey[5], `\x1b[12;${replacement.length + 1}H`);
-  assert.equal(beforeKey[6], `\x1b[12;${conflict.length + 1}H`);
-  assert.equal(beforeKey[8], `\x1b[12;${save.length + 1}H`);
+  assert.equal(beforeKey[1], '\x1b[2;9H', 'filter input moved the cursor after its prompt');
+  assert.equal(beforeKey[2], '\x1b[2;10H', 'typed filter text kept the cursor with the prompt');
+  assert.equal(beforeKey[7], `\x1b[12;${replacement.length + 1}H`);
+  assert.equal(beforeKey[8], `\x1b[12;${conflict.length + 1}H`);
+  assert.equal(beforeKey[10], `\x1b[12;${save.length + 1}H`);
 });
 
 test('declining to save restores the bindings used before the wizard', async () => {
@@ -581,7 +605,7 @@ test('rebinding a key another action holds is confirmed first', async () => {
   output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
 
   // Find Quit; Enter j n refuses the swap, Enter j y accepts it, and Escape y saves.
-  const queued = [...'quit', '\r', 'j', 'n', '\r', 'j', 'y', '\x1b', 'y'];
+  const queued = ['/', ...'quit', '\x1b', '\r', 'j', 'n', '\r', 'j', 'y', '\x1b', 'y'];
   const reader = { next: () => Promise.resolve(queued.shift()) };
 
   const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
@@ -605,7 +629,7 @@ test('a key nothing else holds is bound without a question', async () => {
   const write = output.write.bind(output);
   output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
 
-  const queued = [...'quit', '\r', 'z', '\x1b', 'n'];
+  const queued = ['/', ...'quit', '\x1b', '\r', 'z', '\x1b', 'n'];
   const reader = { next: () => Promise.resolve(queued.shift()) };
 
   await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
