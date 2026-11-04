@@ -1688,6 +1688,31 @@ function announce(state, { politeness, text }) {
   }
 }
 
+// Whether a polite announcement held back from the status row can be said now.
+//
+// A status row that something else owns — an error, or a message still inside
+// its hold time — is not shouted over, so the announcement waits instead. It
+// must then actually be said: a queued announcement that nothing drains is an
+// announcement the page made and the reader never heard, which is what a
+// reader who is pressing keys would see most of the time.
+function nextPendingAnnouncement(state, now = Date.now()) {
+  const live = state.core && state.core.live;
+  const queue = live && live.queue;
+  if (!queue || !queue.length) return null;
+  if (state.statusMsg && (state.statusHeldUntil || 0) >= now) return null;
+  return queue.shift();
+}
+
+// Says whatever has been waiting, as far as the row is free to say it.
+function drainPendingAnnouncements(state, now = Date.now()) {
+  let said = false;
+  for (let item = nextPendingAnnouncement(state, now); item; item = nextPendingAnnouncement(state, now)) {
+    announce(state, item);
+    said = true;
+  }
+  return said;
+}
+
 // Records that the reader just did something. Live refreshes hold off while
 // this is recent, so the buffer is never swapped mid-keystroke. It lives in
 // the key handlers rather than the input loop so no call path can bypass it.
@@ -1744,8 +1769,14 @@ function markInput(state) {
 // This is a keystroke boundary and not a general "input happened" hook: a
 // handler may note input more than once while carrying out one key, and a
 // status written in the middle of that is the answer to this keystroke.
+//
+// A message that asked for its hold has not finished being said. A live region
+// announcement is the case: it arrived unasked while the reader was pressing
+// keys, which is exactly when it will be followed by another key, so clearing
+// it here is how it gets announced to nobody. The hold is what gives it time.
 function beginKeystroke(state) {
   if (!state.statusMsg) return false;
+  if ((state.statusHeldUntil || 0) >= Date.now()) return false;
   state.statusMsg = '';
   return true;
 }
@@ -2326,6 +2357,9 @@ function startLiveTicker(state, page) {
     state.core.collectLive(state.core.page)
       .then(() => pulseLive(state, state.core.page))
       .then(() => runLiveRefresh(state, state.core.page))
+      // An announcement held back while the row was busy is said as soon as
+      // it is free, even when no key arrives to prompt it.
+      .then(() => drainPendingAnnouncements(state))
       .catch(() => {});
   }, TICK_MS);
   if (state.core.live.ticker.unref) state.core.live.ticker.unref();
@@ -5746,6 +5780,9 @@ async function main() {
     const ms = Date.now() - t0;
 
     markInput(state);
+    // The keystroke cleared the status row, which is what a message held back
+    // for it was waiting for.
+    drainPendingAnnouncements(state);
     // Only slow keys are worth a line each; movement is the common case and
     // would otherwise flood the log.
     if (ms >= 20) {
@@ -5900,6 +5937,7 @@ module.exports = {
   expandPath, completePath, fileToAttach, fileSize, attachedNote,
   anchorFor, restoreAnchor, capturePlace, restorePlace, jumpToChange, activateCurrent, ALL_SOURCES,
   attachLive, onLiveEvent, runLiveRefresh, patchVisibleRows, reanchorQuietly,
+  drainPendingAnnouncements, nextPendingAnnouncement,
   markInput, keepLivePlace, popupIsOpen, popupKey, closePopup, moveToPopup, refresh,
   screenBefore, repaintList, visibleRowsNow,
   applyTextPatches, loadMore, atEnd,

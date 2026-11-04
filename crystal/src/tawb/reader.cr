@@ -871,6 +871,11 @@ module Tawb
       property short_links : Bool
       property link_address : Bool
       property status_msg : String
+      # When a message that asked for a hold stops owning the row, in unix
+      # milliseconds. A live region announcement is the case: it arrives
+      # unasked while the reader is pressing keys, so it asks for time to be
+      # said rather than being cleared by the next keystroke.
+      property status_held_until : Int64
       # Everything the row has said this session, newest first. See
       # `set_status`.
       getter messages : Array(String)
@@ -954,6 +959,7 @@ module Tawb
         @short_links = false
         @link_address = true
         @status_msg = ""
+        @status_held_until = 0_i64
         @messages = [] of String
         @cursor = 0
         @col = 0
@@ -1011,10 +1017,16 @@ module Tawb
     # This is a keystroke boundary and not a general "input happened" hook: a
     # handler may note input more than once while carrying out one key, and a
     # status written in the middle of that is the answer to this keystroke.
+    #
+    # A message that asked for its hold has not finished being said. A live
+    # region announcement is the case: it arrived unasked while the reader was
+    # pressing keys, which is exactly when it will be followed by another key,
+    # so clearing it here is how it gets announced to nobody.
     def self.begin_keystroke(state : State) : Bool
-      cleared = !state.status_msg.empty?
-      state.status_msg = "" if cleared
-      cleared
+      return false if state.status_msg.empty?
+      return false if state.status_held_until >= Time.utc.to_unix_ms
+      state.status_msg = ""
+      true
     end
 
     def self.lynx_active?(state : State) : Bool

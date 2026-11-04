@@ -146,6 +146,13 @@ class ReaderTty {
     return current;
   }
 
+  // One key with no wait. A loop that has to keep watching the screen while
+  // keys are still going in cannot use press(): waiting for quiet after each
+  // press is exactly what hides a status row that the next press clears.
+  send(key) {
+    run('tmux', ['send-keys', '-t', this.session, key]);
+  }
+
   // Literal text, for a prompt that edits a line: sent as one send-keys -l so
   // the address bar is not retyped key by key with a settle after each.
   async type(text, { settle = 300 } = {}) {
@@ -374,21 +381,32 @@ const UNDER = `<!doctype html><html><head><meta charset="utf-8"><title>Anchor</t
 // change is structural — a row is added — so it takes the whole-page rebuild
 // path, and it announces itself through a live region so the test can see it
 // arrived even when the buffer is held.
+//
+// The announcement keeps changing once the page is armed. A live region says
+// something once, and the reader's status row is cleared by the next keystroke:
+// a single announcement is visible for a few dozen milliseconds, and whether
+// the test happens to look in that window says nothing about whether it was
+// announced. A counter that keeps moving is the same announcement arriving
+// again and again, which is what a page counting results or a score does.
 const HOLD = `<!doctype html><html><head><meta charset="utf-8"><title>Hold</title></head>
 <body><h1>Hold heading</h1>
 <p>Reading line</p>
 <ul id="list"><li>First row</li></ul>
 <div role="status">Nothing yet</div>
 <script>
+  let count = 0;
   const timer = setInterval(async () => {
     try {
       const answer = await fetch('/ready');
       if ((await answer.text()) !== 'go') return;
-      clearInterval(timer);
-      const row = document.createElement('li');
-      row.textContent = 'Held row';
-      document.getElementById('list').appendChild(row);
-      document.querySelector('[role="status"]').firstChild.data = 'Held announcement';
+      if (count === 0) {
+        clearInterval(timer);
+        const row = document.createElement('li');
+        row.textContent = 'Held row';
+        document.getElementById('list').appendChild(row);
+      }
+      count += 1;
+      document.querySelector('[role="status"]').firstChild.data = 'Held announcement ' + count;
     } catch (error) { /* the server went away; the page stays as it was */ }
   }, 120);
 </script></body></html>`;
@@ -711,16 +729,26 @@ for (const engine of ['firefox', 'chromium']) {
             // Up on the first line marks input without moving or writing the
             // status row, so the whole press window counts as reading and the
             // announcement is not overwritten by an end-of-page notice.
+            //
+            // Keys go in on a timer and the screen is read between them,
+            // rather than press-then-look: a press clears the status row, so
+            // an announcement that arrived while the reader was holding the
+            // key is gone again by the time that press returns. The change is
+            // armed after the first press, so it lands inside the input grace
+            // period.
             let announced = false;
             let swapped = false;
             let armed = false;
-            const until = Date.now() + 5000;
-            while (Date.now() < until) {
-              await reader.press('Up', { settle: 40, timeout: 2000 });
-              if (!armed) { hold.arm(); armed = true; }
+            let nextPress = 0;
+            for (const until = Date.now() + 5000; Date.now() < until;) {
+              if (Date.now() >= nextPress) {
+                reader.send('Up');
+                nextPress = Date.now() + 350;
+                if (!armed) { hold.arm(); armed = true; }
+              }
               if (reader.status().includes('Held announcement')) announced = true;
               if (reader.rows().some((row) => row.includes('Held row'))) swapped = true;
-              await sleep(50);
+              await sleep(40);
             }
             answers.push({
               runtime: runtime.name,

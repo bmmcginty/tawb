@@ -448,8 +448,14 @@ module Tawb
         Reader.repaint_list(@output, @state, wrapper.url, before)
         (result["announcements"]?.try(&.as_a?) || [] of JSON::Any).each do |announcement|
           text = announcement.as_h["text"]?.try(&.as_s?) || ""
-          Reader.set_status(@output, @state, wrapper.url,
-            text[0, Math.min(text.size, @state.cols)]) unless text.empty?
+          next if text.empty?
+          # The row now belongs to this message for as long as it needs to be
+          # heard, for the reason Reader.begin_keystroke gives for not clearing
+          # it: a polite announcement is not shouted over, and an assertive one
+          # interrupts for longer.
+          polite = announcement.as_h["politeness"]?.try(&.as_s?) != "assertive"
+          @state.status_held_until = Time.utc.to_unix_ms + (polite ? 4000_i64 : 8000_i64)
+          Reader.set_status(@output, @state, wrapper.url, text[0, Math.min(text.size, @state.cols)])
         end
         if payload
           mutations = payload.as_h["mutations"]?.try(&.as_i64?) || 0_i64
