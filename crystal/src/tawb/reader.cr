@@ -8,6 +8,7 @@ require "./lynx_session"
 require "./log"
 require "./layout"
 require "./place"
+require "./screen_stack"
 require "./list_screen"
 
 module Tawb
@@ -866,6 +867,9 @@ module Tawb
       property cols : Int32
       property interface : String
       property mode : String
+      # The page is the base screen; a library or chooser raises a screen
+      # above it. See screen_stack.cr and docs/screen-contract.md.
+      property screens : ScreenStack
       property title : String
       property escape_unicode : Bool
       property unicode : String
@@ -954,6 +958,7 @@ module Tawb
         @cols = 80
         @interface = "tawb"
         @mode = "browse"
+        @screens = ScreenStack.new
         @title = ""
         @escape_unicode = false
         @unicode = "ascii"

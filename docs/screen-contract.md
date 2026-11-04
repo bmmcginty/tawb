@@ -151,3 +151,19 @@ into the list model, changing Lynx options' letter commands, or making the
 wizard filter on every printable key. Those are different interactions with
 different keys, and sharing the list machinery does not mean sharing the
 interaction.
+
+## Where the migration stands
+
+The shared list state and filter policy are in place for the library, the
+internal lists and the select chooser in both runtimes. The library, every
+internal list and the chooser are on the screen stack: the page is the base,
+opening a list pushes a screen, closing it pops that same screen, and the
+terminal loop dispatches to the top screen when its mode matches. Prompts and
+browser dialogs still use their own modes above the stack, so a dialog can
+arrive while a list is open without losing the list underneath.
+
+The keyboard wizard uses the same explicit filter policy and filter edits, but
+still draws its own full terminal and has not been moved onto the stack. Lynx
+options remains a whole-terminal screen with its own letter commands. The next
+steps are the wizard, then the options screen, then deleting the old mode
+branches once both runtimes cover the stack paths.

@@ -387,35 +387,41 @@ module Tawb
           Reader.note_input(state)
           Reader.draw_status(terminal, state, tabs.current_page.url) if Reader.begin_keystroke(state)
           current = tabs.current_page
-          verdict = case state.mode
-                    when "library"
+          # The top screen owns the keyboard. Only a mode the stack knows
+          # about is dispatched this way; a prompt or a browser dialog raised
+          # above it has its own mode and falls through to the mode switch.
+          top_screen = state.screens.top
+          verdict = if top_screen.mode == state.mode && top_screen.mode == "library"
                       ReaderKeys.handle_library_key(terminal, state, current, keyboard, chunk)
-                    when "choose"
+                    elsif top_screen.mode == state.mode && top_screen.mode == "choose"
                       ReaderKeys.handle_choose_key(terminal, state, current, chunk); nil
-                    when "type"
-                      ReaderKeys.handle_type_key(terminal, state, current, chunk); nil
-                    when "command"
-                      ReaderKeys.handle_command_key(terminal, state, current, keyboard, chunk,
-                        Time.utc.to_unix_ms)
-                    when "field-command"
-                      ReaderKeys.handle_field_command_key(terminal, state, current, chunk); nil
-                    when "forms"
-                      ReaderKeys.handle_forms_key(terminal, state, current, keyboard, chunk); nil
-                    when "control"
-                      ReaderKeys.handle_control_key(terminal, state, current, chunk); nil
-                    when "page"
-                      ReaderKeys.handle_page_key(terminal, state, current, chunk, Time.utc.to_unix_ms); nil
-                    when "address"
-                      ReaderKeys.handle_address_key(terminal, state, current, keyboard, chunk); nil
-                    when "find"
-                      ReaderKeys.handle_find_key(terminal, state, current.url, chunk); nil
-                    when "number"
-                      ReaderKeys.handle_number_key(terminal, state, current, keyboard, chunk); nil
-                    when "options"
-                      ReaderKeys.handle_lynx_options_key(terminal, state, current, chunk); nil
                     else
-                      ReaderKeys.handle_browse_key(terminal, state, current, keyboard, chunk,
-                        Time.utc.to_unix_ms)
+                      case state.mode
+                      when "type"
+                        ReaderKeys.handle_type_key(terminal, state, current, chunk); nil
+                      when "command"
+                        ReaderKeys.handle_command_key(terminal, state, current, keyboard, chunk,
+                          Time.utc.to_unix_ms)
+                      when "field-command"
+                        ReaderKeys.handle_field_command_key(terminal, state, current, chunk); nil
+                      when "forms"
+                        ReaderKeys.handle_forms_key(terminal, state, current, keyboard, chunk); nil
+                      when "control"
+                        ReaderKeys.handle_control_key(terminal, state, current, chunk); nil
+                      when "page"
+                        ReaderKeys.handle_page_key(terminal, state, current, chunk, Time.utc.to_unix_ms); nil
+                      when "address"
+                        ReaderKeys.handle_address_key(terminal, state, current, keyboard, chunk); nil
+                      when "find"
+                        ReaderKeys.handle_find_key(terminal, state, current.url, chunk); nil
+                      when "number"
+                        ReaderKeys.handle_number_key(terminal, state, current, keyboard, chunk); nil
+                      when "options"
+                        ReaderKeys.handle_lynx_options_key(terminal, state, current, chunk); nil
+                      else
+                        ReaderKeys.handle_browse_key(terminal, state, current, keyboard, chunk,
+                          Time.utc.to_unix_ms)
+                      end
                     end
           break if verdict == "quit"
 

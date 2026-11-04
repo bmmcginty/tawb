@@ -96,8 +96,10 @@ keypress
         +-- 'browse'    the Lynx/ordinary browse keymap
 ```
 
-The options screen is `state.mode === 'options'` and owns the terminal rather
-than borrowing the internal-list renderer. Choosing an option stores
+The library and chooser screens are also on the screen stack; the page is the
+base and the top screen receives keys. The options screen is
+`state.mode === 'options'` and owns the terminal rather than borrowing the
+internal-list renderer. Choosing an option stores
 `state.options.choosing`; while it is set, `handleOptionsKey` delegates to
 `handleOptionChoosing`, exactly as Lynx's `boolean_choice` takes the keyboard
 for itself.

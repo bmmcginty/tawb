@@ -38,6 +38,7 @@ const {
 const { createLynxActions } = require('./lynx_actions');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
+const { ScreenStack } = require('./screen_stack');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
 const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 const { entryLine, shortAddress, KIND_LABELS } = require('./library');
@@ -3454,6 +3455,7 @@ function openChooser(state, page, item, listing) {
   });
   select(list);
   state.chooser = { ...list, item, from: line ? line.blockIndex : 0 };
+  if (state.screens) state.screens.push({ mode: 'choose', kind: 'select' });
 
   relayout(state);
   const range = chooserLines(state);
@@ -3476,6 +3478,7 @@ function closeChooser(state, page, { note }) {
   state.core.live.refreshing = false;
   state.mode = 'browse';
   state.chooser = null;
+  if (state.screens) state.screens.pop('choose');
   relayout(state);
   const line = lineForBlock(state, from);
   if (line >= 0) state.cursor = line;
@@ -3678,6 +3681,11 @@ function showLibrary(state, page, filter, {
   at = null, scroll = 0, fallbackIndex = null, selectedKey = null,
 } = {}) {
   const lib = state.library;
+  if (!lib.entered) {
+    if (!state.screens) state.screens = new ScreenStack();
+    state.screens.push({ mode: 'library', kind: lib.kind });
+    lib.entered = true;
+  }
   if (selectedKey !== null) lib.selectedKey = selectedKey;
   if (fallbackIndex !== null) lib.fallbackIndex = Math.max(0, fallbackIndex);
   if (at !== null && selectedKey === null) lib.fallbackIndex = Math.max(0, at);
@@ -3994,6 +4002,7 @@ function closeLibrary(state, page, note) {
   const { place } = state.library;
   state.library = null;
   state.mode = 'browse';
+  if (state.screens) state.screens.pop('library');
   state.core.live.refreshing = false;
   state.title = place.title;
   relayout(state);
@@ -5740,6 +5749,9 @@ async function main() {
   const state = {
     core,
     keys,
+    // The page is the base screen; a library or chooser raises a screen above
+    // it. See screen_stack.js and docs/screen-contract.md.
+    screens: new ScreenStack(),
     interface: ARGS.frontEnd,
     keyReader: null,
     credentials: null,
@@ -5953,7 +5965,15 @@ async function main() {
     // The terminal's own interrupt gets out of anything — a page, a prompt, a
     // page's own keyboard — and no mode may take it.
     if (chunk === ALWAYS_QUIT) { log('input.interrupt', {}); running = false; break; }
-    if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
+    // The top screen owns the keyboard. Only a mode the stack knows about is
+    // dispatched this way; a prompt or a browser dialog raised above it has
+    // its own mode and falls through to the mode switch below.
+    const screen = state.screens ? state.screens.top() : null;
+    if (screen && screen.mode === state.mode && screen.mode === 'choose') {
+      result = await handleChooseKey(chunk, state, current);
+    } else if (screen && screen.mode === state.mode && screen.mode === 'library') {
+      result = await handleLibraryKey(chunk, state, current);
+    } else if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
     else if (state.mode === 'options') result = await handleOptionsKey(chunk, state, current);
     else if (state.mode === 'library') result = await handleLibraryKey(chunk, state, current);
     else if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);

@@ -30,6 +30,7 @@ require "./layout"
 require "./library"
 require "./list_model"
 require "./list_screen"
+require "./screen_stack"
 require "./library_chromium"
 require "./live"
 require "./log"
@@ -823,6 +824,24 @@ module Tawb
         key = ListModel.move_key(entries, object["selectedKey"]?.try(&.as_s?),
           object["action"].as_s, size)
         JSON::Any.new(key)
+      when "screen_stack.scenario"
+        object = payload.as_h
+        stack = ScreenStack.new
+        results = [] of JSON::Any
+        object["actions"].as_a.each do |raw|
+          action = raw.as_h
+          case action["op"].as_s
+          when "push"
+            screen = stack.push(action["mode"].as_s, action["kind"]?.try(&.as_s?))
+            results << JSON::Any.new({"pushed" => JSON::Any.new(screen.mode)})
+          when "pop"
+            screen = stack.pop(action["mode"]?.try(&.as_s?))
+            results << JSON::Any.new({"popped" => screen ? JSON::Any.new(screen.mode) : JSON::Any.new(nil)})
+          else
+            results << JSON::Any.new({"top" => JSON::Any.new(stack.top.mode)})
+          end
+        end
+        JSON::Any.new(results)
       when "list_screen.filter_key"
         object = payload.as_h
         edit = ListScreen.filter_key(

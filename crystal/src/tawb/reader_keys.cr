@@ -985,6 +985,7 @@ module Tawb
         "filtering" => JSON::Any.new(false),
       }
       state.chooser = JSON::Any.new(object)
+      state.screens.push("choose", "select")
       entries = chooser_entries(object, "")
       selected = select_list(object, entries)
       Reader.relayout(state)
@@ -1021,6 +1022,7 @@ module Tawb
       end
       state.mode = "browse"
       state.chooser = nil
+      state.screens.pop("choose")
       Reader.relayout(state)
       line = Reader.line_for_block(state, from)
       state.cursor = line if line >= 0
@@ -2821,6 +2823,7 @@ module Tawb
           "scroll" => JSON::Any.new(state.scroll.to_i64), "title" => JSON::Any.new(state.title),
         }),
       })
+      state.screens.push("library", kind)
       set_live_value(state, "refreshing", JSON::Any.new(true))
       state.mode = "library"
       state.title = title || "#{label} — #{rows.size}"
@@ -2909,6 +2912,7 @@ module Tawb
           "scroll" => JSON::Any.new(state.scroll.to_i64), "title" => JSON::Any.new(state.title),
         }),
       })
+      state.screens.push("library", kind)
       set_live_value(state, "refreshing", JSON::Any.new(true))
       state.mode = "library"
       state.title = "#{label} — #{entries.size}"
@@ -2921,6 +2925,7 @@ module Tawb
       place = library.as_h["place"].as_h
       state.library = nil
       state.mode = "browse"
+      state.screens.pop("library")
       set_live_value(state, "refreshing", JSON::Any.new(false))
       state.title = place["title"].as_s
       Reader.relayout(state)
