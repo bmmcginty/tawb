@@ -28,6 +28,7 @@ require "./keyboard"
 require "./keys"
 require "./layout"
 require "./library"
+require "./list_model"
 require "./library_chromium"
 require "./live"
 require "./log"
@@ -778,6 +779,42 @@ module Tawb
         runtime_scenario(payload)
       when "startup.scenario"
         startup_scenario(payload)
+      when "list_model.visible_entries"
+        object = payload.as_h
+        sections = object["sections"].as_a.map do |raw|
+          section = raw.as_h
+          rows = section["rows"].as_a.map do |row|
+            fields = row.as_h
+            ListModel::Row.new(fields["key"].as_s, fields["search"].as_s)
+          end
+          ListModel::Section(ListModel::Row).new(
+            section["key"].as_s, section["title"]?.try(&.as_s?), rows)
+        end
+        pinned = object["pinned"].as_a.map do |row|
+          fields = row.as_h
+          ListModel::Row.new(fields["key"].as_s, fields["search"].as_s)
+        end
+        entries = ListModel.visible_entries(
+          sections, pinned, object["filter"]?.try(&.as_s?) || "")
+        JSON::Any.new(entries.map do |entry|
+          row_key = entry.row.try(&.key)
+          JSON::Any.new({
+            "kind"   => JSON::Any.new(entry.kind),
+            "key"    => JSON::Any.new(entry.key),
+            "title"  => entry.title ? JSON::Any.new(entry.title) : JSON::Any.new(nil),
+            "rowKey" => row_key ? JSON::Any.new(row_key) : JSON::Any.new(nil),
+          })
+        end)
+      when "list_model.move"
+        object = payload.as_h
+        entries = object["entries"].as_a.map do |raw|
+          fields = raw.as_h
+          ListModel::Entry(Nil).new(fields["kind"].as_s, fields["key"].as_s, nil, nil)
+        end
+        size = (object["pageSize"]?.try(&.as_i64?) || 1).to_i32
+        key = ListModel.move_key(entries, object["selectedKey"]?.try(&.as_s?),
+          object["action"].as_s, size)
+        JSON::Any.new(key)
       when "library.entry_line"
         object = payload.as_h
         JSON::Any.new(Library.entry_line(object["kind"].as_s, object["entry"],

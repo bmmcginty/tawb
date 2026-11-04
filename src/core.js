@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const { matches } = require('./list_model');
 const { snapshotFrameTree } = require('./frames');
 const { armRenderedFrames, createLiveState, installLive, collect, INPUT_GRACE_MS } = require('./live');
 const { activateDomItem, domElementHandle } = require('./dom');
@@ -1069,11 +1070,10 @@ class Core {
     if (filter !== null) chooser.filter = filter;
     if (chooser.count) this.blocks.splice(chooser.at, chooser.count);
 
-    const needle = chooser.filter.trim().toLowerCase();
     const shown = [];
     const blocks = [];
     chooser.options.forEach((option, index) => {
-      if (needle && !option.text.toLowerCase().includes(needle)) return;
+      if (!matches(option.text, chooser.filter)) return;
       shown.push(index);
       blocks.push({
         text: `    ${option.selected ? '(*)' : '( )'} ${option.text}`

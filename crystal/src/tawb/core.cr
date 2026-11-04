@@ -50,6 +50,7 @@
 require "json"
 require "set"
 require "uri"
+require "./list_model"
 require "./actions"
 require "./aria"
 require "./firefox_driver"
@@ -1767,13 +1768,12 @@ module Tawb
       chooser.filter = filter unless filter.nil?
       @blocks.delete_at(chooser.at, chooser.count) if chooser.count > 0
 
-      needle = chooser.filter.strip.downcase
       shown = [] of Int32
       blocks = [] of Block
       chooser.options.each_with_index do |option, index|
         object = option.as_h? || {} of String => JSON::Any
         option_text = object["text"]?.try(&.as_s?) || ""
-        next if !needle.empty? && !option_text.downcase.includes?(needle)
+        next unless ListModel.matches?(option_text, chooser.filter)
         selected = object["selected"]?.try(&.as_bool?) || false
         disabled = object["disabled"]?.try(&.as_bool?) || false
         shown << index

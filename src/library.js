@@ -13,6 +13,8 @@
 // keeping, how one is written on a line, and what filtering a list means.
 // Nothing in this file knows which browser it is talking about.
 
+const { matches } = require('./list_model');
+
 const KINDS = ['bookmarks', 'history', 'downloads'];
 
 const KIND_LABELS = {
@@ -101,17 +103,6 @@ function entryLine(kind, entry, now = Date.now()) {
   if (kind === 'bookmarks' && entry.folder) parts.push(`in ${entry.folder}`);
   if (kind === 'history') parts.push(relativeAge(entry.when, now));
   return parts.filter(Boolean).join(' — ');
-}
-
-// What the reader typed, against what they can see. Case is ignored, because
-// an address is lower case and a title is not, and nobody filtering a list of
-// pages means the difference. Every space-separated word must appear, so
-// "wiki braille" finds the article without knowing which order they come in.
-function matches(line, filter) {
-  const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
-  if (!words.length) return true;
-  const haystack = line.toLowerCase();
-  return words.every((word) => haystack.includes(word));
 }
 
 // What both engines' answers pass through before anyone sees them. Bookmarks

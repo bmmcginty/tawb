@@ -1,5 +1,6 @@
 require "json"
 require "uri"
+require "./list_model"
 
 module Tawb
   # Shared presentation policy for the browser's bookmark, history and
@@ -82,9 +83,7 @@ module Tawb
     end
 
     def self.matches?(line : String, filter : String) : Bool
-      words = filter.downcase.split(/\s+/).reject(&.empty?)
-      haystack = line.downcase
-      words.all? { |word| haystack.includes?(word) }
+      ListModel.matches?(line, filter)
     end
 
     def self.order_entries(kind : String, entries : Array(JSON::Any),
