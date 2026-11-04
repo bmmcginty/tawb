@@ -51,7 +51,7 @@ module Tawb
       "new-tab"                 => [] of String,
       "bookmarks"               => ["v"],
       "add-bookmark"            => ["a"],
-      "delete-bookmark"         => ["r", "R"],
+      "delete-bookmark"         => ["r", "R", "Alt+D"],
       "visited-links"           => ["V"],
       "session-history"         => ["Backspace", "Ctrl+H"],
       "downloads"               => [] of String,
@@ -149,7 +149,7 @@ module Tawb
     # that work, so these stay out of its map and out of its keyboard screen
     # until somebody pulls one across deliberately.
     LYNX_ONLY_ACTIONS = Set.new([
-      "goto", "location-edit", "edit-command", "delete-bookmark", "list-links",
+      "goto", "location-edit", "edit-command", "list-links",
       "list-addresses", "document-info", "options", "link-number",
       "repeat-find-forward", "repeat-find-backward", "reload-no-cache",
       "interrupt", "toggle-trace", "trace-log", "source-view", "help",

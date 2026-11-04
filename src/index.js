@@ -2758,8 +2758,12 @@ async function handleBrowseKey(chunk, state, page, actionOverride = null) {
 
   if (action === 'visited-links') return openVisitedLinks(state, page);
   if (action === 'session-history') return openSessionHistory(state, page);
+  // A list command named from the command line while a page is being read.
+  // Its key belongs to the list keyboard; there is no row to remove here, so
+  // say where it becomes meaningful with the reader's own bindings.
   if (action === 'delete-bookmark') {
-    setStatus(state, 'Open the bookmarks list with v, select a bookmark, then press r to remove it.');
+    setStatus(state, `Open the bookmarks list with ${actionKeyLabel(state, 'bookmarks', 'Ctrl+O')}, `
+      + `select a bookmark, then press ${actionKeyLabel(state, 'delete-bookmark', 'Alt+D')}.`);
     return;
   }
   if (action === 'history') return openLibrary(state, page, 'history');
@@ -3831,9 +3835,10 @@ async function handleLibraryKey(chunk, state, page) {
   if (!lib) { state.mode = 'browse'; return; }
   const lynxAction = LYNX_ACTIONS.libraryAction(state, chunk);
   const contextAction = contextNavigationAction(chunk, state);
+  const libraryAction = (state.keys || FALLBACK_KEYMAP).libraryActionFor(chunk);
 
   if (lib.kind === 'options') return handleOptionsKey(chunk, state, page);
-  if (lib.kind === 'bookmarks' && lynxAction === 'delete-bookmark') {
+  if (lib.kind === 'bookmarks' && libraryAction === 'delete-bookmark') {
     return deleteLibraryBookmark(state, page);
   }
   if (lynxAction === 'quit' || lynxAction === 'abort' || lynxAction === 'confirm-quit') {

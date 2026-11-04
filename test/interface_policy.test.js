@@ -24,6 +24,9 @@ test('an action belongs to the interface that can reach it', () => {
   // Everything else exists in both.
   assert.deepEqual(profilesFor('activate'), ['default', 'lynx']);
   assert.deepEqual(profilesFor('next-screen'), ['default', 'lynx']);
+  // The list keyboard's own command belongs to both interfaces, because both
+  // open the browser's lists and both filter them by typing.
+  assert.deepEqual(profilesFor('delete-bookmark'), ['default', 'lynx']);
 });
 
 test('the two action sets name real, disjoint groups', () => {

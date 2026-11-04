@@ -40,6 +40,29 @@ test('interface profiles keep their defaults and saved files separate', () => {
   assert.equal(lynx.editingActionFor('\x10'), 'edit-previous-word');
 });
 
+test('a list of the browser\'s own has its own keyboard', () => {
+  const ordinary = new Keymap({ terminfo: {}, load: false });
+  // The same press, two meanings, and neither keyboard can reach the other's.
+  assert.equal(ordinary.actionFor('\x1bd'), 'download-link');
+  assert.equal(ordinary.libraryActionFor('\x1bd'), 'delete-bookmark');
+  assert.equal(ordinary.editingActionFor('\x1bd'), 'edit-delete-word');
+
+  const lynx = new Keymap({ terminfo: {}, profile: 'lynx', load: false });
+  assert.equal(lynx.actionFor('r'), null, 'removal is not a page command');
+  assert.equal(lynx.libraryActionFor('r'), 'delete-bookmark');
+  assert.equal(lynx.libraryActionFor('\x1bd'), 'delete-bookmark');
+});
+
+test('an explicit page binding does not take the list keyboard\'s default', () => {
+  // A key file written before this action existed names download-link on
+  // Alt+D. That claim reaches the page keyboard only; the list keeps its own.
+  const keys = new Keymap({
+    terminfo: {}, load: false, bindings: { 'download-link': ['Alt+D'] },
+  });
+  assert.equal(keys.actionFor('\x1bd'), 'download-link');
+  assert.equal(keys.libraryActionFor('\x1bd'), 'delete-bookmark');
+});
+
 test('effective standard, vi, and Emacs Lynx maps drive their familiar keys', () => {
   const imported = (name) => parseBrowseMap(fs.readFileSync(
     path.join(__dirname, 'fixtures', `lynx-keymap-${name}.txt`), 'utf8')).bindings;

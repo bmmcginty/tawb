@@ -1886,6 +1886,11 @@ function readerImplementations(index, keysModule) {
           // from the test runner's.
           await drawingStore.run(current, async () => {
           if (action.op === 'libraryKey') {
+            // A list command may ask a question — removing a bookmark does —
+            // and the answer arrives on the same keyboard the list was read
+            // with. The native side takes it as an argument; here it is the
+            // prompt's own reader.
+            if (action.keys) state.keyReader = scriptedKeyReader(action.keys);
             value = await index.handleLibraryKey(action.chunk, state, page) ?? null;
           } else if (action.op === 'dialogBlocks') {
             value = index.dialogBlocks(scriptedDialog(action.dialog)).map(dialogBlockShape);

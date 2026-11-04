@@ -87,7 +87,7 @@ module Tawb
       {id: "new-tab", label: "New tab", defaults: ["Ctrl+T"]},
       {id: "bookmarks", label: "Bookmarks", defaults: ["Ctrl+O"]},
       {id: "add-bookmark", label: "Bookmark this page", defaults: ["Ctrl+D"]},
-      {id: "delete-bookmark", label: "Delete the selected bookmark", defaults: [] of String},
+      {id: "delete-bookmark", label: "Delete the selected bookmark", defaults: ["Alt+D"]},
       {id: "visited-links", label: "Links visited in this session", defaults: [] of String},
       {id: "session-history", label: "Documents held in this session", defaults: [] of String},
       {id: "history", label: "History", defaults: ["Alt+H"]},
@@ -176,6 +176,17 @@ module Tawb
       ACTIONS.select { |action| action[:id].starts_with?("edit-") }.map { |action| action[:id] }
     )
 
+    # The third keyboard: the browser's own lists.
+    #
+    # A list of bookmarks, history or downloads is not the page behind it. It
+    # is a buffer of its own in which the letters type a filter, so the
+    # commands that act on its rows cannot live on letters — they are Alt
+    # chords, and they mean nothing out on the page. Alt+D downloads a link
+    # while reading and removes the bookmark under the cursor while the list
+    # is open, the same way Ctrl+D files a bookmark in one keyboard and
+    # deletes a character in the other.
+    LIBRARY_ACTIONS = Set{"delete-bookmark"}
+
     def self.actions_for(profile : String) : Array(NamedTuple(id: String, label: String, defaults: Array(String)))
       ACTIONS.select { |action| Interfaces.profiles_for(action[:id]).includes?(profile) }
     end
@@ -222,6 +233,7 @@ module Tawb
     end
 
     def self.keyboards_for(id : String) : Array(String)
+      return ["library"] if LIBRARY_ACTIONS.includes?(id)
       keyboards = [] of String
       keyboards << "browse" unless id.starts_with?("edit-")
       keyboards << "edit" if EDITING_ACTIONS.includes?(id)
@@ -300,6 +312,7 @@ module Tawb
       @sequence_names : Hash(String, String)
       @sequence_actions : Hash(String, String)
       @editing_actions : Hash(String, String)
+      @library_actions : Hash(String, String)
       getter key_file : NamedTuple(
         parse: Proc(String, Hash(String, JSON::Any)?),
         serialise: Proc(Array(NamedTuple(id: String, bindings: Array(String))), String),
@@ -352,6 +365,7 @@ module Tawb
         @sequence_names = {} of String => String
         @sequence_actions = {} of String => String
         @editing_actions = {} of String => String
+        @library_actions = {} of String => String
         build_names
         displace_unspecified_bindings(Set.new(bindings.keys))
         @actions.each { |action| @default_bindings[action.id] = action.bindings.dup }
@@ -427,17 +441,24 @@ module Tawb
       # steal that key from the action the reader explicitly put there years
       # ago.
       def displace_unspecified_bindings(explicit : Set(String)) : Nil
-        claimed = Set(String).new
+        # A claim only reaches an action on a keyboard it shares. Alt+D held
+        # by the download action does not strip the list's own Alt+D, and an
+        # editing action's Ctrl+D does not take a browsing default away; both
+        # are the same key only on paper.
+        claimed = {} of String => String
         @actions.each do |action|
           next unless explicit.includes?(action.id)
           action.bindings.each do |binding|
-            sequences_for(binding).each { |sequence| claimed << sequence }
+            sequences_for(binding).each { |sequence| claimed[sequence] = action.id }
           end
         end
         @actions.each do |action|
           next if explicit.includes?(action.id)
           action.bindings = action.bindings.reject do |binding|
-            sequences_for(binding).any? { |sequence| claimed.includes?(sequence) }
+            sequences_for(binding).any? do |sequence|
+              owner = claimed[sequence]?
+              owner ? Keys.shares_keyboard?(action.id, owner) : false
+            end
           end
         end
       end
@@ -464,16 +485,20 @@ module Tawb
       # and into no other. An `edit-` action never reaches the browsing map,
       # so a key it shares with a browsing action resolves to the browsing
       # action while reading and to the `edit-` action while typing, whichever
-      # order the two happen to appear in ACTIONS.
+      # order the two happen to appear in ACTIONS. A list action is kept out
+      # of both maps for the same reason: the same key may already mean
+      # something out on the page.
       def rebuild : Nil
         @sequence_actions = {} of String => String
         @editing_actions = {} of String => String
+        @library_actions = {} of String => String
         @actions.each do |action|
           keyboards = Keys.keyboards_for(action.id)
           action.bindings.each do |binding|
             sequences_for(binding).each do |sequence|
               @sequence_actions[sequence] = action.id if keyboards.includes?("browse")
               @editing_actions[sequence] = action.id if keyboards.includes?("edit")
+              @library_actions[sequence] = action.id if keyboards.includes?("library")
             end
           end
         end
@@ -486,6 +511,7 @@ module Tawb
         maps = [] of Hash(String, String)
         maps << @sequence_actions if keyboards.includes?("browse")
         maps << @editing_actions if keyboards.includes?("edit")
+        maps << @library_actions if keyboards.includes?("library")
         maps
       end
 
@@ -496,6 +522,11 @@ module Tawb
       # The same question asked from inside a field. See EDITING_ACTIONS.
       def editing_action_for(sequence : String) : String?
         @editing_actions[sequence]?
+      end
+
+      # And asked with a list of the browser's own open. See LIBRARY_ACTIONS.
+      def library_action_for(sequence : String) : String?
+        @library_actions[sequence]?
       end
 
       def is_key(sequence : String, name : String) : Bool

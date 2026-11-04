@@ -720,13 +720,15 @@ report that they are unavailable outside a field.
 Browsing and editing are two keyboards on the same keys, and the wizard treats
 the two keyboards separately. An action prefixed `edit-` is reachable only
 while a field is being edited. Every other action is reachable only while a
-page is being read. The four movements a field shares with a line — start of
-line, end of line, previous character, next character — belong to both
-keyboards. A key already held on the other keyboard is therefore not a clash:
-the wizard binds it without a question, and the other action keeps it. `Ctrl+D`
-files a bookmark while reading and deletes a character while typing, and
-`Alt+D` downloads the link under the cursor while reading and deletes the next
-word while typing, for exactly this reason.
+page is being read, except for the list keyboard, whose one command is
+reachable only while one of the browser's own lists is open. The four
+movements a field shares with a line — start of line, end of line, previous
+character, next character — belong to both keyboards. A key already held on the
+other keyboard is therefore not a clash: the wizard binds it without a
+question, and the other action keeps it. `Ctrl+D` files a bookmark while
+reading and deletes a character while typing; `Alt+D` downloads the link under
+the cursor while reading, deletes the next word while typing, and removes the
+selected bookmark while the bookmarks list is open, for exactly this reason.
 
 While a binding or confirmation answer is being read, the terminal cursor moves
 from the selected row to that prompt, marking where the next key will take
@@ -949,7 +951,7 @@ buffer while holding live rebuilds. Help is a read-only internal page, while
 `k`/`K` retain the configurable keymap wizard. `m`/`M` loads the same initial
 address used for the session rather than mistaking the top of the current page
 for Lynx's main screen. Bookmark entries retain the browser's opaque bookmark
-identity, so `r`/`R` removes the selected entry through Chrome's bookmarks API
+identity, so `Alt+D` removes the selected entry through Chrome's bookmarks API
 or Firefox Places rather than deleting an arbitrary bookmark with the same
 URL. `x`/`X` passes the protocols' native `ignoreCache` flag to reload rather
 than emulating a cache clear, and `z`/`Z` shares Escape's interrupt path while

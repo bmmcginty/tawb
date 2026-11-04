@@ -51,6 +51,21 @@ test('browser bookmarks open, filter, and close back at the page', { skip }, asy
   assert.equal(result.state.statusMsg, 'Closed bookmarks.');
 });
 
+test('Alt+D removes the selected bookmark from the bookmarks list', { skip }, async () => {
+  const result = await both('delete bookmark', state({}, {
+    bookmarks: [
+      { title: 'Crystal', url: 'https://crystal-lang.org/', folder: 'Tools' },
+      { title: 'Braille', url: 'https://example.test/braille', folder: 'Reading' },
+    ],
+  }), [
+    { op: 'browseKey', chunk: 'B' },
+    { op: 'libraryKey', chunk: '\x1bd', keys: ['y'] },
+  ], false);
+  assert.equal(result.state.mode, 'library', 'removal leaves the list open');
+  assert.deepEqual(result.state.library.rows, ['Braille — https://example.test/braille — in Reading']);
+  assert.equal(result.state.statusMsg, 'Removed bookmark "Crystal".');
+});
+
 test('browser library failures are spoken without leaving the page', { skip }, async () => {
   const result = await both('library failure', state({}, { failure: 'agent unavailable' }), [
     { op: 'browseKey', chunk: 'H' },

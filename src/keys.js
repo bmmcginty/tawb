@@ -91,7 +91,11 @@ const ACTIONS = [
   // shell, but nothing is reading a line here, and the editing actions have
   // their own Ctrl+D for the character under the cursor while typing.
   ['add-bookmark', 'Bookmark this page', ['Ctrl+D']],
-  ['delete-bookmark', 'Delete the selected bookmark', []],
+  // The list keyboard's own key, so it is also the list's own action. Alt+D
+  // is the download gesture out on the page; a list of bookmarks is not the
+  // page, and the two meanings never meet. The list is also where typing
+  // filters, so a command there cannot be a plain letter.
+  ['delete-bookmark', 'Delete the selected bookmark', ['Alt+D']],
   ['visited-links', 'Links visited in this session', []],
   ['session-history', 'Documents held in this session', []],
   ['history', 'History', ['Alt+H']],
@@ -212,6 +216,17 @@ const EDITING_ACTIONS = new Set([
   ...ACTIONS.map((action) => action.id).filter((id) => id.startsWith('edit-')),
 ]);
 
+// The third keyboard: the browser's own lists.
+//
+// A list of bookmarks, history or downloads is not the page behind it. It is
+// a buffer of its own in which the letters type a filter, so the commands
+// that act on its rows cannot live on letters — they are Alt chords, and they
+// mean nothing out on the page. Alt+D downloads a link while reading and
+// removes the bookmark under the cursor while the list is open, the same way
+// Ctrl+D files a bookmark in one keyboard and deletes a character in the
+// other.
+const LIBRARY_ACTIONS = new Set(['delete-bookmark']);
+
 function actionsFor(profile) {
   return ACTIONS.filter((action) => profilesFor(action.id).includes(profile));
 }
@@ -228,6 +243,7 @@ function actionsFor(profile) {
 // neither pair takes anything from the other. The wizard asks about a key only
 // when the two actions could actually be reached by the same press.
 function keyboardsFor(id) {
+  if (LIBRARY_ACTIONS.has(id)) return ['library'];
   const keyboards = [];
   if (!id.startsWith('edit-')) keyboards.push('browse');
   if (EDITING_ACTIONS.has(id)) keyboards.push('edit');
@@ -366,17 +382,24 @@ class Keymap {
   // actions, so merely adding one on a familiar key must not steal that key
   // from the action the reader explicitly put there years ago.
   displaceUnspecifiedBindings(explicit) {
-    const claimed = new Set();
+    // A claim only reaches an action on a keyboard it shares. Alt+D held by
+    // the download action does not strip the list's own Alt+D, and an editing
+    // action's Ctrl+D does not take a browsing default away; both are the
+    // same key only on paper.
+    const claimed = new Map();
     for (const action of this.actions) {
       if (!explicit.has(action.id)) continue;
       for (const binding of action.bindings) {
-        for (const sequence of this.sequencesFor(binding)) claimed.add(sequence);
+        for (const sequence of this.sequencesFor(binding)) claimed.set(sequence, action.id);
       }
     }
     for (const action of this.actions) {
       if (explicit.has(action.id)) continue;
       action.bindings = action.bindings.filter((binding) =>
-        !this.sequencesFor(binding).some((sequence) => claimed.has(sequence)));
+        !this.sequencesFor(binding).some((sequence) => {
+          const owner = claimed.get(sequence);
+          return owner !== undefined && sharesKeyboard(action.id, owner);
+        }));
     }
   }
 
@@ -403,16 +426,19 @@ class Keymap {
   // into no other. An `edit-` action never reaches the browsing map, so a key
   // it shares with a browsing action resolves to the browsing action while
   // reading and to the `edit-` action while typing, whichever order the two
-  // happen to appear in ACTIONS.
+  // happen to appear in ACTIONS. A list action is kept out of both maps for
+  // the same reason: the same key may already mean something out on the page.
   rebuild() {
     this.sequenceActions = new Map();
     this.editingActions = new Map();
+    this.libraryActions = new Map();
     for (const action of this.actions) {
       const keyboards = keyboardsFor(action.id);
       for (const binding of action.bindings) {
         for (const sequence of this.sequencesFor(binding)) {
           if (keyboards.includes('browse')) this.sequenceActions.set(sequence, action.id);
           if (keyboards.includes('edit')) this.editingActions.set(sequence, action.id);
+          if (keyboards.includes('library')) this.libraryActions.set(sequence, action.id);
         }
       }
     }
@@ -425,6 +451,7 @@ class Keymap {
     const maps = [];
     if (keyboards.includes('browse')) maps.push(this.sequenceActions);
     if (keyboards.includes('edit')) maps.push(this.editingActions);
+    if (keyboards.includes('library')) maps.push(this.libraryActions);
     return maps;
   }
 
@@ -432,6 +459,9 @@ class Keymap {
 
   // The same question asked from inside a field. See EDITING_ACTIONS.
   editingActionFor(sequence) { return this.editingActions.get(sequence) || null; }
+
+  // And asked with a list of the browser's own open. See LIBRARY_ACTIONS.
+  libraryActionFor(sequence) { return this.libraryActions.get(sequence) || null; }
   isKey(sequence, name) { return this.sequencesFor(name).includes(sequence); }
 
   // Which other actions would lose a binding if this one took the key. The

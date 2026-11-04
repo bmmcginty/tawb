@@ -304,7 +304,7 @@ The common Lynx commands include:
 | `a` / `v` | Add a bookmark / view bookmarks |
 | `V` | Links followed in this session |
 | `Backspace` / `Ctrl+H` | Documents held in this session |
-| `r`, `R` | Remove the selected bookmark while viewing bookmarks |
+| `Alt+D` | Remove the selected bookmark while viewing bookmarks |
 | `=` | Information about the current document and selected item |
 | `o`, `O` | Lynx options menu |
 | `h`, `H`, `?` | Lynx help |
@@ -437,14 +437,15 @@ copies:
 | `Ctrl+D` | Bookmark the current page |
 | `Alt+H` | History |
 | `Alt+J` | Downloads |
-| `Alt+D` | Download the link under the cursor |
+| `Alt+D` | Download the link under the cursor, or remove the selected bookmark while the bookmarks list is open |
 
 Typing in one of these lists filters it. Press `Enter` to open the selected
-entry or `Escape` to return to the page. The `Alt+D` action uses the browser's
-own download manager, so authenticated requests, filenames, and download
-history behave as they do for an Alt-click in the graphical browser. Plain
-letters are reserved for moving through the page, so every command that acts on
-something carries `Alt` or `Ctrl`.
+entry or `Escape` to return to the page. Out on a page, `Alt+D` uses the
+browser's own download manager, so authenticated requests, filenames, and
+download history behave as they do for an Alt-click in the graphical browser.
+Inside the bookmarks list it removes the selected bookmark instead, after
+asking. Plain letters are reserved for moving through the page, so every
+command that acts on something carries `Alt` or `Ctrl`.
 
 The browser's password manager remains responsible for saved credentials.
 TAWB can present its save-password prompt and identifies fields the browser

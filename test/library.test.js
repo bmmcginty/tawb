@@ -312,6 +312,22 @@ test('r removes the selected bookmark through the browser after confirmation', a
   assert.equal(state.statusMsg, 'Removed bookmark "Braille".');
 });
 
+test('Alt+D removes the selected bookmark in the ordinary interface', async () => {
+  const entry = {
+    bookmarkId: '42', title: 'Braille', url: 'https://example.test/braille', folder: 'Reading',
+  };
+  const state = readerAt([entry]);
+  state.keyReader = keyboard(['y']);
+  const removed = [];
+  state.driver.deleteBookmark = async (selected) => removed.push(selected);
+  await quietly(() => openLibrary(state, PAGE, 'bookmarks'));
+  await quietly(() => handleLibraryKey('\x1bd', state, PAGE));
+  assert.deepEqual(removed, [entry]);
+  assert.equal(state.library.rows.length, 0);
+  assert.equal(state.library.empty, true);
+  assert.equal(state.statusMsg, 'Removed bookmark "Braille".');
+});
+
 test('a declined bookmark deletion leaves the browser and list unchanged', async () => {
   const entry = { title: 'Braille', url: 'https://example.test/braille' };
   const state = readerAt([entry]);

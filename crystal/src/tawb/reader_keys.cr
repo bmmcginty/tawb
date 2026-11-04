@@ -2855,6 +2855,7 @@ module Tawb
         return nil
       end
       action = keymap_for(state).action_for(chunk)
+      library_action = keymap_for(state).library_action_for(chunk)
       return "quit" if action == "quit" || action == "abort"
       last = state.lines.size - 1
       if key_is(chunk, "ArrowDown", state)
@@ -2893,17 +2894,17 @@ module Tawb
         load_address(output, state, page, keyboard, url)
         return nil
       end
-      if object["kind"].as_s == "bookmarks" && action == "delete-bookmark"
+      if object["kind"].as_s == "bookmarks" && library_action == "delete-bookmark"
         entry = Reader.current_block(state).try(&.as_h).try(&.["entry"]?)
         unless entry
           Reader.set_status(output, state, page.url, "Move to a bookmark first."); return nil
         end
-        if ask_yes_no(output, state, keyboard,
-             "Remove bookmark \"#{entry.as_h["title"]?.try(&.as_s?) || entry.as_h["url"]?.try(&.as_s?)}\"?")
+        name = entry.as_h["title"]?.try(&.as_s?) || entry.as_h["url"]?.try(&.as_s?) || ""
+        if ask_yes_no(output, state, keyboard, "Remove bookmark \"#{name}\"?")
           state.browser_library.try(&.delete(entry))
           object["rows"].as_a.reject! { |row| row.as_h["entry"]? == entry }
           show_library(output, state, page, object["filter"].as_s)
-          Reader.set_status(output, state, page.url, "Removed bookmark.")
+          Reader.set_status(output, state, page.url, "Removed bookmark \"#{name}\".")
         else
           Reader.set_status(output, state, page.url, "Bookmark not removed.")
         end
@@ -4179,11 +4180,16 @@ module Tawb
         open_document_info(output, state, page)
         return nil
       end
-      # Outside the bookmarks screen this command explains where removal is
-      # available; inside, handle_library_key performs it.
+      # A list command named from the command line while a page is being
+      # read. Its key belongs to the list keyboard; there is no row to remove
+      # here, so say where it becomes meaningful with the reader's own
+      # bindings.
       if action == "delete-bookmark"
         Reader.set_status(output, state, page.url,
-          "Open the bookmarks list with v, select a bookmark, then press r to remove it.")
+          "Open the bookmarks list with " +
+          action_key_label(state, "bookmarks", "Ctrl+O") +
+          ", select a bookmark, then press " +
+          action_key_label(state, "delete-bookmark", "Alt+D") + ".")
         return nil
       end
 
