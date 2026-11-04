@@ -69,11 +69,11 @@ check("a field's live text and caret read the same from both runtimes", async ()
     }
 
     assert.deepEqual(javascript, [
-      { text: 'hello world', caret: 0, native: true },
-      { text: 'abcdef', caret: 3, native: true },
-      { text: 'first line\nsecond line', caret: 6, native: true },
-      { text: 'one bold tail\ntwo\n\n', caret: 6, native: true },
-      { text: 'just text', caret: 9, native: false },
+      { text: 'hello world', caret: 0, multiline: false, native: true },
+      { text: 'abcdef', caret: 3, multiline: false, native: true },
+      { text: 'first line\nsecond line', caret: 6, multiline: true, native: true },
+      { text: 'one bold tail\ntwo\n\n', caret: 6, multiline: false, native: true },
+      { text: 'just text', caret: 9, multiline: false, native: false },
     ]);
 
     // The native runtime, joining the same browser as a second reader.
