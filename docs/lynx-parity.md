@@ -13,20 +13,21 @@ terminal harness they share.
 ## What "match" means
 
 A reader who knows Lynx should be able to press the same keys and get the same
-result. That is checked on three axes, in this order of importance:
+result. The single-screen options comparison checks four things:
 
-1. **Which option the cursor is on**, counted in reading order — first to last,
-   top to bottom, left to right. This is the position a reader actually walks,
-   and it is invariant under a different screen layout.
-2. **What is said**, where the words are Lynx's own: the chosen-value prompt,
+1. **What is drawn**, row for row and column for column. The two rows that name
+   the program and its user agent differ deliberately; every other row must
+   match.
+2. **Where the cursor is**, both on the `Command:` prompt and while a value is
+   being chosen.
+3. **What is said**, where the words are Lynx's own: the chosen-value prompt,
    the acceptance, the cancellation, the choice-list hint, and the select line.
-3. **What is saved**, by meaning rather than by bytes. Lynx writes `.lynxrc`;
+4. **What is saved**, by meaning rather than by bytes. Lynx writes `.lynxrc`;
    TAWB writes `settings.lynx.json`. The two files say the same thing.
 
-Layout is deliberately *not* compared byte for byte, and may not be. TAWB draws
-a header of its own and gives every option a row of its own; Lynx draws no
-header, packs up to three options onto a row, and ends with a Command prompt.
-Those are recorded below as the remaining differences.
+TAWB draws this screen directly rather than through its ordinary page or list
+layout. That is what lets several options share a row and puts each value and
+the `Command:` prompt at Lynx's columns.
 
 ## Lynx has two options screens
 
@@ -43,8 +44,8 @@ with a keyboard of its own.
 
 ## The layered keymap
 
-Lynx resolves a key through a stack of layers, and so does TAWB. The layers are
-not the same shape, and this is where most of the remaining work is.
+Lynx resolves a key through a stack of layers, and so does TAWB. The layers
+have the same roles even though TAWB names them as explicit reader modes.
 
 ### Lynx
 
@@ -87,18 +88,19 @@ keypress
         +-- 'type'      field editing        (edit- action ids)
         +-- 'field-command'  one browse command from inside a field
         +-- 'choose'    a dropdown
-        +-- 'library'   an internal list
+        +-- 'library'   an internal list: movement and filter typing
+        +-- 'options'   the Lynx options screen
         |     |
-        |     +-- kind 'options' -> the options layer, then the chooser layer
-        |     +-- other kinds    -> list movement, filter typing
+        |     +-- state.options.choosing -> the option's chooser layer
         |
         +-- 'browse'    the Lynx/ordinary browse keymap
 ```
 
-The options screen is `state.mode === 'library'` with `kind: 'options'`.
-Choosing an option stores `state.library.choosing`, which is the chooser layer:
-while it is set, `handleOptionsKey` delegates to `handleOptionChoosing`, exactly
-as Lynx's `boolean_choice` takes the keyboard for itself.
+The options screen is `state.mode === 'options'` and owns the terminal rather
+than borrowing the internal-list renderer. Choosing an option stores
+`state.options.choosing`; while it is set, `handleOptionsKey` delegates to
+`handleOptionChoosing`, exactly as Lynx's `boolean_choice` takes the keyboard
+for itself.
 
 ```
 handleOptionsKey(chunk)
@@ -178,7 +180,7 @@ on:
 
 ```
 LIST — List page links, l
-NEXT_LINK — Next link, button or form field, 2, ArrowDown
+NEXT_LINK — Next link, button or form field, ArrowDown
 TAWB_CYCLE_VIEW — Cycle view, Ctrl+O
 ```
 
@@ -194,59 +196,27 @@ document's, and `DWIMHELP` (`F1`) describes the control under the cursor where
 | --- | --- | --- |
 | Browse, `SHOW_CURSOR` off | hidden at the bottom-right corner | hidden at the bottom-right corner |
 | Browse, `SHOW_CURSOR` on | left of the current link or option | on the current item's line |
-| Options open | on the `Command:` prompt, one row above the status line | on the first option (no prompt exists) |
-| Option chosen, `SHOW_CURSOR` on | one column left of the value (Lynx's `LYmove(line, col-1)`) | on the option's line |
-| Option chosen, `SHOW_CURSOR` off | wherever the last move left it | on the option's line |
-| After accepting | back on the `Command:` prompt | stays on the option's line |
+| Options open | on the `Command:` prompt, one row above the status line | same row and column |
+| Option chosen, `SHOW_CURSOR` on | one column left of the value (Lynx's `LYmove(line, col-1)`) | same row and column |
+| Option chosen, `SHOW_CURSOR` off | after the value Lynx just wrote | after the same value |
+| After accepting | back on the `Command:` prompt | back on the `Command:` prompt |
 
-The reading-order position agrees; the physical row and column do not, because
-the screens are laid out differently.
+Browse mode still reflects the two programs' different page renderers. The
+single-screen options menu has exact cursor placement because TAWB draws that
+screen with its own dedicated renderer.
 
-## Document placement
+## Options-screen placement
 
-Rows are 1-based here. `rows` is the terminal height.
+Rows are 1-based. On the 24-row screen used by the parity tests, both programs
+place the menu on rows 1 through 22, the `Command:` prompt on row 23, and status
+messages on row 24. There is no TAWB title, address, hint, or blank page chrome
+around this mode.
 
-### Lynx
-
-| Rows | Contents |
-| --- | --- |
-| 1..`rows-3` | page, or the options menu |
-| `rows-2` | the `Select capital letter…` line (letter screen) |
-| `rows-1` | `Command:` prompt (letter screen) |
-| `rows` | status line: help hints, messages, the browse key bar |
-
-There is no header. A 24-row terminal gives 21 rows of content and 3 rows of
-chrome.
-
-### TAWB
-
-| Rows | Contents |
-| --- | --- |
-| 1 | title |
-| 2 | address |
-| 3 | hint |
-| 4 | blank |
-| 5..`rows-2` | page, or an internal list such as the options menu |
-| `rows-1` | blank |
-| `rows` | status line |
-
-A 24-row terminal gives 18 rows of content and 6 rows of chrome. The options
-rows therefore begin four rows lower than Lynx's and end three rows higher, and
-the `Command:` prompt has no row of its own to sit on.
-
-## What the single-screen menu now shares with Lynx
-
-The letter-driven Options menu is no longer TAWB's own rendering. It is
-Lynx's screen: the same rows, the same columns, the same values on the same
-lines, the `Command:` prompt on the row above the status line, and the terminal
-cursor left where Lynx leaves it — on the prompt while nothing is chosen, and
-beside the value while one is. `test/lynx_options_compare.test.js` compares it
-row for row with a real Lynx and fails if any row but the two that name the
-program and its user agent differs.
-
-Two options still share a row (`O`/`&`, `V`/`M`/`W`, `T`/`@`, `U`/`!`), and the
-cursor is placed within the row rather than on the row, because the screen is
-drawn by its own renderer rather than through the page list.
+The letter-driven menu uses Lynx's rows, columns, and values. Several options
+share a row (`L`/`B`, `O`/`&`, `V`/`M`/`W`, `T`/`@`, `U`/`!`), and the cursor is
+placed within the row rather than merely on it. `test/lynx_options_compare.test.js`
+compares this output row for row with a real Lynx and permits differences only
+on the title and user-agent rows.
 
 ## The remaining differences
 

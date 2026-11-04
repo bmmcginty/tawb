@@ -326,7 +326,6 @@ The common Lynx commands include:
 | `Ctrl+_` | Return to a question the browser asked |
 | `Ctrl+T` / `;` | Toggle TAWB tracing / view its trace log |
 | `\\` | Toggle source and presentation |
-| `q` | Quit |
 
 Links and controls use Lynx-like terminal forms and the current control is
 shown in reverse video. Prose and inline links from one HTML block reflow

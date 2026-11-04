@@ -268,7 +268,7 @@ thirteen processes behind. Browsers are now started detached, leading a group
 of their own, and taken down as a group.
 
 That covers every session that gets to finish. One that does not — `SIGKILL`,
-or an out-of-memory kill — never runs its cleanup, so every browser tweb
+or an out-of-memory kill — never runs its cleanup, so every browser TAWB
 starts is also recorded under `browsers/` in the state directory, and every
 launch sweeps that list first. A browser is taken down when the session that
 started it has gone, no other reader has claimed a tab in it, and it was not
@@ -284,7 +284,7 @@ kill — which is how all of this came up.
 ```
 npm run browsers            # what is running, its memory, and whose it is
 npm run browsers -- --sweep # take down the ones nobody is using
-npm run browsers -- --all   # take down every browser tweb started
+npm run browsers -- --all   # take down every browser TAWB started
 ```
 
 ### Throwaway profiles clean themselves
@@ -297,7 +297,7 @@ runs had built up 3.4GB of them.
 
 Nothing can be done from inside the process being killed, so each directory
 carries the pid that made it in its own name and the next run sweeps the ones
-whose owner has gone. The name is also what makes it safe: a directory tweb
+whose owner has gone. The name is also what makes it safe: a directory TAWB
 did not create has no pid in its name and is never touched, which matters
 because `--profile /tmp/something` of your own is a perfectly ordinary thing
 to pass. The directory itself is handed back empty and stays that way.
@@ -687,11 +687,11 @@ for is one they cannot undo.
 ## Keys
 
 The named terminal keys are not assumed to have one universal escape
-sequence. At startup tweb asks the current terminal's terminfo entry through
+sequence. At startup TAWB asks the current terminal's terminfo entry through
 `tput` for PageUp, PageDown, arrows, Alt+Left, Alt+Right, Home and End, and
 keeps the common xterm-compatible sequences as fallbacks. `$TERM` therefore
 needs to describe the terminal accurately; a missing `tput` or terminfo entry
-does not prevent tweb from starting.
+does not prevent TAWB from starting.
 
 Press `Alt+?` to open the keyboard wizard while reading, or open it without
 starting a browser:
@@ -2169,7 +2169,7 @@ through once loads directly next time rather than asking again.
 This applies to every navigation that the engine refuses outright, not only
 to certificates: a refused connection and a name that does not resolve land
 on the same kind of page. Before this, such a navigation threw — it killed
-the session outright when it was the address tweb started with, and from the
+the session outright when it was the address TAWB started with, and from the
 address bar it left the reader on the previous page with a fragment of a
 stack trace on the status line and no way to go on.
 
