@@ -232,6 +232,7 @@ function recordedAccessibilityBus(record) {
 // cookies survive — which is most of what makes the web usable.
 async function launchOwnBrowser({
   profileDir = null, browserTimeoutMs = null, log = () => {}, onStartup = () => {},
+  portal = 'system',
 } = {}) {
   const found = findBrowserExecutable();
   if (!found) {
@@ -394,7 +395,7 @@ async function launchOwnBrowser({
   return { browser, context, child, owned: true, port, executable: found.executable, a11y };
 }
 
-async function connectToBrowser(endpoint, { log = () => {} } = {}) {
+async function connectToBrowser(endpoint, { log = () => {}, portal = 'system' } = {}) {
   const browser = await cdpBrowser.connect(endpoint);
   const contexts = browser.contexts();
   if (contexts.length === 0) throw new Error(`No browser context available at ${endpoint}`);

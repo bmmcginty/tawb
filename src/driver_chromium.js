@@ -95,7 +95,7 @@ async function openChromium({
 
   if (connect) {
     try { onStartup('Connecting to Chromium…'); } catch { /* display only */ }
-    const connected = await connectToBrowser(connect, { log });
+    const connected = await connectToBrowser(connect, { log, portal });
     ({ browser, context } = connected);
     port = connected.port;
     rejoined = true;
