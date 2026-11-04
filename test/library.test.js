@@ -290,7 +290,7 @@ test('opening a list replaces the buffer with what the browser answered', async 
   assert.equal(state.mode, 'library');
   assert.equal(state.library.rows.length, 3);
   assert.equal(state.cursor, 0);
-  assert.match(state.lines[0].text, /^Braille — https:\/\/en\.wikipedia\.org\/wiki\/Braille/);
+  assert.match(state.lines[0].text, /^Braille -- https:\/\/en\.wikipedia\.org\/wiki\/Braille/);
 });
 
 // A browser that cannot answer — an older Firefox, or one this session only
@@ -393,7 +393,7 @@ test('typing filters the list, and backspace puts back what it removed', async (
   await quietly(() => openLibrary(state, PAGE, 'history'));
 
   await typeInto(state, 'louis');
-  assert.deepEqual(state.lines.map((line) => line.text.split(' — ')[0]), ['Louis Braille']);
+  assert.deepEqual(state.lines.map((line) => line.text.split(' -- ')[0]), ['Louis Braille']);
 
   await quietly(() => handleLibraryKey('\x7f', state, PAGE));
   assert.equal(state.library.filter, 'loui');
@@ -450,7 +450,7 @@ test('the address Enter goes to is the one the browser gave, not the short one',
   const long = `https://ads.test/click?i=${'x'.repeat(400)}`;
   const state = readerAt([{ title: 'An advert', url: long, when: NOW }]);
   await quietly(() => openLibrary(state, PAGE, 'history'));
-  assert.match(state.lines[0].text, /An advert — https:\/\/ads\.test\/click…/);
+  assert.match(state.lines[0].text, /An advert -- https:\/\/ads\.test\/click\.\.\./);
 
   const went = [];
   const page = {
