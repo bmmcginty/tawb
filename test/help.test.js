@@ -13,6 +13,15 @@ const { readerCommands } = require('./crystal_impl');
 
 const ROOT = path.join(__dirname, '..');
 
+const SHARED_HELP_OPTIONS = [
+  'front-end', 'keyboard', 'dump', 'alt-screen', 'no-alt-screen',
+  'escape-unicode', 'unicode', 'link-address', 'no-link-address', 'short-links',
+  'close-initial-tab-on-exit', 'search',
+  'lynx-executable', 'lynx-config', 'lynx-reimport',
+  'browser', 'connect', 'profile', 'keep-browser', 'no-keep-browser',
+  'browser-timeout', 'portal', 'port', 'log', 'log-dir', 'help',
+];
+
 function help(program, args) {
   return spawnSync(program.command, [...program.args, ...args], {
     cwd: program.cwd || ROOT,
@@ -29,6 +38,10 @@ for (const program of readerCommands(ROOT)) {
     assert.match(result.stdout, /^Usage: tawb /);
     assert.match(result.stdout, /--front-end/);
     assert.match(result.stdout, /--dump/);
+    for (const option of SHARED_HELP_OPTIONS) {
+      assert.ok(result.stdout.includes(`--${option}`), `${program.name} help omits --${option}`);
+    }
+    assert.match(result.stdout, /Options may also be placed in the settings file/);
     assert.equal(result.stderr, '');
   });
 

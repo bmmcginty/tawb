@@ -43,14 +43,23 @@ module Tawb
       --close-initial-tab-on-exit   close the tab this session opened on exit
       --search <url>                search template with %s (TAWB_SEARCH)
 
+    Lynx front end:
+      --lynx-executable <path>      the Lynx to read key bindings from (TAWB_LYNX)
+      --lynx-config <path>          a lynx.cfg to read as well
+      --lynx-reimport               import the Lynx configuration again
+
     Browser:
       --browser <name>              chromium or firefox
       --connect <port|url>          attach to a browser already running
       --profile <dir>               the browser profile to use
       --keep-browser                leave the browser running after quitting
+      --no-keep-browser             close a browser the settings would keep
       --browser-timeout <seconds>   how long to wait for the browser to start
       --portal <tawb|system>        which portal answers a file chooser
                                     (TAWB_PORTAL; system unless the bus is ours)
+
+    edb front end:
+      --port <number>               the port the edbrowse bridge listens on
 
     Logging:
       --log                         write a diagnostic log
@@ -60,6 +69,8 @@ module Tawb
       --version                     print the version and its source commit
       --update                      check for and install a newer release
       -h, --help                    show this help and exit
+
+    Options may also be placed in the settings file; see README.md.
 
     The native Crystal reader reads pages interactively through Firefox and
     Chromium, in this interface or Lynx's, and writes dumps through either.
