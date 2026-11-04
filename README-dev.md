@@ -964,12 +964,20 @@ activate whichever unrelated block inherited that index. Links continue
 through `activateCurrent`. Numbered form controls and the `g` suffix only move
 the terminal selection.
 
-While one of the browser's lists is open, a printable character is always
-filter text, whatever the page keyboard binds it to. List commands therefore
-live on the navigation keys and Alt chords: `Alt+D` removes a bookmark, and
-`Esc` closes the list. Removal names the entry's position in the filtered
+While one of the browser's lookup lists is open, a printable character is
+always filter text, whatever the page keyboard binds it to. List commands
+therefore live on the navigation keys and Alt chords: `Alt+D` removes a
+bookmark, and `Esc` closes the list. `Backspace` erases and `Ctrl+U` clears.
+Selection follows the row's stable key, so narrowing the filter keeps the
+reader on the same entry; removal names the entry's position in the filtered
 list, so the cursor stays on the entry that takes its place, or on the one
 before it when the last entry was removed.
+
+Information, help and the trace log are reading surfaces rather than lookup
+lists, so they use explicit filtering: `j` and `k` remain movement, `/` opens
+the filter input, and `Enter` or `Escape` keeps the narrowed rows and returns
+to browsing. The same list state and filter handler serve both policies; see
+`src/list_screen.js` and `docs/screen-contract.md`.
 
 The reference, information, and Lynx help commands reuse the internal-list
 buffer while holding live rebuilds. Help is a read-only internal page, while
@@ -1221,13 +1229,16 @@ paragraph. What it borrows is the dropdown's *mode* rather than the page's.
 Typing filters instead of jumping, because a reader looking for a page they saw
 yesterday knows a word of its title and not its position, and every
 space-separated word has to appear somewhere in the entry — `wiki braille`
-finds the article without knowing which order they come in. Live rebuilds are
-held while a list is open, for the same reason the dropdown holds them: a
-refresh would replace the block list, and the block list is not the page's. The
-core is not told where the reader is standing either, since block twelve of a
-list of bookmarks is not block twelve of the tab, and a text patch aimed there
-would land where they are not. Escape puts the reader back on the line, column
-and screen they left, because closing a list is not a navigation and must not
+finds the article without knowing which order they come in. The filter, the
+selection rule and the movement are the shared list model rather than a copy
+per screen; a row keeps its browser identity, and a row that disappears leaves
+the selection on the nearest remaining position. Live rebuilds are held while
+a list is open, for the same reason the dropdown holds them: a refresh would
+replace the block list, and the block list is not the page's. The core is not
+told where the reader is standing either, since block twelve of a list of
+bookmarks is not block twelve of the tab, and a text patch aimed there would
+land where they are not. Escape puts the reader back on the line, column and
+screen they left, because closing a list is not a navigation and must not
 read as one.
 
 ### Filing one

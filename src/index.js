@@ -40,7 +40,12 @@ const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
 const { Credentials, describeChallenge, splitCredentials } = require('./auth');
-const { entryLine, matches, shortAddress, KIND_LABELS } = require('./library');
+const { entryLine, shortAddress, KIND_LABELS } = require('./library');
+const {
+  TYPEAHEAD, EXPLICIT, CLEAR_FILTER,
+  createListState, entriesOf, selectedIndex, select, setFilter, move: moveList,
+  beginFilter, filterKey, filterHint, printable: filterCharacter,
+} = require('./list_screen');
 const { resolveAddress, DEFAULT_SEARCH } = require('./address');
 const { readSettings } = require('./settings');
 const {
@@ -881,10 +886,16 @@ function hintText(state) {
   if (state.mode === 'number') return 'Follow link number — Enter: follow  g: move  Esc: cancel';
   if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
   if (state.mode === 'library') {
-    if (state.library.kind === 'messages') {
-      return `${state.library.label} — j/k: move  Enter or Esc: back to the page`;
+    const lib = state.library;
+    if (lib.kind === 'messages') {
+      return `${lib.label} — j/k: move  type: filter  Enter or Esc: back to the page`;
     }
-    return `${state.library.label} — type: filter  Enter: open  Esc: close`;
+    if (lib.policy === EXPLICIT) {
+      return lib.filtering
+        ? `${lib.label} — Filter: ${lib.filter}  Enter/Esc: browse results  Ctrl+U: clear`
+        : `${lib.label} — j/k: move  /: filter  Enter: open  Esc: close`;
+    }
+    return `${lib.label} — type: filter  Enter: open  Esc: close`;
   }
   if (state.mode === 'line') return `${state.line.label} — Enter: save  Esc: cancel`;
   if (state.mode === 'files') {
@@ -3380,6 +3391,47 @@ function chooserLines(state) {
   return first < 0 ? null : { first, last };
 }
 
+// A chooser's rows are a list like any other. Their identity is the option
+// index, which does not change while the dropdown is open, so filtering can
+// keep the reader on the same choice.
+function chooserRows(options) {
+  return options.map((option, index) => ({
+    key: `choice:${index}`,
+    text: option.text,
+    search: option.text,
+    index,
+  }));
+}
+
+function chooserEntryIndex(state) {
+  const chooser = state.chooser;
+  if (!chooser) return -1;
+  const row = chooser.selectedKey == null ? null : chooserRows(state.core.chooser.options)
+    .find((candidate) => candidate.key === chooser.selectedKey);
+  return row ? row.index : -1;
+}
+
+function chooserBlockForOption(state, optionIndex) {
+  const chooser = state.core.chooser;
+  if (!chooser || optionIndex < 0) return -1;
+  for (let index = chooser.at; index < chooser.at + chooser.count; index += 1) {
+    const block = state.core.blocks[index];
+    if (block && block.item && block.item.chooserIndex === optionIndex) return index;
+  }
+  return -1;
+}
+
+function moveChooser(state, page, action) {
+  const chooser = state.chooser;
+  if (!chooser) return;
+  const index = moveList(chooser, action, viewportHeight());
+  if (index < 0) return;
+  const optionIndex = chooserRows(state.core.chooser.options)[index].index;
+  const blockIndex = chooserBlockForOption(state, optionIndex);
+  const position = blockIndex >= 0 ? positionForBlock(state, blockIndex) : null;
+  if (position) moveSelection(state, position.line, page, position.col);
+}
+
 function openChooser(state, page, item, listing) {
   const line = state.lines[state.cursor];
   // A control in a table row shares its line with other cells, and the
@@ -3393,13 +3445,26 @@ function openChooser(state, page, item, listing) {
   // the block list and take the entries with it, mid-choice.
   state.core.live.refreshing = true;
   state.mode = 'choose';
-  state.chooser = { item, from: line ? line.blockIndex : 0 };
+  const chosen = listing.options.findIndex((option) => option.selected);
+  const list = createListState({
+    rows: chooserRows(listing.options),
+    policy: TYPEAHEAD,
+    selectedKey: chosen >= 0 ? `choice:${chosen}` : null,
+    fallbackIndex: Math.max(chosen, 0),
+  });
+  select(list);
+  state.chooser = { ...list, item, from: line ? line.blockIndex : 0 };
 
   relayout(state);
   const range = chooserLines(state);
-  const chosen = listing.options.findIndex((option) => option.selected);
-  const offset = chosen >= 0 ? state.core.chooser.shown.indexOf(chosen) : 0;
-  state.cursor = range ? Math.min(range.first + Math.max(offset, 0), range.last) : state.cursor;
+  const selected = chooserBlockForOption(state, chooserEntryIndex(state));
+  const position = selected >= 0 ? positionForBlock(state, selected) : null;
+  if (position) {
+    state.cursor = position.line;
+    state.col = position.col;
+  } else {
+    state.cursor = range ? range.first : state.cursor;
+  }
   clampScroll(state);
   render(state, page, { force: true });
   setStatus(state, `${listing.options.length} choice${listing.options.length === 1 ? '' : 's'} for "${item.name}" — type to filter, Enter to choose, Esc to cancel.`);
@@ -3422,8 +3487,9 @@ function closeChooser(state, page, { note }) {
 
 async function handleChooseKey(chunk, state, page) {
   markInput(state);
-  const chooser = state.core.chooser;
-  if (!chooser) { state.mode = 'browse'; return; }
+  const coreChooser = state.core.chooser;
+  const chooser = state.chooser;
+  if (!coreChooser || !chooser) { state.mode = 'browse'; return; }
   const contextAction = contextNavigationAction(chunk, state);
 
   if (keyIs(chunk, 'Escape', state) || contextAction === 'cancel') {
@@ -3462,42 +3528,54 @@ async function handleChooseKey(chunk, state, page) {
     return;
   }
 
+  const edit = filterKey(chooser, chunk, {
+    character: filterCharacter(chunk),
+    backspace: keyIs(chunk, 'Backspace', state),
+    clear: chunk === CLEAR_FILTER,
+  });
+  if (edit.handled) {
+    if (edit.changed) refilter(state, page, chooser.filter);
+    return;
+  }
+
   const range = chooserLines(state);
   if (keyIs(chunk, 'ArrowDown', state) || contextAction === 'next') {
-    if (range) moveSelection(state, Math.min(state.cursor + 1, range.last), page);
+    if (range) moveChooser(state, page, 'next');
     return;
   }
   if (keyIs(chunk, 'ArrowUp', state) || contextAction === 'previous') {
-    if (range) moveSelection(state, Math.max(state.cursor - 1, range.first), page);
+    if (range) moveChooser(state, page, 'previous');
     return;
   }
   if (keyIs(chunk, 'PageDown', state) || contextAction === 'page-next') {
-    if (range) moveSelection(state, Math.min(state.cursor + viewportHeight(), range.last), page);
+    if (range) moveChooser(state, page, 'page-next');
     return;
   }
   if (keyIs(chunk, 'PageUp', state) || contextAction === 'page-previous') {
-    if (range) moveSelection(state, Math.max(state.cursor - viewportHeight(), range.first), page);
+    if (range) moveChooser(state, page, 'page-previous');
     return;
   }
-  if (contextAction === 'first' && range) return moveSelection(state, range.first, page);
-  if (contextAction === 'last' && range) return moveSelection(state, range.last, page);
-
-  if (keyIs(chunk, 'Backspace', state)) {
-    refilter(state, page, chooser.filter.slice(0, -1));
-    return;
-  }
-  if (chunk.startsWith(ESC)) return; // an escape sequence we do not use here
-  if (chunk >= ' ') {
-    refilter(state, page, chooser.filter + chunk);
-    return;
-  }
+  if (contextAction === 'first' && range) return moveChooser(state, page, 'first');
+  if (contextAction === 'last' && range) return moveChooser(state, page, 'last');
 }
 
 function refilter(state, page, filter) {
+  const chooser = state.chooser;
+  const index = setFilter(chooser, filter);
   const shown = state.core.showChooser(filter);
   relayout(state);
   const range = chooserLines(state);
-  if (range) state.cursor = range.first;
+  if (index >= 0) {
+    const optionIndex = chooserRows(state.core.chooser.options)[index].index;
+    const blockIndex = chooserBlockForOption(state, optionIndex);
+    const position = blockIndex >= 0 ? positionForBlock(state, blockIndex) : null;
+    if (position) {
+      state.cursor = position.line;
+      state.col = position.col;
+    }
+  } else if (range) {
+    state.cursor = range.first;
+  }
   clampCol(state);
   clampScroll(state);
   render(state, page, { force: true });
@@ -3523,31 +3601,101 @@ function refilter(state, page, filter) {
 // page they were reading, where they were reading it.
 // ---------------------------------------------------------------------------
 
-function libraryStatus(state) {
-  const { rows, blocks, filter, empty, kind } = state.library;
-  if (empty) return filter ? `Nothing matching "${filter}".` : 'Nothing here yet.';
-  if (filter) return `${blocks.length} of ${rows.length} matching "${filter}".`;
-  if (kind === 'messages') return `${rows.length} message${rows.length === 1 ? '' : 's'}.`;
-  return `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} — type to filter.`;
+// Stable identity for a list row. A bookmark has the browser's own id; the
+// other lists have the address or file plus the time it happened. A row with
+// no identity of its own falls back to its original position, which is stable
+// while the list is open because only bookmark removal changes the rows.
+function libraryRowKey(kind, row, index) {
+  const entry = row && row.entry;
+  if (entry && kind === 'bookmarks' && entry.bookmarkId) return `bookmark:${entry.bookmarkId}`;
+  if (row && row.key) return row.key;
+  const identity = entry && (entry.url || entry.file)
+    ? `${entry.url || entry.file}\n${entry.when == null ? '' : entry.when}`
+    : (row && row.text) || '';
+  return `${kind}:${index}:${identity}`;
 }
 
-// Rebuilds the buffer from whatever the filter now admits. The reader is put
-// at the top: after a keystroke that changed which entries exist, the line
-// they were on is not the line they would be on, and staying at an index is
-// staying nowhere in particular. A caller that knows the index still means
-// the same entry — removal does — names it as `at`, and the screen row it was
-// on as `scroll`, so the list does not move under the reader.
-function showLibrary(state, page, filter, { at = 0, scroll = 0 } = {}) {
+// Whatever a screen hands over — browser entries, reference rows, messages —
+// becomes the same kind of row: a stable key, the line to draw, and what the
+// filter may read. The section and pinned row machinery is the list model's.
+function keyedRows(kind, rows) {
+  const seen = new Map();
+  return rows.map((row, index) => {
+    const base = libraryRowKey(kind, row, index);
+    const occurrence = seen.get(base) || 0;
+    seen.set(base, occurrence + 1);
+    return {
+      ...row,
+      key: occurrence ? `${base}#${occurrence}` : base,
+      search: row.search || row.text || '',
+    };
+  });
+}
+
+// One library screen: the shared list state plus this list's own metadata.
+// `rows` stays beside the sections because a single-section list is what all
+// of these are, and the deletion path replaces that one array.
+function libraryScreen({ kind, label, rows, policy = TYPEAHEAD, place }) {
+  const keyed = keyedRows(kind, rows);
+  const list = createListState({ rows: keyed, policy });
+  return {
+    ...list,
+    rows: keyed,
+    kind,
+    label,
+    blocks: [],
+    empty: false,
+    place,
+  };
+}
+
+function replaceLibraryRows(lib, rows) {
+  const keyed = keyedRows(lib.kind, rows);
+  lib.rows = keyed;
+  lib.sections = [{ key: 'rows', title: null, rows: keyed }];
+}
+
+function libraryStatus(state) {
   const lib = state.library;
-  lib.filter = filter;
-  lib.blocks = lib.rows
-    .filter((row) => matches(row.text, filter))
-    .map((row) => ({
+  const { total, shown } = { total: lib.rows.length, shown: entriesOf(lib).length };
+  if (lib.empty) return lib.filter ? `Nothing matching "${lib.filter}".` : 'Nothing here yet.';
+  if (lib.filter) {
+    return shown ? `${shown} of ${total} matching "${lib.filter}".`
+      : `Nothing matching "${lib.filter}".`;
+  }
+  if (lib.kind === 'messages') return `${total} message${total === 1 ? '' : 's'}.`;
+  if (lib.kind === 'info') return `${total} line${total === 1 ? '' : 's'} — ${filterHint(lib)}.`;
+  return `${total} entr${total === 1 ? 'y' : 'ies'} — ${filterHint(lib)}.`;
+}
+
+// Rebuilds the buffer from whatever the filter now admits. Selection is by
+// stable row key first, so narrowing the list keeps the reader on the same
+// entry; when that entry is gone, `fallbackIndex` names the nearest position
+// instead. A caller that knows the displayed entry index which still means
+// the same place — removal does — names it as `at`, and the screen row it was
+// on as `scroll`, so the list does not move under the reader.
+function showLibrary(state, page, filter, {
+  at = null, scroll = 0, fallbackIndex = null, selectedKey = null,
+} = {}) {
+  const lib = state.library;
+  if (selectedKey !== null) lib.selectedKey = selectedKey;
+  if (fallbackIndex !== null) lib.fallbackIndex = Math.max(0, fallbackIndex);
+  if (at !== null && selectedKey === null) lib.fallbackIndex = Math.max(0, at);
+  setFilter(lib, filter);
+
+  const entries = entriesOf(lib);
+  lib.blocks = entries.map((entry) => {
+    if (entry.kind === 'heading') {
+      return { text: entry.title, item: { role: 'text', name: entry.title }, entry: null };
+    }
+    const row = entry.row;
+    return {
       text: row.text,
       item: lib.kind === 'info'
         ? { role: 'text', name: row.text } : { role: 'link', name: row.text },
       entry: row.entry,
-    }));
+    };
+  });
   lib.empty = lib.blocks.length === 0;
   if (lib.empty) {
     lib.blocks = [{ text: libraryStatus(state), item: null, entry: null }];
@@ -3556,8 +3704,8 @@ function showLibrary(state, page, filter, { at = 0, scroll = 0 } = {}) {
   state.col = 0;
   state.scroll = 0;
   relayout(state);
-  const position = positionForBlock(state,
-    Math.min(Math.max(at, 0), Math.max(lib.blocks.length - 1, 0)));
+  const selected = select(lib, entries);
+  const position = selected >= 0 ? positionForBlock(state, selected) : null;
   if (position) {
     state.cursor = position.line;
     state.col = position.col;
@@ -3569,6 +3717,15 @@ function showLibrary(state, page, filter, { at = 0, scroll = 0 } = {}) {
   // asked for: it is painted on the row and not kept, so it neither lands in
   // the message buffer nor outlives the list it describes.
   paintRow(state, libraryStatus(state));
+}
+
+function moveLibrary(state, page, action) {
+  const lib = state.library;
+  const entries = entriesOf(lib);
+  const index = moveList(lib, action, viewportHeight());
+  if (index < 0) return;
+  const position = positionForBlock(state, index);
+  if (position) moveSelection(state, position.line, page, position.col);
 }
 
 // Lynx's TRACE_TOGGLE: TAWB's own private NDJSON trace, not Lynx's parser
@@ -3599,11 +3756,10 @@ async function openTraceLog(state, page) {
   const lines = traceRows(text);
   state.core.live.refreshing = true;
   state.mode = 'library';
-  state.library = {
-    kind: 'info', label: 'Trace Log', filter: '',
-    rows: lines, blocks: [], empty: false,
+  state.library = libraryScreen({
+    kind: 'info', label: 'Trace Log', rows: lines, policy: EXPLICIT,
     place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
-  };
+  });
   state.title = `Trace Log — ${file}`;
   showLibrary(state, page, '');
 }
@@ -3624,11 +3780,11 @@ function openHelp(state, page) {
   const rows = helpRows({ unsupported: state.keys.unsupported });
   state.core.live.refreshing = true;
   state.mode = 'library';
-  state.library = {
-    kind: 'info', label: 'Lynx Help', filter: '',
-    rows: rows.map((text) => ({ text, entry: null })), blocks: [], empty: false,
+  state.library = libraryScreen({
+    kind: 'info', label: 'Lynx Help',
+    rows: rows.map((text) => ({ text, entry: null })), policy: EXPLICIT,
     place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
-  };
+  });
   state.title = 'Lynx Help';
   showLibrary(state, page, '');
 }
@@ -3712,11 +3868,10 @@ function openDocumentInfo(state, page) {
   });
   state.core.live.refreshing = true;
   state.mode = 'library';
-  state.library = {
-    kind: 'info', label: 'Information about current document', filter: '',
-    rows, blocks: [], empty: false,
+  state.library = libraryScreen({
+    kind: 'info', label: 'Information about current document', rows, policy: EXPLICIT,
     place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
-  };
+  });
   state.title = 'Information about current document';
   showLibrary(state, page, '');
 }
@@ -3732,10 +3887,10 @@ function openAddressList(state, page, { kind, label, rows, empty }) {
   }
   state.core.live.refreshing = true;
   state.mode = 'library';
-  state.library = {
-    kind, label, filter: '', rows, blocks: [], empty: false,
+  state.library = libraryScreen({
+    kind, label, rows,
     place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
-  };
+  });
   state.title = `${label} — ${rows.length}`;
   showLibrary(state, page, '');
 }
@@ -3787,12 +3942,10 @@ function openLinkList(state, page, addresses = false) {
   state.core.live.refreshing = true;
   state.mode = 'library';
   const label = addresses ? 'Link addresses' : 'References';
-  state.library = {
-    kind: addresses ? 'addresses' : 'links',
-    label,
-    filter: '', rows, blocks: [], empty: false,
+  state.library = libraryScreen({
+    kind: addresses ? 'addresses' : 'links', label, rows,
     place: { cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title },
-  };
+  });
   state.title = `${label} in ${page.url()}`;
   showLibrary(state, page, '');
 }
@@ -3820,19 +3973,16 @@ async function openLibrary(state, page, kind) {
   state.core.live.refreshing = true;
   state.mode = 'library';
   const now = Date.now();
-  state.library = {
+  state.library = libraryScreen({
     kind,
     label,
-    filter: '',
     rows: entries.map((entry) => ({ text: entryLine(kind, entry, now), entry })),
-    blocks: [],
-    empty: false,
     // Where the reader was standing on the page, so closing the list is not a
     // second navigation.
     place: {
       cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title,
     },
-  };
+  });
   state.title = `${label} — ${entries.length}`;
   log('library.open', {
     kind, entries: entries.length, engine: state.driver.name, ms: Date.now() - startedAt,
@@ -3857,8 +4007,9 @@ function closeLibrary(state, page, note) {
 }
 
 async function deleteLibraryBookmark(state, page) {
-  const line = currentLine(state);
-  const at = line ? line.blockIndex : state.cursor;
+  const lib = state.library;
+  const entries = entriesOf(lib);
+  const at = Math.max(0, selectedIndex(lib, entries));
   const scroll = state.scroll;
   const block = currentBlock(state);
   const entry = block && block.entry;
@@ -3877,8 +4028,12 @@ async function deleteLibraryBookmark(state, page) {
     setStatus(state, `Could not remove the bookmark: ${reason}`);
     return;
   }
-  state.library.rows = state.library.rows.filter((row) => row.entry !== entry);
-  showLibrary(state, page, state.library.filter, { at, scroll });
+  replaceLibraryRows(lib, lib.rows.filter((row) => row.entry !== entry));
+  // The deleted row's key is gone, so the nearest remaining position is what
+  // keeps the reader on the entry that took its place.
+  showLibrary(state, page, lib.filter, {
+    selectedKey: null, fallbackIndex: at, scroll,
+  });
   setStatus(state, `Removed bookmark "${entry.title || entry.url}".`);
 }
 
@@ -3888,22 +4043,40 @@ async function handleLibraryKey(chunk, state, page) {
   if (!lib) { state.mode = 'browse'; return; }
   const lynxAction = LYNX_ACTIONS.libraryAction(state, chunk);
   const contextAction = contextNavigationAction(chunk, state);
-  const libraryAction = (state.keys || FALLBACK_KEYMAP).libraryActionFor(chunk);
+  const keymap = state.keys || FALLBACK_KEYMAP;
+  const libraryAction = keymap.libraryActionFor(chunk);
+  const movementAction = keymap.actionFor(chunk);
 
   if (lib.kind === 'options') return handleOptionsKey(chunk, state, page);
 
-  // A list is a filter box. Whatever letter the reader presses is text for
-  // the filter, even when that letter is a command out on the page: q quits a
-  // page and is a letter here, and in the Lynx interface r removes a bookmark
-  // and is a letter here too. The commands a list does have are the ones this
-  // keyboard keeps off letters — the arrows and paging keys, Enter, Backspace,
-  // Escape and Alt chords.
-  // Del is a control character the terminal happens to encode above space,
-  // and it is this list's Backspace; it is excluded here so it reaches the
-  // editing key below rather than becoming a character of the filter.
-  if (chunk >= ' ' && chunk !== '\x7f' && !chunk.startsWith(ESC)) {
-    showLibrary(state, page, lib.filter + chunk);
+  const accept = chunk === '\r' || chunk === '\n' || contextAction === 'accept';
+  const cancel = keyIs(chunk, 'Escape', state) || contextAction === 'cancel';
+  const edit = filterKey(lib, chunk, {
+    character: filterCharacter(chunk),
+    backspace: keyIs(chunk, 'Backspace', state),
+    clear: chunk === CLEAR_FILTER,
+    enter: accept,
+    escape: cancel,
+  });
+  // A typeahead list filters every printable character; a reading screen
+  // filters only after / or find-forward has opened its input. Either way the
+  // same function decides it, so a letter doing two jobs cannot drift between
+  // screens.
+  if (edit.handled) {
+    if (edit.changed || edit.ended) showLibrary(state, page, lib.filter);
     return;
+  }
+  // While an explicit filter owns the keyboard, movement and commands wait.
+  // The reader is typing, and j is a letter until Enter or Escape says it is
+  // not.
+  if (lib.policy === EXPLICIT && lib.filtering) return;
+
+  if (lib.policy === EXPLICIT && !lib.filtering) {
+    if (chunk === '/' || movementAction === 'find-forward') {
+      beginFilter(lib);
+      showLibrary(state, page, lib.filter);
+      return;
+    }
   }
 
   if (lib.kind === 'bookmarks' && libraryAction === 'delete-bookmark') {
@@ -3928,7 +4101,7 @@ async function handleLibraryKey(chunk, state, page) {
     }
   }
 
-  if (chunk === '\r' || chunk === '\n' || contextAction === 'accept') {
+  if (accept) {
     // A message is read, not opened: there is nothing behind one to go to.
     if (lib.kind === 'messages') {
       closeLibrary(state, page, null);
@@ -3972,24 +4145,27 @@ async function handleLibraryKey(chunk, state, page) {
     return;
   }
 
-  const last = state.lines.length - 1;
-  if (keyIs(chunk, 'ArrowDown', state) || contextAction === 'next') {
-    return moveSelection(state, Math.min(state.cursor + 1, last), page);
+  if (keyIs(chunk, 'ArrowDown', state) || contextAction === 'next'
+      || movementAction === 'next-line') {
+    return moveLibrary(state, page, 'next');
   }
-  if (keyIs(chunk, 'ArrowUp', state) || contextAction === 'previous') {
-    return moveSelection(state, Math.max(state.cursor - 1, 0), page);
+  if (keyIs(chunk, 'ArrowUp', state) || contextAction === 'previous'
+      || movementAction === 'previous-line') {
+    return moveLibrary(state, page, 'previous');
   }
-  if (keyIs(chunk, 'PageDown', state) || contextAction === 'page-next') return moveScreen(state, 1, page);
-  if (keyIs(chunk, 'PageUp', state) || contextAction === 'page-previous') return moveScreen(state, -1, page);
-  if (keyIs(chunk, 'Home', state) || contextAction === 'first') return moveSelection(state, 0, page);
-  if (keyIs(chunk, 'End', state) || contextAction === 'last') return moveSelection(state, last, page);
-
-  // Backspace is the one editing key a filter box needs. Everything else
-  // that reaches here is an escape sequence or control chord this list has no
-  // use for, which is the same as doing nothing.
-  if (keyIs(chunk, 'Backspace', state)) {
-    if (!lib.filter) return;
-    showLibrary(state, page, lib.filter.slice(0, -1));
+  if (keyIs(chunk, 'PageDown', state) || contextAction === 'page-next'
+      || movementAction === 'next-screen') {
+    return moveLibrary(state, page, 'page-next');
+  }
+  if (keyIs(chunk, 'PageUp', state) || contextAction === 'page-previous'
+      || movementAction === 'previous-screen') {
+    return moveLibrary(state, page, 'page-previous');
+  }
+  if (keyIs(chunk, 'Home', state) || contextAction === 'first' || movementAction === 'top') {
+    return moveLibrary(state, page, 'first');
+  }
+  if (keyIs(chunk, 'End', state) || contextAction === 'last' || movementAction === 'bottom') {
+    return moveLibrary(state, page, 'last');
   }
 }
 

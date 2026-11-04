@@ -311,7 +311,7 @@ The common Lynx commands include:
 | `V` | Links followed in this session |
 | `Backspace` / `Ctrl+H` | Documents held in this session |
 | `Alt+D` | Remove the selected bookmark while viewing bookmarks |
-| `=` | Information about the current document and selected item |
+| `=` | Information about the current document and selected item (j/k move; / filters) |
 | `o`, `O` | Lynx options menu |
 | `h`, `H`, `?` | Lynx help |
 | `F1` | Help for the control under the cursor |
@@ -449,15 +449,20 @@ copies:
 
 Typing in one of these lists filters it. Every printable character is filter
 text, including letters that are commands while reading a page — `q` in a
-list is a letter, not Quit. Press `Enter` to open the selected entry or
-`Escape` to return to the page. Out on a page, `Alt+D` uses the
-browser's own download manager, so authenticated requests, filenames, and
-download history behave as they do for an Alt-click in the graphical browser.
-Inside the bookmarks list it removes the selected bookmark instead, after
-asking. The list keeps its place: the bookmark that takes the removed one's
-place is selected, or the one before it when the last entry was removed.
-Plain letters are reserved for moving through the page, so every
-command that acts on something carries `Alt` or `Ctrl`.
+list is a letter, not Quit. `Backspace` erases, `Ctrl+U` clears the filter,
+and the row the reader was on stays selected while the filter narrows the
+list. Press `Enter` to open the selected entry or `Escape` to return to the
+page. Out on a page, `Alt+D` uses the browser's own download manager, so
+authenticated requests, filenames, and download history behave as they do for
+an Alt-click in the graphical browser. Inside the bookmarks list it removes
+the selected bookmark instead, after asking. The list keeps its place: the
+bookmark that takes the removed one's place is selected, or the one before it
+when the last entry was removed. Plain letters are reserved for moving through
+the page, so every command that acts on something carries `Alt` or `Ctrl`.
+
+The read-only information, help and trace-log pages are different: they are
+for reading, so `j` and `k` keep moving through them. Press `/` to filter one,
+then `Enter` or `Escape` to keep the narrowed rows and go back to reading.
 
 The browser's password manager remains responsible for saved credentials.
 TAWB can present its save-password prompt and identifies fields the browser

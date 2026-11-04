@@ -1,5 +1,6 @@
 require "./keys"
 require "./list_model"
+require "./list_screen"
 require "./wizard_order"
 
 module Tawb
@@ -449,17 +450,13 @@ module Tawb
         # especially j and k — remain usable while browsing the list. Enter or
         # Escape returns to navigation without discarding the narrowed results.
         if filtering
-          if key == ESC || keymap.is_key(key, "Enter")
-            filtering = false
-          elsif key == CLEAR_FILTER
-            filter = ""
-          elsif BACKSPACE.includes?(key)
-            filter = ListModel.backspace_filter(filter)
-          elsif filter_character?(key)
-            filter = ListModel.append_filter(filter, key)
-          else
-            next
-          end
+          edit = ListScreen.filter_key(
+            ListScreen::EXPLICIT, filtering, filter, key,
+            filter_character?(key), BACKSPACE.includes?(key), key == CLEAR_FILTER,
+            keymap.is_key(key, "Enter"), key == ESC)
+          next unless edit.handled
+          filter = edit.filter
+          filtering = edit.filtering
           selected_key = ListModel.selection_key(wizard_entries(keymap, filter), selected_key)
           status = filter_status(keymap, filter)
           render.call(false)

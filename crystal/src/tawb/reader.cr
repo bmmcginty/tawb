@@ -8,6 +8,7 @@ require "./lynx_session"
 require "./log"
 require "./layout"
 require "./place"
+require "./list_screen"
 
 module Tawb
   # The terminal drawing of src/index.js: the three banner rows, the reading
@@ -1673,7 +1674,14 @@ module Tawb
         library = state.library.try(&.as_h)
         label = library.try(&.["label"]?.try(&.as_s?)) || ""
         if library.try(&.["kind"]?.try(&.as_s?)) == "messages"
-          return "#{label} — j/k: move  Enter or Esc: back to the page"
+          return "#{label} — j/k: move  type: filter  Enter or Esc: back to the page"
+        end
+        if library.try(&.["policy"]?.try(&.as_s?)) == ListScreen::EXPLICIT
+          if library.try(&.["filtering"]?.try(&.as_bool?))
+            filter = library.try(&.["filter"]?.try(&.as_s?)) || ""
+            return "#{label} — Filter: #{filter}  Enter/Esc: browse results  Ctrl+U: clear"
+          end
+          return "#{label} — j/k: move  /: filter  Enter: open  Esc: close"
         end
         return "#{label} — type: filter  Enter: open  Esc: close"
       elsif mode == "line"

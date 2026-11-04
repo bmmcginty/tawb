@@ -2,9 +2,10 @@
 
 const { Keymap } = require('./keys');
 const { KeyReader, EOF } = require('./input');
+const { visibleEntries, moveKey } = require('./list_model');
 const {
-  visibleEntries, selectionKey, selectionIndex, moveKey, appendFilter, backspaceFilter,
-} = require('./list_model');
+  EXPLICIT, createListState, entriesOf, select, beginFilter, filterKey,
+} = require('./list_screen');
 const { sectionsFor } = require('./wizard_order');
 
 const ESC = '\x1b';
@@ -119,8 +120,21 @@ function wizardSections(keymap) {
   return sections;
 }
 
+// The wizard is an explicit-filter list: its movement bindings are the same
+// keymap it is editing, so j and k must keep moving until / opens the filter.
 function wizardList(keymap, filter = '') {
-  return { sections: wizardSections(keymap), pinned: pinnedRows(), filter };
+  return createListState({
+    sections: wizardSections(keymap),
+    pinned: pinnedRows(),
+    filter,
+    policy: EXPLICIT,
+  });
+}
+
+function refreshWizardList(list, keymap) {
+  list.sections = wizardSections(keymap);
+  list.pinned = pinnedRows();
+  return list;
 }
 
 // The flat view the tests and the conformance surface read. The screen itself
@@ -170,9 +184,7 @@ async function runKeyWizard({
   if (ownsReader && input.isTTY) input.setRawMode(true);
   const reader = suppliedReader || new KeyReaderClass(input);
   const original = new Map(keymap.actions.map((action) => [action.id, [...action.bindings]]));
-  let selectedKey = null;
-  let filter = '';
-  let filtering = false;
+  const list = wizardList(keymap);
   let scroll = 0;
   let status = 'Enter replaces a binding; Alt+A adds one. Press / to filter.';
   let capturing = null;
@@ -191,8 +203,8 @@ async function runKeyWizard({
   // still be on, and a filter that hid part of the screen is no longer the
   // question they are asking.
   const refocus = (key) => {
-    filter = '';
-    selectedKey = key;
+    list.filter = '';
+    list.selectedKey = key;
   };
   const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
   // Run before the reader's shutdown handler, which may exit synchronously
@@ -215,9 +227,8 @@ async function runKeyWizard({
   };
 
   const render = ({ clear = false } = {}) => {
-    const entries = visibleEntries(wizardList(keymap, filter));
-    selectedKey = selectionKey(entries, selectedKey);
-    const selected = selectionIndex(entries, selectedKey);
+    const entries = entriesOf(refreshWizardList(list, keymap));
+    const selected = select(list, entries);
     const height = Math.max(1, size(output).rows - 4);
     if (selected < scroll) scroll = selected;
     if (selected >= scroll + height) scroll = selected - height + 1;
@@ -244,10 +255,10 @@ async function runKeyWizard({
       : '';
     const hint = capturing
       ? `${capturing === 'add' ? 'Adding to' : 'Replacing'} ${selectedLabel}: press one key; Esc cancels.`
-      : filtering
-        ? `Filter: ${filter}  Enter/Esc: browse results  Ctrl+U: clear`
-        : filter
-          ? `Filter: ${filter}  /: edit  ${keyLabel('previous-line', 'Up')}/${keyLabel('next-line', 'Down')}: move`
+      : list.filtering
+        ? `Filter: ${list.filter}  Enter/Esc: browse results  Ctrl+U: clear`
+        : list.filter
+          ? `Filter: ${list.filter}  /: edit  ${keyLabel('previous-line', 'Up')}/${keyLabel('next-line', 'Down')}: move`
             + `  ${keyLabel('quit', 'Escape')}: exit`
           : `${keyLabel('previous-line', 'Up')}/${keyLabel('next-line', 'Down')}: move`
             + `  ${keyLabel('activate', 'Enter')}: replace  Alt+A: add`
@@ -279,8 +290,8 @@ async function runKeyWizard({
     // moves to that prompt instead, so a screen reader does not keep reporting
     // a list item whose binding is not receiving the key. This must be the
     // final write.
-    if (filtering) {
-      move(output, 2, Math.min(`Filter: ${filter}`.length + 1, size(output).cols));
+    if (list.filtering) {
+      move(output, 2, Math.min(`Filter: ${list.filter}`.length + 1, size(output).cols));
     } else if (capturing || pending || saving) {
       move(output, size(output).rows, Math.min(status.length + 1, size(output).cols));
     } else {
@@ -349,10 +360,8 @@ async function runKeyWizard({
       // The keyboard has gone. Nothing typed here has been written yet, so
       // the wizard leaves the keymap as it found it.
       if (key === EOF) { restore(); break; }
-      const list = wizardList(keymap, filter);
-      const entries = visibleEntries(list);
-      selectedKey = selectionKey(entries, selectedKey);
-      const selected = selectionIndex(entries, selectedKey);
+      const entries = entriesOf(refreshWizardList(list, keymap));
+      const selected = select(list, entries);
       const entry = selected >= 0 ? entries[selected] : null;
       const row = entry ? entry.row : null;
 
@@ -407,20 +416,16 @@ async function runKeyWizard({
       // Filtering is an explicit input mode so printable movement bindings —
       // especially j and k — remain usable while browsing the list. Enter or
       // Escape returns to navigation without discarding the narrowed results.
-      if (filtering) {
-        if (key === ESC || keymap.isKey(key, 'Enter')) {
-          filtering = false;
-        } else if (key === CLEAR_FILTER) {
-          filter = '';
-        } else if (BACKSPACE.has(key)) {
-          filter = backspaceFilter(filter);
-        } else if (isFilterCharacter(key)) {
-          filter = appendFilter(filter, key);
-        } else {
-          continue;
-        }
-        selectedKey = selectionKey(visibleEntries(wizardList(keymap, filter)), selectedKey);
-        status = filterStatus(keymap, filter);
+      if (list.filtering) {
+        const edit = filterKey(list, key, {
+          character: isFilterCharacter(key),
+          backspace: BACKSPACE.has(key),
+          clear: key === CLEAR_FILTER,
+          enter: keymap.isKey(key, 'Enter'),
+          escape: key === ESC,
+        });
+        if (!edit.handled) continue;
+        status = filterStatus(keymap, list.filter);
         render();
         continue;
       }
@@ -443,8 +448,8 @@ async function runKeyWizard({
       // browser does the same thing to this list.
       const action = wizardAction(key);
       if (key === '/' || action === 'find-forward') {
-        filtering = true;
-        status = filterStatus(keymap, filter);
+        beginFilter(list);
+        status = filterStatus(keymap, list.filter);
         render();
         continue;
       }
@@ -452,7 +457,7 @@ async function runKeyWizard({
       const movement = MOVE_ACTIONS[action];
 
       if (movement) {
-        selectedKey = moveKey(entries, selectedKey, movement, screen);
+        list.selectedKey = moveKey(entries, list.selectedKey, movement, screen);
       } else if (action === 'where') {
         status = `Item ${selected + 1} of ${entries.length} — ${entryText(entry, keymap)}.`;
       } else if (action === 'activate') {

@@ -51,6 +51,24 @@ test('browser bookmarks open, filter, and close back at the page', { skip }, asy
   assert.equal(result.state.statusMsg, 'Closed bookmarks.');
 });
 
+test('a narrower filter keeps the native cursor on the same entry', { skip }, async () => {
+  const result = await both('filter keeps place', state({}, {
+    history: [
+      { title: 'Braille', url: 'https://example.test/braille' },
+      { title: 'Politics', url: 'https://example.test/politics' },
+      { title: 'Louis Braille', url: 'https://example.test/louis' },
+    ],
+  }), [
+    { op: 'browseKey', chunk: 'H' },
+    { op: 'libraryKey', chunk: '\x1b[B' },
+    { op: 'libraryKey', chunk: '\x1b[B' },
+    { op: 'libraryKey', chunk: 'b' },
+  ], false);
+  assert.equal(result.state.cursor, 1);
+  assert.match(result.state.lines[1].text, /^Louis Braille/);
+  assert.equal(result.state.lines.length, 2);
+});
+
 test('Alt+D removes the selected bookmark from the bookmarks list', { skip }, async () => {
   const result = await both('delete bookmark', state({}, {
     bookmarks: [
@@ -122,6 +140,32 @@ test('a printable letter filters a Lynx list instead of quitting', { skip }, asy
     { op: 'libraryKey', chunk: '\x7f' },
   ], false);
   assert.equal(erased.state.library.rows.length, 1);
+});
+
+test('information moves with j instead of filtering on it', { skip }, async () => {
+  const result = await both('info movement', state(), [
+    { op: 'openDocumentInfo' },
+    { op: 'libraryKey', chunk: 'j' },
+  ], false);
+  assert.equal(result.state.mode, 'library');
+  assert.equal(result.state.cursor, 1);
+  assert.equal(result.state.library.rows.length, 5);
+  assert.equal(result.state.lines[1].text, 'Linkname: Example');
+});
+
+test('information is filtered explicitly with slash', { skip }, async () => {
+  const result = await both('info explicit filter', state(), [
+    { op: 'openDocumentInfo' },
+    { op: 'libraryKey', chunk: '/' },
+    { op: 'libraryKey', chunk: 's' },
+    { op: 'libraryKey', chunk: 'i' },
+    { op: 'libraryKey', chunk: 'z' },
+    { op: 'libraryKey', chunk: 'e' },
+    { op: 'libraryKey', chunk: '\r' },
+  ], false);
+  assert.equal(result.state.mode, 'library');
+  assert.equal(result.state.lines[0].text.includes('size:'), true);
+  assert.equal(result.state.drawn.status, '1 of 5 matching "size".');
 });
 
 test('browser library failures are spoken without leaving the page', { skip }, async () => {

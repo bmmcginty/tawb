@@ -1606,6 +1606,8 @@ function readerImplementations(index, keysModule) {
       }
       case 'fileToAttach':
         return index.fileToAttach(action.text ?? '');
+      case 'openDocumentInfo':
+        index.openDocumentInfo(state, page); return undefined;
       case 'findKey':
         index.handleFindKey(action.chunk, state, page); return undefined;
       case 'findText': {

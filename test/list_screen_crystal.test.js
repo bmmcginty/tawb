@@ -36,8 +36,9 @@ test('native filter policy matches for every input shape', { skip }, () => {
       character: !!flags.character, backspace: !!flags.backspace,
       clear: !!flags.clear, enter: !!flags.enter, escape: !!flags.escape,
     });
-    assert.deepEqual(actual, expected,
-      `${policy}/${filtering} ${JSON.stringify(filter)} ${JSON.stringify(chunk)}`);
+    assert.deepEqual({
+      handled: actual.handled, changed: actual.changed, ended: actual.ended,
+    }, expected, `${policy}/${filtering} ${JSON.stringify(filter)} ${JSON.stringify(chunk)}`);
     assert.equal(list.filter, actual.filter);
     assert.equal(list.filtering, actual.filtering);
   }

@@ -2794,6 +2794,8 @@ module Tawb
           action["refused"]?.try(&.as_bool?) || false)
         answered = answer.as?(JSON::Any)
         return JSON::Any.new(answered ? answered.raw : nil)
+      when "openDocumentInfo"
+        ReaderKeys.open_document_info(output, state, page.not_nil!)
       when "findKey"
         ReaderKeys.handle_find_key(output, state, page_url, action["chunk"].as_s)
       when "findText"

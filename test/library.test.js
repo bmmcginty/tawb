@@ -447,6 +447,59 @@ test('typing filters the list, and backspace puts back what it removed', async (
   assert.equal(state.lines.length, 1);
 });
 
+test('narrowing a list keeps the reader on the same entry', async () => {
+  const state = readerAt(HISTORY);
+  await quietly(() => openLibrary(state, PAGE, 'history'));
+  for (let press = 0; press < 2; press += 1) {
+    await quietly(() => handleLibraryKey('\x1b[B', state, PAGE));
+  }
+  assert.match(state.lines[state.cursor].text, /^Louis Braille/);
+
+  await typeInto(state, 'braille');
+  // Both Braille entries still match, and the one the reader was on is the
+  // one they are still on.
+  assert.equal(state.lines.length, 2);
+  assert.match(state.lines[state.cursor].text, /^Louis Braille/);
+});
+
+test('Ctrl+U clears a typeahead filter and keeps the selected row', async () => {
+  const state = readerAt(HISTORY);
+  await quietly(() => openLibrary(state, PAGE, 'history'));
+  await typeInto(state, 'louis');
+  assert.equal(state.library.filter, 'louis');
+  await quietly(() => handleLibraryKey('\x15', state, PAGE));
+  assert.equal(state.library.filter, '');
+  assert.match(state.lines[state.cursor].text, /^Louis Braille/);
+});
+
+test('information is read with movement keys and filtered explicitly', async () => {
+  const state = readerAt(HISTORY);
+  await quietly(() => openDocumentInfo(state, PAGE));
+  assert.equal(state.library.policy, 'explicit');
+  assert.equal(state.library.filter, '');
+
+  const before = state.cursor;
+  await quietly(() => handleLibraryKey('j', state, PAGE));
+  assert.equal(state.cursor, before + 1, 'j moved through the information');
+  assert.equal(state.library.filter, '', 'j did not become filter text');
+
+  await quietly(() => handleLibraryKey('/', state, PAGE));
+  assert.equal(state.library.filtering, true);
+  await typeInto(state, 'size');
+  assert.equal(state.library.filtering, true);
+  assert.equal(state.library.filter, 'size');
+  assert.match(state.lines[0].text, /size:/);
+
+  await quietly(() => handleLibraryKey('\x15', state, PAGE));
+  assert.equal(state.library.filter, '');
+  assert.equal(state.library.filtering, true, 'Ctrl+U clears without leaving the input');
+  await typeInto(state, 'size');
+  await quietly(() => handleLibraryKey('\r', state, PAGE));
+  assert.equal(state.library.filtering, false);
+  assert.equal(state.library.filter, 'size', 'Enter keeps the narrowed results');
+  assert.match(state.lines[0].text, /size:/);
+});
+
 test('a filter that matches nothing says so instead of showing an empty screen', async () => {
   const state = readerAt(HISTORY);
   await quietly(() => openLibrary(state, PAGE, 'history'));

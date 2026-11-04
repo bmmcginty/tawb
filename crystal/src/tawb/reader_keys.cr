@@ -10,6 +10,7 @@ require "./keys"
 require "./input"
 require "./interfaces"
 require "./library"
+require "./list_screen"
 require "./lynx_pages"
 require "./lynx_options_screen"
 require "./lynx_settings"
@@ -873,6 +874,65 @@ module Tawb
       {first: first, last: last}
     end
 
+    # The chooser's rows are the shared list state too. Their identity is the
+    # option index, which does not change while the dropdown is open, so
+    # filtering can keep the reader on the same choice.
+    def self.chooser_rows(object : Hash(String, JSON::Any)) : Array(JSON::Any)
+      sections = object["sections"]?.try(&.as_a?) || [] of JSON::Any
+      sections.flat_map do |section|
+        section.as_h["rows"]?.try(&.as_a?) || [] of JSON::Any
+      end
+    end
+
+    def self.chooser_entries(object : Hash(String, JSON::Any),
+                             filter : String) : Array(ListModel::Entry(JSON::Any))
+      chooser_rows(object).select do |row|
+        fields = row.as_h
+        harvest = fields["search"]?.try(&.as_s?) || fields["text"]?.try(&.as_s?) || ""
+        ListModel.matches?(harvest, filter)
+      end.map do |row|
+        ListModel::Entry(JSON::Any).new("row", row.as_h["key"].as_s, nil, row)
+      end
+    end
+
+    def self.chooser_block_index(state : Reader::State, option_index : Int32) : Int32
+      chooser = state.core.chooser.try(&.as_h) || return -1
+      at = (chooser["at"]?.try(&.as_i64?) || 0).to_i32
+      count = (chooser["count"]?.try(&.as_i64?) || 0).to_i32
+      (at...(at + count)).each do |index|
+        block = state.core.blocks[index]?
+        item = block.try(&.as_h).try(&.["item"]?).try(&.as_h)
+        next unless item
+        if (item["chooserIndex"]?.try(&.as_i64?) || -1).to_i32 == option_index
+          return index
+        end
+      end
+      -1
+    end
+
+    def self.move_chooser(output : Screen::Output, state : Reader::State,
+                          page : Reader::PageEnv, action : String) : Nil
+      object = state.chooser.try(&.as_h) || return
+      filter = object["filter"]?.try(&.as_s?) || ""
+      entries = chooser_entries(object, filter)
+      index = select_list(object, entries)
+      return if index < 0
+      key = ListModel.move_key(entries, object["selectedKey"]?.try(&.as_s?),
+        action, Reader.viewport_height(state))
+      object["selectedKey"] = key ? JSON::Any.new(key) : JSON::Any.new(nil)
+      moved = ListModel.selection_index(entries, key)
+      object["fallbackIndex"] = JSON::Any.new(Math.max(moved, 0).to_i64)
+      return if moved < 0
+      row = entries[moved].row.not_nil!.as_h
+      option_index = (row["index"]?.try(&.as_i64?) || 0).to_i32
+      block_index = chooser_block_index(state, option_index)
+      if block_index >= 0
+        if position = Reader.position_for_block(state, block_index)
+          Reader.move_selection(output, state, page.url, position[:line], position[:col])
+        end
+      end
+    end
+
     def self.open_chooser(output : Screen::Output, state : Reader::State,
                           page : Reader::PageEnv, item : JSON::Any, listing : JSON::Any) : Nil
       line = Reader.current_line(state)
@@ -896,22 +956,52 @@ module Tawb
         end
       end
       state.mode = "choose"
-      state.chooser = JSON::Any.new({
+      options = listing.as_h["options"]?.try(&.as_a?) || [] of JSON::Any
+      rows = options.map_with_index do |option, index|
+        fields = option.as_h? || {} of String => JSON::Any
+        text = fields["text"]?.try(&.as_s?) || ""
+        JSON::Any.new({
+          "key" => JSON::Any.new("choice:#{index}"),
+          "text" => JSON::Any.new(text),
+          "search" => JSON::Any.new(text),
+          "index" => JSON::Any.new(index.to_i64),
+        })
+      end
+      chosen = options.index { |option| option.as_h?.try(&.["selected"]?).try(&.as_bool?) }
+      object = {
         "item" => item,
         "from" => JSON::Any.new((line ? line.block_index : 0).to_i64),
-      })
-
+        "sections" => JSON::Any.new([
+          JSON::Any.new({
+            "key" => JSON::Any.new("rows"), "title" => JSON::Any.new(nil),
+            "rows" => JSON::Any.new(rows),
+          }),
+        ]),
+        "pinned" => JSON::Any.new([] of JSON::Any),
+        "filter" => JSON::Any.new(""),
+        "policy" => JSON::Any.new(ListScreen::TYPEAHEAD),
+        "selectedKey" => chosen ? JSON::Any.new("choice:#{chosen.not_nil!}") : JSON::Any.new(nil),
+        "fallbackIndex" => JSON::Any.new(Math.max(chosen || 0, 0).to_i64),
+        "filtering" => JSON::Any.new(false),
+      }
+      state.chooser = JSON::Any.new(object)
+      entries = chooser_entries(object, "")
+      selected = select_list(object, entries)
       Reader.relayout(state)
       range = chooser_lines(state)
-      options = listing.as_h["options"]?.try(&.as_a?) || [] of JSON::Any
-      chosen = options.index { |option| option.as_h?.try(&.["selected"]?).try(&.as_bool?) }
-      shown = state.core.chooser.try(&.as_h).try(&.["shown"]?).try(&.as_a?) || [] of JSON::Any
-      offset = if chosen
-                 shown.index(JSON::Any.new(chosen.not_nil!.to_i64)) || 0
-               else
-                 0
-               end
-      state.cursor = range ? Math.min(range[:first] + Math.max(offset, 0), range[:last]) : state.cursor
+      if selected >= 0
+        row = entries[selected].row.not_nil!.as_h
+        option_index = (row["index"]?.try(&.as_i64?) || 0).to_i32
+        block_index = chooser_block_index(state, option_index)
+        if block_index >= 0
+          if position = Reader.position_for_block(state, block_index)
+            state.cursor = position[:line]
+            state.col = position[:col]
+          end
+        end
+      elsif range
+        state.cursor = range[:first]
+      end
       Reader.clamp_scroll(state)
       Reader.render(output, state, page.url, force: true)
       count = options.size
@@ -956,6 +1046,20 @@ module Tawb
         return
       end
 
+      chooser_object = state.chooser.try(&.as_h)
+      if chooser_object
+        filter = chooser_object["filter"]?.try(&.as_s?) || ""
+        edit = ListScreen.filter_key(
+          ListScreen::TYPEAHEAD, false, filter, chunk,
+          ListScreen.printable?(chunk), key_is(chunk, "Backspace", state),
+          chunk == ListScreen::CLEAR_FILTER, false, false)
+        if edit.handled
+          chooser_object["filter"] = JSON::Any.new(edit.filter)
+          refilter(output, state, page, edit.filter) if edit.changed
+          return
+        end
+      end
+
       if chunk == "\r" || chunk == "\n" || action == "accept"
         line = Reader.current_line(state)
         block_item = line.try do |entry|
@@ -995,51 +1099,58 @@ module Tawb
 
       range = chooser_lines(state)
       if key_is(chunk, "ArrowDown", state) || action == "next"
-        Reader.move_selection(output, state, page.url, Math.min(state.cursor + 1, range[:last]), 0) if range
+        move_chooser(output, state, page, "next") if range
         return
       end
       if key_is(chunk, "ArrowUp", state) || action == "previous"
-        Reader.move_selection(output, state, page.url, Math.max(state.cursor - 1, range[:first]), 0) if range
+        move_chooser(output, state, page, "previous") if range
         return
       end
       if key_is(chunk, "PageDown", state) || action == "page-next"
-        if range
-          Reader.move_selection(output, state, page.url,
-            Math.min(state.cursor + Reader.viewport_height(state), range[:last]), 0)
-        end
+        move_chooser(output, state, page, "page-next") if range
         return
       end
       if key_is(chunk, "PageUp", state) || action == "page-previous"
-        if range
-          Reader.move_selection(output, state, page.url,
-            Math.max(state.cursor - Reader.viewport_height(state), range[:first]), 0)
-        end
+        move_chooser(output, state, page, "page-previous") if range
         return
       end
       if action == "first" && range
-        Reader.move_selection(output, state, page.url, range[:first], 0)
+        move_chooser(output, state, page, "first")
         return
       end
       if action == "last" && range
-        Reader.move_selection(output, state, page.url, range[:last], 0)
+        move_chooser(output, state, page, "last")
         return
       end
-
-      filter = chooser.as_h["filter"]?.try(&.as_s?) || ""
-      if key_is(chunk, "Backspace", state)
-        refilter(output, state, page, filter.size > 0 ? filter[0, filter.size - 1] : "")
-        return
-      end
-      return if chunk.starts_with?(ESC) # an escape sequence we do not use here
-      refilter(output, state, page, filter + chunk) if chunk >= " "
     end
 
     def self.refilter(output : Screen::Output, state : Reader::State,
                       page : Reader::PageEnv, filter : String) : Nil
+      object = state.chooser.try(&.as_h) || return
+      old_filter = object["filter"]?.try(&.as_s?) || ""
+      old_index = ListModel.selection_index(chooser_entries(object, old_filter),
+        object["selectedKey"]?.try(&.as_s?),
+        object["fallbackIndex"]?.try(&.as_i64?).try(&.to_i32))
+      object["fallbackIndex"] = JSON::Any.new(old_index.to_i64) if old_index >= 0
+      object["filter"] = JSON::Any.new(filter)
+      entries = chooser_entries(object, filter)
+      selected = select_list(object, entries)
       shown = state.core.show_chooser(filter)
       Reader.relayout(state)
       range = chooser_lines(state)
-      state.cursor = range[:first] if range
+      if selected >= 0
+        row = entries[selected].row.not_nil!.as_h
+        option_index = (row["index"]?.try(&.as_i64?) || 0).to_i32
+        block_index = chooser_block_index(state, option_index)
+        if block_index >= 0
+          if position = Reader.position_for_block(state, block_index)
+            state.cursor = position[:line]
+            state.col = position[:col]
+          end
+        end
+      elsif range
+        state.cursor = range[:first]
+      end
       Reader.clamp_col(state)
       Reader.clamp_scroll(state)
       Reader.render(output, state, page.url, force: true)
@@ -1533,7 +1644,8 @@ module Tawb
         end
         reader.logger.flush
         rows = LynxPages.trace_rows(File.read(path))
-        ReaderKeys.open_internal_rows(@output, reader, page, "info", "Trace Log", rows)
+        ReaderKeys.open_internal_rows(@output, reader, page, "info", "Trace Log", rows,
+          policy: ListScreen::EXPLICIT, title: "Trace Log")
         reader.title = "Trace Log — #{path}"
         Reader.draw_title(@output, reader, true)
       rescue error
@@ -1681,7 +1793,8 @@ module Tawb
                             page : Reader::PageEnv) : Nil
       unsupported = reader.keys.try(&.unsupported) || [] of String
       rows = LynxPages.help_rows(unsupported).map { |text| LynxPages::Row.new(text, nil) }
-      open_internal_rows(output, reader, page, "info", "Lynx Help", rows)
+      open_internal_rows(output, reader, page, "info", "Lynx Help", rows,
+        policy: ListScreen::EXPLICIT, title: "Lynx Help")
     end
 
     # DWIMHELP: the one-line description of what is under the cursor.
@@ -2513,6 +2626,76 @@ module Tawb
     # Browser libraries
     # ------------------------------------------------------------------
 
+    # Stable identity for a list row. A bookmark has the browser's own id;
+    # the other lists have the address or file plus the time it happened. A
+    # row with no identity of its own falls back to its original position,
+    # which is stable while the list is open because only bookmark removal
+    # changes the rows.
+    def self.library_row_key(kind : String, row : JSON::Any, index : Int32) : String
+      object = row.as_h
+      entry = object["entry"]?
+      entry = nil if entry && entry.raw.nil?
+      if kind == "bookmarks" && entry
+        if id = entry.as_h["bookmarkId"]?.try(&.as_s?)
+          return "bookmark:#{id}" unless id.empty?
+        end
+      end
+      if given = object["key"]?.try(&.as_s?)
+        return given unless given.empty?
+      end
+      identity = if entry
+        fields = entry.as_h
+        url = fields["url"]?.try(&.as_s?) || fields["file"]?.try(&.as_s?) || ""
+        when_value = fields["when"]?.try(&.as_i64?)
+        "#{url}\n#{when_value || ""}"
+      else
+        object["text"]?.try(&.as_s?) || ""
+      end
+      "#{kind}:#{index}:#{identity}"
+    end
+
+    def self.keyed_library_rows(kind : String, rows : Array(JSON::Any)) : Array(JSON::Any)
+      seen = Hash(String, Int32).new(0)
+      rows.map_with_index do |row, index|
+        base = library_row_key(kind, row, index)
+        occurrence = seen[base]? || 0
+        seen[base] = occurrence + 1
+        key = occurrence > 0 ? "#{base}##{occurrence}" : base
+        fields = row.as_h.dup
+        fields["key"] = JSON::Any.new(key)
+        fields["search"] = fields["search"]? || JSON::Any.new(fields["text"]?.try(&.as_s?) || "")
+        JSON::Any.new(fields)
+      end
+    end
+
+    # The rows the filter admits, as shared-list entries. The key is the row's
+    # stable identity; the row itself stays JSON so it can carry the entry
+    # object the screen activates.
+    def self.library_entries(object : Hash(String, JSON::Any),
+                             filter : String) : Array(ListModel::Entry(JSON::Any))
+      rows = object["rows"]?.try(&.as_a?) || [] of JSON::Any
+      rows.select do |row|
+        fields = row.as_h
+        harvest = fields["search"]?.try(&.as_s?) || fields["text"]?.try(&.as_s?) || ""
+        Library.matches?(harvest, filter)
+      end.map do |row|
+        key = row.as_h["key"]?.try(&.as_s?) || ""
+        ListModel::Entry(JSON::Any).new("row", key, nil, row)
+      end
+    end
+
+    # Settle the list selection against the rows which exist now. A stable key
+    # wins while it is visible; otherwise the nearest position is used.
+    def self.select_list(object : Hash(String, JSON::Any),
+                            entries : Array(ListModel::Entry(JSON::Any))) : Int32
+      fallback = object["fallbackIndex"]?.try(&.as_i64?).try(&.to_i32)
+      key = ListModel.selection_key(entries, object["selectedKey"]?.try(&.as_s?), fallback)
+      object["selectedKey"] = key ? JSON::Any.new(key) : JSON::Any.new(nil)
+      index = ListModel.selection_index(entries, key)
+      object["fallbackIndex"] = JSON::Any.new(Math.max(index, 0).to_i64)
+      index
+    end
+
     # What the list has to say about itself, which is also the message the row
     # carries while the list is open: how many entries there are, how many of
     # them the filter admits, or that nothing is left.
@@ -2520,29 +2703,54 @@ module Tawb
       kind = object["kind"]?.try(&.as_s?) || ""
       total = object["rows"].as_a.size
       filter = object["filter"]?.try(&.as_s?) || ""
+      policy = object["policy"]?.try(&.as_s?) || ListScreen::TYPEAHEAD
+      filtering = object["filtering"]?.try(&.as_bool?) || false
       if count.zero?
         return filter.empty? ? "Nothing here yet." : "Nothing matching \"#{filter}\"."
       end
       return "#{count} of #{total} matching \"#{filter}\"." unless filter.empty?
       return "#{total} message#{"s" unless total == 1}." if kind == "messages"
-      "#{total} entr#{total == 1 ? "y" : "ies"} — type to filter."
+      hint = ListScreen.filter_hint(policy, filtering)
+      if kind == "info"
+        return "#{total} line#{"s" unless total == 1} — #{hint}."
+      end
+      "#{total} entr#{total == 1 ? "y" : "ies"} — #{hint}."
     end
 
-    # A caller that knows the index still means the same entry — removal
-    # does — names it as `at`, and the screen row it was on as `scroll`, so
-    # the list does not move under the reader.
+    # A caller that knows the displayed entry index which still means the same
+    # place — removal does — names it as `at`, and the screen row it was on as
+    # `scroll`, so the list does not move under the reader.
     def self.show_library(output : Screen::Output, state : Reader::State,
                           page : Reader::PageEnv, filter : String,
-                          at : Int32 = 0, scroll : Int32 = 0) : Nil
+                          at : Int32? = nil, scroll : Int32 = 0,
+                          selected_key : String? = nil,
+                          fallback_index : Int32? = nil) : Nil
       library = state.library || return
       object = library.as_h
-      object["filter"] = JSON::Any.new(filter)
-      rows = object["rows"].as_a.select do |row|
-        Library.matches?(row.as_h["text"].as_s, filter)
+      if selected_key
+        object["selectedKey"] = JSON::Any.new(selected_key)
+      elsif at
+        object["fallbackIndex"] = JSON::Any.new(at.to_i64)
       end
-      blocks = rows.map do |row|
-        JSON::Any.new({"text" => row.as_h["text"],
-                       "entry" => row.as_h["entry"]? || JSON::Any.new(nil)})
+      if fallback_index
+        object["fallbackIndex"] = JSON::Any.new(fallback_index.to_i64)
+      end
+      # The old selected position is the fallback for a filter that hides the
+      # row the reader was on. It is read before the filter changes.
+      unless at || fallback_index || selected_key
+        old_filter = object["filter"]?.try(&.as_s?) || ""
+        old_index = ListModel.selection_index(library_entries(object, old_filter),
+          object["selectedKey"]?.try(&.as_s?),
+          object["fallbackIndex"]?.try(&.as_i64?).try(&.to_i32))
+        object["fallbackIndex"] = JSON::Any.new(old_index.to_i64) if old_index >= 0
+      end
+      object["filter"] = JSON::Any.new(filter)
+      entries = library_entries(object, filter)
+      selected = select_list(object, entries)
+      blocks = entries.map do |entry|
+        row = entry.row.not_nil!.as_h
+        JSON::Any.new({"text" => row["text"],
+                       "entry" => row["entry"]? || JSON::Any.new(nil)})
       end
       if blocks.empty?
         blocks = [JSON::Any.new({"text" => JSON::Any.new(library_status(object, 0)),
@@ -2553,10 +2761,11 @@ module Tawb
       state.col = 0
       state.scroll = 0
       Reader.relayout(state)
-      wanted = Math.min(Math.max(at, 0), Math.max(object["blocks"].as_a.size - 1, 0))
-      if position = Reader.position_for_block(state, wanted)
-        state.cursor = position[:line]
-        state.col = position[:col]
+      if selected >= 0
+        if position = Reader.position_for_block(state, selected)
+          state.cursor = position[:line]
+          state.col = position[:col]
+        end
       end
       state.scroll = scroll
       Reader.clamp_scroll(state)
@@ -2564,12 +2773,33 @@ module Tawb
       # The count is furniture for this screen rather than something the reader
       # asked for: it is painted on the row and not kept, so it neither lands in
       # the message buffer nor outlives the list it describes.
-      Reader.paint_row(output, state, page.url, library_status(object, rows.size))
+      Reader.paint_row(output, state, page.url, library_status(object, entries.size))
+    end
+
+    def self.move_library(output : Screen::Output, state : Reader::State,
+                          page : Reader::PageEnv, action : String) : Nil
+      library = state.library || return
+      object = library.as_h
+      filter = object["filter"]?.try(&.as_s?) || ""
+      entries = library_entries(object, filter)
+      index = select_list(object, entries)
+      return if index < 0
+      key = ListModel.move_key(entries, object["selectedKey"]?.try(&.as_s?),
+        action, Reader.viewport_height(state))
+      object["selectedKey"] = key ? JSON::Any.new(key) : JSON::Any.new(nil)
+      moved = ListModel.selection_index(entries, key)
+      object["fallbackIndex"] = JSON::Any.new(Math.max(moved, 0).to_i64)
+      return if moved < 0
+      if position = Reader.position_for_block(state, moved)
+        Reader.move_selection(output, state, page.url, position[:line], position[:col])
+      end
     end
 
     def self.open_internal_rows(output : Screen::Output, state : Reader::State,
                                         page : Reader::PageEnv, kind : String, label : String,
-                                        rows : Array(LynxPages::Row), empty : String? = nil) : Nil
+                                        rows : Array(LynxPages::Row), empty : String? = nil,
+                                        policy : String = ListScreen::TYPEAHEAD,
+                                        title : String? = nil) : Nil
       if rows.empty? && empty
         Reader.set_status(output, state, page.url, empty)
         return
@@ -2578,9 +2808,13 @@ module Tawb
         JSON::Any.new({"text" => JSON::Any.new(row.text),
                        "entry" => row.entry || JSON::Any.new(nil)})
       end
+      keyed = keyed_library_rows(kind, encoded)
       state.library = JSON::Any.new({
         "kind" => JSON::Any.new(kind), "label" => JSON::Any.new(label),
-        "filter" => JSON::Any.new(""), "rows" => JSON::Any.new(encoded),
+        "filter" => JSON::Any.new(""), "policy" => JSON::Any.new(policy),
+        "filtering" => JSON::Any.new(false),
+        "selectedKey" => JSON::Any.new(nil), "fallbackIndex" => JSON::Any.new(0_i64),
+        "rows" => JSON::Any.new(keyed),
         "blocks" => JSON::Any.new([] of JSON::Any),
         "place" => JSON::Any.new({
           "cursor" => JSON::Any.new(state.cursor.to_i64), "col" => JSON::Any.new(state.col.to_i64),
@@ -2589,7 +2823,7 @@ module Tawb
       })
       set_live_value(state, "refreshing", JSON::Any.new(true))
       state.mode = "library"
-      state.title = "#{label} — #{rows.size}"
+      state.title = title || "#{label} — #{rows.size}"
       show_library(output, state, page, "")
     end
 
@@ -2627,15 +2861,17 @@ module Tawb
         Reader.set_status(output, state, page.url, "No references in this document.")
         return
       end
+      label = addresses ? "Link addresses" : "References"
       open_internal_rows(output, state, page, addresses ? "addresses" : "links",
-        addresses ? "Link addresses" : "References", rows)
+        label, rows, title: "#{label} in #{page.url}")
     end
 
     def self.open_document_info(output : Screen::Output, state : Reader::State,
                                 page : Reader::PageEnv) : Nil
       rows = LynxPages.document_info_rows(state.title, page.url, state.core.source,
         state.lines.size.to_i64, Reader.item_under_cursor(state))
-      open_internal_rows(output, state, page, "info", "Information about current document", rows)
+      open_internal_rows(output, state, page, "info", "Information about current document", rows,
+        policy: ListScreen::EXPLICIT, title: "Information about current document")
     end
 
     def self.open_library(output : Screen::Output, state : Reader::State,
@@ -2660,9 +2896,13 @@ module Tawb
         JSON::Any.new({"text" => JSON::Any.new(Library.entry_line(kind, entry)),
                        "entry" => entry})
       end
+      keyed = keyed_library_rows(kind, rows)
       state.library = JSON::Any.new({
         "kind" => JSON::Any.new(kind), "label" => JSON::Any.new(label),
-        "filter" => JSON::Any.new(""), "rows" => JSON::Any.new(rows),
+        "filter" => JSON::Any.new(""), "policy" => JSON::Any.new(ListScreen::TYPEAHEAD),
+        "filtering" => JSON::Any.new(false),
+        "selectedKey" => JSON::Any.new(nil), "fallbackIndex" => JSON::Any.new(0_i64),
+        "rows" => JSON::Any.new(keyed),
         "blocks" => JSON::Any.new([] of JSON::Any),
         "place" => JSON::Any.new({
           "cursor" => JSON::Any.new(state.cursor.to_i64), "col" => JSON::Any.new(state.col.to_i64),
@@ -2880,39 +3120,76 @@ module Tawb
       end
       object = library.as_h
       label = object["label"].as_s
+      policy = object["policy"]?.try(&.as_s?) || ListScreen::TYPEAHEAD
+      filtering = object["filtering"]?.try(&.as_bool?) || false
+      filter = object["filter"]?.try(&.as_s?) || ""
+      context_action = context_action(chunk, state)
+      accept = chunk == "\r" || chunk == "\n" || context_action == "accept"
+      cancel = key_is(chunk, "Escape", state) || context_action == "cancel"
+      edit = ListScreen.filter_key(
+        policy, filtering, filter, chunk,
+        ListScreen.printable?(chunk), key_is(chunk, "Backspace", state),
+        chunk == ListScreen::CLEAR_FILTER, accept, cancel)
+      if edit.handled
+        object["filter"] = JSON::Any.new(edit.filter)
+        object["filtering"] = JSON::Any.new(edit.filtering)
+        show_library(output, state, page, edit.filter) if edit.changed || edit.ended
+        return nil
+      end
+      # While an explicit filter owns the keyboard, movement and commands
+      # wait: the reader is typing, and j is a letter until Enter or Escape
+      # says it is not.
+      return nil if policy == ListScreen::EXPLICIT && filtering
+
+      keymap = keymap_for(state)
+      action = keymap.action_for(chunk)
+      if policy == ListScreen::EXPLICIT && !filtering
+        if chunk == "/" || action == "find-forward"
+          object["filtering"] = JSON::Any.new(true)
+          show_library(output, state, page, filter)
+          return nil
+        end
+      end
+
+      if object["kind"].as_s == "bookmarks" && keymap.library_action_for(chunk) == "delete-bookmark"
+        entries = library_entries(object, filter)
+        at = Math.max(select_list(object, entries), 0)
+        scroll = state.scroll
+        entry = Reader.current_block(state).try(&.as_h).try(&.["entry"]?)
+        unless entry
+          Reader.set_status(output, state, page.url, "Move to a bookmark first."); return nil
+        end
+        name = entry.as_h["title"]?.try(&.as_s?) || entry.as_h["url"]?.try(&.as_s?) || ""
+        if ask_yes_no(output, state, keyboard, "Remove bookmark \"#{name}\"?")
+          state.browser_library.try(&.delete(entry))
+          object["rows"] = JSON::Any.new(object["rows"].as_a.reject { |row| row.as_h["entry"]? == entry })
+          # The deleted row's key is gone, so the nearest remaining position
+          # is what keeps the reader on the entry that took its place.
+          object["selectedKey"] = JSON::Any.new(nil)
+          show_library(output, state, page, filter,
+            scroll: scroll, fallback_index: at)
+          Reader.set_status(output, state, page.url, "Removed bookmark \"#{name}\".")
+        else
+          Reader.set_status(output, state, page.url, "Bookmark not removed.")
+        end
+        return nil
+      end
+      return "quit" if action == "quit" || action == "abort" || action == "confirm-quit"
+      if cancel
+        close_library(output, state, page, "Closed #{label.downcase}.")
+        return nil
+      end
       if key_is(chunk, "Escape", state)
         close_library(output, state, page, "Closed #{label.downcase}.")
         return nil
       end
-
-      # A list is a filter box. Whatever letter the reader presses is text for
-      # the filter, even when that letter is a command out on the page: q
-      # quits a page and is a letter here, and in the Lynx interface r removes
-      # a bookmark and is a letter here too. The commands a list does have are
-      # the ones this keyboard keeps off letters — the arrows and paging keys,
-      # Enter, Backspace, Escape and Alt chords.
-      # Del is a control character the terminal happens to encode above space,
-      # and it is this list's Backspace; it is excluded here so it reaches the
-      # editing key below rather than becoming a character of the filter.
-      if !chunk.starts_with?(ESC) && chunk != "\x7f" && chunk >= " "
-        show_library(output, state, page, object["filter"].as_s + chunk)
+      if (object["kind"].as_s == "links" || object["kind"].as_s == "addresses" ||
+         object["kind"].as_s == "info") && key_is(chunk, "ArrowLeft", state)
+        close_library(output, state, page, "Closed #{label.downcase}.")
         return nil
       end
 
-      action = keymap_for(state).action_for(chunk)
-      library_action = keymap_for(state).library_action_for(chunk)
-      return "quit" if action == "quit" || action == "abort"
-      last = state.lines.size - 1
-      if key_is(chunk, "ArrowDown", state)
-        Reader.move_selection(output, state, page.url, Math.min(state.cursor + 1, last)); return nil
-      elsif key_is(chunk, "ArrowUp", state)
-        Reader.move_selection(output, state, page.url, Math.max(state.cursor - 1, 0)); return nil
-      elsif key_is(chunk, "PageDown", state)
-        Reader.move_screen(output, state, 1, page.url); return nil
-      elsif key_is(chunk, "PageUp", state)
-        Reader.move_screen(output, state, -1, page.url); return nil
-      end
-      if (chunk == "\r" || chunk == "\n")
+      if accept
         if object["kind"].as_s == "messages"
           close_library(output, state, page, nil)
           return nil
@@ -2939,31 +3216,19 @@ module Tawb
         load_address(output, state, page, keyboard, url)
         return nil
       end
-      if object["kind"].as_s == "bookmarks" && library_action == "delete-bookmark"
-        line = state.lines[state.cursor]?
-        at = line ? line.block_index : state.cursor
-        scroll = state.scroll
-        entry = Reader.current_block(state).try(&.as_h).try(&.["entry"]?)
-        unless entry
-          Reader.set_status(output, state, page.url, "Move to a bookmark first."); return nil
-        end
-        name = entry.as_h["title"]?.try(&.as_s?) || entry.as_h["url"]?.try(&.as_s?) || ""
-        if ask_yes_no(output, state, keyboard, "Remove bookmark \"#{name}\"?")
-          state.browser_library.try(&.delete(entry))
-          object["rows"].as_a.reject! { |row| row.as_h["entry"]? == entry }
-          show_library(output, state, page, object["filter"].as_s, at, scroll)
-          Reader.set_status(output, state, page.url, "Removed bookmark \"#{name}\".")
-        else
-          Reader.set_status(output, state, page.url, "Bookmark not removed.")
-        end
-        return nil
-      end
-      # Backspace is the one editing key a filter box needs. Everything else
-      # that reaches here is an escape sequence or control chord this list has
-      # no use for, which is the same as doing nothing.
-      if key_is(chunk, "Backspace", state)
-        filter = object["filter"].as_s
-        show_library(output, state, page, filter.empty? ? filter : filter[0, filter.size - 1])
+
+      if key_is(chunk, "ArrowDown", state) || context_action == "next" || action == "next-line"
+        move_library(output, state, page, "next")
+      elsif key_is(chunk, "ArrowUp", state) || context_action == "previous" || action == "previous-line"
+        move_library(output, state, page, "previous")
+      elsif key_is(chunk, "PageDown", state) || context_action == "page-next" || action == "next-screen"
+        move_library(output, state, page, "page-next")
+      elsif key_is(chunk, "PageUp", state) || context_action == "page-previous" || action == "previous-screen"
+        move_library(output, state, page, "page-previous")
+      elsif key_is(chunk, "Home", state) || context_action == "first" || action == "top"
+        move_library(output, state, page, "first")
+      elsif key_is(chunk, "End", state) || context_action == "last" || action == "bottom"
+        move_library(output, state, page, "last")
       end
       nil
     end
