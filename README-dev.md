@@ -702,12 +702,22 @@ npm start -- --keyboard
 
 The wizard uses a temporary terminal screen, so leaving it restores exactly
 what was underneath rather than dropping into an empty window. It lists every
-browse-mode and editing action with its bindings. Move with the
-arrow or page keys, press `Enter` to replace an action's binding, or `Alt+A`
-to add another. The next complete keystroke is recorded. `Esc` cancels a
-capture, and `Backspace` during replacement leaves the action unbound. A new
-binding is removed from any other action on the same keyboard, so one key never
-silently performs two actions in the same mode.
+browse-mode and editing action with its bindings, grouped into sections by the
+screen and feature they belong to. The section order is a display table in
+`src/wizard_order.js`, kept apart from the order in `keys.js`, which decides
+which action wins a shared key; an action the table does not name falls into a
+trailing Other section rather than vanishing.
+
+Type to filter. Every term must appear in the row, so a label, an action id, a
+Lynx function name and the current bindings are all searchable; a key the
+reader remembers is enough. Sections with no matching row lose their heading,
+while Restore default bindings and Exit keyboard wizard stay pinned at the
+bottom. Move with the arrows, page keys, Home and End — a printable key is
+filter text, so `j` and `k` are letters here, not movement. Press `Enter` to
+replace an action's binding, or `Alt+A` to add another. `Backspace` edits the
+filter, or during replacement leaves the action unbound. `Esc` leaves. A
+rebind clears the filter and keeps that action selected, so the row cannot
+disappear under the reader because its new binding no longer matches.
 
 Press `:` while reading to open a command line over the same action list.
 Type the name the wizard shows for the action, press `Tab` to complete a

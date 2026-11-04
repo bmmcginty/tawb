@@ -51,8 +51,9 @@ for (const implementation of implementations) {
 
   test(`${implementation.name}: unsupported imported commands are an inventory, not rows`, () => {
     const rows = implementation.rows({ profile: 'lynx', unsupported: ['SHELL'] });
-    const heading = rows.find((row) => row.type === 'heading');
-    assert.equal(heading.label, 'Lynx commands with no TAWB equivalent (cannot be bound):');
+    const heading = rows.find((row) => row.type === 'heading'
+      && row.label === 'Lynx commands with no TAWB equivalent (cannot be bound):');
+    assert.ok(heading, 'the unsupported commands have their own heading');
     const unsupported = rows.find((row) => row.type === 'unsupported');
     assert.equal(unsupported.label, 'Imported Lynx command SHELL, unsupported');
     const first = rows.findIndex((row) => row.type === 'unsupported');
@@ -119,7 +120,7 @@ for (const implementation of implementations) {
 
   test(`${implementation.name}: the cursor follows every prompt that consumes the next key`, async () => {
     const result = await implementation.run({
-      rows: 12, cols: 200, keys: ['\r', 'j', 'n', 'q', 'n'],
+      rows: 12, cols: 200, keys: ['\r', 'j', 'n', '\x1b', 'n'],
     });
     const replacement = 'Press the replacement for Quit; Backspace unbinds it.';
     const conflict = 'j is assigned to Next line; rebind to Quit? y/n';
@@ -150,16 +151,21 @@ for (const implementation of implementations) {
 
   test(`${implementation.name}: the wizard is driven by the browsing keys themselves`, async () => {
     const file = path.join(tempDir(`tweb-wizard-keys-${implementation.name}-`), 'keys.json');
-    const rows = await implementation.rows({ file });
+    const bindings = { where: ['Ctrl+W'] };
+    const rows = await implementation.rows({ file, bindings });
 
-    //  G bottom, = report position, Home back to the first row, = again,
-    //  then q leaves the way it leaves the browser.
+    //  End reaches the bottom, Ctrl+W reports position, Home returns to the
+    //  first row, Ctrl+W reports again, then Escape leaves the way it leaves
+    //  the browser. Printable keys are filter text now, so the movement
+    //  actions this test uses have to be on non-printing keys.
     const result = await implementation.run({
-      file, rows: 12, cols: 200, keys: ['G', '=', '\x1b[H', '=', 'q', 'y'],
+      file, bindings, rows: 12, cols: 200,
+      keys: ['\x1b[F', '\x17', '\x1b[H', '\x17', '\x1b', 'y'],
     });
     assert.equal(result.saved, true);
-    assert.equal(result.fileExists, true, 'q reached the same save question as the exit row');
-    assert.ok(painted(result).includes(`Item ${rows.length} of ${rows.length}`), 'G reached the last row');
+    assert.equal(result.fileExists, true, 'Escape reached the same save question as the exit row');
+    assert.ok(painted(result).includes(`Item ${rows.length} of ${rows.length}`),
+      'End reached the last row');
     assert.ok(painted(result).includes('Item 1 of ' + rows.length), 'Home returned to the first row');
   });
 
@@ -176,7 +182,7 @@ for (const implementation of implementations) {
   test(`${implementation.name}: rebinding a key another action holds is confirmed first`, async () => {
     const file = path.join(tempDir(`tweb-wizard-clash-${implementation.name}-`), 'keys.json');
     const rows = await implementation.rows({ file });
-    assert.equal(rows[0].actionId, 'quit');
+    assert.equal(rows.find((row) => row.type === 'action').actionId, 'quit');
 
     //  Enter j n  refuses the swap, Enter j y  accepts it, Escape y  saves.
     const result = await implementation.run({
@@ -193,4 +199,29 @@ for (const implementation of implementations) {
     const byId = Object.fromEntries(result.actions.map((action) => [action.id, action.bindings]));
     assert.deepEqual(byId['next-line'], ['ArrowDown']);
   });
+
+  test(`${implementation.name}: typing filters the screen, and a rebind clears the filter`, async () => {
+    // Filter to the three actions holding Alt+D, Enter on the first, assign z,
+    // then leave without saving. The row is still on screen after the rebind
+    // because the filter is cleared rather than left matching the old key.
+    const result = await implementation.run({
+      rows: 24, cols: 200, keys: [...'alt+d', '\r', 'z', '\x1b', 'n'],
+    });
+    const screen = painted(result);
+    assert.ok(screen.includes('matching "alt+d"'), 'the filter was applied');
+    assert.ok(screen.includes('z assigned to Download link under the cursor.'),
+      'the filtered row was the one rebound');
+    assert.ok(screen.includes('Download link under the cursor, z'),
+      'the rebound row is still on screen after the filter was cleared');
+  });
 }
+
+
+test('the filtered keyboard screen is the same in both runtimes', {
+  skip: implementations.length < 2 ? 'the Crystal runtime is not enabled' : false,
+}, () => {
+  for (const filter of ['', 'quit', 'alt+d', 'download link', 'zzz']) {
+    const rows = implementations.map((implementation) => implementation.rows({ filter }));
+    assert.deepEqual(rows[1], rows[0], filter || '(no filter)');
+  }
+});

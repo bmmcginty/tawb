@@ -108,11 +108,63 @@ test('imported Lynx defaults reset cleanly and expose unsupported commands', () 
   // The unsupported commands come after a heading, so the list reads as an
   // inventory rather than as rows a key could be put on.
   const rows = wizardRows(keys);
-  const heading = rows.findIndex((row) => row.type === 'heading');
+  const heading = rows.findIndex((row) => row.type === 'heading'
+    && /no TAWB equivalent/.test(row.label));
   const first = rows.findIndex((row) => row.type === 'unsupported');
   assert.ok(heading >= 0, 'no heading before the unsupported commands');
   assert.ok(heading < first, 'the heading does not precede the commands');
   assert.ok(rows.slice(first).every((row) => row.type !== 'action'));
+});
+
+test('the keyboard screen filters by name, action id and binding, and keeps its pinned rows', () => {
+  const keymap = new Keymap({ terminfo: {}, load: false });
+  const filtered = (filter) => wizardRows(keymap, { filter });
+  const actionsOf = (rows) => rows.filter((row) => row.type === 'action')
+    .map((row) => row.action.id);
+
+  // A word from a label.
+  assert.deepEqual(actionsOf(filtered('quit')), ['quit']);
+  // A word from the action id, including its punctuation.
+  assert.deepEqual(actionsOf(filtered('next-line')).sort(),
+    ['next-line']);
+  // A key that three actions currently hold, in three sections: the page
+  // keyboard, the list keyboard and the editing keyboard.
+  assert.deepEqual(actionsOf(filtered('alt+d')).sort(),
+    ['delete-bookmark', 'download-link', 'edit-delete-word']);
+  for (const filter of ['quit', 'alt+d', 'zzz']) {
+    const rows = filtered(filter);
+    assert.deepEqual(rows.slice(-2).map((row) => row.type), ['reset', 'exit'],
+      `the pinned rows survive the "${filter}" filter`);
+  }
+  // Sections with no matching row lose their heading too.
+  const noMatch = filtered('zzz');
+  assert.equal(noMatch.some((row) => row.type === 'heading'), false);
+});
+
+test('typing filters the keyboard screen, and a rebind clears the filter', async () => {
+  const keymap = new Keymap({ terminfo: {}, load: false });
+  const output = new PassThrough();
+  output.rows = 24;
+  output.columns = 200;
+  const writes = [];
+  const write = output.write.bind(output);
+  output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
+
+  // Filter to the two actions holding Alt+D, Enter on the first (download),
+  // assign z, then leave without saving. Printable keys are filter text, so
+  // the whole word reaches the filter before any action gets a look at it.
+  const queued = [...'alt+d', '\r', 'z', '\x1b', 'n'];
+  const reader = { next: () => Promise.resolve(queued.shift()) };
+
+  const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
+  assert.equal(saved, false);
+  assert.equal(queued.length, 0);
+  const painted = writes.join('');
+  assert.ok(painted.includes('z assigned to Download link under the cursor.'),
+    'the filtered row was the one rebound');
+  assert.ok(painted.includes('matching "alt+d"'), 'the filter was applied');
+  assert.ok(painted.includes('Download link under the cursor, z'),
+    'the rebound row is still on screen after the filter was cleared');
 });
 
 test('the version-one default key file still loads without conversion', () => {
@@ -374,7 +426,7 @@ test('the cursor follows every prompt that consumes the next key', async () => {
   const write = output.write.bind(output);
   output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
 
-  const queued = ['\r', 'j', 'n', 'q', 'n'];
+  const queued = ['\r', 'j', 'n', '\x1b', 'n'];
   const beforeKey = [];
   const reader = {
     next: () => {
@@ -428,15 +480,18 @@ test('the wizard is driven by the browsing keys themselves', async () => {
   const write = output.write.bind(output);
   output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
 
-  //  G bottom, = report position, Home back to the first row, = again,
-  //  then q leaves the way it leaves the browser.
-  const queued = ['G', '=', '\x1b[H', '=', 'q', 'y'];
+  //  End reaches the bottom, Ctrl+W reports position, Home returns to the
+  //  first row, Ctrl+W reports again, then Escape leaves the way it leaves the
+  //  browser. Printable keys are filter text now, so the movement actions the
+  //  test uses have to be on non-printing keys.
+  keymap.assign('where', '\x17');
+  const queued = ['\x1b[F', '\x17', '\x1b[H', '\x17', '\x1b', 'y'];
   const reader = { next: () => Promise.resolve(queued.shift()) };
 
   const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
   assert.equal(saved, true);
   assert.equal(queued.length, 0);
-  assert.ok(fs.existsSync(file), 'q reached the same save question as the exit row');
+  assert.ok(fs.existsSync(file), 'Escape reached the same save question as the exit row');
   const painted = writes.join('');
   assert.ok(painted.includes(`Item ${rows.length} of ${rows.length}`), 'G reached the last row');
   assert.ok(painted.includes(`Item 1 of ${rows.length}`), 'Home returned to the first row');
@@ -466,7 +521,7 @@ test('rebinding a key another action holds is confirmed first', async () => {
   const directory = tempDir('tweb-wizard-clash-');
   const file = path.join(directory, 'keys.json');
   const keymap = new Keymap({ terminfo: {}, file, load: false });
-  assert.equal(wizardRows(keymap)[0].action.id, 'quit');
+  assert.equal(wizardRows(keymap).find((row) => row.type === 'action').action.id, 'quit');
 
   const output = new PassThrough();
   output.rows = 12;
@@ -512,6 +567,7 @@ test('a key nothing else holds is bound without a question', async () => {
 // ones: a reader must never be able to strand themselves in this list.
 test('the arrows, Enter and Escape work in the wizard whatever they are bound to', async () => {
   const keymap = new Keymap({ terminfo: {}, load: false });
+  keymap.assign('where', '\x17');
   keymap.assign('refresh', '\x1b[B');   // Down now means something this list cannot do
   keymap.unbind('activate');
   keymap.unbind('quit');
@@ -525,7 +581,7 @@ test('the arrows, Enter and Escape work in the wizard whatever they are bound to
   output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
 
   //  Down = to move and report, Enter Alt+Z to rebind there, Escape n to leave.
-  const queued = ['\x1b[B', '=', '\r', '\x1bz', '\x1b', 'n'];
+  const queued = ['\x1b[B', '\x17', '\r', '\x1bz', '\x1b', 'n'];
   const reader = { next: () => Promise.resolve(queued.shift()) };
 
   const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
@@ -533,6 +589,6 @@ test('the arrows, Enter and Escape work in the wizard whatever they are bound to
   assert.equal(queued.length, 0);
 
   const painted = writes.join('');
-  assert.ok(painted.includes('Item 2 of'), 'Down still moved the selection');
-  assert.ok(painted.includes('Alt+Z assigned to Location bar.'), 'Enter still activated the row');
+  assert.ok(painted.includes('Item 3 of'), 'Down still moved the selection');
+  assert.ok(painted.includes('Alt+Z assigned to Run a command by name.'), 'Enter still activated the row');
 });

@@ -230,8 +230,10 @@ track and verifies that its value changed. Independently focusable controls
 remain reachable even when a site incorrectly nests them inside another
 button or field.
 
-All browse and editing bindings are configurable. Press `Alt+?`, select an
-action, and replace or add a key. TAWB stores the result in
+All browse and editing bindings are configurable. Press `Alt+?` to open the
+keyboard wizard. Its actions are grouped in sections, and typing filters them
+by name, action or current key; the arrows move, `Enter` replaces, `Alt+A`
+adds, and `Esc` leaves. TAWB stores the result in
 `$XDG_CONFIG_HOME/tawb/keys.json`, or `~/.config/tawb/keys.json` when
 `XDG_CONFIG_HOME` is not set.
 

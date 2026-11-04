@@ -1,14 +1,17 @@
 require "./keys"
+require "./list_model"
+require "./wizard_order"
 
 module Tawb
   # The keyboard wizard: the one screen where the bindings themselves are
   # edited.
   #
   # The list is driven by the same bindings as the rest of the browser, so it
-  # stays usable while they change under it — a key whose action means nothing
-  # to a list falls back to what the key itself does here, and a key being
-  # captured for a binding is read raw, so the arrows and Enter can still be
-  # assigned to anything.
+  # stays usable while they change under it — a non-printing key whose action
+  # means nothing to a list falls back to what the key itself does here, and a
+  # key being captured for a binding is read raw, so the arrows and Enter can
+  # still be assigned to anything. Printable keys are filter text first, which
+  # is why the list's movement is the arrows and paging keys.
   module KeyWizard
     ESC       = "\e"
     BACKSPACE = Set.new(["\x7f", "\x08"])
@@ -21,6 +24,17 @@ module Tawb
       "top", "bottom", "line-start", "line-end", "where", "activate",
       "quit", "close-popup",
     ])
+
+    MOVE_ACTIONS = {
+      "next-line"       => "next",
+      "previous-line"   => "previous",
+      "next-screen"     => "page-next",
+      "previous-screen" => "page-previous",
+      "top"             => "first",
+      "line-start"      => "first",
+      "bottom"          => "last",
+      "line-end"        => "last",
+    }
 
     # The terminal the wizard draws on: byte-level writes, a size, and a
     # resize event. The JavaScript original used process.stdout.
@@ -44,8 +58,14 @@ module Tawb
       getter type : String
       getter action : Keys::Action?
       getter label : String?
+      getter key : String
+      getter text : String
+      getter search : String
 
-      def initialize(@type : String, @action : Keys::Action? = nil, @label : String? = nil); end
+      def initialize(@type : String, @action : Keys::Action? = nil,
+                     @label : String? = nil, @key : String = "",
+                     @text : String = "", @search : String = "")
+      end
     end
 
     private class Drawn
@@ -62,30 +82,10 @@ module Tawb
       end
     end
 
-    # Imported commands with no TAWB equivalent are listed so the screen is a
-    # complete picture of what the reader's configuration asked for, and
-    # headed so it is plain that they are an inventory rather than something
-    # to bind.
-    def self.wizard_rows(keymap : Keys::Keymap) : Array(Row)
-      unsupported = keymap.unsupported
-      labels = keymap.labels
-      rows = keymap.actions.map { |action| Row.new("action", action) }.to_a
-      unless unsupported.empty?
-        rows << Row.new("heading", nil,
-          labels["unsupportedHeading"]? || "Commands with no TAWB equivalent:")
-      end
-      unsupported.each do |name|
-        rows << Row.new("unsupported", nil,
-          "#{labels["unsupportedPrefix"]? || "Imported command"} #{name}, unsupported")
-      end
-      rows << Row.new("reset", nil, "Restore default bindings")
-      rows << Row.new("exit", nil, "Exit keyboard wizard")
-      rows
-    end
-
-    def self.row_text(row : Row, keymap : Keys::Keymap) : String
-      return row.label.not_nil! unless row.type == "action"
-      action = row.action.not_nil!
+    # What a row says. The bindings are part of the search text as well as the
+    # visible line, so a reader who remembers a key can find the action holding
+    # it, and a reader who remembers part of the name does not need the key.
+    def self.action_text(action : Keys::Action, keymap : Keys::Keymap) : String
       bindings = if action.bindings.empty?
         "(unbound)"
       else
@@ -98,6 +98,96 @@ module Tawb
       "#{name}, #{bindings}"
     end
 
+    def self.action_row(action : Keys::Action, keymap : Keys::Keymap) : Row
+      text = action_text(action, keymap)
+      function_name = keymap.function_names[action.id]? || ""
+      Row.new("action", action, nil, "action:#{action.id}", text,
+        [text, action.id, function_name].reject(&.empty?).join("\n"))
+    end
+
+    def self.pinned_rows : Array(Row)
+      [
+        Row.new("reset", nil, "Restore default bindings", "cmd:reset",
+          "Restore default bindings", "Restore default bindings"),
+        Row.new("exit", nil, "Exit keyboard wizard", "cmd:exit",
+          "Exit keyboard wizard", "Exit keyboard wizard"),
+      ]
+    end
+
+    # Imported commands with no TAWB equivalent are listed so the screen is a
+    # complete picture of what the reader's configuration asked for, and headed
+    # so it is plain that they are an inventory rather than something to bind.
+    def self.unsupported_section(keymap : Keys::Keymap) : ListModel::Section(Row)?
+      unsupported = keymap.unsupported
+      return nil if unsupported.empty?
+      labels = keymap.labels
+      rows = unsupported.map do |name|
+        label = "#{labels["unsupportedPrefix"]? || "Imported command"} #{name}, unsupported"
+        Row.new("unsupported", nil, label, "unsupported:#{name}", label, label)
+      end
+      ListModel::Section(Row).new("unsupported",
+        labels["unsupportedHeading"]? || "Commands with no TAWB equivalent:", rows)
+    end
+
+    def self.wizard_sections(keymap : Keys::Keymap) : Array(ListModel::Section(Row))
+      sections = WizardOrder.sections_for(keymap.actions).map do |section|
+        rows = section.rows.map { |action| action_row(action, keymap) }
+        ListModel::Section(Row).new(section.key, section.title, rows)
+      end
+      if unsupported = unsupported_section(keymap)
+        sections << unsupported
+      end
+      sections
+    end
+
+    def self.wizard_entries(keymap : Keys::Keymap, filter : String) : Array(ListModel::Entry(Row))
+      ListModel.visible_entries(wizard_sections(keymap), pinned_rows, filter)
+    end
+
+    # The flat view the tests and the conformance surface read. The screen
+    # itself uses wizard_entries, which also carries the section each row came
+    # from.
+    def self.wizard_rows(keymap : Keys::Keymap, filter : String = "") : Array(Row)
+      wizard_entries(keymap, filter).map do |entry|
+        if entry.kind == "heading"
+          title = entry.title || ""
+          Row.new("heading", nil, title, entry.key, title, title)
+        else
+          entry.row.not_nil!
+        end
+      end
+    end
+
+    def self.row_text(row : Row, keymap : Keys::Keymap) : String
+      return row.text unless row.text.empty?
+      return row.label || "" unless row.type == "action"
+      action_text(row.action.not_nil!, keymap)
+    end
+
+    def self.entry_text(entry : ListModel::Entry(Row)?, keymap : Keys::Keymap) : String
+      return "" unless entry
+      return entry.title || "" if entry.kind == "heading"
+      row_text(entry.row.not_nil!, keymap)
+    end
+
+    # A printable character belongs to the filter before it belongs to any
+    # binding. Del is a control character the terminal encodes above space and
+    # is this screen's Backspace, so it is excluded explicitly.
+    def self.filter_character?(chunk : String) : Bool
+      !chunk.starts_with?(ESC) && chunk != "\x7f" && chunk >= " "
+    end
+
+    def self.filter_status(keymap : Keys::Keymap, filter : String) : String
+      sections = wizard_sections(keymap)
+      total = 0
+      sections.each { |section| total += section.rows.size }
+      shown = ListModel.visible_entries(sections, [] of Row, filter)
+        .count { |entry| entry.kind == "row" }
+      return "#{total} rows." if filter.empty?
+      shown > 0 ? "#{shown} of #{total} rows matching \"#{filter}\"." :
+        "Nothing matching \"#{filter}\"."
+    end
+
     # Runs the wizard to completion and answers whether it saved the
     # bindings. The reader and the terminal come in from outside, so the
     # differenced tests drive the same loop against recorded fakes, and the
@@ -105,9 +195,10 @@ module Tawb
     def self.run(output : Output, keymap : Keys::Keymap, reader : KeySource,
                  alt_screen : Bool = true) : Bool
       original = keymap.actions.to_h { |action| {action.id, action.bindings.dup} }
-      selected = 0
+      selected_key : String? = nil
+      filter = ""
       scroll = 0
-      status = "Enter replaces a binding; Alt+A adds one."
+      status = "Enter replaces a binding; Alt+A adds one. Type to filter."
       capturing : String? = nil
       pending : NamedTuple(id: String, label: String, key: String, add: Bool)? = nil
       saving = false
@@ -149,12 +240,22 @@ module Tawb
         binding ? keymap.display(binding) : fallback
       end
 
+      # A binding has changed. The row the reader was on is the one they
+      # should still be on, and a filter that hid part of the screen is no
+      # longer the question they are asking.
+      refocus = ->(key : String) do
+        filter = ""
+        selected_key = key
+      end
+
       render = ->(clear : Bool) do
-        rows = wizard_rows(keymap)
+        entries = wizard_entries(keymap, filter)
+        selected_key = ListModel.selection_key(entries, selected_key)
+        selected = ListModel.selection_index(entries, selected_key)
         height = Math.max(1, output.rows - 4)
         scroll = selected if selected < scroll
         scroll = selected - height + 1 if selected >= scroll + height
-        scroll = Math.max(0, Math.min(scroll, Math.max(0, rows.size - height)))
+        scroll = Math.max(0, Math.min(scroll, Math.max(0, entries.size - height)))
 
         if clear
           output.write("\e[2J")
@@ -170,13 +271,19 @@ module Tawb
           drawn.heading = heading
         end
 
+        selected_entry = selected >= 0 ? entries[selected] : nil
+        selected_row = selected_entry.try(&.row)
+        selected_label = selected_row.try(&.action).try(&.label) ||
+          selected_row.try(&.label) || ""
         hint = if capturing
           "#{capturing == "add" ? "Adding to" : "Replacing"} " \
-            "#{rows[selected].action.not_nil!.label}: press one key; Esc cancels."
-        else
+            "#{selected_label}: press one key; Esc cancels."
+        elsif filter.empty?
           "#{key_label.call("previous-line", "Up")}/#{key_label.call("next-line", "Down")}: move" \
             "  #{key_label.call("activate", "Enter")}: replace  Alt+A: add" \
-            "  #{key_label.call("quit", "Escape")}: exit"
+            "  type: filter  #{key_label.call("quit", "Escape")}: exit"
+        else
+          "Filter: #{filter}  Backspace: erase  #{key_label.call("quit", "Escape")}: exit"
         end
         if drawn.hint != hint
           draw_line(output, 2, hint, output.columns)
@@ -185,7 +292,7 @@ module Tawb
 
         (0...height).each do |i|
           index = scroll + i
-          text = index < rows.size ? row_text(rows[index], keymap) : ""
+          text = index < entries.size ? entry_text(entries[index], keymap) : ""
           if i < drawn.list.size
             next if drawn.list[i] == text
             drawn.list[i] = text
@@ -215,7 +322,7 @@ module Tawb
         if capturing || pending || saving
           output.write("\e[#{output.rows};#{Math.min(status.size + 1, output.columns)}H")
         else
-          output.write("\e[#{3 + selected - scroll};1H")
+          output.write("\e[#{3 + Math.max(selected, 0) - scroll};1H")
         end
       end
 
@@ -272,34 +379,40 @@ module Tawb
           restore.call
           break
         end
-        rows = wizard_rows(keymap)
-        row = rows[selected]
+        entries = wizard_entries(keymap, filter)
+        selected_key = ListModel.selection_key(entries, selected_key)
+        selected = ListModel.selection_index(entries, selected_key)
+        entry = selected >= 0 ? entries[selected] : nil
+        row = entry.try(&.row)
 
         if capturing
           if key == ESC
             capturing = nil
             status = "Binding unchanged."
           elsif capturing == "replace" && BACKSPACE.includes?(key)
-            keymap.unbind(row.action.not_nil!.id)
+            keymap.unbind(row.not_nil!.action.not_nil!.id)
             capturing = nil
-            status = "#{row.action.not_nil!.label} is unbound."
+            refocus.call(row.not_nil!.key)
+            status = "#{row.not_nil!.action.not_nil!.label} is unbound."
           else
             add = capturing == "add"
             binding = keymap.name_for_sequence(key)
-            clashes = keymap.conflicts(row.action.not_nil!.id, binding)
+            clashes = keymap.conflicts(row.not_nil!.action.not_nil!.id, binding)
             capturing = nil
             if clashes.empty?
-              result = keymap.assign(row.action.not_nil!.id, key, add)
-              status = "#{result.not_nil![:binding]} assigned to #{row.action.not_nil!.label}."
+              result = keymap.assign(row.not_nil!.action.not_nil!.id, key, add)
+              status = "#{result.not_nil![:binding]} assigned to #{row.not_nil!.action.not_nil!.label}."
+              refocus.call(row.not_nil!.key)
             else
               # Taking a key from something else is the one edit here the
               # reader cannot see coming, so it is named and asked about
               # rather than reported once it has already happened.
-              pending = {id: row.action.not_nil!.id, label: row.action.not_nil!.label,
+              pending = {id: row.not_nil!.action.not_nil!.id,
+                         label: row.not_nil!.action.not_nil!.label,
                          key: key, add: add}
               status = "#{keymap.display(binding)} is assigned to " \
                 "#{clashes.map(&.label).join(" and ")}; " \
-                "rebind to #{row.action.not_nil!.label}? y/n"
+                "rebind to #{row.not_nil!.action.not_nil!.label}? y/n"
             end
           end
           render.call(false)
@@ -311,6 +424,7 @@ module Tawb
             result = keymap.assign(waiting[:id], waiting[:key], waiting[:add])
             status = "#{result.not_nil![:binding]} assigned to #{waiting[:label]}." +
               (result.not_nil![:displaced] ? " Removed from #{result.not_nil![:displaced].not_nil!.label}." : "")
+            refocus.call("action:#{waiting[:id]}")
           elsif key == "n" || key == "N" || key == ESC
             status = "Binding unchanged."
           else
@@ -321,11 +435,38 @@ module Tawb
           next
         end
 
+        # A list is a filter box first. Printable input is text for the
+        # filter, even where the same key is a command out on the page; Del is
+        # a control character the terminal encodes above space and stays
+        # Backspace.
+        if filter_character?(key)
+          filter = ListModel.append_filter(filter, key)
+          selected_key = ListModel.selection_key(wizard_entries(keymap, filter), nil)
+          status = filter_status(keymap, filter)
+          render.call(false)
+          next
+        end
+        if BACKSPACE.includes?(key)
+          if filter.empty?
+            status = "The filter is empty."
+          else
+            filter = ListModel.backspace_filter(filter)
+            selected_key = ListModel.selection_key(wizard_entries(keymap, filter), nil)
+            status = filter_status(keymap, filter)
+          end
+          render.call(false)
+          next
+        end
+
         # Adding a binding is the wizard's own control rather than a browsing
         # command, so it is read before the keymap gets a look at the key.
-        if ALT_A.includes?(key) && row.type == "action"
-          capturing = "add"
-          status = "Press the key to add to #{row.action.not_nil!.label}."
+        if ALT_A.includes?(key)
+          if row && row.type == "action"
+            capturing = "add"
+            status = "Press the key to add to #{row.action.not_nil!.label}."
+          else
+            status = "Move to an action row to add a binding."
+          end
           render.call(false)
           next
         end
@@ -335,41 +476,29 @@ module Tawb
         # browser does the same thing to this list.
         action = wizard_action(keymap, key)
         screen = Math.max(1, output.rows - 4)
+        movement = MOVE_ACTIONS[action]?
 
-        case action
-        when "next-line"
-          selected = Math.min(selected + 1, rows.size - 1)
-        when "previous-line"
-          selected = Math.max(selected - 1, 0)
-        when "next-screen"
-          selected = Math.min(selected + screen, rows.size - 1)
-        when "previous-screen"
-          selected = Math.max(selected - screen, 0)
-        when "top", "line-start"
-          # A list row is a single item with nowhere to go across it, so the
-          # start and end keys move within the list like the top and bottom
-          # keys rather than doing nothing at all.
-          selected = 0
-        when "bottom", "line-end"
-          selected = rows.size - 1
-        when "where"
-          status = "Item #{selected + 1} of #{rows.size} — #{row_text(row, keymap)}."
-        when "activate"
-          case row.type
-          when "action"
+        if movement
+          selected_key = ListModel.move_key(entries, selected_key, movement, screen)
+        elsif action == "where"
+          status = "Item #{selected + 1} of #{entries.size} — #{entry_text(entry, keymap)}."
+        elsif action == "activate"
+          if entry && entry.kind == "heading"
+            status = entry.title || ""
+          elsif row && row.type == "action"
             capturing = "replace"
             status = "Press the replacement for #{row.action.not_nil!.label}; Backspace unbinds it."
-          when "reset"
+          elsif row && row.type == "reset"
             keymap.reset
             status = "Default bindings restored. They are not saved yet."
-          when "unsupported"
+          elsif row && row.type == "unsupported"
             status = "#{row.label}."
-          when "heading"
-            status = "These have no TAWB equivalent, so there is nothing to bind them to."
-          else
+          elsif row && row.type == "exit"
             leave.call
+          else
+            status = "Nothing here to activate."
           end
-        when "quit", "close-popup"
+        elsif action == "quit" || action == "close-popup"
           # Quitting leaves the wizard rather than the browser, and closing a
           # popup is what Escape means everywhere else in the browser.
           leave.call

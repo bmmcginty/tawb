@@ -82,8 +82,9 @@ test('the wizard words come from the interface policy', () => {
     terminfo: {}, profile: 'lynx', load: false, unsupported: ['SHELL'],
   });
   assert.equal(lynx.labels.keyboardTitle, 'Lynx keyboard bindings');
-  const heading = wizardRows(lynx).find((row) => row.type === 'heading');
-  assert.equal(heading.label, 'Lynx commands with no TAWB equivalent (cannot be bound):');
+  const heading = wizardRows(lynx).find((row) => row.type === 'heading'
+    && row.label === 'Lynx commands with no TAWB equivalent (cannot be bound):');
+  assert.ok(heading, 'the unsupported commands have their own heading');
   const unsupported = wizardRows(lynx).find((row) => row.type === 'unsupported');
   assert.equal(unsupported.label, 'Imported Lynx command SHELL, unsupported');
   // A Lynx action row leads with the function it acts on.

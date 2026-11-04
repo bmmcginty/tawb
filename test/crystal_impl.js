@@ -2040,7 +2040,7 @@ function keyWizardImplementations(keysModule, keyWizard, inputModule) {
         load: false, bindings: options.bindings || {}, unsupported: options.unsupported || [],
       });
       if (options.unbindAll) for (const action of keymap.actions) keymap.unbind(action.id);
-      return keyWizard.wizardRows(keymap).map((row) => ({
+      return keyWizard.wizardRows(keymap, { filter: options.filter || '' }).map((row) => ({
         type: row.type,
         label: row.label === undefined ? null : row.label,
         actionId: row.action ? row.action.id : null,

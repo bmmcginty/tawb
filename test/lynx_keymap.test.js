@@ -148,7 +148,7 @@ test('the keyboard screen names Lynx functions for the Lynx interface', () => {
 
   // The ordinary interface has no such vocabulary and its rows are unchanged.
   const ordinary = new Keymap({ terminfo: {}, load: false });
-  const quit = wizardRows(ordinary).find((row) => row.action.id === 'quit');
+  const quit = wizardRows(ordinary).find((row) => row.action && row.action.id === 'quit');
   assert.match(rowText(quit, ordinary), /^Quit, /);
   assert.equal(ordinary.functionNames.size, 0,
     'the ordinary screen grew a Lynx vocabulary');

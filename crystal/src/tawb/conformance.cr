@@ -2987,7 +2987,8 @@ module Tawb
 
     private def self.key_wizard_rows(payload : JSON::Any) : JSON::Any
       keymap = wizard_keymap(payload)
-      JSON::Any.new(KeyWizard.wizard_rows(keymap).map do |row|
+      filter = payload.as_h["filter"]?.try(&.as_s?) || ""
+      JSON::Any.new(KeyWizard.wizard_rows(keymap, filter).map do |row|
         JSON::Any.new({
           "type"     => JSON::Any.new(row.type),
           "label"    => JSON::Any.new(row.label),

@@ -2,6 +2,10 @@
 
 const { Keymap } = require('./keys');
 const { KeyReader, EOF } = require('./input');
+const {
+  visibleEntries, selectionKey, selectionIndex, moveKey, appendFilter, backspaceFilter,
+} = require('./list_model');
+const { sectionsFor } = require('./wizard_order');
 
 const ESC = '\x1b';
 const BACKSPACE = new Set(['\x7f', '\x08']);
@@ -18,43 +22,138 @@ function line(output, row, text) {
 }
 
 // What this list can be told to do. Any other action — refresh, next tab,
-// find — has no meaning against a list of bindings.
+// find — has no meaning against a list of bindings. A printable character
+// never reaches this table: it belongs to the filter first.
 const WIZARD_ACTIONS = new Set([
   'next-line', 'previous-line', 'next-screen', 'previous-screen',
   'top', 'bottom', 'line-start', 'line-end', 'where', 'activate',
   'quit', 'close-popup',
 ]);
 
-function wizardRows(keymap) {
-  // Imported commands with no TAWB equivalent are listed so the screen is a
-  // complete picture of what the reader's configuration asked for, and headed
-  // so it is plain that they are an inventory rather than something to bind.
-  const unsupported = keymap.unsupported || [];
-  const labels = keymap.labels || {};
-  return [
-    ...keymap.actions.map((action) => ({ type: 'action', action })),
-    ...(unsupported.length
-      ? [{ type: 'heading', label: labels.unsupportedHeading || 'Commands with no TAWB equivalent:' }]
-      : []),
-    ...unsupported.map((name) => ({
-      type: 'unsupported',
-      label: `${labels.unsupportedPrefix || 'Imported command'} ${name}, unsupported`,
-    })),
-    { type: 'reset', label: 'Restore default bindings' },
-    { type: 'exit', label: 'Exit keyboard wizard' },
-  ];
-}
+const MOVE_ACTIONS = {
+  'next-line': 'next',
+  'previous-line': 'previous',
+  'next-screen': 'page-next',
+  'previous-screen': 'page-previous',
+  top: 'first',
+  'line-start': 'first',
+  bottom: 'last',
+  'line-end': 'last',
+};
 
-function rowText(row, keymap) {
-  if (row.type !== 'action') return row.label;
-  const bindings = row.action.bindings.length
-    ? row.action.bindings.map((binding) => keymap.display(binding)).join(', ')
+// What a row says. The bindings are part of the search text as well as the
+// visible line, so a reader who remembers a key can find the action holding
+// it, and a reader who remembers part of the name does not need the key.
+function actionText(action, keymap) {
+  const bindings = action.bindings.length
+    ? action.bindings.map((binding) => keymap.display(binding)).join(', ')
     : '(unbound)';
   // In an interface that names its functions the row leads with the function
   // it acts on, so a reader can find their own entry by name.
-  const functionName = keymap.functionNames && keymap.functionNames.get(row.action.id);
-  const name = functionName ? `${functionName} — ${row.action.label}` : row.action.label;
+  const functionName = keymap.functionNames && keymap.functionNames.get(action.id);
+  const name = functionName ? `${functionName} — ${action.label}` : action.label;
   return `${name}, ${bindings}`;
+}
+
+function actionRow(action, keymap) {
+  const text = actionText(action, keymap);
+  const functionName = keymap.functionNames && keymap.functionNames.get(action.id);
+  return {
+    type: 'action',
+    action,
+    key: `action:${action.id}`,
+    text,
+    search: [text, action.id, functionName || ''].filter(Boolean).join('\n'),
+  };
+}
+
+function pinnedRows() {
+  return [
+    {
+      type: 'reset', label: 'Restore default bindings', key: 'cmd:reset',
+      text: 'Restore default bindings', search: 'Restore default bindings',
+    },
+    {
+      type: 'exit', label: 'Exit keyboard wizard', key: 'cmd:exit',
+      text: 'Exit keyboard wizard', search: 'Exit keyboard wizard',
+    },
+  ];
+}
+
+// Imported commands with no TAWB equivalent are listed so the screen is a
+// complete picture of what the reader's configuration asked for, and headed
+// so it is plain that they are an inventory rather than something to bind.
+function unsupportedSection(keymap) {
+  const unsupported = keymap.unsupported || [];
+  if (!unsupported.length) return null;
+  const labels = keymap.labels || {};
+  return {
+    key: 'unsupported',
+    title: labels.unsupportedHeading || 'Commands with no TAWB equivalent:',
+    rows: unsupported.map((name) => {
+      const label = `${labels.unsupportedPrefix || 'Imported command'} ${name}, unsupported`;
+      return {
+        type: 'unsupported',
+        label,
+        key: `unsupported:${name}`,
+        text: label,
+        search: label,
+      };
+    }),
+  };
+}
+
+function wizardSections(keymap) {
+  const sections = sectionsFor(keymap.actions).map((section) => ({
+    key: section.key,
+    title: section.title,
+    rows: section.rows.map((action) => actionRow(action, keymap)),
+  }));
+  const unsupported = unsupportedSection(keymap);
+  if (unsupported) sections.push(unsupported);
+  return sections;
+}
+
+function wizardList(keymap, filter = '') {
+  return { sections: wizardSections(keymap), pinned: pinnedRows(), filter };
+}
+
+// The flat view the tests and the conformance surface read. The screen itself
+// uses visibleEntries, which also carries the section each row came from.
+function wizardRows(keymap, { filter = '' } = {}) {
+  return visibleEntries(wizardList(keymap, filter)).map((entry) => (entry.kind === 'heading'
+    ? { type: 'heading', label: entry.title, key: entry.key }
+    : entry.row));
+}
+
+function rowText(row, keymap) {
+  if (row && row.text !== undefined) return row.text;
+  if (!row || row.type !== 'action') return row ? row.label : '';
+  return actionText(row.action, keymap);
+}
+
+function entryText(entry, keymap) {
+  if (!entry) return '';
+  if (entry.kind === 'heading') return entry.title;
+  return rowText(entry.row, keymap);
+}
+
+// A printable character belongs to the filter before it belongs to any
+// binding. Del is a control character the terminal encodes above space and is
+// this screen's Backspace, so it is excluded explicitly.
+function isFilterCharacter(chunk) {
+  return chunk >= ' ' && chunk !== '\x7f' && !chunk.startsWith(ESC);
+}
+
+function filterStatus(keymap, filter) {
+  const sections = wizardSections(keymap);
+  const total = sections.reduce((count, section) => count + section.rows.length, 0);
+  const shown = visibleEntries({ sections, pinned: [], filter })
+    .filter((entry) => entry.kind === 'row').length;
+  if (!filter) return `${total} rows.`;
+  return shown
+    ? `${shown} of ${total} rows matching "${filter}".`
+    : `Nothing matching "${filter}".`;
 }
 
 async function runKeyWizard({
@@ -66,9 +165,10 @@ async function runKeyWizard({
   if (ownsReader && input.isTTY) input.setRawMode(true);
   const reader = suppliedReader || new KeyReaderClass(input);
   const original = new Map(keymap.actions.map((action) => [action.id, [...action.bindings]]));
-  let selected = 0;
+  let selectedKey = null;
+  let filter = '';
   let scroll = 0;
-  let status = 'Enter replaces a binding; Alt+A adds one.';
+  let status = 'Enter replaces a binding; Alt+A adds one. Type to filter.';
   let capturing = null;
   let pending = null;
   let saving = false;
@@ -80,6 +180,13 @@ async function runKeyWizard({
     if (leftScreen) return;
     leftScreen = true;
     if (altScreen) output.write('\x1b[?1049l');
+  };
+  // A binding has changed. The row the reader was on is the one they should
+  // still be on, and a filter that hid part of the screen is no longer the
+  // question they are asking.
+  const refocus = (key) => {
+    filter = '';
+    selectedKey = key;
   };
   const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
   // Run before the reader's shutdown handler, which may exit synchronously
@@ -102,11 +209,13 @@ async function runKeyWizard({
   };
 
   const render = ({ clear = false } = {}) => {
-    const rows = wizardRows(keymap);
+    const entries = visibleEntries(wizardList(keymap, filter));
+    selectedKey = selectionKey(entries, selectedKey);
+    const selected = selectionIndex(entries, selectedKey);
     const height = Math.max(1, size(output).rows - 4);
     if (selected < scroll) scroll = selected;
     if (selected >= scroll + height) scroll = selected - height + 1;
-    scroll = Math.max(0, Math.min(scroll, Math.max(0, rows.length - height)));
+    scroll = Math.max(0, Math.min(scroll, Math.max(0, entries.length - height)));
 
     if (clear) {
       output.write('\x1b[2J');
@@ -122,11 +231,18 @@ async function runKeyWizard({
       drawn.heading = heading;
     }
 
+    const selectedEntry = selected >= 0 ? entries[selected] : null;
+    const selectedRow = selectedEntry && selectedEntry.row;
+    const selectedLabel = selectedRow
+      ? (selectedRow.action ? selectedRow.action.label : selectedRow.label)
+      : '';
     const hint = capturing
-      ? `${capturing === 'add' ? 'Adding to' : 'Replacing'} ${rows[selected].action.label}: press one key; Esc cancels.`
-      : `${keyLabel('previous-line', 'Up')}/${keyLabel('next-line', 'Down')}: move`
-        + `  ${keyLabel('activate', 'Enter')}: replace  Alt+A: add`
-        + `  ${keyLabel('quit', 'Escape')}: exit`;
+      ? `${capturing === 'add' ? 'Adding to' : 'Replacing'} ${selectedLabel}: press one key; Esc cancels.`
+      : filter
+        ? `Filter: ${filter}  Backspace: erase  ${keyLabel('quit', 'Escape')}: exit`
+        : `${keyLabel('previous-line', 'Up')}/${keyLabel('next-line', 'Down')}: move`
+          + `  ${keyLabel('activate', 'Enter')}: replace  Alt+A: add`
+          + `  type: filter  ${keyLabel('quit', 'Escape')}: exit`;
     if (drawn.hint !== hint) {
       line(output, 2, hint);
       drawn.hint = hint;
@@ -134,7 +250,7 @@ async function runKeyWizard({
 
     for (let i = 0; i < height; i += 1) {
       const index = scroll + i;
-      const text = index < rows.length ? rowText(rows[index], keymap) : '';
+      const text = index < entries.length ? entryText(entries[index], keymap) : '';
       if (drawn.list[i] === text) continue;
       line(output, 3 + i, text);
       drawn.list[i] = text;
@@ -157,7 +273,7 @@ async function runKeyWizard({
     if (capturing || pending || saving) {
       move(output, size(output).rows, Math.min(status.length + 1, size(output).cols));
     } else {
-      move(output, 3 + selected - scroll, 1);
+      move(output, 3 + Math.max(selected, 0) - scroll, 1);
     }
   };
 
@@ -222,8 +338,12 @@ async function runKeyWizard({
       // The keyboard has gone. Nothing typed here has been written yet, so
       // the wizard leaves the keymap as it found it.
       if (key === EOF) { restore(); break; }
-      const rows = wizardRows(keymap);
-      const row = rows[selected];
+      const list = wizardList(keymap, filter);
+      const entries = visibleEntries(list);
+      selectedKey = selectionKey(entries, selectedKey);
+      const selected = selectionIndex(entries, selectedKey);
+      const entry = selected >= 0 ? entries[selected] : null;
+      const row = entry ? entry.row : null;
 
       if (capturing) {
         if (key === ESC) {
@@ -232,6 +352,7 @@ async function runKeyWizard({
         } else if (capturing === 'replace' && BACKSPACE.has(key)) {
           keymap.unbind(row.action.id);
           capturing = null;
+          refocus(row.key);
           status = `${row.action.label} is unbound.`;
         } else {
           const add = capturing === 'add';
@@ -249,6 +370,7 @@ async function runKeyWizard({
           } else {
             status = `${keymap.assign(row.action.id, key, { add }).binding} `
               + `assigned to ${row.action.label}.`;
+            refocus(row.key);
           }
         }
         render();
@@ -260,6 +382,7 @@ async function runKeyWizard({
           const result = keymap.assign(pending.id, pending.key, { add: pending.add });
           status = `${result.binding} assigned to ${pending.label}.`
             + (result.displaced ? ` Removed from ${result.displaced.label}.` : '');
+          refocus(`action:${pending.id}`);
         } else if (key === 'n' || key === 'N' || key === ESC) {
           status = 'Binding unchanged.';
         } else {
@@ -270,11 +393,38 @@ async function runKeyWizard({
         continue;
       }
 
+      // A list is a filter box first. Printable input is text for the filter,
+      // even where the same key is a command out on the page; Del is a control
+      // character the terminal encodes above space and stays Backspace.
+      if (isFilterCharacter(key)) {
+        filter = appendFilter(filter, key);
+        selectedKey = selectionKey(visibleEntries(wizardList(keymap, filter)), null);
+        status = filterStatus(keymap, filter);
+        render();
+        continue;
+      }
+      if (BACKSPACE.has(key)) {
+        if (!filter) {
+          status = 'The filter is empty.';
+          render();
+          continue;
+        }
+        filter = backspaceFilter(filter);
+        selectedKey = selectionKey(visibleEntries(wizardList(keymap, filter)), null);
+        status = filterStatus(keymap, filter);
+        render();
+        continue;
+      }
+
       // Adding a binding is the wizard's own control rather than a browsing
       // command, so it is read before the keymap gets a look at the key.
-      if (ALT_A.has(key) && row.type === 'action') {
-        capturing = 'add';
-        status = `Press the key to add to ${row.action.label}.`;
+      if (ALT_A.has(key)) {
+        if (row && row.type === 'action') {
+          capturing = 'add';
+          status = `Press the key to add to ${row.action.label}.`;
+        } else {
+          status = 'Move to an action row to add a binding.';
+        }
         render();
         continue;
       }
@@ -284,37 +434,27 @@ async function runKeyWizard({
       // browser does the same thing to this list.
       const action = wizardAction(key);
       const screen = Math.max(1, size(output).rows - 4);
+      const movement = MOVE_ACTIONS[action];
 
-      if (action === 'next-line') {
-        selected = Math.min(selected + 1, rows.length - 1);
-      } else if (action === 'previous-line') {
-        selected = Math.max(selected - 1, 0);
-      } else if (action === 'next-screen') {
-        selected = Math.min(selected + screen, rows.length - 1);
-      } else if (action === 'previous-screen') {
-        selected = Math.max(selected - screen, 0);
-      } else if (action === 'top' || action === 'line-start') {
-        // A list row is a single item with nowhere to go across it, so the
-        // start and end keys move within the list like the top and bottom
-        // keys rather than doing nothing at all.
-        selected = 0;
-      } else if (action === 'bottom' || action === 'line-end') {
-        selected = rows.length - 1;
+      if (movement) {
+        selectedKey = moveKey(entries, selectedKey, movement, screen);
       } else if (action === 'where') {
-        status = `Item ${selected + 1} of ${rows.length} — ${rowText(row, keymap)}.`;
+        status = `Item ${selected + 1} of ${entries.length} — ${entryText(entry, keymap)}.`;
       } else if (action === 'activate') {
-        if (row.type === 'action') {
+        if (entry && entry.kind === 'heading') {
+          status = entry.title;
+        } else if (row && row.type === 'action') {
           capturing = 'replace';
           status = `Press the replacement for ${row.action.label}; Backspace unbinds it.`;
-        } else if (row.type === 'reset') {
+        } else if (row && row.type === 'reset') {
           keymap.reset();
           status = 'Default bindings restored. They are not saved yet.';
-        } else if (row.type === 'unsupported') {
+        } else if (row && row.type === 'unsupported') {
           status = `${row.label}.`;
-        } else if (row.type === 'heading') {
-          status = 'These have no TAWB equivalent, so there is nothing to bind them to.';
-        } else {
+        } else if (row && row.type === 'exit') {
           await leave();
+        } else {
+          status = 'Nothing here to activate.';
         }
       // Quitting leaves the wizard rather than the browser, and closing a
       // popup is what Escape means everywhere else in the browser.
