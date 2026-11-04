@@ -167,6 +167,30 @@ test('typing filters the keyboard screen, and a rebind clears the filter', async
     'the rebound row is still on screen after the filter was cleared');
 });
 
+test('backspace broadens the filter without moving off the selected row', async () => {
+  const keymap = new Keymap({ terminfo: {}, load: false });
+  keymap.assign('where', '\x17');
+  const output = new PassThrough();
+  output.rows = 24;
+  output.columns = 200;
+  const writes = [];
+  const write = output.write.bind(output);
+  output.write = (chunk) => { writes.push(String(chunk)); return write(chunk); };
+
+  // Filter to the delete actions, move to "Delete previous character", then
+  // erase one character of the filter. "delet" still matches that row, so it
+  // must stay selected rather than jumping to the first match.
+  const queued = [...'delete', '\x1b[B', '\x1b[B', '\x7f', '\x17', '\x1b', 'n'];
+  const reader = { next: () => Promise.resolve(queued.shift()) };
+
+  const saved = await runKeyWizard({ input: new PassThrough(), output, keymap, reader });
+  assert.equal(saved, false);
+  assert.equal(queued.length, 0);
+  const painted = writes.join('');
+  assert.ok(painted.includes('— Delete previous character while editing, Backspace, Ctrl+H.'),
+    'the selected row stayed under the reader when the filter broadened');
+});
+
 test('the version-one default key file still loads without conversion', () => {
   const directory = tempDir('tawb-old-keys-');
   const file = path.join(directory, 'keys.json');

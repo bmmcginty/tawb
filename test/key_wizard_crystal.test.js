@@ -214,6 +214,19 @@ for (const implementation of implementations) {
     assert.ok(screen.includes('Download link under the cursor, z'),
       'the rebound row is still on screen after the filter was cleared');
   });
+
+  test(`${implementation.name}: backspace broadens the filter without moving off the selected row`, async () => {
+    // Filter to the delete actions, move to "Delete previous character",
+    // then erase one character. "delet" still matches that row, so it must
+    // stay selected rather than jumping to the first match.
+    const result = await implementation.run({
+      rows: 24, cols: 200, bindings: { where: ['Ctrl+W'] },
+      keys: [...'delete', '\x1b[B', '\x1b[B', '\x7f', '\x17', '\x1b', 'n'],
+    });
+    assert.ok(painted(result).includes(
+      '— Delete previous character while editing, Backspace, Ctrl+H.'),
+    'the selected row stayed under the reader when the filter broadened');
+  });
 }
 
 

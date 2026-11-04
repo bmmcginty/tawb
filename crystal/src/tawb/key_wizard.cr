@@ -441,7 +441,7 @@ module Tawb
         # Backspace.
         if filter_character?(key)
           filter = ListModel.append_filter(filter, key)
-          selected_key = ListModel.selection_key(wizard_entries(keymap, filter), nil)
+          selected_key = ListModel.selection_key(wizard_entries(keymap, filter), selected_key)
           status = filter_status(keymap, filter)
           render.call(false)
           next
@@ -451,7 +451,7 @@ module Tawb
             status = "The filter is empty."
           else
             filter = ListModel.backspace_filter(filter)
-            selected_key = ListModel.selection_key(wizard_entries(keymap, filter), nil)
+            selected_key = ListModel.selection_key(wizard_entries(keymap, filter), selected_key)
             status = filter_status(keymap, filter)
           end
           render.call(false)

@@ -398,7 +398,7 @@ async function runKeyWizard({
       // character the terminal encodes above space and stays Backspace.
       if (isFilterCharacter(key)) {
         filter = appendFilter(filter, key);
-        selectedKey = selectionKey(visibleEntries(wizardList(keymap, filter)), null);
+        selectedKey = selectionKey(visibleEntries(wizardList(keymap, filter)), selectedKey);
         status = filterStatus(keymap, filter);
         render();
         continue;
@@ -410,7 +410,7 @@ async function runKeyWizard({
           continue;
         }
         filter = backspaceFilter(filter);
-        selectedKey = selectionKey(visibleEntries(wizardList(keymap, filter)), null);
+        selectedKey = selectionKey(visibleEntries(wizardList(keymap, filter)), selectedKey);
         status = filterStatus(keymap, filter);
         render();
         continue;
