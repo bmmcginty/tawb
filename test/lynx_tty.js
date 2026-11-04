@@ -15,10 +15,15 @@
 // internals is read.
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const TERM = 'xterm-256color';
+// Give this test process its own socket directly under the temporary directory.
+// Letting tmux choose /tmp/tmux-$UID both couples concurrent test files to one
+// server and fails in restricted environments where that directory is absent.
+const TMUX_SOCKET = path.join(os.tmpdir(), `tawb-probe-tmux-${process.pid}.sock`);
 
 function run(command, args, options = {}) {
   return spawnSync(command, args, { encoding: 'utf8', timeout: 10000, ...options });
@@ -29,6 +34,10 @@ function hasCommand(name) {
   return result.status === 0;
 }
 
+function tmux(args) {
+  return run('tmux', ['-S', TMUX_SOCKET, ...args]);
+}
+
 // Both halves are needed, and neither is an error when it is missing: this is
 // the same posture as the unit tests' missing-lynx fallback.
 function available() {
@@ -37,20 +46,21 @@ function available() {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// The tmux server exits when its last session does. Two test files run side by
-// side, so one killing its last session can race the other asking for a new
-// one, and the loser is told "server exited unexpectedly". A session running a
-// sleeping command holds the server up for the life of this file, and is
-// cleaned up when the process ends.
+// The tmux server exits when its last session does. A session running a
+// sleeping command holds this process's private server up for the life of the
+// file, so one test cannot race the next while the server is shutting down.
 const KEEPALIVE = `tawb-probe-keepalive-${process.pid}`;
 let keepaliveReady = false;
 
 function keepalive() {
   if (keepaliveReady) return;
-  const started = run('tmux', ['new-session', '-d', '-s', KEEPALIVE, 'sleep 3600']);
+  const started = tmux(['new-session', '-d', '-s', KEEPALIVE, 'sleep 3600']);
   if (started.status !== 0) return;
   keepaliveReady = true;
-  process.on('exit', () => { run('tmux', ['kill-session', '-t', KEEPALIVE]); });
+  process.on('exit', () => {
+    tmux(['kill-session', '-t', KEEPALIVE]);
+    fs.rmSync(TMUX_SOCKET, { force: true });
+  });
 }
 
 // A session, with a moment's patience for the server having just been started
@@ -59,7 +69,7 @@ async function newSession(args, { attempts = 4 } = {}) {
   let last = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     keepalive();
-    const started = run('tmux', args);
+    const started = tmux(args);
     if (started.status === 0) return started;
     last = started;
     await sleep(150 * (attempt + 1));
@@ -88,7 +98,7 @@ class LynxTty {
   }
 
   #tmux(args) {
-    return run('tmux', args);
+    return tmux(args);
   }
 
   async start({ ready = null, timeout = 8000 } = {}) {
