@@ -423,9 +423,12 @@ after you stop pressing keys, updates resume. This prevents advertisements,
 feeds, clocks, and other live content from moving the current line while it is
 being read.
 
-ARIA live announcements are delivered immediately. Simple text changes that
-do not reflow the page may also be updated in place. Press `r` for an immediate
-refresh, or `L` to disable or enable automatic updates.
+ARIA live announcements are delivered immediately, even while you are
+pressing keys, and one that has just been announced stays on the status row
+for a few seconds so it can be heard before the next keystroke clears it.
+Simple text changes that do not reflow the page may also be updated in place.
+Press `r` for an immediate refresh, or `L` to disable or enable automatic
+updates.
 
 At the end of a feed, press Down again. TAWB scrolls the browser, waits for
 more content, and adds any newly loaded items.

@@ -415,6 +415,12 @@ So the rule here is:
 - **Announcements are never delayed.** `aria-live` regions — status
   messages, errors, "42 results found" — reach the status line immediately
   whether you are reading or not.
+- **An announcement is given time to be heard.** The row normally clears on
+  the next keystroke, which for an announcement is the keystroke that was
+  already coming. A message that asked for a hold keeps the row for four
+  seconds (eight when assertive) instead. A polite announcement that arrives
+  while something else owns the row waits in a queue, and that queue is what
+  the reader drains after each keystroke and on every live tick.
 
 This is why watching a clock works without any special mode: watching means
 not touching keys, so the page is idle-updating and the clock ticks. The
