@@ -10,7 +10,7 @@ const assert = require('node:assert');
 
 const {
   terms, matches, rowMatches, filterRows, visibleEntries,
-  firstSelectable, selectionKey, selectionIndex, moveKey,
+  firstSelectable, nearestSelectable, selectionKey, selectionIndex, moveKey,
   appendFilter, backspaceFilter,
 } = require('../src/list_model');
 
@@ -90,6 +90,21 @@ test('the selection keeps a visible row and otherwise lands after its heading', 
   assert.equal(selectionKey(entries, 'gone'), 'next-line');
   assert.equal(selectionIndex(entries, 'gone'), 1);
   assert.equal(selectionKey([], 'anything'), null);
+});
+
+test('a missing selection falls to the nearest selectable row by position', () => {
+  const entries = visibleEntries({ sections: SECTIONS, pinned: PINNED });
+  // Entries: heading, next-line, previous-line, heading, edit-backspace,
+  // cmd:reset, cmd:exit.
+  assert.equal(nearestSelectable(entries, 2), 2);
+  assert.equal(nearestSelectable(entries, 3), 2, 'a heading falls back upward');
+  assert.equal(nearestSelectable(entries, 0), 1, 'the first heading falls forward');
+  assert.equal(nearestSelectable(entries, 99), 6, 'past the end lands on the last row');
+  assert.equal(nearestSelectable([], 4), -1);
+  assert.equal(selectionKey(entries, 'gone', { fallbackIndex: 4 }), 'edit-backspace');
+  assert.equal(selectionIndex(entries, 'gone', { fallbackIndex: 4 }), 4);
+  // The old behaviour is unchanged when no fallback is named.
+  assert.equal(selectionKey(entries, 'gone'), 'next-line');
 });
 
 test('movement steps through headings and clamps at both ends', () => {

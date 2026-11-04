@@ -29,6 +29,7 @@ require "./keys"
 require "./layout"
 require "./library"
 require "./list_model"
+require "./list_screen"
 require "./library_chromium"
 require "./live"
 require "./log"
@@ -805,6 +806,13 @@ module Tawb
             "rowKey" => row_key ? JSON::Any.new(row_key) : JSON::Any.new(nil),
           })
         end)
+      when "list_model.nearest"
+        object = payload.as_h
+        entries = object["entries"].as_a.map do |raw|
+          fields = raw.as_h
+          ListModel::Entry(Nil).new(fields["kind"].as_s, fields["key"].as_s, nil, nil)
+        end
+        JSON::Any.new(ListModel.nearest_selectable(entries, object["index"].as_i).to_i64)
       when "list_model.move"
         object = payload.as_h
         entries = object["entries"].as_a.map do |raw|
@@ -815,6 +823,29 @@ module Tawb
         key = ListModel.move_key(entries, object["selectedKey"]?.try(&.as_s?),
           object["action"].as_s, size)
         JSON::Any.new(key)
+      when "list_screen.filter_key"
+        object = payload.as_h
+        edit = ListScreen.filter_key(
+          object["policy"].as_s, object["filtering"].as_bool,
+          object["filter"]?.try(&.as_s?) || "", object["chunk"].as_s,
+          object["character"].as_bool, object["backspace"].as_bool,
+          object["clear"].as_bool, object["enter"].as_bool, object["escape"].as_bool)
+        JSON::Any.new({
+          "handled"   => JSON::Any.new(edit.handled),
+          "changed"   => JSON::Any.new(edit.changed),
+          "ended"     => JSON::Any.new(edit.ended),
+          "filter"    => JSON::Any.new(edit.filter),
+          "filtering" => JSON::Any.new(edit.filtering),
+        })
+      when "list_screen.filter_summary"
+        object = payload.as_h
+        JSON::Any.new(ListScreen.filter_summary(
+          object["filter"].as_s, object["total"].as_i, object["shown"].as_i,
+          object["noun"]?.try(&.as_s?) || "row"))
+      when "list_screen.filter_hint"
+        object = payload.as_h
+        JSON::Any.new(ListScreen.filter_hint(
+          object["policy"].as_s, object["filtering"].as_bool))
       when "library.entry_line"
         object = payload.as_h
         JSON::Any.new(Library.entry_line(object["kind"].as_s, object["entry"],

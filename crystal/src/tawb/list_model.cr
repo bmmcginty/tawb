@@ -75,20 +75,48 @@ module Tawb
       entries.index { |entry| entry.kind != "heading" } || 0
     end
 
+    # The nearest selectable entry to a position, used when the row the reader
+    # was on has gone. A stable key is the first choice; this is what a screen
+    # falls back to when there is no identity left to follow.
+    def self.nearest_selectable(entries : Array(Entry(T)), index : Int32) : Int32 forall T
+      return -1 if entries.empty?
+      start = Math.max(0, Math.min(index, entries.size - 1))
+      distance = 0
+      while distance < entries.size
+        before = start - distance
+        if before >= 0 && entries[before].kind != "heading"
+          return before
+        end
+        after = start + distance
+        if after < entries.size && entries[after].kind != "heading"
+          return after
+        end
+        distance += 1
+      end
+      first_selectable(entries)
+    end
+
     # The key the selection should have after the rows or the filter changed.
     # The row the reader was on wins when it is still there; otherwise the
     # first row after its heading is a better landing place than the heading
-    # itself, because that is where the next Enter or replacement acts.
-    def self.selection_key(entries : Array(Entry(T)), preferred : String?) : String? forall T
+    # itself, because that is where the next Enter or replacement acts. A
+    # caller that knows the position still means the same place — a removed
+    # row does — names it as `fallback_index`, and the nearest row to it wins.
+    def self.selection_key(entries : Array(Entry(T)), preferred : String?,
+                           fallback_index : Int32? = nil) : String? forall T
       return nil if entries.empty?
       if preferred && entries.any? { |entry| entry.key == preferred }
         return preferred
       end
+      if fallback = fallback_index
+        return entries[nearest_selectable(entries, fallback)].key
+      end
       entries[first_selectable(entries)].key
     end
 
-    def self.selection_index(entries : Array(Entry(T)), preferred : String?) : Int32 forall T
-      key = selection_key(entries, preferred)
+    def self.selection_index(entries : Array(Entry(T)), preferred : String?,
+                             fallback_index : Int32? = nil) : Int32 forall T
+      key = selection_key(entries, preferred, fallback_index)
       return -1 unless key
       entries.index { |entry| entry.key == key } || 0
     end

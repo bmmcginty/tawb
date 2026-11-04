@@ -61,3 +61,11 @@ test('native list selection and movement match', { skip }, () => {
   }
   assert.deepEqual(call('list_model.move', { entries: [], selectedKey: null, action: 'next' }), null);
 });
+
+test('native nearest-position fallback matches', { skip }, () => {
+  const entries = shape(model.visibleEntries({ sections: SECTIONS, pinned: PINNED }));
+  for (const index of [0, 2, 3, 4, 99]) {
+    assert.equal(call('list_model.nearest', { entries, index }), model.nearestSelectable(
+      model.visibleEntries({ sections: SECTIONS, pinned: PINNED }), index));
+  }
+});

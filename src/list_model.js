@@ -72,19 +72,37 @@ function firstSelectable(entries) {
   return index >= 0 ? index : 0;
 }
 
+// The nearest selectable entry to a position, used when the row the reader
+// was on has gone. A stable key is the first choice; this is what a screen
+// falls back to when there is no identity left to follow.
+function nearestSelectable(entries, index) {
+  if (!entries.length) return -1;
+  const start = Math.max(0, Math.min(index, entries.length - 1));
+  for (let distance = 0; distance < entries.length; distance += 1) {
+    const before = start - distance;
+    if (before >= 0 && entries[before].kind !== 'heading') return before;
+    const after = start + distance;
+    if (after < entries.length && entries[after].kind !== 'heading') return after;
+  }
+  return firstSelectable(entries);
+}
+
 // The key the selection should have after the rows or the filter changed.
 // The row the reader was on wins when it is still there; otherwise the first
 // row after its heading is a better landing place than the heading itself,
-// because that is where the next Enter or replacement acts.
-function selectionKey(entries, preferred = null) {
+// because that is where the next Enter or replacement acts. A caller that
+// knows the position still means the same place — a removed row does — names
+// it as `fallbackIndex`, and the nearest row to it wins.
+function selectionKey(entries, preferred = null, { fallbackIndex = null } = {}) {
   if (!entries.length) return null;
   if (preferred != null && entries.some((entry) => entry.key === preferred)) return preferred;
+  if (fallbackIndex != null) return entries[nearestSelectable(entries, fallbackIndex)].key;
   return entries[firstSelectable(entries)].key;
 }
 
-function selectionIndex(entries, preferred = null) {
+function selectionIndex(entries, preferred = null, { fallbackIndex = null } = {}) {
   if (!entries.length) return -1;
-  const key = selectionKey(entries, preferred);
+  const key = selectionKey(entries, preferred, { fallbackIndex });
   return entries.findIndex((entry) => entry.key === key);
 }
 
@@ -124,6 +142,6 @@ function backspaceFilter(filter) {
 
 module.exports = {
   terms, matches, rowMatches, filterRows,
-  visibleEntries, firstSelectable, selectionKey, selectionIndex, moveKey,
+  visibleEntries, firstSelectable, nearestSelectable, selectionKey, selectionIndex, moveKey,
   appendFilter, backspaceFilter,
 };
