@@ -967,7 +967,9 @@ the terminal selection.
 While one of the browser's lists is open, a printable character is always
 filter text, whatever the page keyboard binds it to. List commands therefore
 live on the navigation keys and Alt chords: `Alt+D` removes a bookmark, and
-`Esc` closes the list.
+`Esc` closes the list. Removal names the entry's position in the filtered
+list, so the cursor stays on the entry that takes its place, or on the one
+before it when the last entry was removed.
 
 The reference, information, and Lynx help commands reuse the internal-list
 buffer while holding live rebuilds. Help is a read-only internal page, while

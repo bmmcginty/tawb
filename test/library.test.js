@@ -330,6 +330,53 @@ test('Alt+D removes the selected bookmark in the ordinary interface', async () =
   assert.equal(state.statusMsg, 'Removed bookmark "Braille".');
 });
 
+const BOOKMARKS = ['One', 'Two', 'Three', 'Four', 'Five'].map((title, index) => ({
+  bookmarkId: String(index + 1),
+  title,
+  url: `https://example.test/${title.toLowerCase()}`,
+}));
+
+// Removing an entry shifts everything below it up. Staying at the same index
+// is what keeps the reader on the bookmark that took the removed one's place.
+test('removing a bookmark leaves the cursor on the entry below it', async () => {
+  const state = readerAt(BOOKMARKS);
+  state.keyReader = keyboard(['y']);
+  const removed = [];
+  state.driver.deleteBookmark = async (selected) => removed.push(selected);
+  await quietly(() => openLibrary(state, PAGE, 'bookmarks'));
+  for (let press = 0; press < 3; press += 1) {
+    await quietly(() => handleLibraryKey('\x1b[B', state, PAGE));
+  }
+  assert.equal(state.cursor, 3);
+
+  await quietly(() => handleLibraryKey('\x1bd', state, PAGE));
+
+  assert.deepEqual(removed, [BOOKMARKS[3]]);
+  assert.equal(state.library.rows.length, 4);
+  assert.equal(state.cursor, 3);
+  assert.equal(state.library.blocks[3].entry, BOOKMARKS[4]);
+});
+
+// There is no entry below the last one, so the nearest place is the one before.
+test('removing the last bookmark moves the cursor up to the one before it', async () => {
+  const state = readerAt(BOOKMARKS);
+  state.keyReader = keyboard(['y']);
+  const removed = [];
+  state.driver.deleteBookmark = async (selected) => removed.push(selected);
+  await quietly(() => openLibrary(state, PAGE, 'bookmarks'));
+  for (let press = 0; press < 4; press += 1) {
+    await quietly(() => handleLibraryKey('\x1b[B', state, PAGE));
+  }
+  assert.equal(state.cursor, 4);
+
+  await quietly(() => handleLibraryKey('\x1bd', state, PAGE));
+
+  assert.deepEqual(removed, [BOOKMARKS[4]]);
+  assert.equal(state.library.rows.length, 4);
+  assert.equal(state.cursor, 3);
+  assert.equal(state.library.blocks[3].entry, BOOKMARKS[3]);
+});
+
 test('a letter in a Lynx bookmark list is filter text, not a command', async () => {
   const entry = { title: 'Braille', url: 'https://example.test/braille' };
   const state = readerAt([entry]);

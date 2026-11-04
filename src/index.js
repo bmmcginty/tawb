@@ -3534,8 +3534,10 @@ function libraryStatus(state) {
 // Rebuilds the buffer from whatever the filter now admits. The reader is put
 // at the top: after a keystroke that changed which entries exist, the line
 // they were on is not the line they would be on, and staying at an index is
-// staying nowhere in particular.
-function showLibrary(state, page, filter) {
+// staying nowhere in particular. A caller that knows the index still means
+// the same entry — removal does — names it as `at`, and the screen row it was
+// on as `scroll`, so the list does not move under the reader.
+function showLibrary(state, page, filter, { at = 0, scroll = 0 } = {}) {
   const lib = state.library;
   lib.filter = filter;
   lib.blocks = lib.rows
@@ -3554,6 +3556,14 @@ function showLibrary(state, page, filter) {
   state.col = 0;
   state.scroll = 0;
   relayout(state);
+  const position = positionForBlock(state,
+    Math.min(Math.max(at, 0), Math.max(lib.blocks.length - 1, 0)));
+  if (position) {
+    state.cursor = position.line;
+    state.col = position.col;
+  }
+  state.scroll = scroll;
+  clampScroll(state);
   render(state, page, { force: true });
   // The count is furniture for this screen rather than something the reader
   // asked for: it is painted on the row and not kept, so it neither lands in
@@ -3847,6 +3857,9 @@ function closeLibrary(state, page, note) {
 }
 
 async function deleteLibraryBookmark(state, page) {
+  const line = currentLine(state);
+  const at = line ? line.blockIndex : state.cursor;
+  const scroll = state.scroll;
   const block = currentBlock(state);
   const entry = block && block.entry;
   if (!entry) { setStatus(state, 'Move to a bookmark first.'); return; }
@@ -3865,7 +3878,7 @@ async function deleteLibraryBookmark(state, page) {
     return;
   }
   state.library.rows = state.library.rows.filter((row) => row.entry !== entry);
-  showLibrary(state, page, state.library.filter);
+  showLibrary(state, page, state.library.filter, { at, scroll });
   setStatus(state, `Removed bookmark "${entry.title || entry.url}".`);
 }
 

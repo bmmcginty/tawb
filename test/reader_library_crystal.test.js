@@ -66,6 +66,37 @@ test('Alt+D removes the selected bookmark from the bookmarks list', { skip }, as
   assert.equal(result.state.statusMsg, 'Removed bookmark "Crystal".');
 });
 
+// The entry that takes the removed one's place is where the cursor belongs;
+// the last entry has nothing below it, so the nearest place is above.
+test('removing a bookmark keeps the native cursor in the list', { skip }, async () => {
+  const bookmarks = ['One', 'Two', 'Three', 'Four', 'Five'].map((title, index) => ({
+    bookmarkId: String(index + 1),
+    title,
+    url: `https://example.test/${title.toLowerCase()}`,
+  }));
+
+  const below = await both('delete keeps place', state({}, { bookmarks }), [
+    { op: 'browseKey', chunk: 'B' },
+    { op: 'libraryKey', chunk: '\x1b[B' },
+    { op: 'libraryKey', chunk: '\x1b[B' },
+    { op: 'libraryKey', chunk: '\x1b[B' },
+    { op: 'libraryKey', chunk: '\x1bd', keys: ['y'] },
+  ], false);
+  assert.equal(below.state.cursor, 3);
+  assert.equal(below.state.library.rows[3], 'Five — https://example.test/five');
+
+  const last = await both('delete last keeps place', state({}, { bookmarks }), [
+    { op: 'browseKey', chunk: 'B' },
+    { op: 'libraryKey', chunk: '\x1b[B' },
+    { op: 'libraryKey', chunk: '\x1b[B' },
+    { op: 'libraryKey', chunk: '\x1b[B' },
+    { op: 'libraryKey', chunk: '\x1b[B' },
+    { op: 'libraryKey', chunk: '\x1bd', keys: ['y'] },
+  ], false);
+  assert.equal(last.state.cursor, 3);
+  assert.equal(last.state.library.rows[3], 'Four — https://example.test/four');
+});
+
 test('a printable letter filters a Lynx list instead of quitting', { skip }, async () => {
   const result = await both('lynx list filter', state({
     interface: 'lynx',

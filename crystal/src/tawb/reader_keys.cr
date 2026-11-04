@@ -2528,8 +2528,12 @@ module Tawb
       "#{total} entr#{total == 1 ? "y" : "ies"} — type to filter."
     end
 
+    # A caller that knows the index still means the same entry — removal
+    # does — names it as `at`, and the screen row it was on as `scroll`, so
+    # the list does not move under the reader.
     def self.show_library(output : Screen::Output, state : Reader::State,
-                          page : Reader::PageEnv, filter : String) : Nil
+                          page : Reader::PageEnv, filter : String,
+                          at : Int32 = 0, scroll : Int32 = 0) : Nil
       library = state.library || return
       object = library.as_h
       object["filter"] = JSON::Any.new(filter)
@@ -2549,6 +2553,13 @@ module Tawb
       state.col = 0
       state.scroll = 0
       Reader.relayout(state)
+      wanted = Math.min(Math.max(at, 0), Math.max(object["blocks"].as_a.size - 1, 0))
+      if position = Reader.position_for_block(state, wanted)
+        state.cursor = position[:line]
+        state.col = position[:col]
+      end
+      state.scroll = scroll
+      Reader.clamp_scroll(state)
       Reader.render(output, state, page.url, true)
       # The count is furniture for this screen rather than something the reader
       # asked for: it is painted on the row and not kept, so it neither lands in
@@ -2929,6 +2940,9 @@ module Tawb
         return nil
       end
       if object["kind"].as_s == "bookmarks" && library_action == "delete-bookmark"
+        line = state.lines[state.cursor]?
+        at = line ? line.block_index : state.cursor
+        scroll = state.scroll
         entry = Reader.current_block(state).try(&.as_h).try(&.["entry"]?)
         unless entry
           Reader.set_status(output, state, page.url, "Move to a bookmark first."); return nil
@@ -2937,7 +2951,7 @@ module Tawb
         if ask_yes_no(output, state, keyboard, "Remove bookmark \"#{name}\"?")
           state.browser_library.try(&.delete(entry))
           object["rows"].as_a.reject! { |row| row.as_h["entry"]? == entry }
-          show_library(output, state, page, object["filter"].as_s)
+          show_library(output, state, page, object["filter"].as_s, at, scroll)
           Reader.set_status(output, state, page.url, "Removed bookmark \"#{name}\".")
         else
           Reader.set_status(output, state, page.url, "Bookmark not removed.")

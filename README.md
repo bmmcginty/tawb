@@ -454,7 +454,9 @@ list is a letter, not Quit. Press `Enter` to open the selected entry or
 browser's own download manager, so authenticated requests, filenames, and
 download history behave as they do for an Alt-click in the graphical browser.
 Inside the bookmarks list it removes the selected bookmark instead, after
-asking. Plain letters are reserved for moving through the page, so every
+asking. The list keeps its place: the bookmark that takes the removed one's
+place is selected, or the one before it when the last entry was removed.
+Plain letters are reserved for moving through the page, so every
 command that acts on something carries `Alt` or `Ctrl`.
 
 The browser's password manager remains responsible for saved credentials.
