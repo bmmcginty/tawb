@@ -1769,6 +1769,7 @@ module Tawb
       screen.title = reader.title
       reader.lynx_options = screen
       reader.mode = "options"
+      reader.screens.push("options", "lynx-options")
       LynxOptionsScreen.open_options(
         OptionsScreenHost.new(output, reader, page.url), screen, page)
     end
@@ -1787,6 +1788,7 @@ module Tawb
       reader.col = screen.col
       reader.scroll = screen.scroll
       reader.mode = "browse"
+      reader.screens.pop("options")
       reader.lynx_options = nil
     end
 
@@ -2523,6 +2525,7 @@ module Tawb
       end
       source = WizardKeys.new(keyboard)
       state.mode = "keyboard"
+      state.screens.push("keyboard", "wizard")
       # The live ticker must not paint while the wizard has the screen.
       set_live_value(state, "refreshing", JSON::Any.new(true))
       saved = begin
@@ -2531,6 +2534,7 @@ module Tawb
         source.close
         set_live_value(state, "refreshing", JSON::Any.new(false))
         state.mode = "browse"
+        state.screens.pop("keyboard")
       end
       # A resize during the wizard changed the geometry, and either way the
       # rows it wrote are not the page. Clearing first is what the options

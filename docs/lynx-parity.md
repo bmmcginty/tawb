@@ -96,8 +96,9 @@ keypress
         +-- 'browse'    the Lynx/ordinary browse keymap
 ```
 
-The library and chooser screens are also on the screen stack; the page is the
-base and the top screen receives keys. The options screen is
+The library, chooser, options and keyboard wizard screens are also on the
+screen stack; the page is the base and the top screen receives keys. The
+options screen is
 `state.mode === 'options'` and owns the terminal rather than borrowing the
 internal-list renderer. Choosing an option stores
 `state.options.choosing`; while it is set, `handleOptionsKey` delegates to

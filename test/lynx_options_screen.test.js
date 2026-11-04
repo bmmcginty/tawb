@@ -9,8 +9,9 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const {
-  renderOptionsRow, drawOptionsScreen, placeOptionsCursor,
+  renderOptionsRow, drawOptionsScreen, placeOptionsCursor, openOptions, closeOptions,
 } = require('../src/lynx_options_screen');
+const { ScreenStack } = require('../src/screen_stack');
 const {
   screenLines, optionForLetter, SCREEN_ROWS, COMMAND_PROMPT,
   ANY_KEY_CHANGE, VALUE_ACCEPTED,
@@ -107,4 +108,33 @@ test('the module keeps every option Lynx prints addressable', () => {
   // The exported message constants are still the ones the module draws with.
   assert.equal(typeof ANY_KEY_CHANGE, 'string');
   assert.equal(typeof VALUE_ACCEPTED, 'string');
+});
+
+test('the options screen is pushed and popped on the screen stack', () => {
+  const reader = state();
+  reader.screens = new ScreenStack();
+  reader.core = { live: { refreshing: false } };
+  reader.mode = 'browse';
+  reader.cursor = 0;
+  reader.col = 0;
+  reader.scroll = 0;
+  reader.title = 'The page';
+  reader.lines = [{ text: 'page', blockIndex: 0 }];
+  const host = {
+    clearScreen() {},
+    resetScrollRegion() {},
+    writeLine() {},
+    moveCursor() {},
+    setStatus() {},
+    relayout() {},
+    render() {},
+    clampCol() {},
+    clampScroll() {},
+  };
+  openOptions(host, reader, {});
+  assert.equal(reader.screens.top().mode, 'options');
+  assert.equal(reader.screens.depth(), 1);
+  closeOptions(host, reader, {}, null);
+  assert.equal(reader.screens.top().mode, 'page');
+  assert.equal(reader.screens.depth(), 0);
 });

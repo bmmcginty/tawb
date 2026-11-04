@@ -1241,11 +1241,13 @@ land where they are not. Escape puts the reader back on the line, column and
 screen they left, because closing a list is not a navigation and must not
 read as one.
 
-The library and the chooser are the first screens on the screen stack: the
-page is the base, and a raised screen owns the keyboard until it leaves. The
-screen's own enter and leave still restore the page and hold live rebuilds;
-the stack only decides which screen receives a key. The contract and the
-remaining migration order are in `docs/screen-contract.md`.
+The library, the chooser, Lynx options and the keyboard wizard are screens on
+the screen stack: the page is the base, and a raised screen owns the keyboard
+until it leaves. The screen's own enter and leave still restore the page and
+hold live rebuilds; the stack only decides which screen receives a key. The
+wizard runs its own key loop inside its screen, and prompts and browser
+dialogs stay input layers above the stack. The contract is in
+`docs/screen-contract.md`.
 
 ### Filing one
 

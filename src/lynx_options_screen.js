@@ -55,6 +55,7 @@ function placeOptionsCursor(host, state, lines = screenLines(state.keys.preferen
 function openOptions(host, state, page) {
   state.core.live.refreshing = true;
   state.mode = 'options';
+  if (state.screens) state.screens.push({ mode: 'options', kind: 'lynx-options' });
   state.options = {
     choosing: null,
     originalPreferences: { ...state.keys.preferences },
@@ -72,6 +73,7 @@ function closeOptions(host, state, page, note) {
   const { place } = state.options;
   state.options = null;
   state.mode = 'browse';
+  if (state.screens) state.screens.pop('options');
   state.core.live.refreshing = false;
   state.title = place.title;
   host.relayout(state);

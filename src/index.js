@@ -2677,6 +2677,7 @@ async function handleBrowseKey(chunk, state, page, actionOverride = null) {
     // in-flight refresh finish first, then hold later snapshots and text
     // patches until the page view returns.
     state.mode = 'keyboard';
+    if (state.screens) state.screens.push({ mode: 'keyboard', kind: 'wizard' });
     while (state.core.live.refreshing) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
@@ -2689,6 +2690,7 @@ async function handleBrowseKey(chunk, state, page, actionOverride = null) {
     } finally {
       state.core.live.refreshing = false;
       state.mode = 'browse';
+      if (state.screens) state.screens.pop('keyboard');
     }
     // A resize during the wizard changed the geometry, and either way the rows
     // it wrote are not the page. Clearing first is what options does for the
@@ -5973,6 +5975,8 @@ async function main() {
       result = await handleChooseKey(chunk, state, current);
     } else if (screen && screen.mode === state.mode && screen.mode === 'library') {
       result = await handleLibraryKey(chunk, state, current);
+    } else if (screen && screen.mode === state.mode && screen.mode === 'options') {
+      result = await handleOptionsKey(chunk, state, current);
     } else if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
     else if (state.mode === 'options') result = await handleOptionsKey(chunk, state, current);
     else if (state.mode === 'library') result = await handleLibraryKey(chunk, state, current);

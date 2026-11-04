@@ -395,6 +395,8 @@ module Tawb
                       ReaderKeys.handle_library_key(terminal, state, current, keyboard, chunk)
                     elsif top_screen.mode == state.mode && top_screen.mode == "choose"
                       ReaderKeys.handle_choose_key(terminal, state, current, chunk); nil
+                    elsif top_screen.mode == state.mode && top_screen.mode == "options"
+                      ReaderKeys.handle_lynx_options_key(terminal, state, current, chunk); nil
                     else
                       case state.mode
                       when "type"

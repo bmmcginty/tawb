@@ -162,8 +162,9 @@ terminal loop dispatches to the top screen when its mode matches. Prompts and
 browser dialogs still use their own modes above the stack, so a dialog can
 arrive while a list is open without losing the list underneath.
 
-The keyboard wizard uses the same explicit filter policy and filter edits, but
-still draws its own full terminal and has not been moved onto the stack. Lynx
-options remains a whole-terminal screen with its own letter commands. The next
-steps are the wizard, then the options screen, then deleting the old mode
-branches once both runtimes cover the stack paths.
+The keyboard wizard and Lynx options are also pushed and popped as screens.
+Both still own the whole terminal and draw themselves; the wizard's key loop
+runs inside the screen rather than through the terminal loop, while options is
+dispatched from the top of the stack. Lynx options keeps its own letter
+commands. What remains is deleting the old duplicate mode branches once both
+runtimes have exercised the stack paths for a release.
