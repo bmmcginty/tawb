@@ -106,11 +106,12 @@ function createLynxActions(host) {
       return !!(preferences && preferences.textfieldsNeedActivation);
     },
 
-    // What the status line says after Tab lands on an editable field.
+    // What the status line says after Tab lands on an editable field. A
+    // textarea's Enter is a line break, so it must not promise a submission.
     tabTypingStatus(state, name) {
-      return state.interface === 'lynx'
-        ? 'Enter text. Use arrows or Tab to move off of field.'
-        : `Typing into "${name}" — Tab: next control, Esc: stop, Enter: submit.`;
+      if (state.interface === 'lynx') return 'Enter text. Use arrows or Tab to move off of field.';
+      const enter = state.typing && state.typing.multiline ? 'Enter: new line' : 'Enter: submit';
+      return `Typing into "${name}" — Tab: next control, Esc: stop, ${enter}.`;
     },
 
     // The mode to be in after Tab lands on a non-editable control. Lynx stays

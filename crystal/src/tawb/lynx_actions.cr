@@ -197,7 +197,10 @@ module Tawb
       if active?(state)
         "Enter text. Use arrows or Tab to move off of field."
       else
-        "Typing into \"#{name}\" — Tab: next control, Esc: stop, Enter: submit."
+        # A textarea's Enter is a line break, so it must not promise a
+        # submission.
+        enter = state.reader.try(&.typing).try(&.multiline) ? "Enter: new line" : "Enter: submit"
+        "Typing into \"#{name}\" — Tab: next control, Esc: stop, #{enter}."
       end
     end
 

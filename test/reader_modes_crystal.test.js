@@ -45,7 +45,7 @@ function typingState(item, text, caret, drawn, overrides = {}, coreOverrides = {
   ];
   const state = stateFor(blocks, {
     mode: 'type',
-    typing: { item, text, caret, drawn },
+    typing: { item, text, caret, drawn, multiline: !!item.multiline },
     ...overrides,
   }, coreOverrides);
   return state;
@@ -239,6 +239,35 @@ test('enter submits the form and reads whatever came back', { skip: needsCrystal
   assert.equal(result.state.typing, null);
   assert.equal(result.state.statusMsg, 'Submitted "Search".');
   assert.equal(result.state.lines[2].text, 'results for q');
+});
+
+test('typing into a textarea learns that Enter is a new line', { skip: needsCrystal }, async () => {
+  const NOTES = { role: 'textbox', name: 'Notes' };
+  const state = stateFor([
+    { text: 'label', item: { role: 'text' } },
+    { text: '[Notes]', item: NOTES },
+  ], { mode: 'forms', cursor: 1 }, {
+    field: { text: '', caret: 0, native: true, multiline: true },
+  });
+  const result = await runBoth('begin multiline', state, [
+    { op: 'beginTyping', item: NOTES },
+  ], { url: PAGE_URL });
+  assert.equal(result.state.mode, 'type');
+  assert.equal(result.state.drawn.hint,
+    'Typing — Tab: next control  Esc: stop  Enter: new line');
+});
+
+test('enter makes a new line in a textarea instead of submitting', { skip: needsCrystal }, async () => {
+  const NOTES = { role: 'textbox', name: 'Notes', multiline: true };
+  const state = typingState(NOTES, 'hello', 5, '[Notes: hello]', {}, {
+    typedFields: [{ text: 'hello\n', caret: 6, native: true }],
+  });
+  const result = await runBoth('textarea newline', state, [
+    { op: 'typeKey', chunk: '\r' },
+  ], { url: PAGE_URL });
+  assert.equal(result.state.mode, 'type', 'the form was not submitted');
+  assert.deepEqual(result.state.typing, { text: 'hello\n', caret: 6 });
+  assert.equal(result.state.typingReads, 1, 'the field was read back');
 });
 
 test('lynx hands one command back to the browse map', { skip: needsCrystal }, async () => {

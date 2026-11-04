@@ -1,9 +1,17 @@
 // Generated from src/core.js readFieldStateInPage; update with tools/update_crystal_assets.js.
 function readFieldStateInPage(el) {
+  // Whether Enter is text for this field rather than a submission. A
+  // <textarea> says so itself, and ARIA says it for a textbox built out of
+  // other elements; an <input> is one line by definition, whatever type it
+  // has.
+  const multiline = el.tagName === 'TEXTAREA'
+    || el.getAttribute('aria-multiline') === 'true';
+
   if ('value' in el && typeof el.value === 'string') {
     return {
       text: el.value,
       caret: el.selectionStart != null ? el.selectionStart : el.value.length,
+      multiline,
       native: true,
     };
   }
@@ -55,10 +63,11 @@ function readFieldStateInPage(el) {
     return {
       text,
       caret: caret == null ? text.length : Math.min(caret, text.length),
+      multiline,
       native: true,
     };
   }
 
   const text = el.textContent || '';
-  return { text, caret: text.length, native: false };
+  return { text, caret: text.length, multiline, native: false };
 }

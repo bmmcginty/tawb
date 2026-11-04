@@ -1401,6 +1401,7 @@ function readerImplementations(index, keysModule) {
       typing: spec.typing ? {
         item: spec.typing.item, text: spec.typing.text ?? '',
         caret: spec.typing.caret ?? 0, drawn: spec.typing.drawn ?? null,
+        multiline: !!spec.typing.multiline,
       } : null,
       address: spec.address ? {
         text: spec.address.text ?? '', caret: spec.address.caret ?? 0,

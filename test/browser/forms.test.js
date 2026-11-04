@@ -99,6 +99,54 @@ test('the Lynx arrows enter fields unless text-field activation is required', as
   }
 });
 
+test('Enter inserts a line in a textarea and still submits a one-line input', async () => {
+  driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
+  const page = driver.context.pages()[0] || await driver.context.newPage();
+  await page.goto('data:text/html,' + encodeURIComponent(`
+    <form onsubmit="window.submitted += 1; event.preventDefault()">
+      <textarea aria-label="Notes"></textarea>
+      <input aria-label="Query">
+    </form>
+    <script>window.submitted = 0</script>
+  `));
+  const core = new Core({ driver, page, source: 'ax' });
+  await core.rescan();
+  const keys = new Keymap({ terminfo: {}, load: false });
+  const state = {
+    interface: 'default', core, driver, keys, lines: layoutLines(core.blocks, 79),
+    cursor: 0, col: 0, scroll: 0, mode: 'browse', typing: null,
+    historyPlaces: new WeakMap(), statusMsg: '', statusHeldUntil: 0,
+    drawn: { title: null, address: null, hint: null, status: null },
+    title: '', library: null, dialog: null, linkAddress: false,
+  };
+  const write = process.stdout.write;
+  process.stdout.write = () => true;
+  try {
+    state.cursor = lineNamed(state, 'Notes');
+    await activateCurrent(state, page);
+    assert.equal(state.mode, 'type');
+    assert.equal(state.typing.multiline, true);
+
+    await handleTypeKey('\r', state, page);
+    assert.equal(state.mode, 'type', 'the form was not submitted');
+    assert.equal(await page.evaluate(() => document.querySelector('textarea').value), '\n');
+    assert.equal(await page.evaluate(() => window.submitted), 0);
+
+    await handleTypeKey('\x1b', state, page);
+    state.cursor = lineNamed(state, 'Query');
+    await activateCurrent(state, page);
+    assert.equal(state.mode, 'type');
+    assert.equal(state.typing.multiline, false);
+
+    await handleTypeKey('\r', state, page);
+    assert.equal(state.mode, 'browse');
+    assert.equal(await page.evaluate(() => window.submitted), 1);
+  } finally {
+    await core.releaseTypingField().catch(() => {});
+    process.stdout.write = write;
+  }
+});
+
 test('Tab keeps typing between fields, then leaves editing for a combobox', async () => {
   driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
   const page = driver.context.pages()[0] || await driver.context.newPage();

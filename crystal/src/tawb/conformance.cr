@@ -2134,7 +2134,8 @@ module Tawb
             item,
             typing["text"]?.try(&.as_s?) || "",
             (typing["caret"]?.try(&.as_i64?) || 0).to_i32,
-            typing["drawn"]?.try(&.as_s?))
+            typing["drawn"]?.try(&.as_s?),
+            typing["multiline"]?.try(&.as_bool?) || false)
         end
       end
       if address = object["address"]?.try(&.as_h?)

@@ -589,7 +589,9 @@ module Tawb
       state.typing = Reader::Typing.new(
         item,
         info_object["text"]?.try(&.as_s?) || "",
-        (info_object["caret"]?.try(&.as_i64?) || 0).to_i32)
+        (info_object["caret"]?.try(&.as_i64?) || 0).to_i32,
+        nil,
+        info_object["multiline"]?.try(&.as_bool?) || false)
       Reader.draw_hint(output, state)
       typing = state.typing.not_nil!
       typing.drawn = Reader.typing_text(state)[:text]
@@ -1760,6 +1762,14 @@ module Tawb
       end
 
       if chunk == "\r" || chunk == "\n"
+        # A textarea's Enter is text: the browser inserts the line break, and
+        # the field is read back like any other keystroke. An <input> has one
+        # line by definition, so Enter there stays the form's submission.
+        if typing.multiline
+          page.keyboard_press("Enter")
+          refresh_typed_row(output, state, typing, old_caret_col, output_generation)
+          return
+        end
         previous_url = page.url
         remember_history_place(state, page)
         screen = Reader.screen_before(state)
@@ -1809,6 +1819,15 @@ module Tawb
         typing.caret += chunk.size
       end
 
+      refresh_typed_row(output, state, typing, old_caret_col, output_generation)
+    end
+
+    # Read the field back after a keystroke the browser performed, and patch
+    # the row it is drawn on. Shared by ordinary typing and by the Enter that
+    # is text in a textarea, so both end the same way.
+    private def self.refresh_typed_row(output : Screen::Output, state : Reader::State,
+                                       typing : Reader::Typing, old_caret_col : Int32,
+                                       output_generation : Int32) : Nil
       info = state.core.read_typing_field
       return unless info
       info_object = info.as_h

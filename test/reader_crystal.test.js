@@ -282,6 +282,13 @@ test('every mode is answered by its own hint', { skip: needsCrystal }, () => {
   const lynx = stateFor({ mode: 'type', interface: 'lynx' });
   assert.match(valueOf('lynx typing hint', lynx, [{ op: 'hintText' }]),
     /arrows or Tab to move off of field/);
+  // A textarea's Enter is a line break, and the hint must not promise a
+  // submission it will not perform.
+  const notes = stateFor({ mode: 'type', typing: {
+    item: { role: 'textbox', name: 'Notes' }, text: '', caret: 0, multiline: true,
+  } });
+  assert.equal(valueOf('textarea hint', notes, [{ op: 'hintText' }]),
+    'Typing — Tab: next control  Esc: stop  Enter: new line');
 });
 
 test('the webpage-keyboard hint names the key that leaves it', { skip: needsCrystal }, () => {

@@ -80,6 +80,9 @@ test('default hints keep their own wording', () => {
   assert.match(hintText({ mode: 'browse' }), /^j\/k line/);
   assert.equal(hintText({ interface: 'default', mode: 'type' }),
     'Typing — Tab: next control  Esc: stop  Enter: submit');
+  assert.equal(hintText({
+    interface: 'default', mode: 'type', typing: { item: { role: 'textbox' }, multiline: true },
+  }), 'Typing — Tab: next control  Esc: stop  Enter: new line');
   assert.equal(hintText({ interface: 'default', mode: 'number' }),
     'Follow link number — Enter: follow  g: move  Esc: cancel');
 });

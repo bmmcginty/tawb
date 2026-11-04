@@ -862,9 +862,11 @@ function drawAddress(state, page, { force = false, edit = false } = {}) {
 
 function hintText(state) {
   if (state.mode === 'address') return 'Address — Enter: go  Esc: cancel';
-  if (state.mode === 'type') return LYNX_ACTIONS.active(state)
-    ? 'Enter text. Use arrows or Tab to move off of field.'
-    : 'Typing — Tab: next control  Esc: stop  Enter: submit';
+  if (state.mode === 'type') {
+    if (LYNX_ACTIONS.active(state)) return 'Enter text. Use arrows or Tab to move off of field.';
+    const enter = state.typing && state.typing.multiline ? 'Enter: new line' : 'Enter: submit';
+    return `Typing — Tab: next control  Esc: stop  ${enter}`;
+  }
   if (state.mode === 'field-command') return 'Command: press one Lynx browse key  Esc: cancel';
   if (state.mode === 'forms') return 'Forms — Tab: next control  Enter: activate  Esc: browse';
   if (state.mode === 'control') return 'Control — arrows adjust  Home/End  Esc: stop';
@@ -2940,7 +2942,11 @@ async function beginTyping(state, page, item) {
   if (!info) return false;
 
   state.mode = 'type';
-  state.typing = { item, text: info.text, caret: info.caret, drawn: null };
+  state.typing = {
+    item, text: info.text, caret: info.caret, drawn: null,
+    // Enter is a line break in this field, not a submission.
+    multiline: !!info.multiline,
+  };
   drawHint(state);
   state.typing.drawn = typingText(state).text;
   writeLine(lineRow(state, state.cursor), state.typing.drawn);
@@ -4871,6 +4877,14 @@ async function handleTypeKey(chunk, state, page) {
   }
 
   if (chunk === '\r' || chunk === '\n') {
+    // A textarea's Enter is text: the browser inserts the line break, and
+    // the field is read back like any other keystroke. An <input> has one
+    // line by definition, so Enter there stays the form's submission.
+    if (t.multiline) {
+      await page.keyboard.press('Enter');
+      await updateTypedRow(state, t, oldCaretCol, outputGeneration);
+      return;
+    }
     const previousUrl = page.url();
     await rememberCurrentHistoryPlace(state, page);
     const screen = screenBefore(state);
@@ -4913,6 +4927,13 @@ async function handleTypeKey(chunk, state, page) {
     t.caret += chunk.length;
   }
 
+  await updateTypedRow(state, t, oldCaretCol, outputGeneration);
+}
+
+// Read the field back after a keystroke the browser performed, and patch the
+// row it is drawn on. Shared by ordinary typing and by the Enter that is text
+// in a textarea, so both end the same way.
+async function updateTypedRow(state, t, oldCaretCol, outputGeneration) {
   const info = await state.core.readTypingField();
   if (!info) return;
   t.text = info.text;

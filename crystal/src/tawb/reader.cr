@@ -82,8 +82,10 @@ module Tawb
       # What the field's line last showed, so a keystroke can patch the row
       # instead of rewriting it.
       property drawn : String?
+      # Enter is a line break in this field, not a submission.
+      property multiline : Bool
 
-      def initialize(@item, @text = "", @caret = 0, @drawn = nil)
+      def initialize(@item, @text = "", @caret = 0, @drawn = nil, @multiline = false)
       end
     end
 
@@ -1634,7 +1636,8 @@ module Tawb
         if lynx_active?(state)
           return "Enter text. Use arrows or Tab to move off of field."
         end
-        return "Typing — Tab: next control  Esc: stop  Enter: submit"
+        enter = state.typing.try(&.multiline) ? "Enter: new line" : "Enter: submit"
+        return "Typing — Tab: next control  Esc: stop  #{enter}"
       elsif mode == "field-command"
         return "Command: press one Lynx browse key  Esc: cancel"
       elsif mode == "forms"
