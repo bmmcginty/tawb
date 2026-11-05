@@ -2566,7 +2566,10 @@ it writes `--dump` output through either, it edits its own key bindings with
 `--keyboard`, it reads and answers the browser's own windows over the
 accessibility bus, and it serves the same browser to edbrowse with
 `--front-end edb`. It is the packaged `tawb` command; the Node implementation
-remains in the tree as the differential reference.
+remains in the tree as the differential reference. The proof required before
+that reference and the Node runtime can be retired is tracked in
+`docs/crystal-javascript-parity-plan.md`; a named test or matching asset is not
+by itself treated as complete parity there.
 
 Two things in the native build are hand-written where the standard library
 would have done, and for the same reason the protocols are: a dependency the
