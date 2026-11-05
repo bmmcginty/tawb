@@ -79,9 +79,17 @@ async function snapshotBlocks(page, source = 'ax', {
   const t0 = Date.now();
   const visual = layoutOrder === 'default' ? false : layoutOrder;
   const extracted = await snapshotFrameTree(page, source, { visited, driver, layout, visual });
+  const extractedAt = Date.now();
   const blocks = orderBlocks(extracted, layoutOrder);
+  const orderedAt = Date.now();
   log('snapshot', {
-    source, layoutOrder, ms: Date.now() - t0, blocks: blocks.length, frames: page.frames().length,
+    source,
+    layoutOrder,
+    ms: orderedAt - t0,
+    extractMs: extractedAt - t0,
+    orderMs: orderedAt - extractedAt,
+    blocks: blocks.length,
+    frames: page.frames().length,
   });
   return blocks;
 }

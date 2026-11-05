@@ -8,8 +8,12 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const { Core, snapshotBlocks } = require('../src/core');
+const { enableLog, disableLog, flushLog } = require('../src/log');
 
 const rect = (top, left, width = 80, height = 20) => ({ top, left, width, height });
 
@@ -84,6 +88,22 @@ test('a diagnostic snapshot asks for geometry and orders the same blocks', async
   assert.deepEqual(container.options, [{ layout: false, visual: 'container' }]);
   assert.deepEqual(containerBlocks.map((block) => block.text),
     ['Product', '$10.50', 'Reviews']);
+});
+
+test('snapshot logs extraction and ordering costs separately', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tawb-layout-log-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const logPath = enableLog({ directory });
+  const { page } = pageWith(ENTRIES);
+  await snapshotBlocks(page, 'render', { layoutOrder: 'rectangle' });
+  await flushLog();
+  await disableLog();
+  const record = fs.readFileSync(logPath, 'utf8').split('\n')
+    .find((line) => line.includes('"event":"snapshot"'));
+  const parsed = JSON.parse(record);
+  assert.equal(typeof parsed.extractMs, 'number');
+  assert.equal(typeof parsed.orderMs, 'number');
+  assert.equal(parsed.ms, parsed.extractMs + parsed.orderMs);
 });
 
 test('a live rebuild keeps using the selected layout order', async () => {
