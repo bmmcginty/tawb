@@ -547,6 +547,8 @@ module Tawb
         core_view_blocks(payload)
       when "core.layout_scenario"
         core_layout_scenario(payload)
+      when "core.media_scenario"
+        core_media_scenario(payload)
       when "dump.resolve_target"
         object = payload.as_h
         existing = object["existing"].as_a.map(&.as_s).to_set
@@ -4251,6 +4253,92 @@ module Tawb
             held.close rescue nil
           end
         end
+      end
+    end
+
+    # A direct media document uses Firefox's own user-agent shadow root for
+    # every operation after the host status line. Exercise extraction and the
+    # native-control activation path together: merely seeing labels would not
+    # prove that the descriptors still identify controls the browser can use.
+    private def self.core_media_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      profile = object["profile"].as_s
+      started = FirefoxLaunch.launch(profile)
+      session = FirefoxDriver::BrowserSession.new(
+        Broker.ensure(profile, started.endpoint)[:url])
+      page = nil.as(FirefoxDriver::Page?)
+      begin
+        session.start
+        page = session.create_page
+        acting = page.not_nil!
+        acting.goto(object["url"].as_s, "domcontentloaded")
+        50.times do
+          ready = acting.evaluate(
+            "() => { const media = document.querySelector('video,audio'); " \
+            "return !!media && Number.isFinite(media.duration) && media.duration > 1; }"
+          ).as_bool? || false
+          break if ready
+          sleep 100.milliseconds
+        end
+        acting.evaluate("() => { const media = document.querySelector('video,audio'); " \
+                        "if (!media) return false; media.pause(); media.currentTime = 1; return true; }")
+
+        core = Core.new(source: "ax", page: acting)
+        blocks = core.rescan
+        controls = blocks.select { |block| block.item.as_h?.try(&.has_key?("nativeControl")) }
+        toggle = controls.find do |block|
+          object = block.item.as_h
+          object["role"]?.try(&.as_s?) == "button" &&
+            /mute/i.matches?(object["name"]?.try(&.as_s?) || "")
+        end
+        position = controls.find do |block|
+          object = block.item.as_h
+          object["role"]?.try(&.as_s?) == "slider" &&
+            /position|time scrubber/i.matches?(object["name"]?.try(&.as_s?) || "")
+        end
+
+        muted = false
+        mute_status = "missing"
+        if control = toggle
+          before = acting.evaluate("() => document.querySelector('video,audio').muted").as_bool
+          activated = core.activate(control.item, acting).as_h
+          mute_status = activated["status"]?.try(&.as_s?) || "pressed"
+          after = acting.evaluate("() => document.querySelector('video,audio').muted").as_bool
+          muted = before != after
+        end
+
+        moved = false
+        focused = false
+        if slider = position
+          acting.evaluate("() => { document.querySelector('video,audio').currentTime = 1; return true; }")
+          before = acting.evaluate("() => document.querySelector('video,audio').currentTime").as_f
+          focused = core.focus_control(slider.item, acting)
+          core.adjust_control(slider.item, "ArrowRight", acting) if focused
+          after = acting.evaluate("() => document.querySelector('video,audio').currentTime").as_f
+          moved = before != after
+        end
+
+        core.source = "source"
+        source = core.rescan.map(&.text).join('\n')
+        JSON::Any.new({
+          "controls" => JSON::Any.new(controls.map do |block|
+            item = block.item.as_h
+            JSON::Any.new({
+              "role" => item["role"]? || JSON::Any.new(nil),
+              "name" => item["name"]? || JSON::Any.new(nil),
+            })
+          end),
+          "muteToggled"         => JSON::Any.new(muted),
+          "muteStatus"          => JSON::Any.new(mute_status),
+          "positionFocused"    => JSON::Any.new(focused),
+          "positionMoved"      => JSON::Any.new(moved),
+          "sourceHasUserAgent" => JSON::Any.new(source.includes?("#user-agent-shadow-root")),
+          "sourceHasControls"  => JSON::Any.new(source.includes?("<native-control")),
+        })
+      ensure
+        page.try { |held| held.close rescue nil }
+        session.protocol.command(Broker::RETAIN_SESSION) rescue nil
+        session.close(false) rescue nil
       end
     end
 

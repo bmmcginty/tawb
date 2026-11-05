@@ -37,6 +37,10 @@ const PAGE = `<!doctype html><html><head><title>Four views</title></head><body>
   <input type="text" aria-label="Your name" value="Ada">
   <img src="logo.png" alt="">
   <table><tr><th>Name</th><td>Ada</td></tr></table>
+  <div id="closed"></div><script>
+    document.getElementById('closed').attachShadow({ mode: 'closed' }).innerHTML =
+      '<button>Closed view control</button>';
+  </script>
 </body></html>`;
 
 function run(command, args, options) {
@@ -146,6 +150,10 @@ for (const engine of ['chromium', 'firefox']) {
           assert.deepEqual(crystal, javascript,
             `the ${source} view differs between the runtimes`);
           assert.ok(crystal.length > 0, 'and it read something');
+          if (source === 'source') {
+            assert.ok(crystal.some((block) => block.text.includes('Closed view control')),
+              'SOURCE omitted the closed shadow root');
+          }
         } finally {
           killProfile(native);
           killProfile(other);

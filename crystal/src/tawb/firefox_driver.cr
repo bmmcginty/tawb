@@ -1094,29 +1094,45 @@ module Tawb
       end
 
       def accessibility_items(context_id = @context_id, layout = false, visual = false) : Array(JSON::Any)
+        items = extract_accessibility_items(context_id, layout, visual, false)
+        # Closed roots are an enhancement unless the ordinary walk found
+        # nothing. Native media controls are different: the host already
+        # produced its status line, but Play, Position, Mute and Volume live
+        # in Firefox's user-agent root and require the privileged descriptors.
+        return items unless items.empty? || has_media_controls?(context_id)
+        begin
+          extract_accessibility_items(context_id, layout, visual, true)
+        rescue
+          # A privileged root can disappear while the page is changing. Keep
+          # the complete ordinary extraction rather than losing the document.
+          items
+        end
+      end
+
+      private def extract_accessibility_items(context_id : String, layout, visual,
+                                              pierce : Bool) : Array(JSON::Any)
         # The function is sent the way the JavaScript driver sends it: the bare
         # function source, with the walker's options as the call's argument.
         # Wrapping the source in a return statement answered undefined on real
         # Firefox, and handing the generated call its options inside the
         # source is a second way to lose them.
         declaration = EXTRACT_AX.sub(/\)\(\{layout:false\}\)\s*\z/m, ")")
-        layout_argument = JSON::Any.new([
-          JSON::Any.new("layout"),
-          JSON::Any.new({
-            "type"  => JSON::Any.new("boolean"),
-            "value" => JSON::Any.new(layout),
-          }),
-        ])
-        visual_argument = JSON::Any.new([
-          JSON::Any.new("visual"),
-          JSON::Any.new({
-            "type"  => JSON::Any.new(visual.is_a?(String) ? "string" : "boolean"),
-            "value" => JSON::Any.new(visual),
-          }),
-        ])
+        option = ->(name : String, type : String, value : JSON::Any) do
+          JSON::Any.new([
+            JSON::Any.new(name),
+            JSON::Any.new({
+              "type"  => JSON::Any.new(type),
+              "value" => value,
+            }),
+          ])
+        end
         arguments = JSON::Any.new([JSON::Any.new({
-          "type"  => JSON::Any.new("object"),
-          "value" => JSON::Any.new([layout_argument, visual_argument]),
+          "type" => JSON::Any.new("object"),
+          "value" => JSON::Any.new([
+            option.call("layout", "boolean", JSON::Any.new(layout)),
+            option.call("visual", visual.is_a?(String) ? "string" : "boolean", JSON::Any.new(visual)),
+            option.call("pierce", "boolean", JSON::Any.new(pierce)),
+          ]),
         })])
         result = @protocol.command("script.callFunction", {
           "functionDeclaration" => JSON::Any.new(declaration),
@@ -1130,8 +1146,15 @@ module Tawb
           message = detail.try(&.["text"]?.try(&.as_s?)) || "the page threw while extracting accessibility"
           raise IO::Error.new(message)
         end
-        decoded = Bidi.from_remote(result["result"]?)
-        decoded.as_a
+        Bidi.from_remote(result["result"]?).as_a
+      end
+
+      private def has_media_controls?(context_id : String) : Bool
+        Frame.new(@protocol, context_id, self).evaluate(
+          "() => !!document.querySelector('video[controls],audio[controls]')"
+        ).as_bool? || false
+      rescue
+        false
       end
 
       private def frame_tree(context : JSON::Any) : JSON::Any

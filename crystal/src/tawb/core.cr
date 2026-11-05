@@ -569,7 +569,14 @@ module Tawb
                   "visual" => @layout_order == "default" ? JSON::Any.new(false) : JSON::Any.new(@layout_order),
                 })).as_a?
             else
-              scope.evaluate(SourceHtml::EXTRACT_SOURCE).as_a?
+              # SOURCE is the explicit inspection view, so completeness is
+              # worth the privileged scan. Firefox's helper is reached by the
+              # option in the first call; Chromium lends roots to the paired
+              # call. Either engine keeps the ordinary result if no root is
+              # available or a node disappears during the scan.
+              first = scope.evaluate(SourceHtml::EXTRACT_SOURCE, SourceHtml::PIERCE_OPTION)
+              privileged = scope.pierce_and_run(SourceHtml::EXTRACT_WITH_PAIRS) rescue nil
+              (privileged || first).as_a?
             end
           rescue
             nil
