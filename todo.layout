@@ -7,7 +7,7 @@ selected explicitly through the command actions `layout-container` and
 - [x] Define the layout-order contract and fixture cases: stable fallback,
       rectangular row ordering, container-aware reordering, RTL, overlap,
       zero-size content, tables, popups, frames, and current-element restoration.
-- [ ] Collect opt-in visual geometry from AX and PAGE extraction in both browser
+- [x] Collect opt-in visual geometry from AX and PAGE extraction in both browser
       engines without adding geometry work to `layout-default` snapshots.
 - [ ] Implement and conformance-test `layout-rectangle`: order semantic blocks by
       rendered rows and inline position, preserve stable DOM order for ties and

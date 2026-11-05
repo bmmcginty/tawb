@@ -1235,8 +1235,7 @@ module Tawb
         if error = result["errorText"]?.try(&.as_s?)
           # An aborted navigation is what a download and a redirect to a
           # handler both look like; the page the reader is on is unharmed.
-          raise IO::Error.new("#{url} could not be loaded: #{error}") unless
-            error.empty? || error == "net::ERR_ABORTED"
+          raise IO::Error.new("#{url} could not be loaded: #{error}") unless error.empty? || error == "net::ERR_ABORTED"
         end
         # The address is not taken from the request: a redirect means the
         # document that commits is not the one that was asked for, and
@@ -1393,18 +1392,18 @@ module Tawb
         tree
       end
 
-      def accessibility_documents(layout = false) : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))
+      def accessibility_documents(layout = false, visual = false) : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))
         tree = frame_tree
         root_id = tree.as_h["frame"].as_h["id"].as_s
         documents = Frames.collect_documents(tree) do |frame_id|
           context = @contexts[frame_id]?
           if context
-            evaluate_items(context[0], context[1], layout)
+            evaluate_items(context[0], context[1], layout, visual)
           elsif frame_id == root_id
-            evaluate_items(nil, nil, layout)
+            evaluate_items(nil, nil, layout, visual)
           elsif @iframe_targets.includes?(frame_id)
             session_id = attach_frame(frame_id)
-            evaluate_items(nil, session_id, layout)
+            evaluate_items(nil, session_id, layout, visual)
           else
             [] of JSON::Any
           end
@@ -1865,8 +1864,10 @@ module Tawb
         nil
       end
 
-      private def evaluate_items(context_id : Int64?, session_id : String? = nil, layout = false) : Array(JSON::Any)
-        expression = layout ? EXTRACT_AX.sub("{layout:false}", "{layout:true}") : EXTRACT_AX
+      private def evaluate_items(context_id : Int64?, session_id : String? = nil,
+                                 layout = false, visual = false) : Array(JSON::Any)
+        options = "{layout:#{layout},visual:#{visual}}"
+        expression = EXTRACT_AX.sub("{layout:false}", options)
         parameters = {
           "expression"    => JSON::Any.new(expression),
           "returnByValue" => JSON::Any.new(true),
@@ -1881,7 +1882,7 @@ module Tawb
         items = result["result"].as_h["value"].as_a
         needs_privileged = items.empty? || has_media_controls?(context_id, session_id)
         return items unless needs_privileged
-        paired = layout ? EXTRACT_AX_WITH_PAIRS.sub("layout:false", "layout:true") : EXTRACT_AX_WITH_PAIRS
+        paired = EXTRACT_AX_WITH_PAIRS.sub("layout:false", "layout:#{layout},visual:#{visual}")
         privileged_run(context_id, session_id, paired).try(&.as_a?) || items
       end
 

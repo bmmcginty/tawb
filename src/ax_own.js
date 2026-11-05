@@ -180,6 +180,9 @@ function extractAxItems(options) {
   // display lays a page out with. Nothing else reads it, so by default the
   // per-item closest() walk is not run at all.
   const layout = !!opts.layout;
+  // Geometry is a diagnostic opt-in. The ordinary accessibility snapshot must
+  // not force layout or carry rectangles that no default reader consumes.
+  const visual = !!opts.visual;
   const privilegedRoots = new Map();
   const nativeControls = new Map();
   const rememberNative = (controls) => {
@@ -750,6 +753,86 @@ function extractAxItems(options) {
     return undefined;
   };
 
+  // Visual ordering needs two levels of geometry: the item itself and each
+  // flex/grid/column child that places it. IDs are snapshot-local; they only
+  // group returned items and are never used as element identity.
+  const visualIds = new WeakMap();
+  let visualId = 0;
+  const idForVisual = (node) => {
+    if (!visualIds.has(node)) visualIds.set(node, (visualId += 1));
+    return visualIds.get(node);
+  };
+  const visualParent = (node) => {
+    if (!node) return null;
+    if (node.parentElement) return node.parentElement;
+    const root = typeof node.getRootNode === 'function' ? node.getRootNode() : null;
+    return root && root.host ? root.host : null;
+  };
+  const rectOf = (node) => {
+    if (!node) return undefined;
+    let rects;
+    try {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        rects = range.getClientRects();
+      } else if (typeof node.getClientRects === 'function') {
+        rects = node.getClientRects();
+      }
+    } catch { return undefined; }
+    for (const rect of Array.from(rects || [])) {
+      if (![rect.top, rect.left, rect.width, rect.height].every(Number.isFinite)) continue;
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      return {
+        top: rect.top + window.scrollY,
+        left: rect.left + window.scrollX,
+        width: rect.width,
+        height: rect.height,
+      };
+    }
+    return undefined;
+  };
+  const layoutKind = (style) => {
+    const display = String(style.display || '');
+    if (display.includes('flex')) return 'flex';
+    if (display.includes('grid')) return 'grid';
+    const count = Number.parseInt(style.columnCount, 10);
+    if ((Number.isFinite(count) && count > 1)
+      || (style.columnWidth && style.columnWidth !== 'auto')) return 'columns';
+    return null;
+  };
+  const visualOf = (node, el) => {
+    if (!visual || !el) return undefined;
+    const style = getComputedStyle(el);
+    const path = [];
+    let group = el;
+    let parent = visualParent(el);
+    while (parent) {
+      const parentStyle = getComputedStyle(parent);
+      const kind = layoutKind(parentStyle);
+      if (kind) {
+        const groupStyle = getComputedStyle(group);
+        path.unshift({
+          container: idForVisual(parent),
+          group: idForVisual(group),
+          kind,
+          direction: parentStyle.direction || 'ltr',
+          writingMode: parentStyle.writingMode || 'horizontal-tb',
+          position: groupStyle.position || 'static',
+          rect: rectOf(group),
+        });
+      }
+      group = parent;
+      parent = visualParent(parent);
+    }
+    return {
+      rect: rectOf(node) || rectOf(el),
+      direction: style.direction || 'ltr',
+      writingMode: style.writingMode || 'horizontal-tb',
+      path,
+    };
+  };
+
   const fromElement = (item, el) => {
     const table = layout ? tableInfoOf(el) : undefined;
     const flow = layout ? flowOf(el, item.role) : undefined;
@@ -757,13 +840,14 @@ function extractAxItems(options) {
       ...item,
       ...(table ? { table } : {}),
       ...(flow ? { flow } : {}),
+      ...(visual ? { visual: visualOf(el, el) } : {}),
       markup: markupOf(el),
       shadow: insideShadow || undefined,
       nestedIn: nestedIn || undefined,
     };
   };
 
-  const emit = (item, el) => {
+  const emit = (item, el, node = el) => {
     if (item.role !== '__break__') {
       if (layout && !item.table && el) {
         const table = tableInfoOf(el);
@@ -773,6 +857,7 @@ function extractAxItems(options) {
         const flow = flowOf(el, item.role);
         if (flow) item.flow = flow;
       }
+      if (visual && el && !item.visual) item.visual = visualOf(node, el);
       if (insidePopup) item.popup = insidePopup;
       if (insideClosed) item.pierced = true;
     }
@@ -1014,7 +1099,7 @@ function extractAxItems(options) {
       if (child.nodeType === Node.TEXT_NODE) {
         if (!shown) continue; // this element's own text is not on screen
         const text = clean(child.data);
-        if (text) emit({ role: 'text', name: text, markup: '#text' }, el);
+        if (text) emit({ role: 'text', name: text, markup: '#text' }, el, child);
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         walk(child);
       }

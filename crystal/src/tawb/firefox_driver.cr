@@ -16,7 +16,7 @@ module Tawb
       "browsingContext.navigationStarted",
     ]
     NAVIGATION_GRACE_MS = 150
-    EXTRACT_AX = {{ read_file("#{__DIR__}/../../assets/extract_ax_items.js") }}
+    EXTRACT_AX          = {{ read_file("#{__DIR__}/../../assets/extract_ax_items.js") }}
     # Where a slider's track begins and ends inside its own box, measured in
     # the page (src/driver_firefox.js sliderGeometry). The engine's own, not
     # the policy's: Chromium measures the same thing its own way.
@@ -62,9 +62,7 @@ module Tawb
         # again now that the BiDi session exists. A directly connected browser
         # may not expose that agent, but it must still pass the same page-side
         # verification before anything is driven.
-        cleared = library_port ?
-          FirefoxAgent.ask(library_port, JSON.parse(%({"kind":"clearAutomation"}))) :
-          JSON::Any.new(nil)
+        cleared = library_port ? FirefoxAgent.ask(library_port, JSON.parse(%({"kind":"clearAutomation"}))) : JSON::Any.new(nil)
         webdriver = verify_webdriver
         if webdriver
           raise IO::Error.new(
@@ -110,17 +108,17 @@ module Tawb
             fields = given.try(&.as_h?)
             command = if fields
                         {
-                          "request" => JSON::Any.new(request_id),
-                          "action" => JSON::Any.new("provideCredentials"),
+                          "request"     => JSON::Any.new(request_id),
+                          "action"      => JSON::Any.new("provideCredentials"),
                           "credentials" => JSON::Any.new({
-                            "type" => JSON::Any.new("password"),
+                            "type"     => JSON::Any.new("password"),
                             "username" => JSON::Any.new(fields["username"]?.try(&.as_s?) || ""),
                             "password" => JSON::Any.new(fields["password"]?.try(&.as_s?) || ""),
                           }),
                         }
                       else
                         {"request" => JSON::Any.new(request_id),
-                         "action" => JSON::Any.new("cancel")}
+                         "action"  => JSON::Any.new("cancel")}
                       end
             @protocol.command("network.continueWithAuth", command) rescue nil
           end
@@ -285,12 +283,12 @@ module Tawb
                                      actions : Array(JSON::Any)) : Hash(String, JSON::Any)
       key_actions = [] of JSON::Any
       modifiers.each do |value|
-        key_actions << JSON::Any.new({"type" => JSON::Any.new("keyDown"),
+        key_actions << JSON::Any.new({"type"  => JSON::Any.new("keyDown"),
                                       "value" => JSON::Any.new(value)})
       end
       actions.size.times { key_actions << JSON::Any.new({"type" => JSON::Any.new("pause")}) }
       modifiers.reverse.each do |value|
-        key_actions << JSON::Any.new({"type" => JSON::Any.new("keyUp"),
+        key_actions << JSON::Any.new({"type"  => JSON::Any.new("keyUp"),
                                       "value" => JSON::Any.new(value)})
       end
       pointer_actions = [JSON::Any.new({"type" => JSON::Any.new("pause")})] +
@@ -1081,7 +1079,7 @@ module Tawb
         frame_tree(context)
       end
 
-      def accessibility_documents(layout = false) : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))
+      def accessibility_documents(layout = false, visual = false) : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))
         result = @protocol.command("browsingContext.getTree", {
           "root" => JSON::Any.new(@context_id),
         }).as_h
@@ -1090,12 +1088,12 @@ module Tawb
 
         tree = frame_tree(context)
         documents = Frames.collect_documents(tree) do |context_id|
-          accessibility_items(context_id, layout)
+          accessibility_items(context_id, layout, visual)
         end
         {tree, documents}
       end
 
-      def accessibility_items(context_id = @context_id, layout = false) : Array(JSON::Any)
+      def accessibility_items(context_id = @context_id, layout = false, visual = false) : Array(JSON::Any)
         # The function is sent the way the JavaScript driver sends it: the bare
         # function source, with the walker's options as the call's argument.
         # Wrapping the source in a return statement answered undefined on real
@@ -1109,9 +1107,16 @@ module Tawb
             "value" => JSON::Any.new(layout),
           }),
         ])
+        visual_argument = JSON::Any.new([
+          JSON::Any.new("visual"),
+          JSON::Any.new({
+            "type"  => JSON::Any.new("boolean"),
+            "value" => JSON::Any.new(visual),
+          }),
+        ])
         arguments = JSON::Any.new([JSON::Any.new({
           "type"  => JSON::Any.new("object"),
-          "value" => JSON::Any.new([layout_argument]),
+          "value" => JSON::Any.new([layout_argument, visual_argument]),
         })])
         result = @protocol.command("script.callFunction", {
           "functionDeclaration" => JSON::Any.new(declaration),

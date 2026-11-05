@@ -64,6 +64,9 @@ function extractVisible(options) {
   // display lays a page out with. The ordinary PAGE view never reads it, so
   // by default the per-item closest() walk is not run at all.
   const layout = !!(options && options.layout);
+  // Like table/flow metadata, rendered geometry is collected only for a
+  // diagnostic layout request. PAGE in its normal order does no box work.
+  const visual = !!(options && options.visual);
   const SKIP = new Set(['script', 'style', 'noscript', 'template', 'head', 'meta',
     'link', 'title', 'svg', 'path', 'defs']);
   // Elements that start a new line of output regardless of their content.
@@ -237,13 +240,91 @@ function extractVisible(options) {
     return undefined;
   };
 
-  const emit = (entry, el) => {
+  const visualIds = new WeakMap();
+  let visualId = 0;
+  const idForVisual = (node) => {
+    if (!visualIds.has(node)) visualIds.set(node, (visualId += 1));
+    return visualIds.get(node);
+  };
+  const visualParent = (node) => {
+    if (!node) return null;
+    if (node.parentElement) return node.parentElement;
+    const root = typeof node.getRootNode === 'function' ? node.getRootNode() : null;
+    return root && root.host ? root.host : null;
+  };
+  const rectOf = (node) => {
+    if (!node) return undefined;
+    let rects;
+    try {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        rects = range.getClientRects();
+      } else if (typeof node.getClientRects === 'function') {
+        rects = node.getClientRects();
+      }
+    } catch { return undefined; }
+    for (const rect of Array.from(rects || [])) {
+      if (![rect.top, rect.left, rect.width, rect.height].every(Number.isFinite)) continue;
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      return {
+        top: rect.top + window.scrollY,
+        left: rect.left + window.scrollX,
+        width: rect.width,
+        height: rect.height,
+      };
+    }
+    return undefined;
+  };
+  const layoutKind = (style) => {
+    const display = String(style.display || '');
+    if (display.includes('flex')) return 'flex';
+    if (display.includes('grid')) return 'grid';
+    const count = Number.parseInt(style.columnCount, 10);
+    if ((Number.isFinite(count) && count > 1)
+      || (style.columnWidth && style.columnWidth !== 'auto')) return 'columns';
+    return null;
+  };
+  const visualOf = (node, el) => {
+    if (!visual || !el) return undefined;
+    const style = getComputedStyle(el);
+    const path = [];
+    let group = el;
+    let parent = visualParent(el);
+    while (parent) {
+      const parentStyle = getComputedStyle(parent);
+      const kind = layoutKind(parentStyle);
+      if (kind) {
+        const groupStyle = getComputedStyle(group);
+        path.unshift({
+          container: idForVisual(parent),
+          group: idForVisual(group),
+          kind,
+          direction: parentStyle.direction || 'ltr',
+          writingMode: parentStyle.writingMode || 'horizontal-tb',
+          position: groupStyle.position || 'static',
+          rect: rectOf(group),
+        });
+      }
+      group = parent;
+      parent = visualParent(parent);
+    }
+    return {
+      rect: rectOf(node) || rectOf(el),
+      direction: style.direction || 'ltr',
+      writingMode: style.writingMode || 'horizontal-tb',
+      path,
+    };
+  };
+
+  const emit = (entry, el, node = el) => {
     if (el && layout) {
       const table = tableInfoOf(el);
       if (table) entry.table = table;
       const flow = flowOf(el, entry.kind);
       if (flow) entry.flow = flow;
     }
+    if (visual && el && !entry.visual) entry.visual = visualOf(node, el);
     out.push(entry);
   };
 
@@ -618,7 +699,7 @@ function extractVisible(options) {
           text,
           block: isBlock && !opened,
           paragraph: startsParagraph && !opened,
-        }, el);
+        }, el, child);
         opened = true;
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         walk(child, false);
