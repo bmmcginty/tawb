@@ -13,6 +13,7 @@ const assert = require('node:assert');
 
 const {
   linkTarget, shortTarget, drawStatus, drawAddress, moveSelection, handleBrowseKey,
+  beginKeystroke, finishKeystrokeStatus, setStatus,
 } = require('../src/index');
 
 const PAGE = { url: () => 'https://example.test/index.html' };
@@ -83,6 +84,29 @@ test('arrowing onto a link says where it goes, and off it gives the message back
 
   const off = capturingTerminal(() => moveSelection(state, 0, PAGE));
   assert.ok(off.includes('Loaded https://example.test/index.html'), off);
+});
+
+test('a keystroke paints only its final status instead of a link fallback first', () => {
+  const state = pageOf(LINK);
+  state.statusMsg = 'Previous message';
+  state.drawn.status = state.statusMsg;
+
+  const painted = capturingTerminal(() => {
+    const cleared = beginKeystroke(state);
+    setStatus(state, 'This is the only tab open — press q to quit.');
+    finishKeystrokeStatus(state, PAGE, cleared);
+  });
+  assert.match(painted, /This is the only tab open/);
+  assert.doesNotMatch(painted, /https:\/\/example\.test\/about/);
+
+  state.statusMsg = 'Another old message';
+  state.drawn.status = state.statusMsg;
+  const fallback = capturingTerminal(() => {
+    const cleared = beginKeystroke(state);
+    finishKeystrokeStatus(state, PAGE, cleared);
+  });
+  assert.match(fallback, /https:\/\/example\.test\/about/,
+    'an action with no answer did not restore the link after it finished');
 });
 
 test('a row that already says it is not written again', () => {

@@ -1828,6 +1828,15 @@ function beginKeystroke(state) {
   return true;
 }
 
+// Finish the status-row part of a keystroke after its action and any waiting
+// announcements have had their chance to answer. In particular, do not paint
+// a link fallback between clearing an old message and an action writing a new
+// one: that intermediate row is visible as a screen-reader/braille flicker.
+function finishKeystrokeStatus(state, page, clearedStatus) {
+  drainPendingAnnouncements(state);
+  if (clearedStatus && !state.statusMsg) drawStatus(state, page);
+}
+
 function keepLivePlace(state, wasNavigation) {
   return !wasNavigation && !!state.inputSeen;
 }
@@ -6053,7 +6062,6 @@ async function main() {
     // given back and the terminal be put right.
     if (chunk === EOF) { log('input.eof', {}); running = false; break; }
     const clearedStatus = beginKeystroke(state);
-    if (clearedStatus) drawStatus(state, state.core.page);
 
     const t0 = Date.now();
     let result;
@@ -6089,9 +6097,10 @@ async function main() {
     const ms = Date.now() - t0;
 
     markInput(state);
-    // The keystroke cleared the status row, which is what a message held back
-    // for it was waiting for.
-    drainPendingAnnouncements(state);
+    // The keystroke cleared the status in state without painting an
+    // intermediate fallback. Let its final answer (or a waiting announcement)
+    // win, then restore the link only when neither produced one.
+    finishKeystrokeStatus(state, state.core.page, clearedStatus);
     // Only slow keys are worth a line each; movement is the common case and
     // would otherwise flood the log.
     if (ms >= 20) {
@@ -6271,5 +6280,5 @@ module.exports = {
   answerNativeDialog, reopenPendingDialog, dialogBlocks, closeNativeDialog,
   handleChooseKey,
   askForLine, askYesNo, bookmarkPage, deleteLibraryBookmark,
-  downloadCurrentLink, drawLinePrompt, beginKeystroke,
+  downloadCurrentLink, drawLinePrompt, beginKeystroke, finishKeystrokeStatus,
 };

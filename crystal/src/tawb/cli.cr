@@ -391,7 +391,7 @@ module Tawb
           # records that the reader has touched the page, which is what keeps
           # a live rebuild from moving them.
           Reader.note_input(state)
-          Reader.draw_status(terminal, state, tabs.current_page.url) if Reader.begin_keystroke(state)
+          cleared_status = Reader.begin_keystroke(state)
           current = tabs.current_page
           # The top screen owns the keyboard. Only a mode the stack knows
           # about is dispatched this way; a prompt or a browser dialog raised
@@ -442,6 +442,12 @@ module Tawb
           if now - last_tick_ms >= Live::TICK_MS
             last_tick_ms = now
             live_ticker.tick
+          end
+          # Clear old status in state at key-down, but defer painting the link
+          # fallback until the action and live announcements have answered.
+          # That keeps one key from flashing link, then message, on the row.
+          if cleared_status && state.status_msg.empty?
+            Reader.draw_status(terminal, state, tabs.current_page.url)
           end
         end
       ensure
