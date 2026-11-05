@@ -1219,6 +1219,7 @@ function readerImplementations(index, keysModule) {
   const buildJsState = (spec, atCalls) => {
     const core = {
       source: spec.core?.source ?? 'ax',
+      layoutOrder: spec.core?.layoutOrder ?? 'default',
       blocks: spec.core?.blocks ?? [],
       popup: spec.core?.popup ?? null,
       popupAt: () => (spec.core?.popupAt ?? -1),
@@ -1695,6 +1696,7 @@ function readerImplementations(index, keysModule) {
     typingReads: state.core.typingReads ?? 0,
     typingReleased: state.core.typingReleased ?? false,
     source: state.core.source,
+    layoutOrder: state.core.layoutOrder,
     presentationSource: state.lynxPresentationSource ?? null,
     placeDescribed: state.core.placeDescribed ?? [],
     placeArrays: state.core.placeArrays ?? [],

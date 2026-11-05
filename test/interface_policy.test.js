@@ -29,6 +29,17 @@ test('an action belongs to the interface that can reach it', () => {
   assert.deepEqual(profilesFor('delete-bookmark'), ['default', 'lynx']);
 });
 
+test('diagnostic layout orders are command-only in both interfaces', () => {
+  for (const id of ['layout-default', 'layout-container', 'layout-rectangle']) {
+    assert.deepEqual(profilesFor(id), ['default', 'lynx'], id);
+    for (const profile of ['default', 'lynx']) {
+      const keys = new Keymap({ terminfo: {}, profile, load: false });
+      assert.deepEqual(keys.byId.get(id).bindings, [],
+        `${profile} gave ${id} a default key`);
+    }
+  }
+});
+
 test('the two action sets name real, disjoint groups', () => {
   for (const id of LYNX_ONLY_ACTIONS) {
     assert.ok(!DEFAULT_ONLY_ACTIONS.has(id), `${id} is in both sets`);

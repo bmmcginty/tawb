@@ -8,6 +8,15 @@ module Tawb
     ROW_TOLERANCE = 2.0
     OVERLAP_RATIO = 0.6
 
+    # What the reader hears for each order. The action id carries the same
+    # name, so a command typed as layout-rectangle and the status line a
+    # moment later call the mode the same thing.
+    LABELS = {
+      "default"   => "document order",
+      "container" => "container order",
+      "rectangle" => "rectangle order",
+    }
+
     record Rect, top : Float64, left : Float64, width : Float64, height : Float64 do
       def right : Float64
         left + width

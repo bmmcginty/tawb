@@ -15,7 +15,7 @@ selected explicitly through the command actions `layout-container` and
 - [x] Implement and conformance-test `layout-container`: reorder within CSS
       layout containers, preserve coherent content groups, handle flex/grid,
       columns, direction, overlap, sticky/fixed content, and fall back safely.
-- [ ] Add `layout-default`, `layout-container`, and `layout-rectangle` command
+- [x] Add `layout-default`, `layout-container`, and `layout-rectangle` command
       actions to both readers, including labels, status announcements, rescan,
       live refresh, source switching, and restoration to the same element.
 - [ ] Add real-browser fixtures and Firefox/Chromium coverage for a Walmart-like

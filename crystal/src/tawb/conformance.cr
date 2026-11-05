@@ -2133,6 +2133,7 @@ module Tawb
           core["popup"]?,
           core["popupAt"]?.try(&.as_i64?) || -1_i64))
         scripted = state.core.as(Reader::CoreState)
+        scripted.layout_order = core["layoutOrder"]?.try(&.as_s?) || "default"
         scripted.rescan_blocks = core["rescanBlocks"]?.try(&.as_a?)
         if failure = scripted_value(core, "rescanFailure")
           scripted.rescan_failure = failure
@@ -2954,6 +2955,7 @@ module Tawb
         "inputMarks" => JSON::Any.new(scripted.input_marks.to_i64),
         "atCalls"    => JSON::Any.new(scripted.at_calls.map { |call| JSON::Any.new(call) }),
         "source"     => JSON::Any.new(state.core.source),
+        "layoutOrder" => JSON::Any.new(state.core.layout_order),
         "presentationSource" => JSON::Any.new(state.presentation_source),
         "placeDescribed" => JSON::Any.new(scripted.place_described),
         "placeArrays" => JSON::Any.new(scripted.place_arrays.map { |name| JSON::Any.new(name) }),

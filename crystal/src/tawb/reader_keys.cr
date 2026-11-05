@@ -9,6 +9,7 @@ require "./key_wizard"
 require "./keys"
 require "./input"
 require "./interfaces"
+require "./layout_order"
 require "./library"
 require "./list_screen"
 require "./lynx_pages"
@@ -4104,6 +4105,38 @@ module Tawb
         exact ? "#{label} view." : "#{label} view — nearest place.")
     end
 
+    # Diagnostic layouts keep the same view and change only how its blocks are
+    # linearized. The page-side extractor is asked for geometry when the order
+    # is not default, so returning to default removes that cost again. The
+    # element is kept across the rebuild exactly as it is across a view switch:
+    # the line number is meaningless once the order changes.
+    def self.switch_layout(output : Screen::Output, state : Reader::State,
+                           page : Reader::PageEnv, mode : String) : Nil
+      return unless LayoutOrder::LABELS.has_key?(mode)
+
+      viewport_row = state.cursor - state.scroll
+      anchor = state.core.anchor
+      before = Reader.view_of(state)
+      place = Place.capture_place(before, state.core)
+
+      state.core.layout_order = mode
+      Reader.refresh(state, page)
+
+      after = Reader.view_of(state)
+      kept = Place.restore_place(after, state.core, place)
+      state.cursor = after.cursor
+      state.col = after.col
+      Reader.restore_anchor(state, anchor) unless kept
+      Reader.clamp_col(state)
+      Reader.preserve_viewport_row(state, viewport_row)
+
+      Reader.render(output, state, page.url, false)
+      exact = kept == "exact" || (place.nil? && kept.nil?)
+      label = LayoutOrder::LABELS[mode]
+      Reader.set_status(output, state, page.url,
+        exact ? "Layout: #{label}." : "Layout: #{label} — nearest place.")
+    end
+
     private def self.interrupt_loading(output : Screen::Output, state : Reader::State,
                                        page : Reader::PageEnv) : Nil
       # Every page can be asked to stop; the refusal is the engine's.
@@ -4487,6 +4520,11 @@ module Tawb
 
       if action == "cycle-view" || action == "source-view"
         switch_view(output, state, page, action == "source-view")
+        return nil
+      end
+
+      if action == "layout-default" || action == "layout-container" || action == "layout-rectangle"
+        switch_layout(output, state, page, action.not_nil!.sub("layout-", ""))
         return nil
       end
 

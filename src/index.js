@@ -16,6 +16,7 @@ const {
   log, timed, count, flushCounters, enableLog, disableLog, getLogPath, flushLog,
 } = require('./log');
 const { layoutLines } = require('./layout');
+const { LAYOUT_LABELS } = require('./layout_order');
 const {
   clipField, renderLynxRow, lynxBlocks, lynxFocusable,
 } = require('./lynx_display');
@@ -2800,6 +2801,41 @@ async function handleBrowseKey(chunk, state, page, actionOverride = null) {
     setStatus(state, kept === 'exact' || (!place && !kept)
       ? `${SOURCE_LABELS[state.core.source]} view.`
       : `${SOURCE_LABELS[state.core.source]} view — nearest place.`);
+    return;
+  }
+
+  // Diagnostic layouts keep the same view and change only how its blocks are
+  // linearized. The page-side extractor is asked for geometry when the order
+  // is not default, so returning to default removes that cost again. The
+  // element is kept across the rebuild exactly as it is across a view switch:
+  // the line number is meaningless once the order changes.
+  if (action === 'layout-default' || action === 'layout-container' || action === 'layout-rectangle') {
+    const mode = action.slice('layout-'.length);
+    const viewportRow = state.cursor - state.scroll;
+    const anchor = anchorFor(state);
+    const before = viewOf(state);
+    const place = await withTimeout(
+      capturePlace(before, (item) => state.core.handleFor(item, page)),
+      ACTION_TIMEOUT_MS, 'Marking your place',
+    ).catch(() => null);
+
+    state.core.layoutOrder = mode;
+    await refresh(state, page);
+
+    const after = viewOf(state);
+    const kept = await withTimeout(
+      restorePlace(after, page, place), ACTION_TIMEOUT_MS, 'Finding your place',
+    ).catch(() => null);
+    state.cursor = after.cursor;
+    state.col = after.col;
+    if (!kept) restoreAnchor(state, anchor);
+    clampCol(state);
+    preserveViewportRow(state, viewportRow);
+
+    render(state, page);
+    setStatus(state, kept === 'exact' || (!place && !kept)
+      ? `Layout: ${LAYOUT_LABELS[mode]}.`
+      : `Layout: ${LAYOUT_LABELS[mode]} — nearest place.`);
     return;
   }
 

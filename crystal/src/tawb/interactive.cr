@@ -80,6 +80,8 @@ module Tawb
 
       def source : String; @core.source; end
       def source=(value : String) : Nil; @core.source = value; end
+      def layout_order : String; @core.layout_order; end
+      def layout_order=(value : String) : Nil; @core.layout_order = value; end
       def describe_place_element(item : JSON::Any) : JSON::Any?
         @core.describe_place_element(item)
       end

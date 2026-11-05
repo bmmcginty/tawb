@@ -9,6 +9,15 @@
 const ROW_TOLERANCE = 2;
 const OVERLAP_RATIO = 0.6;
 
+// What the reader hears for each order. The action id carries the same name,
+// so a command typed as layout-rectangle and the status line a moment later
+// call the mode the same thing.
+const LAYOUT_LABELS = Object.freeze({
+  default: 'document order',
+  container: 'container order',
+  rectangle: 'rectangle order',
+});
+
 function rectOf(block) {
   const rect = block && block.item && block.item.visual && block.item.visual.rect;
   if (!rect) return null;
@@ -257,7 +266,7 @@ function orderBlocks(blocks, mode = 'default') {
 }
 
 module.exports = {
-  ROW_TOLERANCE,
+  ROW_TOLERANCE, LAYOUT_LABELS,
   OVERLAP_RATIO,
   rectOf,
   rectangleEntries,

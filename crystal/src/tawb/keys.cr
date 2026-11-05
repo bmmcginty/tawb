@@ -127,6 +127,12 @@ module Tawb
       {id: "trace-log", label: "View trace log", defaults: [] of String},
       {id: "cycle-view", label: "Cycle view", defaults: ["\\"]},
       {id: "source-view", label: "Toggle source and presentation", defaults: [] of String},
+      # Diagnostic orders, reachable only by name from the command line. They
+      # change how the same blocks are linearized, not what is on the page, so
+      # they stay out of the ordinary view cycle and have no default key.
+      {id: "layout-default", label: "Layout: document order", defaults: [] of String},
+      {id: "layout-container", label: "Layout: container order", defaults: [] of String},
+      {id: "layout-rectangle", label: "Layout: rectangle order", defaults: [] of String},
       {id: "help", label: "Help", defaults: [] of String},
       {id: "context-help", label: "Help for the current control", defaults: [] of String},
       {id: "keyboard-wizard", label: "Keyboard wizard", defaults: ["Alt+?"]},

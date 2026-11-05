@@ -534,6 +534,67 @@ test('a place the new view cannot match is said to be the nearest one',
     assert.equal(result.state.statusMsg, 'SOURCE view — nearest place.');
   });
 
+// Diagnostic layout orders are command-only: neither joins the view cycle nor
+// takes a default key. The command name is the action id, so the same line
+// reaches the same action on both runtimes, and the element survives the
+// rebuild even though every line number may have moved.
+test('layout commands rebuild the view in the chosen order and keep the place',
+  { skip: needsCrystal }, async () => {
+    const state = stateFor(AX_VIEW, { cursor: 2 }, {
+      layoutOrder: 'default',
+      placeElement: { label: 'Second story', ordinal: 9, total: 40 },
+      placeLocation: { index: 2, exact: true },
+    });
+    const result = await runBoth('rectangle layout', state, [
+      { op: 'browseKey', chunk: ':' },
+      ...Array.from('layout-rectangle', (chunk) => ({ op: 'commandKey', chunk })),
+      { op: 'commandKey', chunk: '\r' },
+    ], { url: PAGE_URL });
+    assert.equal(result.state.layoutOrder, 'rectangle');
+    assert.equal(result.state.mode, 'browse');
+    assert.equal(result.state.statusMsg, 'Layout: rectangle order.');
+    assert.equal(result.state.cursor, 2, 'the same element produced the same line here');
+    assert.deepEqual(result.state.placeDescribed, [{ name: 'Second story', axIndex: 2 }]);
+    assert.equal(result.state.placeReleases, 1, 'the held element is let go of once');
+
+    const back = await runBoth('back to default', {
+      ...state,
+      core: { ...state.core, layoutOrder: 'rectangle' },
+    }, [
+      { op: 'browseKey', chunk: ':' },
+      ...Array.from('layout-default', (chunk) => ({ op: 'commandKey', chunk })),
+      { op: 'commandKey', chunk: '\r' },
+    ], { url: PAGE_URL });
+    assert.equal(back.state.layoutOrder, 'default');
+    assert.equal(back.state.statusMsg, 'Layout: document order.');
+  });
+
+test('a view switch and a rescan keep the selected layout order',
+  { skip: needsCrystal }, async () => {
+    const state = stateFor(AX_VIEW, {
+      cursor: 2, sources: ['ax', 'render'], keys: bound('cycle-view', '\\'),
+    }, {
+      layoutOrder: 'container',
+      sourceBlocks: { render: PAGE_VIEW },
+      placeElement: { label: 'Second story', ordinal: 9, total: 40 },
+      placeLocation: { index: 3, exact: true },
+    });
+    const switched = await runBoth('switch view', state, [
+      { op: 'browseKey', chunk: '\\' },
+    ], { url: PAGE_URL });
+    assert.equal(switched.state.source, 'render');
+    assert.equal(switched.state.layoutOrder, 'container',
+      'a different extractor kept the diagnostic order');
+
+    const rescanned = await runBoth('rescan', {
+      ...state, core: { ...state.core, layoutOrder: 'rectangle' },
+    }, [
+      { op: 'browseKey', chunk: 'r' },
+    ], { url: PAGE_URL });
+    assert.equal(rescanned.state.layoutOrder, 'rectangle');
+    assert.equal(rescanned.state.statusMsg, 'Rescanned.');
+  });
+
 // A view the native extraction cannot build is a Crystal-only case: every
 // view's extractor is available to the JavaScript original, so there is
 // nothing to difference against. The reader must keep the view they had.

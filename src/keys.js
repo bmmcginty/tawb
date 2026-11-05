@@ -163,6 +163,12 @@ const ACTIONS = [
   ['trace-log', 'View trace log', []],
   ['cycle-view', 'Cycle view', ['\\']],
   ['source-view', 'Toggle source and presentation', []],
+  // Diagnostic orders, reachable only by name from the command line. They
+  // change how the same blocks are linearized, not what is on the page, so
+  // they stay out of the ordinary view cycle and have no default key.
+  ['layout-default', 'Layout: document order', []],
+  ['layout-container', 'Layout: container order', []],
+  ['layout-rectangle', 'Layout: rectangle order', []],
   ['help', 'Help', []],
   ['context-help', 'Help for the current control', []],
   ['keyboard-wizard', 'Keyboard wizard', ['Alt+?']],

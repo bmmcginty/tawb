@@ -9,7 +9,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { snapshotBlocks } = require('../src/core');
+const { Core, snapshotBlocks } = require('../src/core');
 
 const rect = (top, left, width = 80, height = 20) => ({ top, left, width, height });
 
@@ -26,7 +26,11 @@ function pageWith(entries) {
   };
   return {
     options,
-    page: { mainFrame: () => frame, frames: () => [frame] },
+    page: {
+      url: () => 'https://example.test/',
+      mainFrame: () => frame,
+      frames: () => [frame],
+    },
   };
 }
 
@@ -79,4 +83,17 @@ test('a diagnostic snapshot asks for geometry and orders the same blocks', async
   });
   assert.deepEqual(containerBlocks.map((block) => block.text),
     ['Product', '$10.50', 'Reviews']);
+});
+
+test('a live rebuild keeps using the selected layout order', async () => {
+  const { page } = pageWith(ENTRIES);
+  const core = new Core({
+    driver: {}, page, source: 'render', sources: ['render'], layoutOrder: 'rectangle',
+  });
+  await core.rescan();
+  assert.deepEqual(core.texts(), ['Product', '$10.50', 'Reviews']);
+
+  await core.rebuild(core.anchor());
+  assert.deepEqual(core.texts(), ['Product', '$10.50', 'Reviews'],
+    'a rebuild quietly returned to document order');
 });

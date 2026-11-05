@@ -279,6 +279,11 @@ module Tawb
       # Switching views is the one thing that writes the core's view, and it
       # writes it between the place capture and the rebuild.
       abstract def source=(value : String) : Nil
+      # Which diagnostic order the next snapshot uses: default, container or
+      # rectangle. A layout action writes it between the place capture and the
+      # rebuild, exactly as a view switch writes the source.
+      abstract def layout_order : String
+      abstract def layout_order=(value : String) : Nil
       abstract def blocks : Array(JSON::Any)
       abstract def at(index : Int32) : Nil
       abstract def mark_input : Nil
@@ -440,6 +445,7 @@ module Tawb
       end
 
       getter source : String
+      getter layout_order : String
       property blocks : Array(JSON::Any)
       property popup : JSON::Any?
       property popup_at : Int64
@@ -506,6 +512,7 @@ module Tawb
 
       def initialize(@source = "ax", @blocks = [] of JSON::Any,
                      @popup = nil, @popup_at = -1_i64)
+        @layout_order = "default"
         @at_calls = [] of Int64
         @input_marks = 0
         @activated = [] of JSON::Any
@@ -581,6 +588,10 @@ module Tawb
 
       def source=(value : String) : Nil
         @source = value
+      end
+
+      def layout_order=(value : String) : Nil
+        @layout_order = value
       end
 
       def at(index : Int32) : Nil
