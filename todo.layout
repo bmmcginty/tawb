@@ -1,0 +1,27 @@
+Visual-layout implementation checklist
+
+The normal page order remains `layout-default`. The two diagnostic orders are
+selected explicitly through the command actions `layout-container` and
+`layout-rectangle`; neither joins the ordinary page-view cycle.
+
+- [ ] Define the layout-order contract and fixture cases: stable fallback,
+      rectangular row ordering, container-aware reordering, RTL, overlap,
+      zero-size content, tables, popups, frames, and current-element restoration.
+- [ ] Collect opt-in visual geometry from AX and PAGE extraction in both browser
+      engines without adding geometry work to `layout-default` snapshots.
+- [ ] Implement and conformance-test `layout-rectangle`: order semantic blocks by
+      rendered rows and inline position, preserve stable DOM order for ties and
+      unplaced blocks, and keep block identity and activation metadata intact.
+- [ ] Implement and conformance-test `layout-container`: reorder within CSS
+      layout containers, preserve coherent content groups, handle flex/grid,
+      columns, direction, overlap, sticky/fixed content, and fall back safely.
+- [ ] Add `layout-default`, `layout-container`, and `layout-rectangle` command
+      actions to both readers, including labels, status announcements, rescan,
+      live refresh, source switching, and restoration to the same element.
+- [ ] Add real-browser fixtures and Firefox/Chromium coverage for a Walmart-like
+      purchase card whose DOM position follows reviews but whose visual position
+      is beside the product heading; prove all three commands and activation.
+- [ ] Document the diagnostic layouts, their command-only availability, their
+      heuristic limits, and how to return to default order.
+- [ ] Run JavaScript, Crystal, focused real-browser, and tmux verification; inspect
+      the final diff, commits, and working tree.
