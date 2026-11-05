@@ -1042,12 +1042,9 @@ module Tawb
       end
       action = context_action(chunk, state)
 
-      if key_is(chunk, "Escape", state) || action == "cancel"
-        close_chooser(output, state, page,
-          "Left \"#{chooser_control_name(state)}\" as it was.")
-        return
-      end
-
+      # A chooser is a lookup list before it is a Lynx command surface.
+      # Printable b and q are filter text even when the page keymap calls them
+      # Back or Quit; only non-printable navigation reaches those commands.
       chooser_object = state.chooser.try(&.as_h)
       if chooser_object
         filter = chooser_object["filter"]?.try(&.as_s?) || ""
@@ -1060,6 +1057,12 @@ module Tawb
           refilter(output, state, page, edit.filter) if edit.changed
           return
         end
+      end
+
+      if key_is(chunk, "Escape", state) || action == "cancel"
+        close_chooser(output, state, page,
+          "Left \"#{chooser_control_name(state)}\" as it was.")
+        return
       end
 
       if chunk == "\r" || chunk == "\n" || action == "accept"

@@ -515,6 +515,37 @@ test('typing filters the dropdown\'s own lines', { skip: needsCrystal }, async (
   assert.equal(result.state.statusMsg, '2 of 4 matching "no".');
 });
 
+test('a Lynx chooser keeps printable commands as filter text', { skip: needsCrystal }, async () => {
+  const blocks = [
+    { text: 'Region', item: { role: 'text' } },
+    { text: '[*Amber]', item: { role: 'combobox', name: 'Region' } },
+  ];
+  const listing = {
+    multiple: false,
+    options: [
+      { text: 'Blue', selected: true },
+      { text: 'Black', selected: false },
+      { text: 'Amber', selected: false },
+    ],
+  };
+  const state = stateFor(blocks, {
+    interface: 'lynx',
+    keys: { profile: 'lynx', terminfo: {}, load: false },
+  }, { listing });
+  state.core.live = { enabled: true, dirty: false, snapshotCostMs: 0 };
+  const result = await runBoth('lynx chooser filter', state, [
+    { op: 'activate' },
+    // b is PREV_PAGE and q is QUIT in the Lynx page keymap. In a lookup list
+    // both are letters, and neither may close the chooser or leave TAWB.
+    { op: 'chooseKey', chunk: 'b' },
+    { op: 'chooseKey', chunk: 'l' },
+    { op: 'chooseKey', chunk: 'q' },
+  ], { url: PAGE_URL });
+  assert.equal(result.state.mode, 'choose');
+  assert.equal(result.state.chooser.filter, 'blq');
+  assert.equal(result.state.statusMsg, '0 of 3 matching "blq".');
+});
+
 test('backspace widens the filter again', { skip: needsCrystal }, async () => {
   const blocks = [
     { text: 'Region', item: { role: 'text' } },

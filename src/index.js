@@ -3497,6 +3497,19 @@ async function handleChooseKey(chunk, state, page) {
   if (!coreChooser || !chooser) { state.mode = 'browse'; return; }
   const contextAction = contextNavigationAction(chunk, state);
 
+  // A chooser is a lookup list before it is a Lynx command surface. Printable
+  // keys such as b and q are filter text here even when the page keymap calls
+  // them Back or Quit; only non-printable navigation reaches those commands.
+  const edit = filterKey(chooser, chunk, {
+    character: filterCharacter(chunk),
+    backspace: keyIs(chunk, 'Backspace', state),
+    clear: chunk === CLEAR_FILTER,
+  });
+  if (edit.handled) {
+    if (edit.changed) refilter(state, page, chooser.filter);
+    return;
+  }
+
   if (keyIs(chunk, 'Escape', state) || contextAction === 'cancel') {
     closeChooser(state, page, { note: `Left "${state.chooser.item.name}" as it was.` });
     return;
@@ -3530,16 +3543,6 @@ async function handleChooseKey(chunk, state, page) {
     await refresh(state, page, { anchor: anchorFor(state) });
     render(state, page, { force: true });
     setStatus(state, outcome.changed ? `Chose "${chosen}".` : `"${chosen}" was already chosen.`);
-    return;
-  }
-
-  const edit = filterKey(chooser, chunk, {
-    character: filterCharacter(chunk),
-    backspace: keyIs(chunk, 'Backspace', state),
-    clear: chunk === CLEAR_FILTER,
-  });
-  if (edit.handled) {
-    if (edit.changed) refilter(state, page, chooser.filter);
     return;
   }
 
