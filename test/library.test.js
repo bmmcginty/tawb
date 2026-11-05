@@ -16,7 +16,7 @@ const {
 } = require('../src/library');
 const {
   openLibrary, openLinkList, openDocumentInfo, closeLibrary, handleLibraryKey,
-  openVisitedLinks, openSessionHistory,
+  openVisitedLinks, openSessionHistory, closeNativeDialog, relayout,
 } = require('../src/index');
 const { Keymap } = require('../src/keys');
 
@@ -645,4 +645,46 @@ test('a followed link is remembered once, at the top', () => {
   // A blank tab is not a document anybody wants listed.
   notePageVisit(state, 'about:blank', 'blank');
   assert.equal(state.pageLog.length, 2);
+});
+
+// A browser question can arrive while a library is open. The question owns
+// the terminal until it is answered, then hands it back to the same list. It
+// used to render the library behind its own title because activeBlocks chose
+// the library before the dialog.
+test('a browser question above a library is what the screen shows, and closing it returns to the list', async () => {
+  const state = readerAt(HISTORY);
+  state.rows = 24;
+  state.cols = 80;
+  state.screens = { push() {}, pop() {} };
+  await quietly(() => openLibrary(state, PAGE, 'history'));
+  assert.equal(state.mode, 'library');
+  const libraryCursor = state.cursor;
+  const libraryTitle = state.title;
+
+  const dialogBlocks = [
+    { text: 'Add "Braille"?', item: null },
+    { text: '', item: null },
+    { text: '[*Cancel]', item: null, button: { name: 'Cancel' } },
+    { text: '[*Add]', item: null, button: { name: 'Add' } },
+  ];
+  state.dialog = {
+    title: 'The browser is asking',
+    blocks: dialogBlocks,
+    place: {
+      cursor: libraryCursor, col: 0, scroll: state.scroll,
+      title: state.title, mode: 'library',
+    },
+  };
+  state.mode = 'dialog';
+  relayout(state);
+  assert.deepEqual(state.lines.map((line) => line.text),
+    dialogBlocks.map((block) => block.text),
+    'the question, not the list underneath, is the buffer on screen');
+
+  await quietly(() => closeNativeDialog(state, PAGE, null));
+  assert.equal(state.mode, 'library', 'the list did not get the keyboard back');
+  assert.equal(state.dialog, null);
+  assert.equal(state.title, libraryTitle);
+  assert.equal(state.cursor, libraryCursor, 'the list cursor moved under the question');
+  assert.match(state.lines[state.cursor].text, /Braille/);
 });

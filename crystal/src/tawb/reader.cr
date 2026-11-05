@@ -1448,8 +1448,11 @@ module Tawb
     # agree about which.
     def self.active_blocks(state : State) : Array(JSON::Any)
       return [] of JSON::Any if state.options
-      return blocks_of(state.library) if state.library
+      # A browser question is an input layer above whatever raised it. It must
+      # win over a library or chooser underneath, or its lines would be hidden
+      # behind the screen it interrupted while its title and keys took over.
       return blocks_of(state.dialog) if state.dialog
+      return blocks_of(state.library) if state.library
       state.core.blocks
     end
 

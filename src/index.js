@@ -444,8 +444,11 @@ function currentLine(state) {
 // longer the tab, and everything that reads lines has to agree about which.
 function activeBlocks(state) {
   if (state.options) return [];
-  if (state.library) return state.library.blocks;
+  // A browser question is an input layer above whatever raised it. It must
+  // win over a library or chooser underneath, or its lines would be hidden
+  // behind the screen it interrupted while its title and keys took over.
   if (state.dialog) return state.dialog.blocks;
+  if (state.library) return state.library.blocks;
   return state.core.blocks;
 }
 
@@ -4820,7 +4823,9 @@ function dialogBlocks(dialog) {
 function closeNativeDialog(state, page, note) {
   const { place } = state.dialog;
   state.dialog = null;
-  state.mode = 'browse';
+  // The question may have been raised over a page, a library, or a chooser.
+  // Its answer returns the keyboard to whichever screen it interrupted.
+  state.mode = place.mode || 'browse';
   state.core.live.refreshing = false;
   state.title = place.title;
   relayout(state);
@@ -4849,6 +4854,7 @@ async function answerNativeDialog(state, dialog) {
     blocks: dialogBlocks(dialog),
     place: {
       cursor: state.cursor, col: state.col, scroll: state.scroll, title: state.title,
+      mode: previousMode,
     },
   };
   state.cursor = 0;

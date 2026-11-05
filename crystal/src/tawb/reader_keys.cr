@@ -3427,7 +3427,10 @@ module Tawb
       place = dialog.as_h["place"].as_h
       state.dialog = nil
       state.dialog_request = nil
-      state.mode = "browse"
+      # The question may have been raised over a page, a library, or a
+      # chooser. Its answer returns the keyboard to whichever screen it
+      # interrupted.
+      state.mode = place["mode"]?.try(&.as_s?) || "browse"
       set_live_value(state, "refreshing", JSON::Any.new(false))
       state.title = place["title"].as_s
       Reader.relayout(state)
@@ -3595,6 +3598,7 @@ module Tawb
           "col"    => JSON::Any.new(state.col.to_i64),
           "scroll" => JSON::Any.new(state.scroll.to_i64),
           "title"  => JSON::Any.new(state.title),
+          "mode"   => JSON::Any.new(previous_mode),
         }),
       })
       state.cursor = 0
