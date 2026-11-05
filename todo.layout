@@ -21,7 +21,7 @@ selected explicitly through the command actions `layout-container` and
 - [ ] Add real-browser fixtures and Firefox/Chromium coverage for a Walmart-like
       purchase card whose DOM position follows reviews but whose visual position
       is beside the product heading; prove all three commands and activation.
-- [ ] Document the diagnostic layouts, their command-only availability, their
+- [x] Document the diagnostic layouts, their command-only availability, their
       heuristic limits, and how to return to default order.
 - [ ] Run JavaScript, Crystal, focused real-browser, and tmux verification; inspect
       the final diff, commits, and working tree.

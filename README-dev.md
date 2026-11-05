@@ -630,6 +630,23 @@ only what is visible — puts you on the nearest line above where it would
 have been, which is a much smaller move than landing wherever its text first
 matched.
 
+### Diagnostic layout order
+
+The four views describe the same document in different vocabularies. They do
+not change its document order, and sometimes CSS puts the thing a reader needs
+somewhere the DOM does not. Three command-only actions re-linearize the
+current view instead: `layout-container` reorders coherent groups inside the
+flex, grid, table and CSS-column containers that place them, `layout-rectangle`
+orders every block by its rendered row and inline position, and
+`layout-default` restores ordinary order and the zero-geometry snapshot path.
+
+They are reached through the command line (`:`) rather than a key or the
+backslash cycle. A layout action captures the element under the cursor, changes
+the core's order, rebuilds the current view, and restores that element rather
+than its old line number. The order lives on the core, so `r`, a live rebuild,
+and a switch between AX, PAGE, INSPECT and SOURCE all keep it. The contract and
+its fallbacks are in `docs/layout-order-contract.md`.
+
 ## Finding text
 
 `/` searches forward, `?` backward. The cursor lands on the matching text

@@ -13,6 +13,11 @@ The three command actions are:
   containers;
 - `layout-rectangle`: order every placeable block by its rendered rectangle.
 
+Both readers expose them only through the command line: press `:` and type the
+action id, such as `layout-rectangle`. None has a default key, and none is part
+of the backslash view cycle. To return to ordinary reading, run
+`layout-default`.
+
 A layout action rebuilds the current page view and restores the current element,
 not its old line number. Changing AX/PAGE/INSPECT/SOURCE keeps the selected
 layout. Running `layout-default` removes all geometry metadata on the next

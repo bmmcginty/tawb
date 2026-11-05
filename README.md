@@ -418,6 +418,30 @@ This does not make every inaccessible website accessible automatically. It
 does make failures inspectable and often provides another route to the
 content or control.
 
+### Diagnostic visual orders
+
+Document order is predictable, but CSS can put a product card beside its
+heading while leaving the card after the reviews in the DOM. Two diagnostic
+orders re-linearize the same page without changing the view. Press `:` and run
+one by name:
+
+| Command | What it does |
+| --- | --- |
+| `layout-container` | Reorders items only within the flex, grid, table and CSS-column containers that place them |
+| `layout-rectangle` | Orders every placeable line by its rendered row and inline position |
+| `layout-default` | Returns to ordinary document order and stops collecting geometry |
+
+These are commands, not keys and not a fifth view: they do not join the
+backslash cycle. The chosen order survives a rescan, a live update, and a
+switch between AX, PAGE, INSPECT and SOURCE. Changing order rebuilds the view
+and keeps you on the same element rather than the same line number.
+
+Container order is conservative and will leave an arrangement alone when CSS
+does not expose a clear group. Rectangle order is deliberately aggressive and
+can interleave newspaper columns or a sidebar with the article, which is why it
+is diagnostic rather than the default. The exact rules, fallbacks and limits
+are in `docs/layout-order-contract.md`.
+
 ## Live pages
 
 TAWB briefly freezes its page buffer while you navigate. About 2.5 seconds
