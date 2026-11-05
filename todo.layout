@@ -25,5 +25,5 @@ selected explicitly through the command actions `layout-container` and
       browser engines, including all three layout orders and activation.
 - [x] Document the diagnostic layouts, their command-only availability, their
       heuristic limits, and how to return to default order.
-- [ ] Run JavaScript, Crystal, focused real-browser, and tmux verification; inspect
+- [x] Run JavaScript, Crystal, focused real-browser, and tmux verification; inspect
       the final diff, commits, and working tree.
