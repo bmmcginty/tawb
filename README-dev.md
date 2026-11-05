@@ -2479,7 +2479,10 @@ git push origin HEAD --follow-tags
 `make release` requires the version tag to point at `HEAD`, the working tree
 to be clean, the tag to exist on `origin`, the GitHub CLI to be authenticated,
 and no release of that name to exist. It builds the static `bin/tawb` with
-`tools/build_crystal.sh` and attaches that binary to the release. The Crystal
+`tools/build_crystal.sh`, setting `TAWB_RELEASE_BUILD=1` so only that operator
+build passes Crystal's `--release`. Ordinary, test and browser-test builds use
+the same script without it, because an optimized rebuild is too slow for the
+suites. The release step attaches that binary to the release. The Crystal
 executable embeds its JavaScript assets at compile time, so the binary is the
 whole program.
 

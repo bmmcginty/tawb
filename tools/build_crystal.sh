@@ -41,7 +41,13 @@ if [ "$NEEDS_HTTP" = 1 ]; then
 fi
 
 mkdir -p "$(dirname -- "$OUTPUT")"
-set -- --static --release --no-debug
+# Test and development builds are unoptimized on purpose: --release makes a
+# Crystal build slow enough that the browser and differential suites cannot
+# afford it. Only the operator's make release asks for an optimized artifact.
+set -- --static --no-debug
+if [ "${TAWB_RELEASE_BUILD:-0}" = 1 ]; then
+  set -- --release "$@"
+fi
 if [ -n "$LINK_FLAGS" ]; then
   set -- "$@" --link-flags "$LINK_FLAGS"
 fi

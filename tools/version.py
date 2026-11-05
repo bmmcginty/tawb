@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import re
 import shutil
@@ -302,6 +303,7 @@ def release(root: Path) -> None:
             [str(root / "tools" / "build_crystal.sh"), str(asset)],
             cwd=root,
             text=True,
+            env={**os.environ, "TAWB_RELEASE_BUILD": "1"},
         )
         if build.returncode != 0:
             raise VersionError("building the release binary failed")
