@@ -44,6 +44,7 @@ test('a profile sees only its own actions, in the table order and without empty 
     'Information and saved items',
     'Text editing',
     'Help and settings',
+    'Diagnostics',
     'Commands and exit',
   ]);
   assert.deepEqual(ordinary[0].rows.map((action) => action.id).slice(0, 4),

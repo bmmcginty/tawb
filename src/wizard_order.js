@@ -108,7 +108,10 @@ const WIZARD_SECTIONS = [
   {
     key: 'diagnostics',
     title: 'Diagnostics',
-    actions: ['toggle-trace', 'trace-log'],
+    actions: [
+      'toggle-trace', 'trace-log',
+      'layout-default', 'layout-container', 'layout-rectangle',
+    ],
   },
   {
     key: 'commands',

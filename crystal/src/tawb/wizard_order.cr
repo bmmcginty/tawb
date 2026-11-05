@@ -100,7 +100,10 @@ module Tawb
       },
       {
         key: "diagnostics", title: "Diagnostics",
-        actions: ["toggle-trace", "trace-log"],
+        actions: [
+          "toggle-trace", "trace-log",
+          "layout-default", "layout-container", "layout-rectangle",
+        ],
       },
       {
         key: "commands", title: "Commands and exit",

@@ -29,6 +29,9 @@ const EXTENSION_FUNCTIONS = {
   TAWB_PREVIOUS_TAB: 'previous-tab',
   TAWB_CLOSE_TAB: 'close-tab',
   TAWB_MESSAGES: 'messages',
+  TAWB_LAYOUT_DEFAULT: 'layout-default',
+  TAWB_LAYOUT_CONTAINER: 'layout-container',
+  TAWB_LAYOUT_RECTANGLE: 'layout-rectangle',
 };
 
 const FUNCTION_ACTIONS = { ...BROWSE_FUNCTIONS, ...EDIT_FUNCTIONS, ...EXTENSION_FUNCTIONS };
