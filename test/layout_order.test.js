@@ -79,3 +79,71 @@ test('rectangle layout preserves identity and activation metadata', () => {
   assert.equal(ordered[1], blocks[0]);
   assert.equal(ordered[1].item.href, 'https://example.com/later');
 });
+
+function grouped(name, box, group, {
+  container = 1, kind = 'grid', direction = 'ltr', writingMode = 'horizontal-tb', position = 'static',
+} = {}) {
+  const one = block(name, box);
+  one.item.visual.path = [{
+    container, group, kind, direction, writingMode, position, rect: box,
+  }];
+  return one;
+}
+
+test('container layout moves a Walmart-like purchase card beside its heading', () => {
+  const blocks = [
+    grouped('Product', r(10, 10), 10),
+    grouped('Reviews', r(200, 10), 20),
+    grouped('Current price is $10.50', r(10, 300), 30, { position: 'sticky' }),
+    grouped('One-time purchase', r(10, 300), 30, { position: 'sticky' }),
+  ];
+  assert.deepEqual(names(orderBlocks(blocks, 'container')),
+    ['Product', 'Current price is $10.50', 'One-time purchase', 'Reviews']);
+});
+
+test('container layout keeps a moved child group coherent', () => {
+  const blocks = [
+    grouped('late heading', r(100, 0), 1),
+    grouped('late prose', r(100, 0), 1),
+    grouped('early heading', r(0, 0), 2),
+    grouped('early control', r(0, 0), 2),
+  ];
+  assert.deepEqual(names(orderBlocks(blocks, 'container')),
+    ['early heading', 'early control', 'late heading', 'late prose']);
+});
+
+test('container layout leaves normal flow and overlapping groups alone', () => {
+  const ordinary = [block('one', r(100, 0)), block('two', r(0, 0))];
+  assert.deepEqual(names(orderBlocks(ordinary, 'container')), ['one', 'two']);
+
+  const overlap = [
+    grouped('first card', r(10, 10, 100, 40), 1),
+    grouped('second card', r(11, 12, 100, 40), 2),
+  ];
+  assert.deepEqual(names(orderBlocks(overlap, 'container')), ['first card', 'second card']);
+});
+
+test('container layout orders CSS columns down each column in inline order', () => {
+  const blocks = [
+    grouped('right top', r(0, 200), 1, { kind: 'columns' }),
+    grouped('left low', r(100, 0), 2, { kind: 'columns' }),
+    grouped('left top', r(0, 0), 3, { kind: 'columns' }),
+  ];
+  assert.deepEqual(names(orderBlocks(blocks, 'container')), ['left top', 'left low', 'right top']);
+});
+
+test('container layout applies nested containers from the inside out', () => {
+  const blocks = [
+    grouped('outer late / inner late', r(100, 0), 10),
+    grouped('outer late / inner early', r(100, 0), 10),
+    grouped('outer early', r(0, 0), 20),
+  ];
+  blocks[0].item.visual.path.push({
+    container: 2, group: 101, kind: 'flex', direction: 'ltr', writingMode: 'horizontal-tb', rect: r(110, 0),
+  });
+  blocks[1].item.visual.path.push({
+    container: 2, group: 102, kind: 'flex', direction: 'ltr', writingMode: 'horizontal-tb', rect: r(100, 0),
+  });
+  assert.deepEqual(names(orderBlocks(blocks, 'container')),
+    ['outer early', 'outer late / inner early', 'outer late / inner late']);
+});

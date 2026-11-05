@@ -12,7 +12,7 @@ selected explicitly through the command actions `layout-container` and
 - [x] Implement and conformance-test `layout-rectangle`: order semantic blocks by
       rendered rows and inline position, preserve stable DOM order for ties and
       unplaced blocks, and keep block identity and activation metadata intact.
-- [ ] Implement and conformance-test `layout-container`: reorder within CSS
+- [x] Implement and conformance-test `layout-container`: reorder within CSS
       layout containers, preserve coherent content groups, handle flex/grid,
       columns, direction, overlap, sticky/fixed content, and fall back safely.
 - [ ] Add `layout-default`, `layout-container`, and `layout-rectangle` command

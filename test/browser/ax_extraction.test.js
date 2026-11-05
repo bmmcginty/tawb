@@ -104,7 +104,9 @@ test('AX and PAGE collect layout geometry only when it is requested', async () =
       <section style="grid-column:1;grid-row:2">Reviews</section>
       <aside style="grid-column:2;grid-row:1">Current price is $10.50</aside>
       <span style="display:none">Hidden</span>
-    </main>`);
+    </main>
+    <div style="display:flex;direction:rtl"><span>Flex first</span><span>Flex second</span></div>
+    <table><tr><td>Cell A</td><td>Cell B</td></tr></table>`);
 
   for (const extractor of [extractAxItems, extractVisible]) {
     const ordinary = await page.evaluate(extractor, {});
@@ -125,6 +127,11 @@ test('AX and PAGE collect layout geometry only when it is requested', async () =
       'separate grid children were collapsed into one group');
     assert.ok(price.visual.rect.top < reviews.visual.rect.top,
       'the browser did not report the CSS placement that contradicts DOM order');
+    const flex = measured.find((item) => (item.name || item.text) === 'Flex first');
+    const cell = measured.find((item) => (item.name || item.text) === 'Cell A');
+    assert.equal(flex.visual.path.at(-1).kind, 'flex');
+    assert.equal(flex.visual.path.at(-1).direction, 'rtl');
+    assert.equal(cell.visual.path.at(-1).kind, 'table');
     assert.equal(measured.some((item) => (item.name || item.text) === 'Hidden'), false);
   }
 });

@@ -710,6 +710,7 @@
     const display = String(style.display || '');
     if (display.includes('flex')) return 'flex';
     if (display.includes('grid')) return 'grid';
+    if (display === 'table-row') return 'table';
     const count = Number.parseInt(style.columnCount, 10);
     if ((Number.isFinite(count) && count > 1)
       || (style.columnWidth && style.columnWidth !== 'auto')) return 'columns';

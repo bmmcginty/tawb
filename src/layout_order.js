@@ -117,8 +117,142 @@ function orderRectangle(blocks) {
   return attachUnplaced(blocks, rectangleEntries(blocks));
 }
 
+const pathOf = (block) => {
+  const path = block?.item?.visual?.path;
+  return Array.isArray(path) ? path : [];
+};
+
+function validRawRect(rect) {
+  if (!rect) return null;
+  const { top, left, width, height } = rect;
+  if (![top, left, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+  return { top, left, width, height, right: left + width, bottom: top + height };
+}
+
+function groupRows(groups, direction, writing = 'horizontal-tb') {
+  if (groups.length < 2) return groups.slice();
+  const vertical = writing.startsWith('vertical');
+  const sign = vertical && writing.endsWith('-rl') ? -1 : 1;
+  const sorted = groups.slice().sort((a, b) => {
+    const av = vertical ? a.rect.left : a.rect.top;
+    const bv = vertical ? b.rect.left : b.rect.top;
+    return sign * (av - bv) || a.first - b.first;
+  });
+  const rows = [];
+  for (const group of sorted) {
+    let row = rows[rows.length - 1];
+    const entry = { rect: group.rect };
+    if (!row || !sameBand(row, entry, vertical)) {
+      row = {
+        start: vertical ? group.rect.left : group.rect.top,
+        size: vertical ? group.rect.width : group.rect.height,
+        entries: [],
+      };
+      rows.push(row);
+    }
+    row.entries.push(group);
+  }
+  return rows.flatMap((row) => row.entries.sort((a, b) => {
+    if (overlapRatio(a.rect, b.rect) >= OVERLAP_RATIO) return a.first - b.first;
+    const av = vertical ? a.rect.top : a.rect.left;
+    const bv = vertical ? b.rect.top : b.rect.left;
+    const inlineSign = !vertical && direction === 'rtl' ? -1 : 1;
+    return inlineSign * (av - bv) || a.first - b.first;
+  }));
+}
+
+function orderGroups(groups, container) {
+  const placed = groups.filter((group) => group.rect);
+  if (placed.length < 2) return groups;
+  let ordered;
+  if (container.kind === 'columns') {
+    const sign = container.direction === 'rtl' ? -1 : 1;
+    ordered = placed.slice().sort((a, b) => sign * (a.rect.left - b.rect.left)
+      || a.rect.top - b.rect.top || a.first - b.first);
+  } else {
+    ordered = groupRows(placed, container.direction, container.writingMode);
+  }
+  const placedIds = new Set(ordered.map((group) => group.id));
+  const leading = [];
+  const after = new Map();
+  let anchor = null;
+  for (const group of groups) {
+    if (placedIds.has(group.id)) anchor = group.id;
+    else if (anchor == null) leading.push(group);
+    else {
+      if (!after.has(anchor)) after.set(anchor, []);
+      after.get(anchor).push(group);
+    }
+  }
+  const out = leading.slice();
+  for (const group of ordered) {
+    out.push(group);
+    out.push(...(after.get(group.id) || []));
+  }
+  return out;
+}
+
+function containerCensus(blocks) {
+  const containers = new Map();
+  blocks.forEach((block, index) => {
+    pathOf(block).forEach((entry, depth) => {
+      if (entry == null || entry.container == null || entry.group == null) return;
+      let container = containers.get(entry.container);
+      if (!container) {
+        container = {
+          id: entry.container,
+          depth,
+          kind: entry.kind || 'grid',
+          direction: entry.direction === 'rtl' ? 'rtl' : 'ltr',
+          writingMode: entry.writingMode || 'horizontal-tb',
+        };
+        containers.set(entry.container, container);
+      }
+      container.depth = Math.max(container.depth, depth);
+      // `index` is only a deterministic tie-break. Membership is re-read from
+      // the current permutation while each container is applied.
+      if (container.first == null) container.first = index;
+    });
+  });
+  return Array.from(containers.values()).sort((a, b) => b.depth - a.depth || b.first - a.first);
+}
+
+function applyContainer(blocks, container) {
+  const slots = [];
+  const groupsById = new Map();
+  blocks.forEach((block, index) => {
+    const entry = pathOf(block).find((one) => one.container === container.id);
+    if (!entry) return;
+    slots.push(index);
+    let group = groupsById.get(entry.group);
+    if (!group) {
+      group = {
+        id: entry.group,
+        first: index,
+        rect: validRawRect(entry.rect),
+        blocks: [],
+      };
+      groupsById.set(entry.group, group);
+    }
+    group.blocks.push(block);
+  });
+  if (groupsById.size < 2) return blocks;
+  const groups = Array.from(groupsById.values()).sort((a, b) => a.first - b.first);
+  const flattened = orderGroups(groups, container).flatMap((group) => group.blocks);
+  const out = blocks.slice();
+  slots.forEach((slot, index) => { out[slot] = flattened[index]; });
+  return out;
+}
+
+function orderContainer(blocks) {
+  let out = blocks.slice();
+  for (const container of containerCensus(blocks)) out = applyContainer(out, container);
+  return out;
+}
+
 function orderBlocks(blocks, mode = 'default') {
   if (mode === 'rectangle') return orderRectangle(blocks);
+  if (mode === 'container') return orderContainer(blocks);
   return blocks.slice();
 }
 
@@ -129,5 +263,8 @@ module.exports = {
   rectangleEntries,
   attachUnplaced,
   orderRectangle,
+  containerCensus,
+  applyContainer,
+  orderContainer,
   orderBlocks,
 };
