@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Purchase card</title>
+<style>
+  body { margin: 0; font-family: sans-serif; }
+  h1, h2, p { margin: 0; }
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 24px;
+    align-items: start;
+    width: 900px;
+  }
+  .product { grid-column: 1; grid-row: 1; }
+  .reviews { grid-column: 1; grid-row: 2; }
+  .purchase {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    position: sticky;
+    top: 0;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1 class="product">Product title</h1>
+  <section class="reviews">
+    <h2>Reviews</h2>
+    <p>Review one</p>
+    <p>Review two</p>
+  </section>
+  <aside class="purchase">
+    <p class="price">$10.50</p>
+    <button type="button" onclick="window.presses = (window.presses || 0) + 1">Add to cart</button>
+  </aside>
+</main>
+</body>
+</html>
