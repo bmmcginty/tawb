@@ -4114,6 +4114,10 @@ module Tawb
                            page : Reader::PageEnv, mode : String) : Nil
       return unless LayoutOrder::LABELS.has_key?(mode)
 
+      # Geometry extraction can be the slow part of this command. Replace the
+      # stale previous message while it runs without flashing progress on
+      # ordinary, fast keystrokes.
+      Reader.paint_row(output, state, page.url, "Working…")
       viewport_row = state.cursor - state.scroll
       anchor = state.core.anchor
       before = Reader.view_of(state)

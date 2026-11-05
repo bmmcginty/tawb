@@ -2820,6 +2820,10 @@ async function handleBrowseKey(chunk, state, page, actionOverride = null) {
   // the line number is meaningless once the order changes.
   if (action === 'layout-default' || action === 'layout-container' || action === 'layout-rectangle') {
     const mode = action.slice('layout-'.length);
+    // Geometry extraction can be the slow part of this command. Replace the
+    // stale previous message while it runs without making every key flash a
+    // generic progress row.
+    paintRow(state, 'Working…');
     const viewportRow = state.cursor - state.scroll;
     const anchor = anchorFor(state);
     const before = viewOf(state);
