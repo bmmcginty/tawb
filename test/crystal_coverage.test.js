@@ -26,6 +26,7 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const CONFORMANCE = path.join(ROOT, 'crystal', 'src', 'tawb', 'conformance.cr');
 const IMPLEMENTATIONS = path.join(__dirname, 'crystal_impl.js');
+const BROWSER_RUNNER = path.join(ROOT, 'tools', 'test_crystal_browser.sh');
 const SELF = path.basename(__filename);
 const TEST_DIRS = ['test', path.join('test', 'browser')];
 
@@ -138,6 +139,15 @@ test('every implementation pair is used by a test', () => {
   const unused = [...factories].filter((name) => !text.includes(name)).sort();
   assert.deepEqual(unused, [],
     `these comparison pairs are exported but no test runs them: ${unused.join(', ')}`);
+});
+
+test('the browser differential runner discovers every conventionally named suite', () => {
+  const runner = fs.readFileSync(BROWSER_RUNNER, 'utf8');
+  assert.match(runner, /test\/browser\/crystal_\*\.test\.js/,
+    'the browser runner has a hand-maintained crystal test list that can drift');
+  for (const legacy of ['layout_order_crystal.test.js', 'live_crystal.test.js']) {
+    assert.ok(runner.includes(legacy), `the browser runner omits ${legacy}`);
+  }
 });
 
 test('every src module is exercised by a test or classified', () => {

@@ -36,7 +36,12 @@ for argument in "$@"; do
   esac
 done
 if [ "$paths" -eq 0 ]; then
-  set -- test/browser/crystal_dump.test.js test/browser/crystal_fields.test.js test/browser/crystal_actions.test.js test/browser/crystal_interactive.test.js test/browser/crystal_tabs.test.js test/browser/crystal_frames.test.js test/browser/crystal_library.test.js test/browser/crystal_auth.test.js test/browser/crystal_views.test.js test/browser/crystal_focus.test.js "$@"
+  # Discover every browser differential by convention instead of maintaining
+  # a list that silently falls behind. The two historical names predate the
+  # crystal_ prefix and remain explicit.
+  set -- test/browser/crystal_*.test.js \
+    test/browser/layout_order_crystal.test.js \
+    test/browser/live_crystal.test.js "$@"
 fi
 
 # Run under tools/run_isolated.sh so a run cut short does not leave the
