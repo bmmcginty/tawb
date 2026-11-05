@@ -4,7 +4,7 @@ The normal page order remains `layout-default`. The two diagnostic orders are
 selected explicitly through the command actions `layout-container` and
 `layout-rectangle`; neither joins the ordinary page-view cycle.
 
-- [ ] Define the layout-order contract and fixture cases: stable fallback,
+- [x] Define the layout-order contract and fixture cases: stable fallback,
       rectangular row ordering, container-aware reordering, RTL, overlap,
       zero-size content, tables, popups, frames, and current-element restoration.
 - [ ] Collect opt-in visual geometry from AX and PAGE extraction in both browser
