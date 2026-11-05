@@ -15,6 +15,7 @@ const {
   armActivationFocus, focusedByActivation, cancelActivationFocus,
 } = require('./focus');
 const { exactBlockForElement } = require('./place');
+const { orderBlocks } = require('./layout_order');
 
 // The core: everything about a page that is not about a terminal.
 //
@@ -72,10 +73,16 @@ const SOURCE_LABELS = { ax: 'AX', render: 'PAGE', inspect: 'INSPECT', source: 'S
 // rather than by matching role and name. INSPECT carries AX's own references.
 const DOM_SOURCES = new Set(['source']);
 
-async function snapshotBlocks(page, source = 'ax', { visited = null, driver = null, layout = false } = {}) {
+async function snapshotBlocks(page, source = 'ax', {
+  visited = null, driver = null, layout = false, layoutOrder = 'default',
+} = {}) {
   const t0 = Date.now();
-  const blocks = await snapshotFrameTree(page, source, { visited, driver, layout });
-  log('snapshot', { source, ms: Date.now() - t0, blocks: blocks.length, frames: page.frames().length });
+  const visual = layoutOrder !== 'default';
+  const extracted = await snapshotFrameTree(page, source, { visited, driver, layout, visual });
+  const blocks = orderBlocks(extracted, layoutOrder);
+  log('snapshot', {
+    source, layoutOrder, ms: Date.now() - t0, blocks: blocks.length, frames: page.frames().length,
+  });
   return blocks;
 }
 
@@ -466,7 +473,9 @@ const RESTORE_SCROLL = () => {
 // ---------------------------------------------------------------------------
 
 class Core {
-  constructor({ driver, page, source, sources, browserPort = null, layout = false }) {
+  constructor({
+    driver, page, source, sources, browserPort = null, layout = false, layoutOrder = 'default',
+  }) {
     this.driver = driver;
     this.page = page;
     this.browserPort = browserPort;
@@ -476,6 +485,7 @@ class Core {
     // the Lynx display lays a page out with. Nothing else reads it, so a
     // reader who has not asked for Lynx does not pay for it. See blocksForFrame.
     this.layout = layout;
+    this.layoutOrder = layoutOrder;
     this.blocks = [];
     // Bumped whenever the block list is replaced wholesale. A front end that
     // holds its own copy — which every front end does, and a front end
@@ -652,7 +662,7 @@ class Core {
     const started = Date.now();
     const visited = [];
     this.blocks = await snapshotBlocks(page, this.source, {
-      visited, driver: this.driver, layout: this.layout,
+      visited, driver: this.driver, layout: this.layout, layoutOrder: this.layoutOrder,
     });
     this.restoreAttachedFiles(this.blocks, page);
     this.generation += 1;

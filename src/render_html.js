@@ -761,9 +761,9 @@ const ROLE_BY_KIND = {
   text: 'text',
 };
 
-async function snapshotRenderBlocks(target, { layout = false } = {}) {
+async function snapshotRenderBlocks(target, { layout = false, visual = false } = {}) {
   const frame = typeof target.mainFrame === 'function' ? target.mainFrame() : target;
-  const entries = await target.evaluate(extractVisible, { layout });
+  const entries = await target.evaluate(extractVisible, { layout, visual });
 
   return entries.map((entry) => ({
     kind: 'control',
@@ -781,6 +781,7 @@ async function snapshotRenderBlocks(target, { layout = false } = {}) {
       file: entry.file,
       table: entry.table,
       flow: entry.flow,
+      visual: entry.visual,
       renderIndex: entry.index,
       frameIndex: entry.frameIndex,
       frame,

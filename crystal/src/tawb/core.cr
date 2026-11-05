@@ -58,6 +58,7 @@ require "./frames"
 require "./fields"
 require "./focus"
 require "./live"
+require "./layout_order"
 require "./remap"
 require "./views"
 require "./session"
@@ -400,8 +401,10 @@ module Tawb
     getter live : Live::State
     getter page : Engine::Page?
     getter snapshot_cost_ms : Int64
+    property layout_order : String
 
     def initialize(source : String = "ax", layout : Bool = false,
+                   layout_order : String = "default",
                    driver : Engine::Session? = nil,
                    page : Engine::Page? = nil,
                    browser_port : Int32? = nil)
@@ -413,6 +416,7 @@ module Tawb
       # the Lynx display lays a page out with. Nothing else reads it, so a
       # reader who has not asked for Lynx does not pay for it.
       @layout = layout
+      @layout_order = layout_order
       @blocks = [] of Block
       @generation = 0
       @rendered_url = ""
@@ -521,11 +525,12 @@ module Tawb
       end
       started = Time.instant
       built = snapshot_blocks(target)
-      @blocks = built.map do |entry|
+      extracted = built.map do |entry|
         object = entry.as_h
         Block.new(object["text"]?.try(&.as_s?) || "",
           object["item"]? || JSON::Any.new(nil))
       end
+      @blocks = LayoutOrder.order(extracted, @layout_order)
       restore_attached_files(target.tab_id)
       @generation += 1
       @rendered_url = target.url
@@ -543,7 +548,7 @@ module Tawb
     private def snapshot_blocks(target : Engine::Page) : Array(JSON::Any)
       case @source
       when "ax", "inspect"
-        tree, documents = target.accessibility_documents(@layout)
+        tree, documents = target.accessibility_documents(@layout, @layout_order != "default")
         return Frames.build(tree, documents) if @source == "ax"
         Frames.assemble(tree) do |frame_id|
           InspectHtml.blocks(documents[frame_id]? || [] of JSON::Any, frame_id)
@@ -558,7 +563,10 @@ module Tawb
             scope = frame_id == target.document_id ? target : target.frame_for(frame_id)
             if @source == "render"
               scope.evaluate(RenderHtml::EXTRACT_VISIBLE,
-                JSON::Any.new({"layout" => JSON::Any.new(@layout)})).as_a?
+                JSON::Any.new({
+                  "layout" => JSON::Any.new(@layout),
+                  "visual" => JSON::Any.new(@layout_order != "default"),
+                })).as_a?
             else
               scope.evaluate(SourceHtml::EXTRACT_SOURCE).as_a?
             end

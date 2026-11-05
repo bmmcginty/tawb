@@ -60,7 +60,7 @@ function isFrameItem(item) {
 // table-cell placement the Lynx display needs. It is off for every other
 // reader, so the extra closest() walk never runs and blocks carry no
 // metadata they would never read.
-async function blocksForFrame(frame, source, driver = null, layout = false) {
+async function blocksForFrame(frame, source, driver = null, layout = false, visual = false) {
   // SOURCE stays unfolded on purpose: it shows structure, where separator
   // folding would be a lie.
   if (source === 'source') {
@@ -72,9 +72,9 @@ async function blocksForFrame(frame, source, driver = null, layout = false) {
       frame, extractSource, driver, (answer) => !answer || !answer.length, async () => true);
     return sourceEntriesToBlocks(entries, frame);
   }
-  if (source === 'render') return foldSeparatorBlocks(await snapshotRenderBlocks(frame, { layout }));
+  if (source === 'render') return foldSeparatorBlocks(await snapshotRenderBlocks(frame, { layout, visual }));
   if (!driver) throw new Error('the AX and INSPECT views need a driver to read accessibility semantics');
-  const items = await driver.axItems(frame, { layout });
+  const items = await driver.axItems(frame, { layout, visual });
   if (source === 'inspect') return inspectBlocks(items, frame);
   const blocks = buildBlocks(items);
   // AX items carry no element reference, so record the frame they came from;
@@ -169,16 +169,18 @@ async function orderedChildFrames(frame, limit = Infinity, requested = null) {
 
 // `visited` collects the frames that actually contributed content, so the
 // caller can observe exactly what it displays.
-async function snapshotFrameTree(page, source, { visited = null, driver = null, layout = false } = {}) {
+async function snapshotFrameTree(page, source, {
+  visited = null, driver = null, layout = false, visual = false,
+} = {}) {
   const budget = { remaining: MAX_FRAMES };
-  return walk(page.mainFrame(), source, 0, budget, new Set(), visited, driver, layout);
+  return walk(page.mainFrame(), source, 0, budget, new Set(), visited, driver, layout, visual);
 }
 
-async function walk(frame, source, depth, budget, seen, visited, driver, layout = false) {
+async function walk(frame, source, depth, budget, seen, visited, driver, layout = false, visual = false) {
   let blocks;
   const tBlocks = Date.now();
   try {
-    blocks = await withDeadline(blocksForFrame(frame, source, driver, layout), FRAME_BUDGET_MS, null);
+    blocks = await withDeadline(blocksForFrame(frame, source, driver, layout, visual), FRAME_BUDGET_MS, null);
   } catch (err) {
     log('frame.blocks.error', {
       depth, url: frame.url().slice(0, 80), error: String(err && err.message ? err.message : err).slice(0, 160),
@@ -246,7 +248,8 @@ async function walk(frame, source, depth, budget, seen, visited, driver, layout 
     budget.remaining -= 1;
     if (budget.remaining < 0) break;
 
-    const nested = await walk(child, source, depth + 1, budget, new Set([...seen, url]), visited, driver, layout);
+    const nested = await walk(
+      child, source, depth + 1, budget, new Set([...seen, url]), visited, driver, layout, visual);
     out.push(...nested);
   }
 
@@ -272,7 +275,8 @@ async function walk(frame, source, depth, budget, seen, visited, driver, layout 
     if (!url || url === 'about:blank' || seen.has(url)) continue;
 
     budget.remaining -= 1;
-    const nested = await walk(child, source, depth + 1, budget, new Set([...seen, url]), visited, driver, layout);
+    const nested = await walk(
+      child, source, depth + 1, budget, new Set([...seen, url]), visited, driver, layout, visual);
 
     // The marker goes in even when nothing could be read out of the frame.
     // A document whose contents are behind a closed shadow root reads as
