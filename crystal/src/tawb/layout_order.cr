@@ -150,15 +150,19 @@ module Tawb
       attach_unplaced(blocks, rectangle_entries(blocks))
     end
 
-    class Container
+    class Container(T)
       property id : Int64
       property depth : Int32
       property kind : String
       property direction : String
       property writing_mode : String
       property first : Int32
+      getter slots : Array(Int32)
+      getter groups : Hash(Int64, Group(T))
 
       def initialize(@id, @depth, @kind, @direction, @writing_mode, @first)
+        @slots = [] of Int32
+        @groups = {} of Int64 => Group(T)
       end
     end
 
@@ -167,9 +171,11 @@ module Tawb
       property first : Int32
       property rect : Rect?
       getter blocks : Array(T)
+      getter slots : Array(Int32)
 
       def initialize(@id, @first, @rect)
         @blocks = [] of T
+        @slots = [] of Int32
       end
     end
 
@@ -190,7 +196,7 @@ module Tawb
       Rect.new(top, left, width, height)
     end
 
-    private def self.group_rows(groups : Array(Group(T)), container : Container) : Array(Group(T)) forall T
+    private def self.group_rows(groups : Array(Group(T)), container : Container(T)) : Array(Group(T)) forall T
       return groups.dup if groups.size < 2
       vertical = container.writing_mode.starts_with?("vertical")
       sign = vertical && container.writing_mode.ends_with?("-rl") ? -1.0 : 1.0
@@ -238,7 +244,7 @@ module Tawb
       rows.flatten
     end
 
-    private def self.order_groups(groups : Array(Group(T)), container : Container) : Array(Group(T)) forall T
+    private def self.order_groups(groups : Array(Group(T)), container : Container(T)) : Array(Group(T)) forall T
       placed = groups.select(&.rect)
       return groups if placed.size < 2
       ordered = if container.kind == "columns"
@@ -278,25 +284,33 @@ module Tawb
       out
     end
 
-    def self.container_census(blocks : Array(T)) : Array(Container) forall T
-      containers = {} of Int64 => Container
+    def self.container_census(blocks : Array(T)) : Array(Container(T)) forall T
+      containers = {} of Int64 => Container(T)
       blocks.each_with_index do |block, index|
         path_of(block).each_with_index do |raw, depth|
           entry = raw.as_h?
           next unless entry
           id = entry["container"]?.try(&.as_i?)
-          group = entry["group"]?.try(&.as_i?)
-          next unless id && group
-          if container = containers[id]?
-            container.depth = Math.max(container.depth, depth.to_i32)
-          else
-            containers[id] = Container.new(
+          group_id = entry["group"]?.try(&.as_i?)
+          next unless id && group_id
+          container = containers[id]? || begin
+            made = Container(T).new(
               id, depth.to_i32,
               entry["kind"]?.try(&.as_s?) || "grid",
               entry["direction"]?.try(&.as_s?) == "rtl" ? "rtl" : "ltr",
               entry["writingMode"]?.try(&.as_s?) || "horizontal-tb",
               index.to_i32)
+            containers[id] = made
+            made
           end
+          container.depth = Math.max(container.depth, depth.to_i32)
+          container.slots << index.to_i32
+          group = container.groups[group_id]? || begin
+            made = Group(T).new(group_id, index.to_i32, raw_rect(entry["rect"]?))
+            container.groups[group_id] = made
+            made
+          end
+          group.slots << index.to_i32
         end
       end
       containers.values.sort do |a, b|
@@ -305,29 +319,16 @@ module Tawb
       end
     end
 
-    def self.apply_container(blocks : Array(T), container : Container) : Array(T) forall T
-      slots = [] of Int32
-      groups = {} of Int64 => Group(T)
-      blocks.each_with_index do |block, index|
-        entry = path_of(block).compact_map(&.as_h?).find do |one|
-          one["container"]?.try(&.as_i?) == container.id
-        end
-        next unless entry
-        id = entry["group"]?.try(&.as_i?)
-        next unless id
-        slots << index.to_i32
-        group = groups[id]? || begin
-          made = Group(T).new(id, index.to_i32, raw_rect(entry["rect"]?))
-          groups[id] = made
-          made
-        end
-        group.blocks << block
+    def self.apply_container(blocks : Array(T), container : Container(T)) : Array(T) forall T
+      return blocks if container.groups.size < 2
+      original = container.groups.values.sort_by(&.first).map do |indexed|
+        group = Group(T).new(indexed.id, indexed.first, indexed.rect)
+        indexed.slots.each { |slot| group.blocks << blocks[slot] }
+        group
       end
-      return blocks if groups.size < 2
-      original = groups.values.sort_by(&.first)
       flattened = order_groups(original, container).flat_map(&.blocks)
       out = blocks.dup
-      slots.each_with_index { |slot, index| out[slot] = flattened[index] }
+      container.slots.each_with_index { |slot, index| out[slot] = flattened[index] }
       out
     end
 

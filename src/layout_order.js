@@ -214,42 +214,41 @@ function containerCensus(blocks) {
           kind: entry.kind || 'grid',
           direction: entry.direction === 'rtl' ? 'rtl' : 'ltr',
           writingMode: entry.writingMode || 'horizontal-tb',
+          first: index,
+          slots: [],
+          groupsById: new Map(),
         };
         containers.set(entry.container, container);
       }
       container.depth = Math.max(container.depth, depth);
-      // `index` is only a deterministic tie-break. Membership is re-read from
-      // the current permutation while each container is applied.
-      if (container.first == null) container.first = index;
+      container.slots.push(index);
+      let group = container.groupsById.get(entry.group);
+      if (!group) {
+        group = {
+          id: entry.group,
+          first: index,
+          rect: validRawRect(entry.rect),
+          slots: [],
+        };
+        container.groupsById.set(entry.group, group);
+      }
+      group.slots.push(index);
     });
   });
   return Array.from(containers.values()).sort((a, b) => b.depth - a.depth || b.first - a.first);
 }
 
 function applyContainer(blocks, container) {
-  const slots = [];
-  const groupsById = new Map();
-  blocks.forEach((block, index) => {
-    const entry = pathOf(block).find((one) => one.container === container.id);
-    if (!entry) return;
-    slots.push(index);
-    let group = groupsById.get(entry.group);
-    if (!group) {
-      group = {
-        id: entry.group,
-        first: index,
-        rect: validRawRect(entry.rect),
-        blocks: [],
-      };
-      groupsById.set(entry.group, group);
-    }
-    group.blocks.push(block);
-  });
-  if (groupsById.size < 2) return blocks;
-  const groups = Array.from(groupsById.values()).sort((a, b) => a.first - b.first);
+  if (container.groupsById.size < 2) return blocks;
+  // Descendant containers only permute these fixed slots. Reading the current
+  // occupants preserves those inner permutations without searching every
+  // block again for every ancestor container.
+  const groups = Array.from(container.groupsById.values())
+    .sort((a, b) => a.first - b.first)
+    .map((group) => ({ ...group, blocks: group.slots.map((slot) => blocks[slot]) }));
   const flattened = orderGroups(groups, container).flatMap((group) => group.blocks);
   const out = blocks.slice();
-  slots.forEach((slot, index) => { out[slot] = flattened[index]; });
+  container.slots.forEach((slot, index) => { out[slot] = flattened[index]; });
   return out;
 }
 

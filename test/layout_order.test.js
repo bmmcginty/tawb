@@ -132,6 +132,20 @@ test('container layout orders CSS columns down each column in inline order', () 
   assert.deepEqual(names(orderBlocks(blocks, 'container')), ['left top', 'left low', 'right top']);
 });
 
+test('container layout indexes each block path once', () => {
+  let reads = 0;
+  const blocks = Array.from({ length: 40 }, (_, index) => {
+    const one = grouped(`block ${index}`, r(40 - index, 0), index);
+    const path = one.item.visual.path;
+    Object.defineProperty(one.item.visual, 'path', {
+      get() { reads += 1; return path; },
+    });
+    return one;
+  });
+  orderBlocks(blocks, 'container');
+  assert.equal(reads, blocks.length);
+});
+
 test('container layout applies nested containers from the inside out', () => {
   const blocks = [
     grouped('outer late / inner late', r(100, 0), 10),
