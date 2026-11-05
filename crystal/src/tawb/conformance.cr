@@ -27,6 +27,7 @@ require "./interfaces"
 require "./keyboard"
 require "./keys"
 require "./layout"
+require "./layout_order"
 require "./library"
 require "./list_model"
 require "./list_screen"
@@ -775,6 +776,19 @@ module Tawb
       when "layout.lines"
         object = payload.as_h
         JSON::Any.new(Layout.lines(object["blocks"].as_a, object["width"].as_i))
+      when "layout_order.order"
+        object = payload.as_h
+        blocks = object["blocks"].as_a.map do |raw|
+          fields = raw.as_h
+          Core::Block.new(fields["text"].as_s, fields["item"]? || JSON::Any.new(nil))
+        end
+        ordered = LayoutOrder.order(blocks, object["mode"]?.try(&.as_s?) || "default")
+        JSON::Any.new(ordered.map do |block|
+          JSON::Any.new({
+            "text" => JSON::Any.new(block.text),
+            "item" => block.item,
+          })
+        end)
       when "log.scenario"
         log_scenario(payload)
       when "runtime.scenario"

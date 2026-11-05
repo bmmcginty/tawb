@@ -9,7 +9,7 @@ selected explicitly through the command actions `layout-container` and
       zero-size content, tables, popups, frames, and current-element restoration.
 - [x] Collect opt-in visual geometry from AX and PAGE extraction in both browser
       engines without adding geometry work to `layout-default` snapshots.
-- [ ] Implement and conformance-test `layout-rectangle`: order semantic blocks by
+- [x] Implement and conformance-test `layout-rectangle`: order semantic blocks by
       rendered rows and inline position, preserve stable DOM order for ties and
       unplaced blocks, and keep block identity and activation metadata intact.
 - [ ] Implement and conformance-test `layout-container`: reorder within CSS
