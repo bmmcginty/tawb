@@ -1866,7 +1866,7 @@ module Tawb
 
       private def evaluate_items(context_id : Int64?, session_id : String? = nil,
                                  layout = false, visual = false) : Array(JSON::Any)
-        options = "{layout:#{layout},visual:#{visual}}"
+        options = "{layout:#{layout},visual:#{visual.to_json}}"
         expression = EXTRACT_AX.sub("{layout:false}", options)
         parameters = {
           "expression"    => JSON::Any.new(expression),
@@ -1882,7 +1882,7 @@ module Tawb
         items = result["result"].as_h["value"].as_a
         needs_privileged = items.empty? || has_media_controls?(context_id, session_id)
         return items unless needs_privileged
-        paired = EXTRACT_AX_WITH_PAIRS.sub("layout:false", "layout:#{layout},visual:#{visual}")
+        paired = EXTRACT_AX_WITH_PAIRS.sub("layout:false", "layout:#{layout},visual:#{visual.to_json}")
         privileged_run(context_id, session_id, paired).try(&.as_a?) || items
       end
 

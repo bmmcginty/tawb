@@ -72,8 +72,17 @@ for (const source of SOURCES) {
           assert.ok(product < price && price < reviews,
             `${order} order did not move the purchase card beside the heading`);
           assert.ok(price < button, 'the purchase card lost its internal order');
-          assert.ok(blocks.every((block) => block.item && block.item.visual && block.item.visual.rect),
-            `${order} order did not collect geometry for every block`);
+          if (order === 'rectangle') {
+            assert.ok(blocks.every((block) => block.item?.visual?.rect),
+              'rectangle order did not collect item rectangles');
+            assert.ok(blocks.every((block) => block.item.visual.path == null),
+              'rectangle order collected unused container paths');
+          } else {
+            assert.ok(blocks.every((block) => Array.isArray(block.item?.visual?.path)),
+              'container order did not collect ancestor paths');
+            assert.ok(blocks.every((block) => block.item.visual.rect == null),
+              'container order collected unused item rectangles');
+          }
         }
 
         await page.evaluate(() => { window.presses = 0; });

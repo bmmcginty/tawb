@@ -548,7 +548,8 @@ module Tawb
     private def snapshot_blocks(target : Engine::Page) : Array(JSON::Any)
       case @source
       when "ax", "inspect"
-        tree, documents = target.accessibility_documents(@layout, @layout_order != "default")
+        visual = @layout_order == "default" ? false : @layout_order
+        tree, documents = target.accessibility_documents(@layout, visual)
         return Frames.build(tree, documents) if @source == "ax"
         Frames.assemble(tree) do |frame_id|
           InspectHtml.blocks(documents[frame_id]? || [] of JSON::Any, frame_id)
@@ -565,7 +566,7 @@ module Tawb
               scope.evaluate(RenderHtml::EXTRACT_VISIBLE,
                 JSON::Any.new({
                   "layout" => JSON::Any.new(@layout),
-                  "visual" => JSON::Any.new(@layout_order != "default"),
+                  "visual" => @layout_order == "default" ? JSON::Any.new(false) : JSON::Any.new(@layout_order),
                 })).as_a?
             else
               scope.evaluate(SourceHtml::EXTRACT_SOURCE).as_a?

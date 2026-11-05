@@ -62,7 +62,7 @@ test('a diagnostic snapshot asks for geometry and orders the same blocks', async
   const rectangleBlocks = await snapshotBlocks(rectangle.page, 'render', {
     layoutOrder: 'rectangle',
   });
-  assert.deepEqual(rectangle.options, [{ layout: false, visual: true }]);
+  assert.deepEqual(rectangle.options, [{ layout: false, visual: 'rectangle' }]);
   assert.deepEqual(rectangleBlocks.map((block) => block.text),
     ['Product', '$10.50', 'Reviews']);
   assert.equal(rectangleBlocks[1].item.renderIndex, 2,
@@ -81,6 +81,7 @@ test('a diagnostic snapshot asks for geometry and orders the same blocks', async
   const containerBlocks = await snapshotBlocks(container.page, 'render', {
     layoutOrder: 'container',
   });
+  assert.deepEqual(container.options, [{ layout: false, visual: 'container' }]);
   assert.deepEqual(containerBlocks.map((block) => block.text),
     ['Product', '$10.50', 'Reviews']);
 });

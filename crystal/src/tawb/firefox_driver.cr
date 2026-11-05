@@ -1110,7 +1110,7 @@ module Tawb
         visual_argument = JSON::Any.new([
           JSON::Any.new("visual"),
           JSON::Any.new({
-            "type"  => JSON::Any.new("boolean"),
+            "type"  => JSON::Any.new(visual.is_a?(String) ? "string" : "boolean"),
             "value" => JSON::Any.new(visual),
           }),
         ])

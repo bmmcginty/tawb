@@ -182,7 +182,15 @@ function extractAxItems(options) {
   const layout = !!opts.layout;
   // Geometry is a diagnostic opt-in. The ordinary accessibility snapshot must
   // not force layout or carry rectangles that no default reader consumes.
-  const visual = !!opts.visual;
+  const visualMode = opts.visual;
+  const rectangleVisual = visualMode === true || visualMode === 'rectangle';
+  const containerVisual = visualMode === true || visualMode === 'container';
+  const visual = rectangleVisual || containerVisual;
+  const styleCache = new WeakMap();
+  const styleOf = (el) => {
+    if (!styleCache.has(el)) styleCache.set(el, window.getComputedStyle(el));
+    return styleCache.get(el);
+  };
   const privilegedRoots = new Map();
   const nativeControls = new Map();
   const rememberNative = (controls) => {
@@ -255,7 +263,7 @@ function extractAxItems(options) {
       // inert behind it; treating that as a live prompt empties the buffer.
       if (el.closest('[inert], [hidden], [aria-hidden="true"]')) continue;
       if (el.hasAttribute('hidden') || el.getAttribute('aria-hidden') === 'true') continue;
-      const style = window.getComputedStyle(el);
+      const style = styleOf(el);
       if (style.display === 'none' || style.visibility === 'hidden') continue;
       const box = el.getBoundingClientRect();
       if (box.width <= 1 || box.height <= 1) continue;
@@ -292,7 +300,7 @@ function extractAxItems(options) {
     // Everything outside the modal is inert. Its own ancestors are not — the
     // walk has to reach it through them.
     if (modal && !modal.contains(el) && !el.contains(modal)) return GONE;
-    const cs = window.getComputedStyle(el);
+    const cs = styleOf(el);
     if (cs.display === 'none') return GONE;
     // display:contents is an element that generates no box of its own and
     // renders its children in its place. checkVisibility() answers for a box,
@@ -397,7 +405,7 @@ function extractAxItems(options) {
   // do not: Wikipedia writes an IPA pronunciation as one element per
   // character, and joining those with spaces turns /breɪl/ into "/ b r eɪ l /".
   const blockLevel = (el) => {
-    const display = window.getComputedStyle(el).display;
+    const display = styleOf(el).display;
     return display === 'block' || display === 'flex' || display === 'grid'
       || display === 'list-item' || display.startsWith('table');
   };
@@ -768,8 +776,10 @@ function extractAxItems(options) {
     const root = typeof node.getRootNode === 'function' ? node.getRootNode() : null;
     return root && root.host ? root.host : null;
   };
+  const rectCache = new WeakMap();
   const rectOf = (node) => {
     if (!node) return undefined;
+    if (rectCache.has(node)) return rectCache.get(node);
     let rects;
     try {
       if (node.nodeType === Node.TEXT_NODE) {
@@ -779,17 +789,23 @@ function extractAxItems(options) {
       } else if (typeof node.getClientRects === 'function') {
         rects = node.getClientRects();
       }
-    } catch { return undefined; }
+    } catch {
+      rectCache.set(node, undefined);
+      return undefined;
+    }
     for (const rect of Array.from(rects || [])) {
       if (![rect.top, rect.left, rect.width, rect.height].every(Number.isFinite)) continue;
       if (rect.width <= 0 || rect.height <= 0) continue;
-      return {
+      const measured = {
         top: rect.top + window.scrollY,
         left: rect.left + window.scrollX,
         width: rect.width,
         height: rect.height,
       };
+      rectCache.set(node, measured);
+      return measured;
     }
+    rectCache.set(node, undefined);
     return undefined;
   };
   const layoutKind = (style) => {
@@ -802,36 +818,40 @@ function extractAxItems(options) {
       || (style.columnWidth && style.columnWidth !== 'auto')) return 'columns';
     return null;
   };
-  const visualOf = (node, el) => {
-    if (!visual || !el) return undefined;
-    const style = getComputedStyle(el);
-    const path = [];
-    let group = el;
-    let parent = visualParent(el);
-    while (parent) {
-      const parentStyle = getComputedStyle(parent);
+  const pathCache = new WeakMap();
+  const pathOfVisual = (group) => {
+    if (pathCache.has(group)) return pathCache.get(group);
+    const parent = visualParent(group);
+    const path = parent ? pathOfVisual(parent).slice() : [];
+    if (parent) {
+      const parentStyle = styleOf(parent);
       const kind = layoutKind(parentStyle);
       if (kind) {
-        const groupStyle = getComputedStyle(group);
-        path.unshift({
+        path.push({
           container: idForVisual(parent),
           group: idForVisual(group),
           kind,
           direction: parentStyle.direction || 'ltr',
           writingMode: parentStyle.writingMode || 'horizontal-tb',
-          position: groupStyle.position || 'static',
+          position: styleOf(group).position || 'static',
           rect: rectOf(group),
         });
       }
-      group = parent;
-      parent = visualParent(parent);
     }
-    return {
-      rect: rectOf(node) || rectOf(el),
-      direction: style.direction || 'ltr',
-      writingMode: style.writingMode || 'horizontal-tb',
-      path,
-    };
+    pathCache.set(group, path);
+    return path;
+  };
+  const visualOf = (node, el) => {
+    if (!visual || !el) return undefined;
+    const answer = {};
+    if (rectangleVisual) {
+      const style = styleOf(el);
+      answer.rect = rectOf(node) || rectOf(el);
+      answer.direction = style.direction || 'ltr';
+      answer.writingMode = style.writingMode || 'horizontal-tb';
+    }
+    if (containerVisual) answer.path = pathOfVisual(el);
+    return answer;
   };
 
   const fromElement = (item, el) => {

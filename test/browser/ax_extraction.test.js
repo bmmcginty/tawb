@@ -113,6 +113,20 @@ test('AX and PAGE collect layout geometry only when it is requested', async () =
     assert.equal(ordinary.some((item) => item.visual), false,
       'a default snapshot paid for diagnostic geometry');
 
+    const rectangles = await page.evaluate(extractor, { visual: 'rectangle' });
+    const rectangleProduct = rectangles.find((item) => (item.name || item.text) === 'Product');
+    assert.ok(rectangleProduct?.visual?.rect, 'rectangle mode omitted an item rectangle');
+    assert.ok(rectangles.every((item) => item.visual?.path == null),
+      'rectangle mode measured unused ancestor paths');
+    const containers = await page.evaluate(extractor, { visual: 'container' });
+    const containerProduct = containers.find((item) => (item.name || item.text) === 'Product');
+    assert.ok(Array.isArray(containerProduct?.visual?.path),
+      'container mode omitted an ancestor path');
+    assert.ok(containers.every((item) => item.visual?.rect == null),
+      'container mode measured unused item rectangles');
+
+    // The legacy boolean requests both forms and remains useful to callers
+    // inspecting all visual metadata in one extraction.
     const measured = await page.evaluate(extractor, { visual: true });
     const product = measured.find((item) => (item.name || item.text) === 'Product');
     const reviews = measured.find((item) => (item.name || item.text) === 'Reviews');
