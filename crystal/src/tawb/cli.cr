@@ -352,13 +352,19 @@ module Tawb
 
         # A window that changed shape: the lines were wrapped to the old
         # width and the rows counted to the old height, so neither describes
-        # what is on screen now. The wizard and the options screen draw their
-        # own rows, so they are left to redraw themselves.
+        # what is on screen now. Raised lists restore their stable selection,
+        # options redraws its own rows, and the wizard handles SIGWINCH inside
+        # its own key loop.
         Signal::WINCH.trap do
           resized = Runtime.terminal_size
           state.rows = resized[:rows]
           state.cols = resized[:cols]
-          unless state.mode == "keyboard" || state.mode == "options"
+          if state.mode == "library" || state.mode == "choose"
+            ReaderKeys.redraw_list_after_resize(
+              terminal, state, tabs.current_page.url) rescue nil
+          elsif state.mode == "options"
+            ReaderKeys.redraw_lynx_options(terminal, state, tabs.current_page.url) rescue nil
+          elsif state.mode != "keyboard"
             Reader.redraw_after_resize(terminal, state, tabs.current_page.url) rescue nil
           end
         end

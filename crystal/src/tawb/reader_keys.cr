@@ -1777,6 +1777,15 @@ module Tawb
         OptionsScreenHost.new(output, reader, page.url), screen, page)
     end
 
+    def self.redraw_lynx_options(output : Screen::Output, reader : Reader::State,
+                                 page_url : String) : Nil
+      screen = reader.lynx_options
+      return unless screen
+      output.write("\e[2J")
+      LynxOptionsScreen.draw_options_screen(
+        OptionsScreenHost.new(output, reader, page_url), screen)
+    end
+
     def self.handle_lynx_options_key(output : Screen::Output, reader : Reader::State,
                                      page : Reader::PageEnv, chunk : String) : Nil
       screen = reader.lynx_options
@@ -2801,6 +2810,55 @@ module Tawb
       return if moved < 0
       if position = Reader.position_for_block(state, moved)
         Reader.move_selection(output, state, page.url, position[:line], position[:col])
+      end
+    end
+
+    # Relayout changes wrapped line numbers, but a raised list owns a stable
+    # row key. Restore that key and its screen-relative row after SIGWINCH
+    # rather than leaving the cursor on whichever row inherited the old line
+    # number.
+    def self.redraw_list_after_resize(output : Screen::Output, state : Reader::State,
+                                      page_url : String) : Nil
+      screen_row = state.cursor - state.scroll
+      Reader.relayout(state)
+      if state.mode == "library"
+        if object = state.library.try(&.as_h?)
+          filter = object["filter"]?.try(&.as_s?) || ""
+          entries = library_entries(object, filter)
+          selected = select_list(object, entries)
+          if selected >= 0
+            if position = Reader.position_for_block(state, selected)
+              state.cursor = position[:line]
+              state.col = position[:col]
+            end
+          end
+        end
+      elsif state.mode == "choose"
+        if object = state.chooser.try(&.as_h?)
+          filter = object["filter"]?.try(&.as_s?) || ""
+          entries = chooser_entries(object, filter)
+          selected = select_list(object, entries)
+          if selected >= 0
+            row = entries[selected].row.not_nil!.as_h
+            option_index = (row["index"]?.try(&.as_i64?) || 0).to_i32
+            block_index = chooser_block_index(state, option_index)
+            if block_index >= 0
+              if position = Reader.position_for_block(state, block_index)
+                state.cursor = position[:line]
+                state.col = position[:col]
+              end
+            end
+          end
+        end
+      end
+      state.scroll = Math.max(0, state.cursor - Math.max(0, screen_row))
+      output.write("\e[2J")
+      Reader.render(output, state, page_url, true)
+      if object = state.library.try(&.as_h?)
+        if state.mode == "library"
+          count = library_entries(object, object["filter"]?.try(&.as_s?) || "").size
+          Reader.paint_row(output, state, page_url, library_status(object, count))
+        end
       end
     end
 

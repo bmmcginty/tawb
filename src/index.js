@@ -584,9 +584,34 @@ function relayout(state) {
 // The keyboard and options screens redraw themselves instead; the resize
 // handler dispatches on the mode before coming here.
 function redrawAfterResize(state, page) {
+  // A raised list owns a stable row key, not the old wrapped line number.
+  // Relayout can turn one row into several terminal lines, so put the cursor
+  // back on that key and preserve its screen-relative row after rewrapping.
+  const screenRow = state.cursor - state.scroll;
   relayout(state);
+  if (state.mode === 'library' && state.library) {
+    const entries = entriesOf(state.library);
+    const selected = select(state.library, entries);
+    const position = selected >= 0 ? positionForBlock(state, selected) : null;
+    if (position) {
+      state.cursor = position.line;
+      state.col = position.col;
+    }
+  } else if (state.mode === 'choose' && state.chooser) {
+    const entries = entriesOf(state.chooser);
+    const selected = select(state.chooser, entries);
+    const row = selected >= 0 && entries[selected] ? entries[selected].row : null;
+    const block = row ? chooserBlockForOption(state, row.index) : -1;
+    const position = block >= 0 ? positionForBlock(state, block) : null;
+    if (position) {
+      state.cursor = position.line;
+      state.col = position.col;
+    }
+  }
+  state.scroll = Math.max(0, state.cursor - Math.max(0, screenRow));
   writeTerminal('\x1b[2J');
   render(state, page, { force: true });
+  if (state.mode === 'library' && state.library) paintRow(state, libraryStatus(state));
 }
 
 function lineText(state, lineIndex) {

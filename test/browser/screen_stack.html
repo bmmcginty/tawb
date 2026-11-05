@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Screen stack fixture</title>
+</head>
+<body>
+  <h1>Screen stack fixture</h1>
+  <p id="standing-place">The reader returns to this standing place after a raised screen closes.</p>
+  <p>Reading row one.</p>
+  <p>Reading row two.</p>
+  <p>Reading row three.</p>
+  <p>Reading row four.</p>
+  <p>Reading row five.</p>
+  <p>Reading row six.</p>
+  <p>Reading row seven.</p>
+  <p>Reading row eight.</p>
+  <p>Reading row nine.</p>
+  <p>Reading row ten.</p>
+  <div id="updates" aria-live="polite">No held update yet.</div>
+  <p><a href="/download">Download probe</a></p>
+  <output id="selected">Selected: Amber choice</output>
+  <label for="palette">Palette</label>
+  <select id="palette">
+    <option>Amber choice</option>
+    <option>Azure choice</option>
+    <option>Blue choice</option>
+    <option>Green choice</option>
+    <option>Violet choice</option>
+  </select>
+  <script>
+    const palette = document.getElementById('palette');
+    palette.addEventListener('change', () => {
+      document.getElementById('selected').textContent = `Selected: ${palette.value}`;
+    });
+
+    let updateApplied = false;
+    let alertApplied = false;
+    setInterval(async () => {
+      try {
+        const response = await fetch('/control', { cache: 'no-store' });
+        const command = await response.text();
+        if (command === 'update' && !updateApplied) {
+          updateApplied = true;
+          const row = document.createElement('p');
+          row.textContent = 'Held dynamic row';
+          document.getElementById('updates').appendChild(row);
+        }
+        if (command === 'alert' && !alertApplied) {
+          alertApplied = true;
+          alert('Layered browser question');
+          const row = document.createElement('p');
+          row.textContent = 'Answered layered question';
+          document.getElementById('updates').appendChild(row);
+        }
+      } catch {
+        // The test server is going away; leaving the last screen intact is fine.
+      }
+    }, 100);
+  </script>
+</body>
+</html>
