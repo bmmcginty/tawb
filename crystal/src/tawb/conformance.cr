@@ -545,6 +545,8 @@ module Tawb
         cdp_library_scenario(payload)
       when "core.view_blocks"
         core_view_blocks(payload)
+      when "core.layout_scenario"
+        core_layout_scenario(payload)
       when "dump.resolve_target"
         object = payload.as_h
         existing = object["existing"].as_a.map(&.as_s).to_set
@@ -4181,6 +4183,90 @@ module Tawb
           end
         end
       end
+    end
+
+    # The diagnostic layouts against a real page: the fixture is read in each
+    # requested view and order, and the purchase button is activated after
+    # every reordering. The JavaScript original answers the same shape, so the
+    # two runtimes must move the same blocks and resolve the same element.
+    private def self.core_layout_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      chromium = object["engine"]?.try(&.as_s?) != "firefox"
+      session = nil.as(Engine::Session?)
+      page = nil.as(Engine::Page?)
+      begin
+        if chromium
+          opened = Cdp::BrowserSession.new(object["endpoint"].as_s)
+          session = opened
+          page = opened.create_page
+        else
+          profile = object["profile"].as_s
+          started = FirefoxLaunch.launch(profile)
+          opened = FirefoxDriver::BrowserSession.new(
+            Broker.ensure(profile, started.endpoint)[:url])
+          session = opened
+          opened.start
+          page = opened.create_page
+        end
+        acting = page.not_nil!
+        acting.goto(object["url"].as_s, "domcontentloaded")
+        Dump.settle_embedded_frames(acting)
+        sources = (object["sources"]?.try(&.as_a?) || [JSON::Any.new("render")]).map(&.as_s)
+        orders = (object["orders"]?.try(&.as_a?) || [JSON::Any.new("default")]).map(&.as_s)
+        activate = object["activate"]?.try(&.as_s?)
+        observations = [] of JSON::Any
+        sources.each do |source|
+          orders.each do |order|
+            core = Core.new(source: source, layout_order: order, page: acting)
+            blocks = core.rescan
+            entry = {
+              "source" => JSON::Any.new(source),
+              "order"  => JSON::Any.new(order),
+              "blocks" => JSON::Any.new(blocks.map { |block| layout_block_json(block) }),
+            } of String => JSON::Any
+            if needle = activate
+              acting.evaluate("() => { window.presses = 0; return true; }") rescue nil
+              target = blocks.find { |block| block.text.includes?(needle) }
+              if target
+                core.activate(target.item, acting)
+                entry["activated"] = JSON::Any.new(true)
+              else
+                entry["activated"] = JSON::Any.new(false)
+              end
+              presses = acting.evaluate("() => window.presses || 0").as_i64? || 0_i64
+              entry["presses"] = JSON::Any.new(presses)
+            end
+            observations << JSON::Any.new(entry)
+          end
+        end
+        JSON::Any.new(observations)
+      ensure
+        page.try { |held| held.close rescue nil }
+        session.try do |held|
+          case held
+          when FirefoxDriver::BrowserSession
+            held.protocol.command(Broker::RETAIN_SESSION) rescue nil
+            held.close(false) rescue nil
+          when Cdp::BrowserSession
+            held.close rescue nil
+          end
+        end
+      end
+    end
+
+    # The cross-runtime shape of one block in a layout observation. The view's
+    # own index survives; the frame is a protocol handle and is reported only
+    # as whether there is one.
+    private def self.layout_block_json(block : Core::Block) : JSON::Any
+      item = block.item.as_h? || {} of String => JSON::Any
+      JSON::Any.new({
+        "text"    => JSON::Any.new(block.text),
+        "role"    => item["role"]? || JSON::Any.new(nil),
+        "name"    => item["name"]? || JSON::Any.new(nil),
+        "index"   => item["renderIndex"]? || item["domIndex"]? ||
+                     item["axIndex"]? || JSON::Any.new(nil),
+        "framed"  => JSON::Any.new(!(item["frame"]?.nil? || item["frame"]?.try(&.raw).nil?)),
+      })
     end
 
     private def self.firefox_launch_scenario(payload : JSON::Any) : JSON::Any
