@@ -80,17 +80,21 @@ for (const implementation of firefoxPageImplementations({
         case 'script.callFunction': {
           assert.equal(message.params.awaitPromise, true);
           assert.equal(message.params.resultOwnership, 'none');
-          assert.match(message.params.functionDeclaration, /extractAxItems/);
-          const asksForLayout = message.params.functionDeclaration.includes('{layout:true}')
-            || JSON.stringify(message.params.arguments).includes('"layout"')
-              && JSON.stringify(message.params.arguments).includes('true');
-          assert.equal(asksForLayout, true);
-          const context = message.params.target.context;
-          result = remoteItems(
-            context === 'top-context' ? 'document' : 'paragraph',
-            context === 'top-context' ? 'Main' : 'Child',
-            { childFrame: context === 'top-context' },
-          );
+          if (message.params.functionDeclaration.includes('video[controls]')) {
+            result = { type: 'success', result: { type: 'boolean', value: false } };
+          } else {
+            assert.match(message.params.functionDeclaration, /extractAxItems/);
+            const asksForLayout = message.params.functionDeclaration.includes('{layout:true}')
+              || JSON.stringify(message.params.arguments).includes('"layout"')
+                && JSON.stringify(message.params.arguments).includes('true');
+            assert.equal(asksForLayout, true);
+            const context = message.params.target.context;
+            result = remoteItems(
+              context === 'top-context' ? 'document' : 'paragraph',
+              context === 'top-context' ? 'Main' : 'Child',
+              { childFrame: context === 'top-context' },
+            );
+          }
           break;
         }
         case 'browsingContext.create':
@@ -114,17 +118,19 @@ for (const implementation of firefoxPageImplementations({
       { id: 5, method: 'browsingContext.getTree' },
       { id: 6, method: 'script.callFunction' },
       { id: 7, method: 'script.callFunction' },
-      { id: 8, method: 'browsingContext.create' },
-      { id: 9, method: 'browsingContext.close' },
-      { id: 10, method: 'session.end' },
+      { id: 8, method: 'script.callFunction' },
+      { id: 9, method: 'script.callFunction' },
+      { id: 10, method: 'browsingContext.create' },
+      { id: 11, method: 'browsingContext.close' },
+      { id: 12, method: 'session.end' },
     ]);
     assert.deepEqual(received[0].params, { capabilities: { alwaysMatch: {} } });
     assert.deepEqual(received[1].params, { events: ['browsingContext.domContentLoaded'] });
     assert.deepEqual(received[3].params, {
       context: 'top-context', url: 'https://example.test/start', wait: 'interactive',
     });
-    assert.deepEqual(received[7].params, { type: 'tab', background: true });
-    assert.deepEqual(received[8].params, { context: 'created-context' });
+    assert.deepEqual(received[9].params, { type: 'tab', background: true });
+    assert.deepEqual(received[10].params, { context: 'created-context' });
     assert.deepEqual(value, {
       session: { sessionId: 'session-1', capabilities: { browserName: 'firefox' } },
       url: 'https://example.test/final',
