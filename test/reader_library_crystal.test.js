@@ -42,7 +42,9 @@ test('browser bookmarks open, filter, and close back at the page', { skip }, asy
     ],
   }), [
     { op: 'browseKey', chunk: 'B' },
+    { op: 'libraryKey', chunk: '/' },
     { op: 'libraryKey', chunk: 'c' },
+    { op: 'libraryKey', chunk: '\x1b' },
     { op: 'libraryKey', chunk: '\x1b' },
   ], false);
   assert.equal(result.state.mode, 'browse');
@@ -62,6 +64,7 @@ test('a narrower filter keeps the native cursor on the same entry', { skip }, as
     { op: 'browseKey', chunk: 'H' },
     { op: 'libraryKey', chunk: '\x1b[B' },
     { op: 'libraryKey', chunk: '\x1b[B' },
+    { op: 'libraryKey', chunk: '/' },
     { op: 'libraryKey', chunk: 'b' },
   ], false);
   assert.equal(result.state.cursor, 1);
@@ -123,6 +126,7 @@ test('a printable letter filters a Lynx list instead of quitting', { skip }, asy
     bookmarks: [{ title: 'Crystal', url: 'https://crystal-lang.org/', folder: 'Tools' }],
   }), [
     { op: 'browseKey', chunk: 'v' },
+    { op: 'libraryKey', chunk: '/' },
     { op: 'libraryKey', chunk: 'q' },
   ], false);
   assert.equal(result.state.mode, 'library', 'q did not quit');
@@ -136,6 +140,7 @@ test('a printable letter filters a Lynx list instead of quitting', { skip }, asy
     bookmarks: [{ title: 'Crystal', url: 'https://crystal-lang.org/', folder: 'Tools' }],
   }), [
     { op: 'browseKey', chunk: 'v' },
+    { op: 'libraryKey', chunk: '/' },
     { op: 'libraryKey', chunk: 'q' },
     { op: 'libraryKey', chunk: '\x7f' },
   ], false);

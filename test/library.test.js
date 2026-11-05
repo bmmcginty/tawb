@@ -274,9 +274,13 @@ test('a Lynx reference list keeps page order, names, addresses, and numbers', as
   await quietly(() => handleLibraryKey('\x1b[B', state, PAGE));
   assert.equal(state.cursor, 1);
   assert.equal(state.library.filter, '');
-  // q is a letter in a list, not the page's Quit, even in the Lynx profile.
+  // q is a letter in the filter input, not the page's Quit, even in the
+  // Lynx profile. The slash opens the input first.
+  await quietly(() => handleLibraryKey('/', state, PAGE));
   assert.equal(await quietly(() => handleLibraryKey('q', state, PAGE)), undefined);
   assert.equal(state.library.filter, 'q');
+  await quietly(() => handleLibraryKey('\x1b', state, PAGE));
+  assert.equal(state.library.filtering, false);
   await quietly(() => handleLibraryKey('\x1b[D', state, PAGE));
   assert.equal(state.mode, 'browse');
 });
@@ -385,20 +389,30 @@ test('a letter in a Lynx bookmark list is filter text, not a command', async () 
   state.driver.deleteBookmark = async () => assert.fail('a letter reached the browser');
   await quietly(() => openLibrary(state, PAGE, 'bookmarks'));
 
-  // r and R still name removal in an imported Lynx map, but the list is a
-  // filter box first: they are typed, and the row is still there.
+  // r and R still name removal in an imported Lynx map, but once / opens the
+  // filter they are typed, and the row is still there.
+  await quietly(() => handleLibraryKey('/', state, PAGE));
   assert.equal(await quietly(() => handleLibraryKey('r', state, PAGE)), undefined);
   assert.equal(state.library.filter, 'r');
   assert.equal(state.library.rows.length, 1);
   assert.equal(await quietly(() => handleLibraryKey('R', state, PAGE)), undefined);
   assert.equal(state.library.filter, 'rR');
   assert.equal(state.library.rows.length, 1);
+  // u is history-back in the Lynx page map; in the filter it is a letter.
+  assert.equal(await quietly(() => handleLibraryKey('u', state, PAGE)), undefined);
+  assert.equal(state.library.filter, 'rRu');
 
   // Del is the filter's Backspace, not a character above space in the filter.
   assert.equal(await quietly(() => handleLibraryKey('\x7f', state, PAGE)), undefined);
+  assert.equal(state.library.filter, 'rR');
+  assert.equal(await quietly(() => handleLibraryKey('\x7f', state, PAGE)), undefined);
   assert.equal(state.library.filter, 'r');
 
-  // A control chord is still a command: only printable characters became text.
+  // A control chord is swallowed while the filter owns the keyboard, so a
+  // paste or an editing key cannot act on the list underneath.
+  assert.equal(await quietly(() => handleLibraryKey('\x04', state, PAGE)), undefined);
+  await quietly(() => handleLibraryKey('\x1b', state, PAGE));
+  assert.equal(state.library.filtering, false);
   assert.equal(await quietly(() => handleLibraryKey('\x04', state, PAGE)), 'quit');
 });
 
@@ -435,10 +449,11 @@ test('live rebuilds are held while a list is open and resume when it closes', as
   assert.equal(state.core.live.refreshing, false);
 });
 
-test('typing filters the list, and backspace puts back what it removed', async () => {
+test('slash then typing filters the list, and backspace puts back what it removed', async () => {
   const state = readerAt(HISTORY);
   await quietly(() => openLibrary(state, PAGE, 'history'));
 
+  await quietly(() => handleLibraryKey('/', state, PAGE));
   await typeInto(state, 'louis');
   assert.deepEqual(state.lines.map((line) => line.text.split(' -- ')[0]), ['Louis Braille']);
 
@@ -455,6 +470,7 @@ test('narrowing a list keeps the reader on the same entry', async () => {
   }
   assert.match(state.lines[state.cursor].text, /^Louis Braille/);
 
+  await quietly(() => handleLibraryKey('/', state, PAGE));
   await typeInto(state, 'braille');
   // Both Braille entries still match, and the one the reader was on is the
   // one they are still on.
@@ -462,9 +478,10 @@ test('narrowing a list keeps the reader on the same entry', async () => {
   assert.match(state.lines[state.cursor].text, /^Louis Braille/);
 });
 
-test('Ctrl+U clears a typeahead filter and keeps the selected row', async () => {
+test('Ctrl+U clears an explicit filter and keeps the selected row', async () => {
   const state = readerAt(HISTORY);
   await quietly(() => openLibrary(state, PAGE, 'history'));
+  await quietly(() => handleLibraryKey('/', state, PAGE));
   await typeInto(state, 'louis');
   assert.equal(state.library.filter, 'louis');
   await quietly(() => handleLibraryKey('\x15', state, PAGE));
@@ -503,6 +520,7 @@ test('information is read with movement keys and filtered explicitly', async () 
 test('a filter that matches nothing says so instead of showing an empty screen', async () => {
   const state = readerAt(HISTORY);
   await quietly(() => openLibrary(state, PAGE, 'history'));
+  await quietly(() => handleLibraryKey('/', state, PAGE));
   await typeInto(state, 'zzz');
 
   assert.equal(state.lines.length, 1);
@@ -514,7 +532,10 @@ test('a filter that matches nothing says so instead of showing an empty screen',
 test('closing a list puts the reader back exactly where they were reading', async () => {
   const state = readerAt(HISTORY);
   await quietly(() => openLibrary(state, PAGE, 'history'));
+  await quietly(() => handleLibraryKey('/', state, PAGE));
   await typeInto(state, 'braille');
+  await quietly(() => handleLibraryKey('\x1b', state, PAGE));
+  assert.equal(state.library.filtering, false);
   await quietly(() => handleLibraryKey('\x1b', state, PAGE));
 
   assert.equal(state.mode, 'browse');
@@ -530,6 +551,7 @@ test('closing a list puts the reader back exactly where they were reading', asyn
 test('Enter closes the list and goes to the entry the reader is standing on', async () => {
   const state = readerAt(HISTORY);
   await quietly(() => openLibrary(state, PAGE, 'history'));
+  await quietly(() => handleLibraryKey('/', state, PAGE));
   await typeInto(state, 'politics');
 
   const went = [];
@@ -539,6 +561,8 @@ test('Enter closes the list and goes to the entry the reader is standing on', as
     title: async () => 'Politics today',
     goto: async (url) => { went.push(url); },
   };
+  await quietly(() => handleLibraryKey('\r', state, page));
+  assert.equal(state.library.filtering, false);
   await quietly(() => handleLibraryKey('\r', state, page));
 
   assert.equal(state.mode, 'browse');

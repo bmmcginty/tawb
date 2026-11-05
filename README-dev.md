@@ -964,20 +964,19 @@ activate whichever unrelated block inherited that index. Links continue
 through `activateCurrent`. Numbered form controls and the `g` suffix only move
 the terminal selection.
 
-While one of the browser's lookup lists is open, a printable character is
-always filter text, whatever the page keyboard binds it to. List commands
-therefore live on the navigation keys and Alt chords: `Alt+D` removes a
-bookmark, and `Esc` closes the list. `Backspace` erases and `Ctrl+U` clears.
-Selection follows the row's stable key, so narrowing the filter keeps the
-reader on the same entry; removal names the entry's position in the filtered
-list, so the cursor stays on the entry that takes its place, or on the one
-before it when the last entry was removed.
+Every list has an explicit filter input. `j` and `k` remain movement until
+`/` opens the input; while it owns the keyboard, printable characters are
+filter text whatever the page keyboard binds them to. List commands therefore
+live on the navigation keys and Alt chords: `Alt+D` removes a bookmark, and
+`Esc` closes the list. `Backspace` erases, `Ctrl+U` clears, and `Enter` or
+`Escape` keeps the narrowed rows and returns to movement. Selection follows
+the row's stable key, so narrowing the filter keeps the reader on the same
+entry; removal names the entry's position in the filtered list, so the cursor
+stays on the entry that takes its place, or on the one before it when the last
+entry was removed.
 
-Information, help and the trace log are reading surfaces rather than lookup
-lists, so they use explicit filtering: `j` and `k` remain movement, `/` opens
-the filter input, and `Enter` or `Escape` keeps the narrowed rows and returns
-to browsing. The same list state and filter handler serve both policies; see
-`src/list_screen.js` and `docs/screen-contract.md`.
+The same list state and filter handler serve the library, chooser, internal
+lists and wizard; see `src/list_screen.js` and `docs/screen-contract.md`.
 
 The reference, information, and Lynx help commands reuse the internal-list
 buffer while holding live rebuilds. Help is a read-only internal page, while
@@ -1752,7 +1751,7 @@ a live region saying the same thing every second — does not fill the buffer
 with one sentence, because the newest entry is not duplicated.
 
 The words a screen puts on the row about *itself* are not messages: a list's
-`2 messages.` or `5 entries — type to filter.` is painted with `paint_row`,
+`2 messages.` or `5 entries — /: filter.` is painted with `paint_row`,
 which neither records it nor leaves it behind when the list closes. Prompt
 hints are not written at all: the prompt itself writes the same row a line
 later, so a hint would be replaced before it could be read.

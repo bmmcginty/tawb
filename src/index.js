@@ -43,7 +43,7 @@ const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
 const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 const { entryLine, shortAddress, KIND_LABELS } = require('./library');
 const {
-  TYPEAHEAD, EXPLICIT, CLEAR_FILTER,
+  EXPLICIT, CLEAR_FILTER,
   createListState, entriesOf, selectedIndex, select, setFilter, move: moveList,
   beginFilter, filterKey, filterHint, printable: filterCharacter,
 } = require('./list_screen');
@@ -913,11 +913,17 @@ function hintText(state) {
       || 'Command — Tab: complete  Enter: run  Esc: cancel';
   }
   if (state.mode === 'number') return 'Follow link number — Enter: follow  g: move  Esc: cancel';
-  if (state.mode === 'choose') return 'Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel';
+  if (state.mode === 'choose') {
+    return state.chooser && state.chooser.filtering
+      ? `Choosing — Filter: ${state.chooser.filter}  Enter/Esc: browse results  Ctrl+U: clear`
+      : 'Choosing — j/k: move  /: filter  Enter: choose  Esc: cancel';
+  }
   if (state.mode === 'library') {
     const lib = state.library;
     if (lib.kind === 'messages') {
-      return `${lib.label} — j/k: move  type: filter  Enter or Esc: back to the page`;
+      return lib.filtering
+        ? `${lib.label} — Filter: ${lib.filter}  Enter/Esc: browse results  Ctrl+U: clear`
+        : `${lib.label} — j/k: move  /: filter  Enter or Esc: back to the page`;
     }
     if (lib.policy === EXPLICIT) {
       return lib.filtering
@@ -3479,7 +3485,7 @@ function openChooser(state, page, item, listing) {
   const chosen = listing.options.findIndex((option) => option.selected);
   const list = createListState({
     rows: chooserRows(listing.options),
-    policy: TYPEAHEAD,
+    policy: EXPLICIT,
     selectedKey: chosen >= 0 ? `choice:${chosen}` : null,
     fallbackIndex: Math.max(chosen, 0),
   });
@@ -3499,7 +3505,7 @@ function openChooser(state, page, item, listing) {
   }
   clampScroll(state);
   render(state, page, { force: true });
-  setStatus(state, `${listing.options.length} choice${listing.options.length === 1 ? '' : 's'} for "${item.name}" — type to filter, Enter to choose, Esc to cancel.`);
+  setStatus(state, `${listing.options.length} choice${listing.options.length === 1 ? '' : 's'} for "${item.name}" — ${filterHint(list)}, Enter to choose, Esc to cancel.`);
 }
 
 function closeChooser(state, page, { note }) {
@@ -3524,26 +3530,44 @@ async function handleChooseKey(chunk, state, page) {
   const chooser = state.chooser;
   if (!coreChooser || !chooser) { state.mode = 'browse'; return; }
   const contextAction = contextNavigationAction(chunk, state);
+  const accept = chunk === '\r' || chunk === '\n' || contextAction === 'accept';
+  const cancel = keyIs(chunk, 'Escape', state) || contextAction === 'cancel';
+  const escape = keyIs(chunk, 'Escape', state);
 
   // A chooser is a lookup list before it is a Lynx command surface. Printable
   // keys such as b and q are filter text here even when the page keymap calls
-  // them Back or Quit; only non-printable navigation reaches those commands.
+  // them Back or Quit; only the real Escape key ends the filter input. Passing
+  // the surrounding Lynx context here would turn a printable u, bound to
+  // history-back, into an escape.
   const edit = filterKey(chooser, chunk, {
     character: filterCharacter(chunk),
     backspace: keyIs(chunk, 'Backspace', state),
     clear: chunk === CLEAR_FILTER,
+    enter: accept,
+    escape,
   });
   if (edit.handled) {
-    if (edit.changed) refilter(state, page, chooser.filter);
+    if (edit.changed || edit.ended) refilter(state, page, chooser.filter);
     return;
   }
+  // Every list has an explicit filter input. Movement keys stay movement
+  // until `/` (or the key bound to find-forward) opens it.
+  if (chooser.policy === EXPLICIT && chooser.filtering) return;
+  if (chooser.policy === EXPLICIT && !chooser.filtering) {
+    const movementAction = (state.keys || FALLBACK_KEYMAP).actionFor(chunk);
+    if (chunk === '/' || movementAction === 'find-forward') {
+      beginFilter(chooser);
+      refilter(state, page, chooser.filter);
+      return;
+    }
+  }
 
-  if (keyIs(chunk, 'Escape', state) || contextAction === 'cancel') {
+  if (cancel) {
     closeChooser(state, page, { note: `Left "${state.chooser.item.name}" as it was.` });
     return;
   }
 
-  if (chunk === '\r' || chunk === '\n' || contextAction === 'accept') {
+  if (accept) {
     const line = state.lines[state.cursor];
     const item = line ? state.core.blocks[line.blockIndex].item : null;
     if (!item || item.chooserIndex == null) {
@@ -3671,7 +3695,7 @@ function keyedRows(kind, rows) {
 // One library screen: the shared list state plus this list's own metadata.
 // `rows` stays beside the sections because a single-section list is what all
 // of these are, and the deletion path replaces that one array.
-function libraryScreen({ kind, label, rows, policy = TYPEAHEAD, place }) {
+function libraryScreen({ kind, label, rows, policy = EXPLICIT, place }) {
   const keyed = keyedRows(kind, rows);
   const list = createListState({ rows: keyed, policy });
   return {
@@ -4098,7 +4122,9 @@ async function handleLibraryKey(chunk, state, page) {
     backspace: keyIs(chunk, 'Backspace', state),
     clear: chunk === CLEAR_FILTER,
     enter: accept,
-    escape: cancel,
+    // Only the real Escape key ends the input. In the Lynx profile printable
+    // keys such as u carry context commands, and those must stay filter text.
+    escape: keyIs(chunk, 'Escape', state),
   });
   // A typeahead list filters every printable character; a reading screen
   // filters only after / or find-forward has opened its input. Either way the

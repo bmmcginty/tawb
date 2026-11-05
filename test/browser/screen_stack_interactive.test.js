@@ -156,19 +156,23 @@ async function libraryJourney(root, server, engine, runtime) {
     assert.ok(await waitForRow(reader, 'Bravo bookmark'),
       `${name} did not open the browser bookmark list; screen was:\n${reader.raw()}`);
 
-    // Printable browse commands belong to typeahead while a lookup list owns
-    // the keyboard. q must filter, not terminate the process.
+    // A list is filtered explicitly: / opens the input, and printable
+    // commands such as q are letters while it owns the keyboard.
+    await reader.press('/');
     await reader.typeKeys('q');
-    assert.ok(reader.alive(), `${name} treated q as Quit in a lookup list`);
+    assert.ok(reader.alive(), `${name} treated q as Quit in the filter input`);
     assert.match(reader.status(), /matching "q"/i);
     await reader.press('C-u');
+    await reader.press('Enter');
 
+    await reader.press('/');
     await reader.typeKeys('bravo');
     assert.match(selectedLine(reader), /Bravo bookmark/,
       `${name} did not select the only matching bookmark`);
     await reader.press('C-u');
     assert.match(selectedLine(reader), /Bravo bookmark/,
       `${name} lost stable selection when the bookmark filter cleared`);
+    await reader.press('Enter');
 
     const order = bookmarkOrder(reader);
     const selected = order.indexOf('Bravo bookmark');
@@ -207,27 +211,30 @@ async function libraryJourney(root, server, engine, runtime) {
     await reader.press('M-h');
     assert.ok(await waitForRow(reader, 'Alpha bookmark'),
       `${name} did not open browser history`);
+    await reader.press('/');
     await reader.typeKeys('alpha');
     assert.match(selectedLine(reader), /Alpha bookmark/,
-      `${name} did not typeahead-filter browser history`);
-    await reader.press('C-u');
+      `${name} did not explicitly filter browser history`);
+    await reader.press('Enter');
     assert.match(selectedLine(reader), /Alpha bookmark/,
-      `${name} did not retain history selection when clearing`);
+      `${name} did not retain history selection after filtering`);
     await reader.press('Escape');
 
     await reader.press('M-j');
     assert.ok(await waitForRow(reader, 'Downloads'),
       `${name} did not open browser downloads; screen was:\n${reader.raw()}`);
-    // A fresh browser may have no downloads. Empty lookup lists still own
-    // printable keys and expose exactly the same typeahead editor.
+    // A fresh browser may have no downloads. Empty lists still own the same
+    // explicit filter editor.
+    await reader.press('/');
     await reader.typeKeys('q');
-    assert.ok(reader.alive(), `${name} let q quit from browser downloads`);
+    assert.ok(reader.alive(), `${name} let q quit from the download filter`);
     assert.match(reader.status(), /matching "q"/i,
-      `${name} did not typeahead-filter browser downloads`);
+      `${name} did not explicitly filter browser downloads`);
     await reader.press('BSpace');
     assert.doesNotMatch(reader.status(), /matching/i,
       `${name} did not erase the download filter with Backspace`);
     await reader.press('C-u');
+    await reader.press('Escape');
     await reader.press('Escape');
 
     await reader.quit();
@@ -291,19 +298,24 @@ async function surfaceJourney(root, server, runtime) {
     await reader.press('Enter');
     assert.ok(await waitForRow(reader, 'Choosing'),
       `${name} did not open the native select chooser; selected ${selectedLine(reader)}; screen was:\n${reader.raw()}`);
+    await reader.press('/');
     await reader.typeKeys('blu');
     assert.match(selectedLine(reader), /Blue choice/,
-      `${name} did not typeahead-filter the chooser; screen was:\n${reader.raw()}`);
+      `${name} did not explicitly filter the chooser; screen was:\n${reader.raw()}`);
     await reader.press('C-u');
     assert.match(selectedLine(reader), /Blue choice/,
       `${name} lost chooser selection when the filter cleared`);
+    await reader.press('Enter');
+    assert.ok(await waitForRow(reader, 'Choosing — j/k'),
+      `${name} did not return to chooser movement after filtering; selected ${selectedLine(reader)}; status ${reader.status()}; screen was:\n${reader.raw()}`);
     await reader.resize(96, 29);
     assert.match(reader.raw(), /Blue choice/,
       `${name} did not redraw the chooser after resize`);
     await reader.resize(COLS, ROWS);
+    await sleep(500);
     await reader.press('Enter');
     assert.ok(await waitForRow(reader, 'Selected: Blue choice', 15000),
-      `${name} did not apply the chosen native option`);
+      `${name} did not apply the chosen native option; selected ${selectedLine(reader)}; screen was:\n${reader.raw()}`);
 
     const pagePlace = reader.cursor();
     const pageLine = selectedLine(reader);
@@ -435,8 +447,10 @@ async function layeredDialogJourney(root, server, runtime) {
     await reader.press('C-o');
     assert.ok(await waitForRow(reader, 'Screen stack fixture'),
       `${name} did not open bookmarks before the dialog`);
+    await reader.press('/');
     await reader.typeKeys('screen');
     assert.match(selectedLine(reader), /Screen stack fixture/);
+    await reader.press('Enter');
 
     server.armAlert();
     assert.ok(await waitForStatus(reader, 'The browser is asking', 30000),

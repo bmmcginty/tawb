@@ -343,7 +343,7 @@ test('a native select opens the chooser on its own entries', { skip: needsCrysta
   assert.equal(result.state.lines[4].text, '( ) Unavailable -- unavailable');
   assert.equal(result.state.cursor, 2, 'the reader lands on the chosen entry');
   assert.equal(result.state.statusMsg,
-    '3 choices for "Region" — type to filter, Enter to choose, Esc to cancel.');
+    '3 choices for "Region" — /: filter, Enter to choose, Esc to cancel.');
 });
 
 test('a chooser in a table row lands after the whole row', { skip: needsCrystal }, async () => {
@@ -485,7 +485,7 @@ test('a choice that cannot be made closes the list and says why', { skip: needsC
   assert.equal(result.state.statusMsg, 'Could not choose "North": option is gone');
 });
 
-test('typing filters the dropdown\'s own lines', { skip: needsCrystal }, async () => {
+test('slash then typing filters the dropdown\'s own lines', { skip: needsCrystal }, async () => {
   const blocks = [
     { text: 'Region', item: { role: 'text' } },
     { text: '[*North]', item: { role: 'combobox', name: 'Region' } },
@@ -503,6 +503,7 @@ test('typing filters the dropdown\'s own lines', { skip: needsCrystal }, async (
   state.core.live = { enabled: true, dirty: false, snapshotCostMs: 0 };
   const result = await runBoth('filter', state, [
     { op: 'activate' },
+    { op: 'chooseKey', chunk: '/' },
     { op: 'chooseKey', chunk: 'n' },
     { op: 'chooseKey', chunk: 'o' },
   ], { url: PAGE_URL });
@@ -535,15 +536,18 @@ test('a Lynx chooser keeps printable commands as filter text', { skip: needsCrys
   state.core.live = { enabled: true, dirty: false, snapshotCostMs: 0 };
   const result = await runBoth('lynx chooser filter', state, [
     { op: 'activate' },
-    // b is PREV_PAGE and q is QUIT in the Lynx page keymap. In a lookup list
-    // both are letters, and neither may close the chooser or leave TAWB.
+    { op: 'chooseKey', chunk: '/' },
+    // b is PREV_PAGE and q is QUIT in the Lynx page keymap. Once the filter
+    // is open both are letters, and neither may close the chooser or leave
+    // TAWB.
     { op: 'chooseKey', chunk: 'b' },
     { op: 'chooseKey', chunk: 'l' },
+    { op: 'chooseKey', chunk: 'u' },
     { op: 'chooseKey', chunk: 'q' },
   ], { url: PAGE_URL });
   assert.equal(result.state.mode, 'choose');
-  assert.equal(result.state.chooser.filter, 'blq');
-  assert.equal(result.state.statusMsg, '0 of 3 matching "blq".');
+  assert.equal(result.state.chooser.filter, 'bluq');
+  assert.equal(result.state.statusMsg, '0 of 3 matching "bluq".');
 });
 
 test('backspace widens the filter again', { skip: needsCrystal }, async () => {
@@ -556,6 +560,7 @@ test('backspace widens the filter again', { skip: needsCrystal }, async () => {
   state.core.live = { enabled: true, dirty: false, snapshotCostMs: 0 };
   const result = await runBoth('backspace', state, [
     { op: 'activate' },
+    { op: 'chooseKey', chunk: '/' },
     { op: 'chooseKey', chunk: 's' },
     { op: 'chooseKey', chunk: '\x7f' },
   ], { url: PAGE_URL });

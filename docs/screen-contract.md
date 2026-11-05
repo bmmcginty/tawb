@@ -57,11 +57,13 @@ cannot answer one of these is not ready to be moved onto the stack.
 
 Each screen also declares four policies:
 
-- **filter policy** — `typeahead` or `explicit`, from `list_screen.js`.
-  Typeahead is for lookup lists: references, addresses, messages, bookmarks,
-  history, downloads and the select chooser. Explicit is for reading surfaces
-  and screens that edit the keyboard: information, help, trace log and the
-  keyboard wizard. Lynx options is neither: its letters are Lynx commands.
+- **filter policy** — every list screen uses `explicit`, from
+  `list_screen.js`: `j` and `k` move until `/` opens the filter input.
+  This covers references, addresses, messages, bookmarks, history, downloads,
+  the select chooser, information, help, trace log and the keyboard wizard.
+  Lynx options is not a list: its letters are Lynx commands. The shared
+  machinery still implements `typeahead` for contract tests, but no
+  production list uses it.
 - **input ownership** — which mode the terminal loop dispatches to. Prompts and
   confirmations sit above this and hand the keyboard back when answered.
 - **live-refresh policy** — whether a live rebuild is held, suppressed only for
@@ -99,9 +101,10 @@ row while a filter narrows the list. An index is not an identity and must not
 be treated as one across a rebuild.
 
 Filter input is one function for every screen. `filterKey()` applies the
-policy: typeahead consumes printable characters immediately; explicit consumes
-them only after `beginFilter()`, and Enter or Escape ends that input while
-keeping the narrowed rows. Backspace edits by reader-visible code point;
+policy: explicit consumes printable characters only after `beginFilter()`, and
+Enter or Escape ends that input while keeping the narrowed rows. The
+`typeahead` policy remains available to the shared tests but is not used by
+any production list. Backspace edits by reader-visible code point;
 `Ctrl+U` clears. `filterSummary()` and `filterHint()` say the same things about
 counts and policy everywhere, so the status row and the handler cannot
 disagree about whether typing is filtering or moving.
@@ -132,10 +135,9 @@ The hard cases are not push and pop:
 
 ## Migration order
 
-1. Share the list state and filter policy. Migrate the library, chooser and
-   internal lists onto it. Keep typeahead for the lookup lists, explicit
-   filtering for information, help and trace log, and the wizard's existing
-   explicit input.
+1. Share the list state and filter policy. Migrate the library, chooser,
+   internal lists and wizard onto it. Every production list uses explicit
+   `/` filtering.
 2. Add the stack and move the library onto it first, because its frozen
    snapshot and live-refresh hold are the simplest complete case.
 3. Move the chooser and then the internal lists. Each keeps its own enter and

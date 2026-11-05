@@ -34,11 +34,14 @@ module Tawb
       if explicit && !filtering
         return Edit.new(false, false, false, filter, filtering)
       end
-      if explicit && (enter || escape)
-        return Edit.new(true, false, true, filter, false)
-      end
+      # Ctrl+U is always the filter's clear. A page keymap may also call that
+      # control chord a command — Lynx has several — but a reader inside the
+      # filter input means the edit, not the command.
       if clear
         return Edit.new(true, filter != "", false, "", filtering)
+      end
+      if explicit && (enter || escape)
+        return Edit.new(true, false, true, filter, false)
       end
       if backspace
         return Edit.new(true, !filter.empty?, false, ListModel.backspace_filter(filter), filtering)

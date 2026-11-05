@@ -9,12 +9,12 @@
 // wizard all use this shape rather than each keeping its own `filter` and
 // `filtering` variables.
 //
-// A policy is not a preference. A lookup list wants typeahead: every
-// printable character narrows it, and there is no competing meaning for a
-// letter. A reading screen wants explicit filtering: j and k stay movement,
-// and `/` (or whatever `find-forward` is bound to) opens the filter input.
-// The wizard is explicit because it is editing the very keymap that would
-// otherwise turn every printable key into text.
+// A policy is not a preference. Every production list uses explicit filtering:
+// j and k stay movement, and `/` (or whatever `find-forward` is bound to)
+// opens the filter input. The wizard needs it because it edits the very keymap
+// that would otherwise turn every printable key into text. Typeahead remains
+// the other half of the shared primitive for contract tests, but no list the
+// reader opens uses it.
 
 const {
   visibleEntries, selectionKey, selectionIndex, moveKey, appendFilter, backspaceFilter,
@@ -121,14 +121,17 @@ function filterKey(list, chunk, {
   const explicit = list.policy === EXPLICIT;
   if (explicit && !list.filtering) return { handled: false, changed: false, ended: false };
 
-  if (explicit && (enter || escape)) {
-    list.filtering = false;
-    return { handled: true, changed: false, ended: true };
-  }
+  // Ctrl+U is always the filter's clear. A page keymap may also call that
+  // control chord a command — Lynx has several — but a reader inside the
+  // filter input means the edit, not the command.
   if (clear) {
     const changed = list.filter !== '';
     setFilter(list, '');
     return { handled: true, changed, ended: false };
+  }
+  if (explicit && (enter || escape)) {
+    list.filtering = false;
+    return { handled: true, changed: false, ended: true };
   }
   if (backspace) {
     if (!list.filter) return { handled: true, changed: false, ended: false };

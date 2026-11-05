@@ -1677,12 +1677,21 @@ module Tawb
       elsif mode == "number"
         return "Follow link number — Enter: follow  g: move  Esc: cancel"
       elsif mode == "choose"
-        return "Choosing — j/k: move  type: filter  Enter: choose  Esc: cancel"
+        chooser = state.chooser.try(&.as_h)
+        if chooser.try(&.["filtering"]?.try(&.as_bool?))
+          filter = chooser.try(&.["filter"]?.try(&.as_s?)) || ""
+          return "Choosing — Filter: #{filter}  Enter/Esc: browse results  Ctrl+U: clear"
+        end
+        return "Choosing — j/k: move  /: filter  Enter: choose  Esc: cancel"
       elsif mode == "library"
         library = state.library.try(&.as_h)
         label = library.try(&.["label"]?.try(&.as_s?)) || ""
         if library.try(&.["kind"]?.try(&.as_s?)) == "messages"
-          return "#{label} — j/k: move  type: filter  Enter or Esc: back to the page"
+          if library.try(&.["filtering"]?.try(&.as_bool?))
+            filter = library.try(&.["filter"]?.try(&.as_s?)) || ""
+            return "#{label} — Filter: #{filter}  Enter/Esc: browse results  Ctrl+U: clear"
+          end
+          return "#{label} — j/k: move  /: filter  Enter or Esc: back to the page"
         end
         if library.try(&.["policy"]?.try(&.as_s?)) == ListScreen::EXPLICIT
           if library.try(&.["filtering"]?.try(&.as_bool?))

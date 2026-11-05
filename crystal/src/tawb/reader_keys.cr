@@ -979,7 +979,7 @@ module Tawb
         ]),
         "pinned" => JSON::Any.new([] of JSON::Any),
         "filter" => JSON::Any.new(""),
-        "policy" => JSON::Any.new(ListScreen::TYPEAHEAD),
+        "policy" => JSON::Any.new(ListScreen::EXPLICIT),
         "selectedKey" => chosen ? JSON::Any.new("choice:#{chosen.not_nil!}") : JSON::Any.new(nil),
         "fallbackIndex" => JSON::Any.new(Math.max(chosen || 0, 0).to_i64),
         "filtering" => JSON::Any.new(false),
@@ -1008,7 +1008,7 @@ module Tawb
       count = options.size
       Reader.set_status(output, state, page.url,
         "#{count} choice#{count == 1 ? "" : "s"} for \"#{item.as_h["name"]?.try(&.as_s?)}\" — " +
-        "type to filter, Enter to choose, Esc to cancel.")
+        "#{ListScreen.filter_hint(ListScreen::EXPLICIT, false)}, Enter to choose, Esc to cancel.")
     end
 
     def self.close_chooser(output : Screen::Output, state : Reader::State,
@@ -1047,15 +1047,32 @@ module Tawb
       # Back or Quit; only non-printable navigation reaches those commands.
       chooser_object = state.chooser.try(&.as_h)
       if chooser_object
+        policy = chooser_object["policy"]?.try(&.as_s?) || ListScreen::EXPLICIT
+        filtering = chooser_object["filtering"]?.try(&.as_bool?) || false
         filter = chooser_object["filter"]?.try(&.as_s?) || ""
+        accept = chunk == "\r" || chunk == "\n" || action == "accept"
+        # Only the real Escape key ends the input. In the Lynx profile
+        # printable keys such as u carry context commands, and those must stay
+        # filter text.
         edit = ListScreen.filter_key(
-          ListScreen::TYPEAHEAD, false, filter, chunk,
+          policy, filtering, filter, chunk,
           ListScreen.printable?(chunk), key_is(chunk, "Backspace", state),
-          chunk == ListScreen::CLEAR_FILTER, false, false)
+          chunk == ListScreen::CLEAR_FILTER, accept, key_is(chunk, "Escape", state))
         if edit.handled
           chooser_object["filter"] = JSON::Any.new(edit.filter)
-          refilter(output, state, page, edit.filter) if edit.changed
+          chooser_object["filtering"] = JSON::Any.new(edit.filtering)
+          refilter(output, state, page, edit.filter) if edit.changed || edit.ended
           return
+        end
+        # Every list has an explicit filter input. Movement keys stay
+        # movement until / (or the key bound to find-forward) opens it.
+        return if policy == ListScreen::EXPLICIT && filtering
+        if policy == ListScreen::EXPLICIT && !filtering
+          if chunk == "/" || keymap_for(state).action_for(chunk) == "find-forward"
+            chooser_object["filtering"] = JSON::Any.new(true)
+            refilter(output, state, page, filter)
+            return
+          end
         end
       end
 
@@ -2721,7 +2738,7 @@ module Tawb
       kind = object["kind"]?.try(&.as_s?) || ""
       total = object["rows"].as_a.size
       filter = object["filter"]?.try(&.as_s?) || ""
-      policy = object["policy"]?.try(&.as_s?) || ListScreen::TYPEAHEAD
+      policy = object["policy"]?.try(&.as_s?) || ListScreen::EXPLICIT
       filtering = object["filtering"]?.try(&.as_bool?) || false
       if count.zero?
         return filter.empty? ? "Nothing here yet." : "Nothing matching \"#{filter}\"."
@@ -2865,7 +2882,7 @@ module Tawb
     def self.open_internal_rows(output : Screen::Output, state : Reader::State,
                                         page : Reader::PageEnv, kind : String, label : String,
                                         rows : Array(LynxPages::Row), empty : String? = nil,
-                                        policy : String = ListScreen::TYPEAHEAD,
+                                        policy : String = ListScreen::EXPLICIT,
                                         title : String? = nil) : Nil
       if rows.empty? && empty
         Reader.set_status(output, state, page.url, empty)
@@ -2967,7 +2984,7 @@ module Tawb
       keyed = keyed_library_rows(kind, rows)
       state.library = JSON::Any.new({
         "kind" => JSON::Any.new(kind), "label" => JSON::Any.new(label),
-        "filter" => JSON::Any.new(""), "policy" => JSON::Any.new(ListScreen::TYPEAHEAD),
+        "filter" => JSON::Any.new(""), "policy" => JSON::Any.new(ListScreen::EXPLICIT),
         "filtering" => JSON::Any.new(false),
         "selectedKey" => JSON::Any.new(nil), "fallbackIndex" => JSON::Any.new(0_i64),
         "rows" => JSON::Any.new(keyed),
@@ -3190,7 +3207,7 @@ module Tawb
       end
       object = library.as_h
       label = object["label"].as_s
-      policy = object["policy"]?.try(&.as_s?) || ListScreen::TYPEAHEAD
+      policy = object["policy"]?.try(&.as_s?) || ListScreen::EXPLICIT
       filtering = object["filtering"]?.try(&.as_bool?) || false
       filter = object["filter"]?.try(&.as_s?) || ""
       context_action = context_action(chunk, state)
@@ -3199,7 +3216,7 @@ module Tawb
       edit = ListScreen.filter_key(
         policy, filtering, filter, chunk,
         ListScreen.printable?(chunk), key_is(chunk, "Backspace", state),
-        chunk == ListScreen::CLEAR_FILTER, accept, cancel)
+        chunk == ListScreen::CLEAR_FILTER, accept, key_is(chunk, "Escape", state))
       if edit.handled
         object["filter"] = JSON::Any.new(edit.filter)
         object["filtering"] = JSON::Any.new(edit.filtering)

@@ -88,7 +88,7 @@ keypress
         +-- 'type'      field editing        (edit- action ids)
         +-- 'field-command'  one browse command from inside a field
         +-- 'choose'    a dropdown
-        +-- 'library'   an internal list: movement, with typeahead or / filtering
+        +-- 'library'   an internal list: movement, with / filtering
         +-- 'options'   the Lynx options screen
         |     |
         |     +-- state.options.choosing -> the option's chooser layer
