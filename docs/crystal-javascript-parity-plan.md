@@ -768,7 +768,7 @@ machine-readable zero-gap summary.
 - [x] Discover all conventionally named native browser differentials.
 - [x] Add the parity manifest and fail on unclassified surfaces.
 - [x] Make the browser gate fail on unexpected skips.
-- [ ] Verify binary revision/assets before browser tests.
+- [x] Verify binary revision/assets before browser tests.
 - [ ] Inventory every asset invocation and add option/target traces.
 - [ ] Replace narrow block serializers with the canonical block contract.
 

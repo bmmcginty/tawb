@@ -11,6 +11,10 @@ cd "$ROOT"
 if [ -z "${TAWB_SKIP_BUILD:-}" ]; then
   tools/build_crystal.sh
 fi
+# TAWB_SKIP_BUILD is only safe when the retained binary still belongs to this
+# checkout. Also prove that the page programs compiled into a fresh build are
+# still generated from their JavaScript references.
+tools/verify_crystal_build.sh
 export TAWB_TEST_CRYSTAL_BROWSER=1
 # A browser asked for a session bus will activate the desktop's portal, dconf,
 # GVfs and keyring services on it, and each is a process of its own that
