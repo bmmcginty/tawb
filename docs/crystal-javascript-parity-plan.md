@@ -820,7 +820,7 @@ behavioural bugs by itself.
   run two readers against one browser while one leaves. Compare the same
   canonical observations as the independent-profile differentials, so state
   that only survives a fresh profile cannot hide.
-- [ ] Trace and compare protocol calls/options/events. Extend the
+- [x] Trace and compare protocol calls/options/events. Extend the
   protocol-trace contract from page-function invocations to the ordered
   command, subscription, event, target/frame selection, retry, deadline, and
   cleanup traffic of a scenario. Compare within an engine across runtimes, not
