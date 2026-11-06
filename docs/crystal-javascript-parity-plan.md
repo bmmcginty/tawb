@@ -761,7 +761,78 @@ machine-readable zero-gap summary.
 
 ## Immediate prioritized backlog
 
-### P0: stop silent omissions
+This backlog is ordered by expected finding rather than by area. The plan-era
+record is the basis for the order: its behavioural additions found product
+defects at seams no earlier test observed, while the breadth additions mostly
+confirmed behaviour that was already covered. The first group therefore proves
+that the suite can catch a regression at all; the next groups move from the
+failure, lifecycle, and protocol seams where historical defects clustered,
+through reader and terminal modes, to performance and release qualification,
+which find little but block shipping a regression. Static inventory work is
+kept in the completed list because it prevents silent omission without finding
+behavioural bugs by itself.
+
+### P0: prove the suite catches regressions
+
+- [ ] Mutation testing. Add the scratch-tree mutation harness and the initial
+  mutation set from "Mutation tests for the parity suite". Each named gate must
+  fail when its mutation is applied; survivors are reported by name. Run a
+  rotating subset in ordinary CI and the full set before a retirement
+  milestone. Do this before adding breadth: a gate that survives a mutation is
+  not evidence for the behaviour it claims to cover.
+
+### P1: failure, race, and cleanup
+
+- [ ] Add failure/cleanup matrix and process-leak assertions. Cover browser
+  close before, during, and after an action; frame detach between extraction
+  passes and during activation; navigation that never settles; stale or
+  double-disposed handles; broker death during ownership transfer; EOF,
+  signals, and resize during slow operations; and unwritable settings, log,
+  temporary, and update files. Assert retained state and cleanup, not only the
+  error text, and assert that no browser, broker, claim, handle, or temporary
+  file survives.
+- [ ] Add kept-browser and same-browser sequential differentials per feature.
+  Rejoin a browser a reader kept, run several documents through one tab, and
+  run two readers against one browser while one leaves. Compare the same
+  canonical observations as the independent-profile differentials, so state
+  that only survives a fresh profile cannot hide.
+- [ ] Trace and compare protocol calls/options/events. Extend the
+  protocol-trace contract from page-function invocations to the ordered
+  command, subscription, event, target/frame selection, retry, deadline, and
+  cleanup traffic of a scenario. Compare within an engine across runtimes, not
+  across protocols.
+
+### P2: reader and terminal
+
+- [ ] Expand tmux coverage to every mode and screen transition. Give every
+  mode, screen-stack ownership boundary, odd terminal escape family, resize,
+  EOF, signal, slow action, held key, and live announcement at least one real
+  terminal path through both interfaces. Compare bytes, cursor, side effects,
+  and repaint count.
+
+### P3: performance and endurance
+
+- [ ] Performance corpus and budgets. Record startup, extraction, ordering,
+  privileged scans, protocol commands, frame queries, refresh phases, key
+  latency, memory, handles, and idle pulse cost over small, large, frame-heavy,
+  shadow-heavy, and live pages. Enforce ratio and absolute budgets with phase
+  logs on failure.
+- [ ] Long soak and leak tests. Run the live, idle, and action paths for an
+  hour with growth, descriptor, handle, and process assertions. A bounded
+  short soak may run in CI, but it does not replace the long run.
+
+### P4: release qualification
+
+- [ ] Browser release matrix for the native artifact. Run the exact candidate
+  artifact against distribution Chromium and Firefox stable, beta, and nightly,
+  including Flatpak and no-desktop environments.
+- [ ] Two release cycles with zero unexplained parity incidents. Freeze Node
+  behaviour except fixes that arrive with a Crystal parity test, and keep both
+  runtimes shipping until the manifest is complete on two consecutive releases.
+
+### Completed
+
+Kept for the record; these are no longer priority work.
 
 - [x] Restore native Firefox privileged media extraction and SOURCE roots.
 - [x] Add direct Ogg extraction/operation parity coverage.
@@ -773,9 +844,6 @@ machine-readable zero-gap summary.
   retry, ownership, and cleanup).
 - [x] Add option/target protocol traces for every asset invocation.
 - [x] Replace narrow block serializers with the canonical block contract.
-
-### P1: expand real-browser breadth
-
 - [x] Run content coverage as a native differential on both engines/all views.
 - [x] Port the complete `test/browser/views.test.js` scenario set into a
   runtime differential rather than one representative page.
@@ -784,23 +852,8 @@ machine-readable zero-gap summary.
 - [x] Run native extraction through the adapted ARIA-AT gate.
 - [x] Run native extraction through the adapted WAI-ARIA role gate.
 - [x] Add direct video and long/streaming media alongside Ogg audio.
-
-### P2: complete lifecycle and terminal proof
-
-- [ ] Trace and compare protocol calls/options/events.
-- [ ] Expand tmux coverage to every mode and screen transition.
-- [ ] Add kept-browser and same-browser sequential differentials per feature.
-- [ ] Add failure/cleanup matrix and process-leak assertions.
 - [x] Add native dialog, portal, and Flatpak parity to the unified manifest.
-
-### P3: qualify retirement
-
-- [ ] Mutation testing.
-- [ ] Performance corpus and budgets.
-- [ ] Long soak and leak tests.
-- [ ] Browser release matrix for the native artifact.
 - [x] No-Node deployment test.
-- [ ] Two release cycles with zero unexplained parity incidents.
 
 ## Reporting progress
 
