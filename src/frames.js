@@ -172,6 +172,7 @@ async function orderedChildFrames(frame, limit = Infinity, requested = null) {
 async function snapshotFrameTree(page, source, {
   visited = null, driver = null, layout = false, visual = false,
 } = {}) {
+  if (typeof page.beginFrameSnapshot === 'function') page.beginFrameSnapshot();
   const budget = { remaining: MAX_FRAMES };
   return walk(page.mainFrame(), source, 0, budget, new Set(), visited, driver, layout, visual);
 }

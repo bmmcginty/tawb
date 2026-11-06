@@ -1124,8 +1124,42 @@ function liveRealImplementations(liveModule, driverModule) {
         await driver.close().catch(() => {});
       }
     },
+    async runRaceScenario({ profile, url, timeoutMs = 45000 }) {
+      const { Core } = require('../src/core');
+      const driver = await driverModule.openDriver({
+        engine: 'firefox', profile, browserTimeoutMs: timeoutMs, log: () => {},
+      });
+      try {
+        const page = driver.context.pages()[0] || await driver.context.newPage();
+        const install = await liveModule.installLive(page);
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
+        const core = new Core({ driver, page, source: 'ax', sources: ['ax'] });
+        const blocks = await core.rescan({ page });
+        const target = blocks.find((block) => block.item?.name === 'Race navigation');
+        if (!target) throw new Error('race action was absent');
+        const activation = await core.activate(target.item, page);
+        // The click navigates asynchronously, so wait for the destination
+        // document rather than guessing how long the browser needs.
+        await page.waitForFunction(
+          () => location.pathname === '/landed', null, { timeout: 15000 },
+        );
+        const batches = await liveModule.collect(page);
+        const finalBlocks = await core.rescan({ page });
+        return {
+          install,
+          activation,
+          url: new URL(page.url()).pathname,
+          frames: page.frames().length,
+          batches,
+          text: finalBlocks.map((block) => block.text),
+        };
+      } finally {
+        await driver.close().catch(() => {});
+      }
+    },
   }];
-  if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
+  if (process.env.TAWB_TEST_CRYSTAL !== '1'
+      && process.env.TAWB_TEST_CRYSTAL_BROWSER !== '1') return implementations;
   implementations.push({
     name: 'Crystal',
     async runScenario(args) {
@@ -1133,6 +1167,9 @@ function liveRealImplementations(liveModule, driverModule) {
         ...args,
         mutation: String(args.mutation),
       }, { timeoutMs: 120000 });
+    },
+    async runRaceScenario(args) {
+      return callAsync('live.race_scenario', args, { timeoutMs: 120000 });
     },
   });
   return implementations;

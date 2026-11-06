@@ -3367,21 +3367,32 @@
       "operations": [
         "live.classify_scenario",
         "live.create_state",
+        "live.race_scenario",
         "live.real_scenario",
         "live.refresh_due",
         "live.watcher_scenario"
       ],
-      "surfaces": [],
-      "engines": [],
-      "views": [],
-      "fixtures": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
+      "views": [
+        "ax"
+      ],
+      "fixtures": [
+        "frame-navigation-live-action-race"
+      ],
       "levels": [
-        "operation"
+        "operation",
+        "real-browser"
       ],
       "tests": [
+        "test/browser/live_crystal.test.js",
         "test/crystal_impl.js"
       ],
-      "status": "scripted-only",
+      "status": "single-engine",
       "differences": []
     },
     {

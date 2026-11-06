@@ -1090,6 +1090,8 @@ module Tawb
         reader_draw(payload)
       when "live.real_scenario"
         live_real_scenario(payload)
+      when "live.race_scenario"
+        live_race_scenario(payload)
       when "key_wizard.rows"
         key_wizard_rows(payload)
       when "key_wizard.run"
@@ -3055,6 +3057,63 @@ module Tawb
               JSON::Any.new(nil)
             end
           end),
+        })
+      ensure
+        session.close
+        started.close
+      end
+    end
+
+    # A real action deliberately overlaps all three asynchronous seams that
+    # can invalidate its starting document: it mutates a live region, removes
+    # a child frame, and navigates. The answer records only state observable
+    # after the race, so stale handles or old-document batches cannot survive.
+    private def self.live_race_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      profile = object["profile"].as_s
+      url = object["url"].as_s
+      timeout = object["timeoutMs"]?.try(&.as_i64?) || 45_000
+      started = FirefoxLaunch.launch(profile, timeout)
+      session = FirefoxDriver::BrowserSession.new(started.endpoint)
+      begin
+        session.start
+        # A reader follows navigation, and the driver learns the address of a
+        # document that arrives on its own only from those events. Without
+        # this subscription the browser sends none, so an action's late
+        # navigation would leave page.url on the document just left.
+        session.subscribe(FirefoxDriver::NAVIGATION_EVENTS)
+        page = session.create_page
+        watcher = Live::Watcher.new
+        install = watcher.install(page)
+        page.goto(url, "domcontentloaded")
+        core = Core.new(source: "ax", page: page)
+        blocks = core.rescan
+        target = blocks.find do |block|
+          block.item.as_h?.try(&.["name"]?.try(&.as_s?)) == "Race navigation"
+        end || raise IO::Error.new("race action was absent")
+        activation = core.activate(target.item, page)
+        # The click navigates asynchronously, so wait for the destination
+        # document rather than guessing how long the browser needs. A predicate
+        # keeps the scenario deterministic across engines and machines.
+        landed_by = Time.instant + 15.seconds
+        loop do
+          address = page.evaluate("() => location.pathname").as_s? rescue nil
+          break if address == "/landed" || Time.instant >= landed_by
+          sleep 20.milliseconds
+        end
+        batches = watcher.collect(page)
+        final_blocks = core.rescan
+        JSON::Any.new({
+          "install" => JSON::Any.new({
+            "boundNow" => JSON::Any.new(install.bound_now),
+            "armed"    => JSON::Any.new(install.armed.to_i64),
+            "frames"   => JSON::Any.new(install.frames.to_i64),
+          }),
+          "activation" => activation,
+          "url"        => JSON::Any.new(URI.parse(page.url).path || ""),
+          "frames"     => JSON::Any.new((1 + page.main_frame.child_frames.size).to_i64),
+          "batches"    => JSON::Any.new(batches),
+          "text"       => JSON::Any.new(final_blocks.map { |block| JSON::Any.new(block.text) }),
         })
       ensure
         session.close

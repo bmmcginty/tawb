@@ -43,6 +43,20 @@ const MUTATION = () => {
   p.firstChild.data = 'row 7, updated';
 };
 
+const RACE_PAGE = `<!doctype html><meta charset="utf-8"><title>race</title>
+<div role="status">Before action</div>
+<iframe title="Disposable frame" src="/child"></iframe>
+<button id="race">Race navigation</button>
+<script>
+  race.addEventListener('click', () => {
+    document.querySelector('[role=status]').firstChild.data = 'During action';
+    document.querySelector('iframe').remove();
+    setTimeout(() => { location.href = '/landed'; }, 0);
+  });
+</script>`;
+const LANDED_PAGE = `<!doctype html><meta charset="utf-8"><title>landed</title>
+<div role="status">After navigation</div><p>Fresh document survived the race.</p>`;
+
 for (const implementation of implementations) {
   test(`${implementation.name}: the observer arms at document-start, reads a parse, and patches a mutation on a real Firefox`, { skip: !enabled }, async () => {
     const profile = tempDir('tawb-live-real-');
@@ -97,3 +111,40 @@ for (const implementation of implementations) {
     }
   });
 }
+
+test('frame removal, live mutation, action, and navigation race to the same final state',
+  { skip: !enabled }, async () => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+      });
+      if (req.url === '/landed') res.end(LANDED_PAGE);
+      else if (req.url === '/child') res.end('<!doctype html><p>Disposable child</p>');
+      else res.end(RACE_PAGE);
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${server.address().port}/race`;
+    const profiles = [];
+    try {
+      const results = [];
+      for (const implementation of implementations) {
+        const profile = tempDir(`tawb-live-race-${implementation.name.toLowerCase()}-`);
+        profiles.push(profile);
+        results.push(await implementation.runRaceScenario({ profile, url, timeoutMs: 60000 }));
+      }
+      for (const result of results) {
+        assert.equal(result.url, '/landed');
+        assert.equal(result.frames, 1, 'the detached child remained in the frame inventory');
+        assert.equal(result.activation.how, 'default-action');
+        assert.equal(result.activation.status, null);
+        assert.ok(result.text.includes('After navigation'));
+        assert.ok(result.text.includes('Fresh document survived the race.'));
+        assert.ok(!result.text.includes('During action'), 'old-document live text leaked');
+        assert.ok(!result.text.includes('Disposable child'), 'detached-frame text leaked');
+      }
+      if (results.length === 2) assert.deepEqual(results[1], results[0]);
+    } finally {
+      server.close();
+      for (const profile of profiles) removeTempDir(profile);
+    }
+  });

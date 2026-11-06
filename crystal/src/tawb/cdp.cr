@@ -1269,6 +1269,15 @@ module Tawb
         @loading = false
       end
 
+      # CDP events are applied to this page as the browser pushes them, so a
+      # navigation the browser already reported is already reflected here and
+      # there is nothing left for a caller to drain. The Firefox driver queues
+      # events until someone polls them and has real work to do here; both
+      # expose the method so a caller above the engines can ask the same way.
+      def drain_navigation : Bool
+        false
+      end
+
       # Playwright's semantics, deliberately: a document that has already
       # reached the state is not waited for. Callers race this against the
       # action that might navigate, so making it wait for a navigation that

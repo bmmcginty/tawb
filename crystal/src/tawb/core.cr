@@ -544,6 +544,12 @@ module Tawb
       @blocks = LayoutOrder.order(extracted, @layout_order)
       restore_attached_files(target.tab_id)
       @generation += 1
+      # The Firefox driver queues navigation events until somebody drains them,
+      # and an action may start its navigation after the action's own load
+      # wait has given up. Reading the address here without first applying
+      # what the browser already reported would record the document just left,
+      # even though the blocks above came from the document now on screen.
+      target.drain_navigation
       @rendered_url = target.url
       relocate_popup
       # The extraction visited these contexts. Arming is best effort: a frame

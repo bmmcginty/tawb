@@ -381,7 +381,12 @@ class FirefoxPage {
     return [this._mainFrame, ...this._seenFrames];
   }
 
+  beginFrameSnapshot() {
+    this._seenFrames = [];
+  }
+
   noteFrame(frame) {
+    if (frame === this._mainFrame) return;
     if (!this._seenFrames.includes(frame)) this._seenFrames.push(frame);
   }
 
