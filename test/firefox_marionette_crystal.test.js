@@ -3,8 +3,16 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const net = require('node:net');
-const { clearAutomationFlag, releaseStrandedSession } = require('../src/firefox');
+const {
+  clearAutomationFlag, releaseStrandedSession,
+  CLEAR_SCRIPT, PIERCE_PARENT_SCRIPT, libraryParentScript,
+} = require('../src/firefox');
 const { marionetteImplementations } = require('./crystal_impl');
+const { protocolTraceV1 } = require('./parity/protocol-trace-v1');
+
+// parity-id: asset.firefox-clear
+// parity-id: asset.firefox-pierce
+// parity-id: asset.firefox-library
 
 function packet(value) {
   const payload = Buffer.from(JSON.stringify(value));
@@ -77,10 +85,23 @@ for (const implementation of marionetteImplementations({
       { id: 5, name: 'WebDriver:ExecuteScript' },
     ]);
     assert.deepEqual(commands[1][3], { value: 'chrome' });
-    for (const command of commands.slice(2)) assert.deepEqual(command[3].args, []);
-    assert.match(commands[2][3].script, /RemoteAgent:IsBrowserAutomationRunning/);
-    assert.match(commands[3][3].script, /content-document-global-created/);
-    assert.match(commands[4][3].script, /clearAutomation/);
+    const traces = protocolTraceV1(commands.slice(2).map(([, , operation, params]) => ({
+      operation,
+      source: params.script,
+      target: { context: 'chrome', process: 'parent' },
+      arguments: params.args,
+      result: null,
+      error: null,
+      handles: [],
+    })));
+    assert.deepEqual(traces.map(({ operation, source, target, arguments: args }) => ({
+      operation, source, target, arguments: args,
+    })), [CLEAR_SCRIPT, PIERCE_PARENT_SCRIPT, libraryParentScript()].map((source) => ({
+      operation: 'WebDriver:ExecuteScript',
+      source,
+      target: { context: 'chrome', process: 'parent' },
+      arguments: [],
+    })));
     assert.deepEqual(result, {
       before: { 'RemoteAgent:Active': true },
       after: { 'RemoteAgent:Active': false },

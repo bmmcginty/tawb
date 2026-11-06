@@ -380,14 +380,20 @@
         "crystal/assets/firefox_clear.js"
       ],
       "surfaces": [],
-      "engines": [],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-marionette-parent"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_marionette_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -400,14 +406,20 @@
         "crystal/assets/firefox_library.js"
       ],
       "surfaces": [],
-      "engines": [],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-marionette-parent"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_marionette_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -420,14 +432,20 @@
         "crystal/assets/firefox_pierce.js"
       ],
       "surfaces": [],
-      "engines": [],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-marionette-parent"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_marionette_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []

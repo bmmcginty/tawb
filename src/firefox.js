@@ -241,7 +241,7 @@ const CLEAR_SCRIPT = `
   for (const key of keys) Services.ppmm.sharedData.set(key, false);
   Services.ppmm.sharedData.flush();
   return { before, after: state(), report: automationReport() };
-`;
+`.trim();
 
 function osDescription() {
   try {
@@ -952,7 +952,7 @@ function libraryParentScript() {
   // The agent and the startup clear report the same way, so one reader of the
   // log compares readings taken minutes apart without translating between two
   // shapes.
-  return `${AUTOMATION_REPORT_BODY}\n${parent}\nreturn server.port;`;
+  return `${AUTOMATION_REPORT_BODY}\n${parent}\nreturn server.port;`.trim();
 }
 
 // Loads the above into every content process, present and future.
@@ -960,7 +960,7 @@ const PIERCE_PARENT_SCRIPT = `
   const source = 'data:text/javascript,' + encodeURIComponent(${JSON.stringify(PIERCE_CHILD_SCRIPT)});
   Services.ppmm.loadProcessScript(source, true);
   return true;
-`;
+`.trim();
 
 // Marionette, used for one thing only.
 //

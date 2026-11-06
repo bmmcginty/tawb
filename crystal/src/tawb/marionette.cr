@@ -3,10 +3,20 @@ require "socket"
 
 module Tawb
   module Marionette
-    CLEAR_SCRIPT          = {{ read_file("#{__DIR__}/../../assets/firefox_clear.js") }}
-    PIERCE_PARENT_SCRIPT  = {{ read_file("#{__DIR__}/../../assets/firefox_pierce.js") }}
-    LIBRARY_PARENT_SCRIPT = {{ read_file("#{__DIR__}/../../assets/firefox_library.js") }}
-    TIMEOUT               = 60.seconds
+    # Generated assets carry a provenance header for repository readers. The
+    # protocol must receive the original JavaScript source bytes, just as the
+    # Node runtime sends them, rather than that build-only comment.
+    def self.asset_source(raw : String) : String
+      raw.lines[1..].join("\n")
+    end
+
+    CLEAR_SCRIPT = asset_source(
+      {{ read_file("#{__DIR__}/../../assets/firefox_clear.js") }})
+    PIERCE_PARENT_SCRIPT = asset_source(
+      {{ read_file("#{__DIR__}/../../assets/firefox_pierce.js") }})
+    LIBRARY_PARENT_SCRIPT = asset_source(
+      {{ read_file("#{__DIR__}/../../assets/firefox_library.js") }})
+    TIMEOUT = 60.seconds
 
     class Client
       def initialize(port : Int32)
