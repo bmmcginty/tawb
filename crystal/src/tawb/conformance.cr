@@ -4501,6 +4501,10 @@ module Tawb
                       current.not_nil!.evaluate(step["fn"].as_s, step["arg"]?, false)
                     end
             observations.push(value)
+          when "pierce"
+            value = current.not_nil!.pierce_and_run(
+              step["expression"].as_s, step["fn"].as_s, step["arg"]?)
+            observations.push(value || JSON::Any.new(nil))
           when "evaluate_handle"
             held = nil.as(FirefoxDriver::Handle?)
             source = step["expression"]?.try(&.as_s?)

@@ -808,7 +808,8 @@ module Tawb
 
       # Run a page function with this document's closed shadow roots lent to
       # it. See `Page#privileged_run` for why that is needed at all.
-      def pierce_and_run(expression : String) : JSON::Any?
+      def pierce_and_run(expression : String, page_function : String? = nil,
+                         extra : JSON::Any? = nil) : JSON::Any?
         context = @page.context_for(@frame_id)
         @page.privileged_run(context[0], context[1], expression)
       rescue
@@ -1522,7 +1523,8 @@ module Tawb
 
       # Run a page function with this document's closed shadow roots lent to
       # it. See `privileged_run` for why that is needed at all.
-      def pierce_and_run(expression : String) : JSON::Any?
+      def pierce_and_run(expression : String, page_function : String? = nil,
+                         extra : JSON::Any? = nil) : JSON::Any?
         context = context_for(main_frame_id)
         privileged_run(context[0], context[1], expression)
       rescue

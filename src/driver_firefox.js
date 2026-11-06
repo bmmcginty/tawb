@@ -91,6 +91,21 @@ function asFunctionDeclaration(fn) {
   return `() => { return (${fn}); }`;
 }
 
+// Firefox's privileged parent script leaves a root-pair provider in each
+// document. Keep the probe and retry in one shared seam so production callers
+// and protocol-contract tests exercise the same target and argument policy.
+async function pierceAndRun(frame, pageFunction, extra = {}, logger = () => {}) {
+  const available = await frame.evaluate(
+    () => {
+      const pierce = window[Symbol.for('tweb.pierce')];
+      return typeof pierce === 'function' ? (pierce() || []).length : 0;
+    },
+  ).catch(() => 0);
+  if (!available) return null;
+  logger('shadow.pierced', { roots: available, url: String(frame.url()).slice(0, 100) });
+  return frame.evaluate(pageFunction, { pierce: true, ...extra });
+}
+
 class FirefoxFrame {
   constructor(session, contextId, page) {
     this.session = session;
@@ -1434,16 +1449,8 @@ async function openFirefox({
     // privileged half was installed at startup and left a function in the
     // page, so the extractor asks for the pairs itself, inside the same call
     // that uses them.
-    async pierceAndRun(frame, pageFunction, extra = {}) {
-      const available = await frame.evaluate(
-        () => {
-          const pierce = window[Symbol.for('tweb.pierce')];
-          return typeof pierce === 'function' ? (pierce() || []).length : 0;
-        },
-      ).catch(() => 0);
-      if (!available) return null;
-      log('shadow.pierced', { roots: available, url: String(frame.url()).slice(0, 100) });
-      return frame.evaluate(pageFunction, { pierce: true, ...extra });
+    pierceAndRun(frame, pageFunction, extra = {}) {
+      return pierceAndRun(frame, pageFunction, extra, log);
     },
 
     async axItems(frame, options = {}) {
@@ -1626,7 +1633,7 @@ async function openFirefox({
 
 module.exports = {
   openFirefox, FirefoxPage, FirefoxFrame, FirefoxHandle, FirefoxKeyboard,
-  sliderGeometry,
+  pierceAndRun, sliderGeometry,
   readAutomationState, clearWebdriverAfterSession, probeExistingContext,
   verifyWebdriverFlag, WEBDRIVER_READY_TIMEOUT_MS, toRemoteArgument, WEBDRIVER_KEYS,
 };

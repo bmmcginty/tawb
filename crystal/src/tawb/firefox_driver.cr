@@ -372,13 +372,25 @@ module Tawb
         Bidi.from_remote(result["result"]?)
       end
 
-      # Nothing to lend. Firefox's closed shadow roots are reached from inside
-      # the page, by the privileged parent script that installs
-      # `window[Symbol.for('tweb.pierce')]` — so a page function that wants
-      # them asks for them itself through its own `pierce` option, and there
-      # is no second, privileged way to run it. See
-      # `Marionette::PIERCE_PARENT_SCRIPT`.
-      def pierce_and_run(expression : String) : JSON::Any?
+      # Firefox cannot lend roots as a CDP call receiver. Its privileged
+      # parent script instead installs a provider in the document. Probe that
+      # provider first, then call the same page function with `pierce:true`,
+      # matching the JavaScript driver's two wire calls. `expression` remains
+      # the CDP form for callers shared by both engines.
+      def pierce_and_run(expression : String, page_function : String? = nil,
+                         extra : JSON::Any? = nil) : JSON::Any?
+        available = evaluate(
+          "() => { const pierce = window[Symbol.for('tweb.pierce')]; " \
+          "return typeof pierce === 'function' ? (pierce() || []).length : 0; }"
+        ).as_i64? || 0_i64
+        return nil if available <= 0
+        if page_function
+          options = {"pierce" => JSON::Any.new(true)} of String => JSON::Any
+          extra.try(&.as_h?).try { |given| given.each { |key, value| options[key] = value } }
+          return evaluate(page_function, JSON::Any.new(options))
+        end
+        evaluate(expression, nil, true)
+      rescue
         nil
       end
 
@@ -704,14 +716,10 @@ module Tawb
         Frame.new(@protocol, @context_id, self, @url).evaluate(fn, arg, expression)
       end
 
-      # Nothing to lend. Firefox's closed shadow roots are reached from inside
-      # the page, by the privileged parent script that installs
-      # `window[Symbol.for('tweb.pierce')]` — so a page function that wants
-      # them asks for them itself through its own `pierce` option, and there
-      # is no second, privileged way to run it. See
-      # `Marionette::PIERCE_PARENT_SCRIPT`.
-      def pierce_and_run(expression : String) : JSON::Any?
-        nil
+      def pierce_and_run(expression : String, page_function : String? = nil,
+                         extra : JSON::Any? = nil) : JSON::Any?
+        Frame.new(@protocol, @context_id, self, @url).pierce_and_run(
+          expression, page_function, extra)
       end
 
       def evaluate_handle(fn : String, arg : JSON::Any? = nil, expression = false) : Handle

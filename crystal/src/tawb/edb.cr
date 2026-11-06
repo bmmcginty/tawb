@@ -41,11 +41,6 @@ module Tawb
     # `this` is the array of pairs; see `Cdp::Page#privileged_run`.
     EXTRACT_WITH_PAIRS = "(#{EXTRACT})({pairs:this,pierce:true})"
 
-    # Asking for the roots the page can reach itself, which is what Firefox's
-    # privileged parent script installs. Harmless on Chromium, where the
-    # symbol is absent.
-    PIERCE_OPTION = JSON::Any.new({"pierce" => JSON::Any.new(true)})
-
     # The element the resolver left behind, ready to be pressed.
     RESOLVED = "() => window[Symbol.for('tweb.resolved')]"
     FOCUS_RESOLVED = "() => { const el = window[Symbol.for('tweb.resolved')]; " \
@@ -65,14 +60,14 @@ module Tawb
       end
 
       def extract : JSON::Any
-        first = @frame.evaluate(EXTRACT, PIERCE_OPTION)
+        first = @frame.evaluate(EXTRACT)
         tokens = first.as_h?.try(&.["tokens"]?.try(&.as_a?)) || [] of JSON::Any
         return first unless tokens.empty?
         # Nothing to read is what a document behind a closed shadow root looks
         # like, and it is what a bot check looks like, so this is where
         # edbrowse would otherwise be shown nothing at all.
         pierced = begin
-          @frame.pierce_and_run(EXTRACT_WITH_PAIRS)
+          @frame.pierce_and_run(EXTRACT_WITH_PAIRS, EXTRACT)
         rescue
           nil
         end
@@ -192,7 +187,7 @@ module Tawb
       end
 
       private def resolve_in_page(desc : JSON::Any) : Bool
-        argument = JSON::Any.new({"desc" => desc, "pierce" => JSON::Any.new(true)})
+        argument = JSON::Any.new({"desc" => desc})
         found = @frame.evaluate(RESOLVE, argument)
         return true unless found.raw.nil?
         # Not found by ordinary means may mean the element is behind a closed
@@ -200,7 +195,9 @@ module Tawb
         # place. Being able to see something that cannot then be acted on is
         # no use at all.
         pierced = begin
-          @frame.pierce_and_run("(#{RESOLVE})({desc:#{desc.to_json},pairs:this,pierce:true})")
+          @frame.pierce_and_run(
+            "(#{RESOLVE})({desc:#{desc.to_json},pairs:this,pierce:true})",
+            RESOLVE, argument)
         rescue
           nil
         end

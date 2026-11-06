@@ -298,7 +298,7 @@
         ],
         "symbol": "EXTRACT",
         "target": "each readable document/frame; privileged retry when empty",
-        "arguments": "{pierce:false}, then {pairs:this,pierce:true}",
+        "arguments": "ordinary defaults, then engine privileged {pierce:true} or {pairs:this,pierce:true}",
         "retry": "privileged second pass only when ordinary output is empty",
         "ownership": "by-value entries plus page node arrays",
         "cleanup": "failed privileged pass retains ordinary output"
@@ -377,7 +377,7 @@
         ],
         "symbol": "EXTRACT_SOURCE",
         "target": "each readable frame; privileged root retry",
-        "arguments": "{pierce:false}; privileged pass {pairs:this,pierce:true}",
+        "arguments": "ordinary defaults; privileged pass uses engine {pierce:true} or {pairs:this,pierce:true}",
         "retry": "privileged pass after ordinary pass; retain ordinary output on failure",
         "ownership": "by-value entries plus page node arrays",
         "cleanup": "failed privileged pass retains ordinary output"

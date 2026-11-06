@@ -230,15 +230,23 @@
       "crystal": [
         "crystal/assets/edb_extract.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "edb"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-privileged-retry"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -250,15 +258,23 @@
       "crystal": [
         "crystal/assets/edb_resolve.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "edb"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-privileged-retry"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -300,14 +316,22 @@
         "crystal/assets/extract_source.js"
       ],
       "surfaces": [],
-      "engines": [],
-      "views": [],
-      "fixtures": [],
+      "engines": [
+        "firefox"
+      ],
+      "views": [
+        "source"
+      ],
+      "fixtures": [
+        "scripted-bidi-privileged-retry"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []

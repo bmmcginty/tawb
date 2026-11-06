@@ -3345,7 +3345,7 @@ function firefoxPageImplementations({ bidi, FirefoxPage, FirefoxFrame, extractAx
 // so the assertions cover both the answers and the exact wire traffic —
 // which is the contract, since a real Firefox parses the same bytes.
 function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard,
-  clickThrough, prepareRealClick, submitsAutofilled }) {
+  pierceAndRun, clickThrough, prepareRealClick, submitsAutofilled }) {
   const handleScenario = async (url, script) => {
     const session = await bidi.connect(url);
     const observations = [];
@@ -3403,6 +3403,11 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, Firefox
             // function, whose text is the declaration the wire carries.
             const fn = step.expression !== undefined ? step.expression : (0, eval)(step.fn);
             const value = await current.evaluate(fn, 'arg' in step ? step.arg : undefined);
+            observations.push(value === undefined ? null : value);
+            break;
+          }
+          case 'pierce': {
+            const value = await pierceAndRun(current, (0, eval)(`(${step.fn})`), step.arg || {});
             observations.push(value === undefined ? null : value);
             break;
           }

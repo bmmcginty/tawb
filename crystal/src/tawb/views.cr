@@ -136,10 +136,8 @@ module Tawb
   module SourceHtml
     EXTRACT_SOURCE = Actions.asset_source(
       {{ read_file("#{__DIR__}/../../assets/extract_source.js") }})
-    # Firefox's privileged helper is called from inside the extractor; CDP
-    # instead lends roots as `this`. Asking both ways is harmless, and keeps
-    # SOURCE complete without putting engine policy in the view converter.
-    PIERCE_OPTION = JSON::Any.new({"pierce" => JSON::Any.new(true)})
+    # CDP lends privileged roots as `this`; Firefox's driver calls the same
+    # extractor with `pierce:true` after confirming its page helper exists.
     EXTRACT_WITH_PAIRS = "(#{EXTRACT_SOURCE})({pairs:this,pierce:true})"
 
     def self.blocks(entries : Array(JSON::Any), frame_id : String?) : Array(JSON::Any)

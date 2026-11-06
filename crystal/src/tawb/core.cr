@@ -581,12 +581,13 @@ module Tawb
                 })).as_a?
             else
               # SOURCE is the explicit inspection view, so completeness is
-              # worth the privileged scan. Firefox's helper is reached by the
-              # option in the first call; Chromium lends roots to the paired
+              # worth the privileged scan. Firefox probes its page helper and
+              # retries with pierce:true; Chromium lends roots to the paired
               # call. Either engine keeps the ordinary result if no root is
               # available or a node disappears during the scan.
-              first = scope.evaluate(SourceHtml::EXTRACT_SOURCE, SourceHtml::PIERCE_OPTION)
-              privileged = scope.pierce_and_run(SourceHtml::EXTRACT_WITH_PAIRS) rescue nil
+              first = scope.evaluate(SourceHtml::EXTRACT_SOURCE)
+              privileged = scope.pierce_and_run(SourceHtml::EXTRACT_WITH_PAIRS,
+                SourceHtml::EXTRACT_SOURCE) rescue nil
               (privileged || first).as_a?
             end
           rescue

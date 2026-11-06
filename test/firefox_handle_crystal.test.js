@@ -10,10 +10,19 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 const bidi = require('../src/bidi');
-const { FirefoxPage, FirefoxFrame, FirefoxKeyboard } = require('../src/driver_firefox');
+const {
+  FirefoxPage, FirefoxFrame, FirefoxKeyboard, pierceAndRun, toRemoteArgument,
+} = require('../src/driver_firefox');
 const { clickThrough, prepareRealClick, submitsAutofilled } = require('../src/click');
+const { extractSource } = require('../src/source_html');
+const { extractForEdbrowse, resolveDescriptor } = require('../src/edb_page');
 const { acceptWebSocket } = require('../src/broker');
 const { firefoxHandleImplementations } = require('./crystal_impl');
+const { bidiCallFunctionTrace } = require('./parity/protocol-trace-v1');
+
+// parity-id: asset.extract-source
+// parity-id: asset.edb-extract
+// parity-id: asset.edb-resolve
 
 async function withEndpoint(onMessage, run) {
   const server = http.createServer();
@@ -91,7 +100,7 @@ const SCRIPT = [
 const runs = {};
 
 for (const implementation of firefoxHandleImplementations({
-  bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard,
+  bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard, pierceAndRun,
   clickThrough, prepareRealClick, submitsAutofilled,
 })) {
   test(`${implementation.name}: the handle layer answers and speaks the wire`, async () => {
@@ -406,8 +415,61 @@ for (const implementation of firefoxHandleImplementations({
   });
 }
 
+test('both runtimes probe and retry privileged assets in the same frame', async () => {
+  const implementations = firefoxHandleImplementations({
+    bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard, pierceAndRun,
+    clickThrough, prepareRealClick, submitsAutofilled,
+  });
+  const assets = [
+    { name: 'extract-source', fn: extractSource, extra: {} },
+    { name: 'edb-extract', fn: extractForEdbrowse, extra: {} },
+    { name: 'edb-resolve', fn: resolveDescriptor, extra: { desc: { tag: 'button' } } },
+  ];
+  for (const asset of assets) {
+    for (const implementation of implementations) {
+      const received = [];
+      const observations = await withEndpoint((message, peer) => {
+        received.push(message);
+        let result = {};
+        if (message.method === 'session.new') result = { sessionId: 'session-1' };
+        if (message.method === 'script.callFunction') {
+          const probe = message.params.functionDeclaration.includes('(pierce() || []).length');
+          result = {
+            type: 'success',
+            result: probe
+              ? { type: 'number', value: 1 }
+              : { type: 'string', value: 'pierced' },
+          };
+        }
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+      }, (url) => implementation.handleScenario(url, [
+        { op: 'frame', context: 'asset-frame', url: 'https://asset.test/' },
+        {
+          op: 'pierce',
+          fn: asset.fn.toString(),
+          expression: `(${asset.fn.toString()})({pairs:this,pierce:true})`,
+          arg: asset.extra,
+        },
+      ]));
+      const label = `${implementation.name} ${asset.name}`;
+      assert.deepEqual(observations, [null, 'pierced'], label);
+      const calls = received.filter(({ method }) => method === 'script.callFunction');
+      assert.equal(calls.length, 2, label);
+      const traces = calls.map(bidiCallFunctionTrace);
+      assert.equal(traces[1].source, asset.fn.toString(), label);
+      assert.deepEqual(traces.map(({ target, arguments: args }) => ({ target, arguments: args })), [
+        { target: { context: 'asset-frame' }, arguments: [] },
+        {
+          target: { context: 'asset-frame' },
+          arguments: [toRemoteArgument({ pierce: true, ...asset.extra })],
+        },
+      ], label);
+    }
+  }
+});
+
 const nativeImplementation = firefoxHandleImplementations({
-  bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard,
+  bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard, pierceAndRun,
   clickThrough, prepareRealClick, submitsAutofilled,
 }).find((implementation) => implementation.name === 'Crystal');
 
