@@ -766,7 +766,7 @@ machine-readable zero-gap summary.
 - [x] Restore native Firefox privileged media extraction and SOURCE roots.
 - [x] Add direct Ogg extraction/operation parity coverage.
 - [x] Discover all conventionally named native browser differentials.
-- [ ] Add the parity manifest and fail on uncovered surfaces.
+- [x] Add the parity manifest and fail on unclassified surfaces.
 - [ ] Make the browser gate fail on unexpected skips.
 - [ ] Verify binary revision/assets before browser tests.
 - [ ] Inventory every asset invocation and add option/target traces.

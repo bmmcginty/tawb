@@ -1,0 +1,3832 @@
+{
+  "$schema": "./parity-manifest.schema.json",
+  "version": 1,
+  "description": "Conservative inventory of JavaScript-retirement parity surfaces. Uncovered entries are deliberate gaps, not parity claims.",
+  "entries": [
+    {
+      "id": "asset.chromium-bookmarks",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/chromium_bookmarks.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.chromium-downloads",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/chromium_downloads.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.chromium-history",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/chromium_history.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.chromium-ready-bookmarks",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/chromium_ready_bookmarks.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.chromium-ready-downloads",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/chromium_ready_downloads.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.chromium-ready-history",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/chromium_ready_history.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.chromium-remove-bookmark",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/chromium_remove_bookmark.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.chromium-save-bookmark",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/chromium_save_bookmark.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.click-through",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/click_through.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.describe-element",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/describe_element.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.edb-apply",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/edb_apply.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.edb-extract",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/edb_extract.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.edb-resolve",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/edb_resolve.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.extract-ax-items",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/extract_ax_items.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.extract-source",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/extract_source.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.extract-visible",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/extract_visible.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.firefox-clear",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/firefox_clear.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.firefox-library",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/firefox_library.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.firefox-pierce",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/firefox_pierce.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.focus-arm",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/focus_arm.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.focus-clear",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/focus_clear.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.focus-has-target",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/focus_has_target.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.focus-take-target",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/focus_take_target.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.live-drain",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/live_drain.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.live-observer",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/live_observer.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.live-pulse",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/live_pulse.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.locate-element",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/locate_element.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.prepare-real-click",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/prepare_real_click.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.read-field-state",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/read_field_state.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.restore-scroll",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/restore_scroll.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.scroll-to-bottom",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/scroll_to_bottom.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.slider-geometry",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/slider_geometry.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.slider-state",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/slider_state.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.slider-track",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/slider_track.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.submits-autofilled",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/submits_autofilled.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "asset.text-at-fragment",
+      "kind": "asset",
+      "javascript": [],
+      "crystal": [
+        "crystal/assets/text_at_fragment.js"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "asset-contract"
+      ],
+      "tests": [
+        "test/crystal_assets.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "module.a11y-bus",
+      "kind": "module",
+      "javascript": [
+        "src/a11y_bus.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/a11y_bus.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.actions",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/actions.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.address",
+      "kind": "module",
+      "javascript": [
+        "src/address.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/address.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.aria",
+      "kind": "module",
+      "javascript": [
+        "src/aria.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/aria.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.atspi",
+      "kind": "module",
+      "javascript": [
+        "src/atspi.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/atspi.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.auth",
+      "kind": "module",
+      "javascript": [
+        "src/auth.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/auth.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.ax-own",
+      "kind": "module",
+      "javascript": [
+        "src/ax_own.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.bidi",
+      "kind": "module",
+      "javascript": [
+        "src/bidi.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/bidi.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.blocks",
+      "kind": "module",
+      "javascript": [
+        "src/blocks.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/blocks.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.broker",
+      "kind": "module",
+      "javascript": [
+        "src/broker.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/broker.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.browser",
+      "kind": "module",
+      "javascript": [
+        "src/browser.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/browser.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.cdp",
+      "kind": "module",
+      "javascript": [
+        "src/cdp.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/cdp.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.cdp-browser",
+      "kind": "module",
+      "javascript": [
+        "src/cdp_browser.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.cdp-page",
+      "kind": "module",
+      "javascript": [
+        "src/cdp_page.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.cli",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/cli.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.click",
+      "kind": "module",
+      "javascript": [
+        "src/click.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.conformance",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.core",
+      "kind": "module",
+      "javascript": [
+        "src/core.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/core.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.crystal-entrypoint",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.dbus",
+      "kind": "module",
+      "javascript": [
+        "src/dbus.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/dbus.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.detach",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/detach.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.dom",
+      "kind": "module",
+      "javascript": [
+        "src/dom.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.driver",
+      "kind": "module",
+      "javascript": [
+        "src/driver.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.driver-chromium",
+      "kind": "module",
+      "javascript": [
+        "src/driver_chromium.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.driver-firefox",
+      "kind": "module",
+      "javascript": [
+        "src/driver_firefox.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.dump",
+      "kind": "module",
+      "javascript": [
+        "src/dump.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/dump.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.edb",
+      "kind": "module",
+      "javascript": [
+        "src/edb.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/edb.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.edb-page",
+      "kind": "module",
+      "javascript": [
+        "src/edb_page.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.edb-server",
+      "kind": "module",
+      "javascript": [
+        "src/edb_server.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/edb_server.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.edit",
+      "kind": "module",
+      "javascript": [
+        "src/edit.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/edit.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.endpoint",
+      "kind": "module",
+      "javascript": [
+        "src/endpoint.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/endpoint.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.engine",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/engine.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.fields",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/fields.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.firefox",
+      "kind": "module",
+      "javascript": [
+        "src/firefox.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.firefox-agent",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/firefox_agent.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.firefox-driver",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/firefox_driver.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.firefox-dump",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/firefox_dump.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.firefox-launch",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/firefox_launch.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.firefox-library",
+      "kind": "module",
+      "javascript": [
+        "src/firefox_library.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.flatpak",
+      "kind": "module",
+      "javascript": [
+        "src/flatpak.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.focus",
+      "kind": "module",
+      "javascript": [
+        "src/focus.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/focus.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.frames",
+      "kind": "module",
+      "javascript": [
+        "src/frames.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/frames.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.index",
+      "kind": "module",
+      "javascript": [
+        "src/index.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.input",
+      "kind": "module",
+      "javascript": [
+        "src/input.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/input.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.inspect-html",
+      "kind": "module",
+      "javascript": [
+        "src/inspect_html.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.interactive",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/interactive.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.interfaces",
+      "kind": "module",
+      "javascript": [
+        "src/interfaces.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/interfaces.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.key-wizard",
+      "kind": "module",
+      "javascript": [
+        "src/key_wizard.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/key_wizard.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.keyboard",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/keyboard.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.keys",
+      "kind": "module",
+      "javascript": [
+        "src/keys.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/keys.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.layout",
+      "kind": "module",
+      "javascript": [
+        "src/layout.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/layout.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.layout-order",
+      "kind": "module",
+      "javascript": [
+        "src/layout_order.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/layout_order.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.library",
+      "kind": "module",
+      "javascript": [
+        "src/library.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/library.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.library-chromium",
+      "kind": "module",
+      "javascript": [
+        "src/library_chromium.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/library_chromium.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.list-model",
+      "kind": "module",
+      "javascript": [
+        "src/list_model.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/list_model.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.list-screen",
+      "kind": "module",
+      "javascript": [
+        "src/list_screen.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/list_screen.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.live",
+      "kind": "module",
+      "javascript": [
+        "src/live.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/live.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.log",
+      "kind": "module",
+      "javascript": [
+        "src/log.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/log.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.lynx-actions",
+      "kind": "module",
+      "javascript": [
+        "src/lynx_actions.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/lynx_actions.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.lynx-config",
+      "kind": "module",
+      "javascript": [
+        "src/lynx_config.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/lynx_config.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.lynx-display",
+      "kind": "module",
+      "javascript": [
+        "src/lynx_display.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/lynx_display.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.lynx-keymap",
+      "kind": "module",
+      "javascript": [
+        "src/lynx_keymap.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/lynx_keymap.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.lynx-number",
+      "kind": "module",
+      "javascript": [
+        "src/lynx_number.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/lynx_number.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.lynx-options",
+      "kind": "module",
+      "javascript": [
+        "src/lynx_options.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/lynx_options.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.lynx-options-screen",
+      "kind": "module",
+      "javascript": [
+        "src/lynx_options_screen.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/lynx_options_screen.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.lynx-pages",
+      "kind": "module",
+      "javascript": [
+        "src/lynx_pages.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/lynx_pages.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.lynx-session",
+      "kind": "module",
+      "javascript": [
+        "src/lynx_session.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/lynx_session.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.lynx-settings",
+      "kind": "module",
+      "javascript": [
+        "src/lynx_settings.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/lynx_settings.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.lynx-state",
+      "kind": "module",
+      "javascript": [
+        "src/lynx_state.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/lynx_state.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.marionette",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/marionette.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.native-prompt",
+      "kind": "module",
+      "javascript": [
+        "src/native_prompt.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/native_prompt.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.options",
+      "kind": "module",
+      "javascript": [
+        "src/options.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/options.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.place",
+      "kind": "module",
+      "javascript": [
+        "src/place.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/place.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.portal",
+      "kind": "module",
+      "javascript": [
+        "src/portal.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/portal.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.proc",
+      "kind": "module",
+      "javascript": [
+        "src/proc.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.processes",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/processes.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.quicknav",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/quicknav.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.reader",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/reader.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.reader-keys",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/reader_keys.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.registry",
+      "kind": "module",
+      "javascript": [
+        "src/registry.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/registry.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.remap",
+      "kind": "module",
+      "javascript": [
+        "src/remap.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/remap.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.render-html",
+      "kind": "module",
+      "javascript": [
+        "src/render_html.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.revision",
+      "kind": "module",
+      "javascript": [
+        "src/revision.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/revision.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.runtime",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/runtime.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.screen",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/screen.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.screen-stack",
+      "kind": "module",
+      "javascript": [
+        "src/screen_stack.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/screen_stack.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.session",
+      "kind": "module",
+      "javascript": [
+        "src/session.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/session.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.settings",
+      "kind": "module",
+      "javascript": [
+        "src/settings.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/settings.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.source-html",
+      "kind": "module",
+      "javascript": [
+        "src/source_html.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.standalone",
+      "kind": "module",
+      "javascript": [
+        "src/standalone.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.startup",
+      "kind": "module",
+      "javascript": [
+        "src/startup.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/startup.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.transport",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/transport.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.unicode-escape",
+      "kind": "module",
+      "javascript": [
+        "src/unicode_escape.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/unicode_escape.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.unicode-text",
+      "kind": "module",
+      "javascript": [
+        "src/unicode_text.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/unicode_text.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.update",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/update.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.views",
+      "kind": "module",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/views.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "module.wizard-order",
+      "kind": "module",
+      "javascript": [
+        "src/wizard_order.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/wizard_order.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "operation.a11y",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "a11y.bus_scenario",
+        "a11y.open_scenario",
+        "a11y.private_bus_config",
+        "a11y.session_bus_address"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.address",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "address.resolve",
+        "address.search_url"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.aria",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "aria.render_line"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.atspi",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "atspi.process_group_of",
+        "atspi.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.auth",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "auth.challenge_key",
+        "auth.normalise",
+        "auth.origin_key",
+        "auth.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/auth_crystal.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.bidi",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "bidi.from_remote",
+        "bidi.session_scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.blocks",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "blocks.build",
+        "blocks.fold"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.broker",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "broker.claim",
+        "broker.clear",
+        "broker.ensure_scenario",
+        "broker.handshake_accept",
+        "broker.read",
+        "broker.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/broker_crystal.test.js",
+        "test/broker_process_crystal.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.cdp",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "cdp.frames_scenario",
+        "cdp.library_scenario",
+        "cdp.scenario",
+        "cdp.tabs_scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/browser/crystal_frames.test.js",
+        "test/browser/crystal_library.test.js",
+        "test/browser/crystal_tabs.test.js",
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.core",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "core.diff_blocks",
+        "core.find_block_with_text",
+        "core.fragment_scenario",
+        "core.history_scenario",
+        "core.identity_of",
+        "core.layout_scenario",
+        "core.live_cycle_scenario",
+        "core.media_scenario",
+        "core.more_scenario",
+        "core.navigation_scenario",
+        "core.remap_index",
+        "core.same_document_fragment",
+        "core.scenario",
+        "core.slider_target",
+        "core.snapshot_scenario",
+        "core.sole_block_containing",
+        "core.tab_scenario",
+        "core.view_blocks"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/browser/crystal_media.test.js",
+        "test/browser/crystal_views.test.js",
+        "test/browser/layout_order_crystal.test.js",
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.dbus",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "dbus.client_scenario",
+        "dbus.decode_message",
+        "dbus.encode_message",
+        "dbus.message_length",
+        "dbus.parse_address",
+        "dbus.split_signature",
+        "dbus.type_length"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.dump",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "dump.format_ax_blocks",
+        "dump.resolve_target"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.edb",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "edb.escape_html",
+        "edb.explain",
+        "edb.lines_to_html",
+        "edb.normalise_target",
+        "edb.open_bar",
+        "edb.routes_scenario",
+        "edb.tokens_to_html"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.edit",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "edit.action",
+        "edit.apply",
+        "edit.keys_for",
+        "edit.word_end",
+        "edit.word_start"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.endpoint",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "endpoint.free_port",
+        "endpoint.port_of",
+        "endpoint.read",
+        "endpoint.running",
+        "endpoint.write"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.firefox",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "firefox.actions_scenario",
+        "firefox.agent_request",
+        "firefox.default_profile",
+        "firefox.dump_scenario",
+        "firefox.fields_scenario",
+        "firefox.files_scenario",
+        "firefox.find",
+        "firefox.handle_scenario",
+        "firefox.installed_version",
+        "firefox.launch_preferences",
+        "firefox.launch_scenario",
+        "firefox.page_scenario",
+        "firefox.profile_last_version",
+        "firefox.require_compatible_profile",
+        "firefox.verified_session",
+        "firefox.write_profile_prefs"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/browser/crystal_actions.test.js",
+        "test/browser/crystal_fields.test.js",
+        "test/crystal_impl.js",
+        "test/firefox_dump_crystal.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.focus",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "focus.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/browser/crystal_focus.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.input",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "input.raw_probe",
+        "input.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js",
+        "test/input_crystal.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.interfaces",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "interfaces.bindings_for",
+        "interfaces.context_actions",
+        "interfaces.context_navigation_action",
+        "interfaces.key_policy",
+        "interfaces.lynx_hides_cursor",
+        "interfaces.name",
+        "interfaces.needs_layout_metadata",
+        "interfaces.profiles_for"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.key-wizard",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "key_wizard.rows",
+        "key_wizard.run"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.keys",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "keys.action_for",
+        "keys.actions_for",
+        "keys.assign",
+        "keys.config_path",
+        "keys.conflicts",
+        "keys.editing_action_for",
+        "keys.is_key",
+        "keys.name_for_sequence",
+        "keys.read_terminfo",
+        "keys.reset",
+        "keys.save",
+        "keys.sequences_for",
+        "keys.snapshot",
+        "keys.unbind"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js",
+        "test/keys.test.js",
+        "test/lynx_keymap.test.js",
+        "test/page_keyboard.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.layout",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "layout.lines",
+        "layout.spans_within",
+        "layout.wrap_with_offsets"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.layout-order",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "layout_order.order"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/layout_order_crystal.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.library",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "library.entry_line",
+        "library.matches",
+        "library.order_entries",
+        "library.relative_age",
+        "library.short_address",
+        "library.size_text"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/library_crystal.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.list-model",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "list_model.move",
+        "list_model.nearest",
+        "list_model.visible_entries"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/list_model_crystal.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.list-screen",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "list_screen.filter_hint",
+        "list_screen.filter_key",
+        "list_screen.filter_summary"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/list_screen_crystal.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.live",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "live.classify_scenario",
+        "live.create_state",
+        "live.real_scenario",
+        "live.refresh_due",
+        "live.watcher_scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.log",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "log.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/runtime_crystal.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.lynx-actions",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "lynx_actions.call"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.lynx-config",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "lynx_config.key_spec",
+        "lynx_config.parse_browse_map",
+        "lynx_config.parse_edit_map",
+        "lynx_config.parse_preferences",
+        "lynx_config.read"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.lynx-display",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "lynx_display.blocks",
+        "lynx_display.group_flows",
+        "lynx_display.group_table_rows",
+        "lynx_display.number_blocks",
+        "lynx_display.render_block",
+        "lynx_display.render_item",
+        "lynx_display.row_text"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.lynx-keymap",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "lynx_keymap.action_for_function",
+        "lynx_keymap.function_for_action",
+        "lynx_keymap.function_names",
+        "lynx_keymap.parse",
+        "lynx_keymap.serialise"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.lynx-number",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "lynx_number.parse",
+        "lynx_number.relative"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.lynx-options",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "lynx_options.model",
+        "lynx_options.screen"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.lynx-pages",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "lynx_pages.call"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.lynx-state",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "lynx_state.keymap",
+        "lynx_state.preferences"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.marionette",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "marionette.clear_automation",
+        "marionette.release_stranded"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.native",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "native.default_button",
+        "native.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.options",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "options.front_end_name",
+        "options.parse_edb",
+        "options.parse_reader"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.place",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "place.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.portal",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "portal.file_uri",
+        "portal.options",
+        "portal.request_path"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.reader",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "reader.draw"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js",
+        "test/lynx_display_crystal.test.js",
+        "test/lynx_options_screen_crystal.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.registry",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "registry.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.revision",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "revision.resolve"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/revision_crystal.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.runtime",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "runtime.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/runtime_crystal.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.screen",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "screen.patch_edited_line"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.screen-stack",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "pop",
+        "push",
+        "screen_stack.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/atspi.test.js",
+        "test/atspi_bus.js",
+        "test/browser/screen_stack_interactive.test.js",
+        "test/crystal_impl.js",
+        "test/dbus.test.js",
+        "test/dbus_crystal.test.js",
+        "test/library.test.js",
+        "test/native_prompt_crystal.test.js",
+        "test/screen_stack.test.js",
+        "test/screen_stack_crystal.test.js",
+        "test/version.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.session",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "session.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.settings",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "settings.path",
+        "settings.read",
+        "settings.split"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.startup",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "startup.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/runtime_crystal.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.transport",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "transport.websocket_round_trip"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.unicode",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "unicode.ascii_punctuation",
+        "unicode.escape",
+        "unicode.escaped_offset",
+        "unicode.present",
+        "unicode.present_offset"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "surface.dump-default",
+      "kind": "surface",
+      "javascript": [],
+      "crystal": [],
+      "surfaces": [
+        "dump"
+      ],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "surface.dump-lynx",
+      "kind": "surface",
+      "javascript": [],
+      "crystal": [],
+      "surfaces": [
+        "dump"
+      ],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "surface.edbrowse",
+      "kind": "surface",
+      "javascript": [],
+      "crystal": [],
+      "surfaces": [
+        "edb"
+      ],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "surface.interactive-default",
+      "kind": "surface",
+      "javascript": [],
+      "crystal": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
+      "id": "surface.interactive-lynx",
+      "kind": "surface",
+      "javascript": [],
+      "crystal": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    }
+  ]
+}

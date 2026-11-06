@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "parity-manifest.schema.json",
+  "title": "TAWB JavaScript/Crystal parity manifest",
+  "type": "object",
+  "required": ["version", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "description": { "type": "string" },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "id", "kind", "javascript", "crystal", "surfaces", "engines",
+        "views", "fixtures", "levels", "tests", "status", "differences"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
+        "kind": { "enum": ["asset", "module", "operation", "surface"] },
+        "javascript": { "$ref": "#/$defs/stringArray" },
+        "crystal": { "$ref": "#/$defs/stringArray" },
+        "operations": { "$ref": "#/$defs/stringArray" },
+        "surfaces": {
+          "type": "array",
+          "items": { "enum": ["interactive", "dump", "edb"] },
+          "uniqueItems": true
+        },
+        "engines": {
+          "type": "array",
+          "items": { "enum": ["chromium", "firefox"] },
+          "uniqueItems": true
+        },
+        "views": {
+          "type": "array",
+          "items": { "enum": ["ax", "page", "inspect", "source"] },
+          "uniqueItems": true
+        },
+        "fixtures": { "$ref": "#/$defs/stringArray" },
+        "levels": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "inventory", "asset-contract", "property", "operation",
+              "protocol-transcript", "real-browser", "terminal", "environment"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "tests": { "$ref": "#/$defs/stringArray" },
+        "status": {
+          "enum": [
+            "uncovered", "scripted-only", "single-engine", "single-surface",
+            "covered", "intentional-difference", "retired"
+          ]
+        },
+        "differences": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["owner", "rationale", "impact", "expiry"],
+            "additionalProperties": false,
+            "properties": {
+              "owner": { "type": "string", "minLength": 1 },
+              "rationale": { "type": "string", "minLength": 1 },
+              "impact": { "type": "string", "minLength": 1 },
+              "expiry": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}
