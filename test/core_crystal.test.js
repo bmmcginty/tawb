@@ -704,6 +704,7 @@ if (implementations.length > 1) {
   test('Crystal follows navigation and load state across a scripted page', async () => {
     const server = http.createServer();
     const sockets = new Set();
+    const sent = [];
     const remote = (value) => {
       if (value === undefined) return { type: 'undefined' };
       if (value === null) return { type: 'null' };
@@ -722,6 +723,7 @@ if (implementations.length > 1) {
       const event = (method, params) => peer.send(JSON.stringify({ type: 'event', method, params }));
       peer = acceptWebSocket(request, socket, (text) => {
         const message = JSON.parse(text);
+        sent.push(message);
         let result = {};
         if (message.method === 'browsingContext.navigate') {
           result = { navigation: 'nav-1', url: 'https://next.test/deep' };
@@ -747,6 +749,13 @@ if (implementations.length > 1) {
     const { port } = server.address();
     try {
       const observed = await crystal.navigationScenario(`ws://127.0.0.1:${port}/session`);
+      const subscription = sent.find(({ method }) => method === 'session.subscribe');
+      assert.deepEqual(subscription.params.events, [
+        'browsingContext.load',
+        'browsingContext.domContentLoaded',
+        'browsingContext.fragmentNavigated',
+        'browsingContext.navigationStarted',
+      ], 'the default subscription must follow a load, a DOM-ready, a fragment, and a start');
       assert.deepEqual(observed, {
         goto: 'https://next.test/deep',
         // The navigate command already waited for this document. Its queued

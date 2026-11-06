@@ -77,10 +77,10 @@ function copyBinary(destination) {
   fs.chmodSync(destination, 0o755);
 }
 
-function run(found, executable) {
+function run(found, executable, extraEnv = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, ['--update'], {
-      env: { ...process.env, TAWB_UPDATE_API: found.api },
+      env: { ...process.env, TAWB_UPDATE_API: found.api, ...extraEnv },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -169,6 +169,28 @@ test('a read-only binary still reports the update, then fails without changing i
     assert.match(result.stderr, /cannot update .*not writable/);
     assert.deepEqual(fs.readFileSync(executable), before);
     assert.deepEqual(tempFiles(root), []);
+  });
+
+test('a replacement the filesystem refuses leaves the old binary and no temp file',
+  { skip }, async (t) => {
+    const root = tempDir('tawb-update-replace-');
+    t.after(() => removeTempDir(root));
+    const found = await releaseFor(nextTag, Buffer.from('replacement that will not land\n'));
+    t.after(() => new Promise((resolve) => found.server.close(resolve)));
+
+    const executable = path.join(root, 'tawb');
+    copyBinary(executable);
+    const before = fs.readFileSync(executable);
+
+    const result = await run(found, executable, { TAWB_UPDATE_FAIL_REPLACE: '1' });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout, new RegExp(`Update available: ${nextVersion}`));
+    assert.match(result.stderr, /could not replace .*rename failed/);
+    assert.deepEqual(fs.readFileSync(executable), before,
+      'a refused replacement changed the binary it could not install');
+    assert.deepEqual(tempFiles(root), [],
+      'a refused replacement left its temporary file behind');
   });
 
 test('a bad digest fails and leaves neither the old binary changed nor a temp file',

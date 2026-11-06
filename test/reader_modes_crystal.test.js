@@ -104,6 +104,23 @@ test('typing sends the key and reads the field back', { skip: needsCrystal }, as
   assert.ok(result.results[0].writes.length > 0, 'the field row was rewritten');
 });
 
+test('a write during a browser edit makes the typed row use an absolute start',
+  { skip: needsCrystal }, async () => {
+    // Browser editing is asynchronous, so a refresh or a prompt can write to
+    // the terminal between the keystroke and the field read. The caret the
+    // patch started from is then no longer on screen, and a relative move
+    // would land in the wrong column.
+    const state = typingState(SEARCH, 'hello', 5, '[Search: hello]', {}, {
+      typedFields: [{ text: 'hellox', caret: 6, native: true }],
+      typedFieldWrites: true,
+    });
+    const result = await runBoth('write during typing', state, [
+      { op: 'typeKey', chunk: 'x' },
+    ], { url: PAGE_URL });
+    assert.match(result.results[0].writes.at(-1), /^\x1b\[\d+;\d+H/,
+      'a stale caret was used for a relative typed-row rewrite');
+  });
+
 test('a backspace goes to the browser as the editing key it is', { skip: needsCrystal }, async () => {
   const state = typingState(SEARCH, 'hello', 5, '[Search: hello]', {}, {
     typedFields: [{ text: 'hell', caret: 4, native: true }],

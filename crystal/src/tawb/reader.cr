@@ -482,6 +482,11 @@ module Tawb
       property typed_fields : Array(JSON::Any)
       property typed_field_reads : Int32
       property typing_released : Bool
+      # A scripted terminal write between the keystroke and the field read,
+      # so the conformance harness can exercise the stale-generation branch
+      # in the typed-row patch deterministically.
+      property scripted_output : Screen::Output?
+      property typed_field_writes : Bool
       property adjust_outcome : JSON::Any?
       property adjust_failure : JSON::Any?
       property no_more_to_load : Bool
@@ -539,6 +544,8 @@ module Tawb
         @typed_fields = [] of JSON::Any
         @typed_field_reads = 0
         @typing_released = false
+        @scripted_output = nil
+        @typed_field_writes = false
         @adjust_outcome = nil
         @adjust_failure = nil
         @no_more_to_load = false
@@ -749,6 +756,14 @@ module Tawb
 
       def read_typing_field : JSON::Any?
         @typed_field_reads += 1
+        # A browser edit is asynchronous: a live refresh can put a write on
+        # the terminal between the keystroke and this read. The harness can
+        # reproduce that ordering without racing a real refresh.
+        if @typed_field_writes
+          @scripted_output.try do |output|
+            Screen.patch_edited_line(output, 1, "same", "same", 1, 2)
+          end
+        end
         fields = @typed_fields
         return nil if fields.empty?
         index = Math.min(@typed_field_reads - 1, fields.size - 1)

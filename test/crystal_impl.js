@@ -1304,6 +1304,12 @@ function readerImplementations(index, keysModule) {
       async dropFocusDestination() {},
       async readTypingField() {
         this.typingReads = (this.typingReads ?? 0) + 1;
+        // A browser edit is asynchronous: a live refresh or a prompt may put
+        // a write on the terminal between the keystroke and this read. The
+        // harness can reproduce that ordering deterministically.
+        if (spec.core?.typedFieldWrites) {
+          index.patchEditedLine(1, 'same', 'same', { currentCol: 1, finalCol: 2 });
+        }
         const fields = spec.core?.typedFields ?? [];
         if (!fields.length) return null;
         return fields[Math.min(this.typingReads - 1, fields.length - 1)];

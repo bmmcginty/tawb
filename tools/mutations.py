@@ -38,6 +38,30 @@ MUTATIONS = {
         'summary': 'repaint the list without resetting the terminal scroll region',
         'build': True,
     },
+    'frame-target-top': {
+        'summary': 'press a hidden frame control in the tab\'s top document instead of its own',
+        'build': True,
+    },
+    'navigation-subscription': {
+        'summary': 'stop subscribing to and following the load navigation event',
+        'build': True,
+    },
+    'early-status-fallback': {
+        'summary': 'paint the link fallback at the start of an action instead of after it',
+        'build': True,
+    },
+    'keymap-action': {
+        'summary': 'drop the next-line action from the browse keymap dispatch',
+        'build': True,
+    },
+    'update-rename-failure': {
+        'summary': 'report a failed update replacement as a completed install',
+        'build': True,
+    },
+    'typed-row-generation': {
+        'summary': 'keep the old caret column after a write invalidated the typed-row patch',
+        'build': True,
+    },
 }
 
 
@@ -92,8 +116,12 @@ def handle_dispose(root):
     replace(
         root,
         'crystal/src/tawb/firefox_driver.cr',
-        '        @session.command("script.disown", {\n',
-        '        @session.command("script.disown-disabled", {\n',
+        '''        @session.command("script.disown", {
+          "handles" => JSON::Any.new([JSON::Any.new(@handle)]),
+          "target"  => JSON::Any.new({"context" => JSON::Any.new(@context_id)}),
+        })
+''',
+        '        # mutation: the held element is never disowned\n',
     )
 
 
@@ -106,6 +134,68 @@ def scroll_region_reset(root):
     )
 
 
+def frame_target_top(root):
+    replace(
+        root,
+        'crystal/src/tawb/actions.cr',
+        '      frame = page.frame_for(frame_id)\n',
+        '      frame = page.frame_for(page.document_id)\n',
+    )
+
+
+def navigation_subscription(root):
+    replace(
+        root,
+        'crystal/src/tawb/firefox_driver.cr',
+        '      "browsingContext.load",\n',
+        '',
+    )
+
+
+def early_status_fallback(root):
+    replace(
+        root,
+        'crystal/src/tawb/reader_keys.cr',
+        '      Reader.note_input(state)\n      actions = mode_actions(output, page.url, keyboard)\n',
+        '      Reader.note_input(state)\n      Reader.draw_status(output, state, page.url)\n'
+        '      actions = mode_actions(output, page.url, keyboard)\n',
+    )
+
+
+def keymap_action(root):
+    replace(
+        root,
+        'crystal/src/tawb/keys.cr',
+        '              @sequence_actions[sequence] = action.id if keyboards.includes?("browse")\n',
+        '              @sequence_actions[sequence] = action.id '
+        'if keyboards.includes?("browse") && action.id != "next-line"\n',
+    )
+
+
+def update_rename_failure(root):
+    replace(
+        root,
+        'crystal/src/tawb/update.cr',
+        '''        unless replace_installed(temporary_path, target)
+          raise Error.new("could not replace #{target}: the rename failed")
+        end
+        installed = true
+''',
+        '''        replace_installed(temporary_path, target)
+        installed = true
+''',
+    )
+
+
+def typed_row_generation(root):
+    replace(
+        root,
+        'crystal/src/tawb/reader_keys.cr',
+        '        current_col: output.generation == output_generation ? old_caret_col : nil,\n',
+        '        current_col: old_caret_col,\n',
+    )
+
+
 APPLY = {
     'privileged-media': privileged_media,
     'native-control-field': native_control_field,
@@ -113,6 +203,12 @@ APPLY = {
     'browser-discovery': browser_discovery,
     'handle-dispose': handle_dispose,
     'scroll-region-reset': scroll_region_reset,
+    'frame-target-top': frame_target_top,
+    'navigation-subscription': navigation_subscription,
+    'early-status-fallback': early_status_fallback,
+    'keymap-action': keymap_action,
+    'update-rename-failure': update_rename_failure,
+    'typed-row-generation': typed_row_generation,
 }
 
 

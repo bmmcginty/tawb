@@ -277,6 +277,22 @@ test('where says where the reader is, and only until they move', { skip: needsCr
   assert.deepEqual(moved.state.messages, ['line 2/3, column 3 — button.']);
 });
 
+test('a keystroke does not paint the link fallback before its action finishes',
+  { skip: needsCrystal }, async () => {
+    // The status row was cleared at key-down. The link under the cursor must
+    // not be painted as an intermediate answer before the action has had its
+    // chance to write the real one: that flash is what a screen reader and a
+    // braille display hear as two separate messages.
+    const state = stateFor(BUTTONS, {
+      cursor: 2, statusMsg: 'Previous message', drawn: { status: 'Previous message' },
+    });
+    const result = await runBoth('no early fallback', state, [
+      { op: 'browseKey', chunk: '2' },
+    ], { url: PAGE_URL });
+    assert.deepEqual(result.results[0].writes, [],
+      'a link fallback was painted before the action finished');
+  });
+
 test('the toggles answer with their own state', { skip: needsCrystal }, async () => {
   const state = stateFor(BUTTONS);
   const live = await runBoth('live', { ...state, keys: bound('toggle-live', 'L') }, [

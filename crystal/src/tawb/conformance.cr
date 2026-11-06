@@ -2062,6 +2062,7 @@ module Tawb
       (object["actions"]?.try(&.as_a?) || [] of JSON::Any).each do |step_value|
         action = step_value.as_h
         output = RecordingScreen.new
+        state.core.as(Reader::CoreState).scripted_output = output
         current_page = state.tabs.try(&.current_page) || page
         value = reader_action(output, state, action, current_page.url,
           current_page.as(ScriptedPage))
@@ -2192,6 +2193,7 @@ module Tawb
         if typed = core["typedFields"]?.try(&.as_a?)
           scripted.typed_fields = typed
         end
+        scripted.typed_field_writes = core["typedFieldWrites"]?.try(&.as_bool?) || false
         if outcome = scripted_value(core, "adjustOutcome")
           scripted.adjust_outcome = outcome
         end

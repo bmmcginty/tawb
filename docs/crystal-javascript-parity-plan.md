@@ -548,22 +548,29 @@ Implemented and verified caught:
 - `live-refresh-guard`: allow a live refresh while another is already running;
 - `browser-discovery`: omit the live-update browser differential from the
   discovered suite;
-- `handle-dispose`: stop disowning the element handle an action held;
+- `handle-dispose`: omit the disown that releases the element handle an action
+  held;
 - `scroll-region-reset`: repaint the list without resetting the terminal scroll
-  region.
+  region;
+- `frame-target-top`: press a control hidden in a child frame against the tab's
+  top document instead;
+- `navigation-subscription`: stop subscribing to and following the load
+  navigation event;
+- `early-status-fallback`: paint the link fallback at the start of a browse
+  action instead of after it finishes;
+- `keymap-action`: remove the `next-line` action from the browse keymap
+  dispatch;
+- `typed-row-generation`: keep using the old caret column after a concurrent
+  write invalidated the typed-row patch;
+- `update-rename-failure`: report a failed replacement as a completed install.
+  The local release-server seam `TAWB_UPDATE_FAIL_REPLACE` reaches the rename
+  failure after every earlier check has passed; a read-only binary alone stops
+  at the writability check and never exercises it.
 
-Still to wire, each with the gate it must break:
-
-- change a frame target to the top document;
-- omit handle disposal;
-- suppress one navigation event subscription;
-- make a status fallback paint before an action finishes;
-- disable the live-generation check used by typed-row patching;
-- ignore a non-zero update rename failure. This one already survived a first
-  attempt: the read-only update test fails at the writability check, so the
-  rename is never reached. It needs a seam that injects a failing replacement
-  before it can be a mutation;
-- remove one action from a keymap dispatch.
+The navigation, typed-row, and replacement cases needed contract tests before
+they could catch their mutations: the default subscription list is asserted on
+the wire, a scripted concurrent terminal write forces the typed-row patch to
+choose its absolute start, and the update test injects a refused replacement.
 
 Run a rotating subset on ordinary CI and the full mutation set before a
 retirement milestone. A mutation that survives identifies a real coverage gap.
@@ -795,7 +802,7 @@ behavioural bugs by itself.
   fails when its mutation is applied; survivors are reported by name and the
   script exits non-zero. Run a rotating subset in ordinary CI and the full set
   before a retirement milestone.
-- [ ] Extend the mutation set to the remaining named regressions in "Mutation
+- [x] Extend the mutation set to the remaining named regressions in "Mutation
   tests for the parity suite".
 
 ### P1: failure, race, and cleanup

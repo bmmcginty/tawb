@@ -96,7 +96,47 @@ run_gate() {
           TAWB_SKIP_BUILD=1 TAWB_TEST_CRYSTAL=1 \
           TAWB_CRYSTAL_BIN="$work/bin/tawb" \
           tools/test_crystal.sh test/reader_crystal.test.js )
-      ;;    *)
+      ;;
+    frame-target-top)
+      ( cd "$work" && env \
+          TAWB_SKIP_BUILD=1 TAWB_TEST_CRYSTAL=1 \
+          TAWB_CRYSTAL_BIN="$work/bin/tawb" \
+          tools/test_crystal.sh test/firefox_handle_crystal.test.js )
+      ;;
+    navigation-subscription)
+      ( cd "$work" && env \
+          TAWB_SKIP_BUILD=1 TAWB_TEST_CRYSTAL=1 \
+          TAWB_CRYSTAL_BIN="$work/bin/tawb" \
+          tools/test_crystal.sh --test-name-pattern='Crystal follows navigation' \
+            test/core_crystal.test.js )
+      ;;
+    early-status-fallback)
+      ( cd "$work" && env \
+          TAWB_SKIP_BUILD=1 TAWB_TEST_CRYSTAL=1 \
+          TAWB_CRYSTAL_BIN="$work/bin/tawb" \
+          tools/test_crystal.sh test/reader_browse_crystal.test.js )
+      ;;
+    keymap-action)
+      ( cd "$work" && env \
+          TAWB_SKIP_BUILD=1 TAWB_TEST_CRYSTAL=1 \
+          TAWB_CRYSTAL_BIN="$work/bin/tawb" \
+          tools/test_crystal.sh test/keys_crystal.test.js )
+      ;;
+    update-rename-failure)
+      ( cd "$work" && env \
+          TAWB_SKIP_BUILD=1 TAWB_TEST_CRYSTAL=1 \
+          TAWB_CRYSTAL_BIN="$work/bin/tawb" \
+          tools/test_crystal.sh --test-name-pattern='replacement the filesystem refuses' \
+            test/update_crystal.test.js )
+      ;;
+    typed-row-generation)
+      ( cd "$work" && env \
+          TAWB_SKIP_BUILD=1 TAWB_TEST_CRYSTAL=1 \
+          TAWB_CRYSTAL_BIN="$work/bin/tawb" \
+          tools/test_crystal.sh --test-name-pattern='write during a browser edit' \
+            test/reader_modes_crystal.test.js )
+      ;;
+    *)
       echo "test_mutations: no gate for $name" >&2
       return 2
       ;;

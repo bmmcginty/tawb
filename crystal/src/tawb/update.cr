@@ -257,12 +257,29 @@ module Tawb
             "#{asset.name} failed its SHA-256 check: expected #{expected}, got #{actual}")
         end
         File.chmod(temporary_path, info.permissions)
-        File.rename(temporary_path, target)
+        unless replace_installed(temporary_path, target)
+          raise Error.new("could not replace #{target}: the rename failed")
+        end
         installed = true
       ensure
         temporary.close unless temporary.closed?
         File.delete?(temporary_path) unless installed
       end
+    end
+
+    # The last step of an install is the one a filesystem can refuse after
+    # every earlier check has passed: another process may hold the target, the
+    # directory may become read-only, or a rename may cross a boundary that no
+    # longer permits it. Keep that answer explicit rather than treating a
+    # failed replacement as success. TAWB_UPDATE_FAIL_REPLACE lets the local
+    # release-server test reach the failure deterministically; production
+    # never sets it.
+    private def self.replace_installed(source : String, target : String) : Bool
+      return false if ENV["TAWB_UPDATE_FAIL_REPLACE"]? == "1"
+      File.rename(source, target)
+      true
+    rescue File::Error
+      false
     end
 
     private def self.sha256(path : String) : String
