@@ -2592,13 +2592,30 @@
       "crystal": [
         "crystal/src/tawb/views.cr"
       ],
-      "surfaces": [],
-      "engines": [],
-      "views": [],
-      "fixtures": [],
-      "levels": [],
-      "tests": [],
-      "status": "uncovered",
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "chromium",
+        "firefox"
+      ],
+      "views": [
+        "ax",
+        "page",
+        "inspect",
+        "source"
+      ],
+      "fixtures": [
+        "content-coverage"
+      ],
+      "levels": [
+        "real-browser",
+        "operation"
+      ],
+      "tests": [
+        "test/browser/crystal_views.test.js"
+      ],
+      "status": "single-surface",
       "differences": []
     },
     {

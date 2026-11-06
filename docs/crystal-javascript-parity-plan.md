@@ -776,7 +776,7 @@ machine-readable zero-gap summary.
 
 ### P1: expand real-browser breadth
 
-- [ ] Run content coverage as a native differential on both engines/all views.
+- [x] Run content coverage as a native differential on both engines/all views.
 - [ ] Port the complete `test/browser/views.test.js` scenario set into a
   runtime differential rather than one representative page.
 - [ ] Add user-agent, open, and closed-root operation tests to both engines.

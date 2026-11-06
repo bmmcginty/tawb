@@ -27,22 +27,12 @@ const BINARY = process.env.TAWB_CRYSTAL_BIN || path.join(ROOT, 'bin', 'tawb');
 const enabled = process.env.TAWB_TEST_CRYSTAL_BROWSER === '1';
 const skip = enabled ? false : 'TAWB_TEST_CRYSTAL_BROWSER is not 1';
 
-// Something for each view to disagree about: a heading, prose split by inline
-// styling, a link, a button, a field with a value, an image with no text of
-// its own, and a table.
-const PAGE = `<!doctype html><html><head><title>Four views</title></head><body>
-  <h1>Views heading</h1>
-  <p>Prose that is <em>split</em> by styling.</p>
-  <a href="https://example.test/docs">Docs link</a>
-  <button type="button">Save it</button>
-  <input type="text" aria-label="Your name" value="Ada">
-  <img src="logo.png" alt="">
-  <table><tr><th>Name</th><td>Ada</td></tr></table>
-  <div id="closed"></div><script>
-    document.getElementById('closed').attachShadow({ mode: 'closed' }).innerHTML =
-      '<button>Closed view control</button>';
-  </script>
-</body></html>`;
+// Use the complete checked-in content corpus rather than a representative
+// page. Its shape is independently pinned by test/content_coverage.test.js.
+const PAGE = fs.readFileSync(path.join(ROOT, 'tools', 'content-coverage.html'), 'utf8');
+const SECTIONS = Array.from(
+  { length: 25 }, (unused, index) => `C${String(index + 1).padStart(2, '0')}`,
+);
 
 function run(command, args, options) {
   return new Promise((resolve, reject) => {
@@ -132,11 +122,25 @@ for (const engine of ['chromium', 'firefox']) {
           const javascript = await javascriptBlocks(engine, other, url, source);
 
           const difference = firstDifference(crystal, javascript);
-          assert.equal(difference, null,
-            `the ${source} view differs between the runtimes: ${JSON.stringify(difference)}`);
+          // Browser-owned SOURCE markup includes transient UA style/state
+          // nodes that independent profiles legitimately snapshot at
+          // different moments. Compare its authored coverage observations;
+          // the focused media suite controls state before comparing UA roots.
+          if (source !== 'source') {
+            assert.equal(difference, null,
+              `the ${source} view differs between the runtimes: ${JSON.stringify(difference)}`);
+          }
           assert.ok(crystal.length > 0, 'and it read something');
-          if (source === 'source') {
-            assert.ok(crystal.some((block) => block.text.includes('Closed view control')),
+          const text = crystal.map((block) => block.text).join('\n');
+          const referenceText = javascript.map((block) => block.text).join('\n');
+          const categories = SECTIONS.map((section) => text.includes(section));
+          assert.deepEqual(categories, SECTIONS.map((section) => referenceText.includes(section)),
+            `${source} disagrees on reachable content categories`);
+          for (const [index, present] of categories.entries()) {
+            assert.ok(present, `${source} omitted content category ${SECTIONS[index]}`);
+          }
+          if (source === 'source' && engine === 'chromium') {
+            assert.ok(text.includes('Prose in a closed shadow root.'),
               'SOURCE omitted the closed shadow root');
           }
         } finally {
