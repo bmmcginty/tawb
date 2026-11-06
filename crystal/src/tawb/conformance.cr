@@ -4568,6 +4568,13 @@ module Tawb
           when "locate_element"
             observations.push(Actions.locate_element(handle.not_nil!, step["array"].as_s) ||
               JSON::Any.new(nil))
+          when "load_more_assets"
+            core = Core.new(page: acting)
+            observations.push(core.ask_for_more)
+          when "fragment_asset"
+            core = Core.new(page: acting)
+            core.blocks = step["blocks"].as_a.map { |text| Core::Block.new(text.as_s) }
+            observations.push(JSON::Any.new(core.block_at_fragment(step["hash"].as_s).to_i64))
           when "adjust_control"
             observations.push(Actions.adjust_control(handle.not_nil!,
               step["role"]?.try(&.as_s?), step["key"].as_s))

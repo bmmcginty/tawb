@@ -719,15 +719,23 @@
       "crystal": [
         "crystal/assets/restore_scroll.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-page-utilities"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -739,15 +747,23 @@
       "crystal": [
         "crystal/assets/scroll_to_bottom.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-page-utilities"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -863,15 +879,23 @@
       "crystal": [
         "crystal/assets/text_at_fragment.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-page-utilities"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []

@@ -3501,6 +3501,19 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, Firefox
           case 'locate_element':
             observations.push(await handle.evaluate(locateElement, step.array));
             break;
+          case 'load_more_assets': {
+            const { Core } = require('../src/core');
+            const core = new Core({ driver: {}, page: acting, source: 'ax', sources: ['ax'] });
+            observations.push(await core.askForMore());
+            break;
+          }
+          case 'fragment_asset': {
+            const { Core } = require('../src/core');
+            const core = new Core({ driver: {}, page: acting, source: 'ax', sources: ['ax'] });
+            core.blocks = step.blocks.map((text) => ({ text }));
+            observations.push(await core.blockAtFragment(step.hash));
+            break;
+          }
           case 'adjust_control': {
             const { Core } = require('../src/core');
             const core = new Core({ driver: {}, page: acting, source: 'ax', sources: ['ax'] });

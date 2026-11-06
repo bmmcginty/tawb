@@ -15,7 +15,10 @@ const {
   toRemoteArgument,
 } = require('../src/driver_firefox');
 const { clickThrough, prepareRealClick, submitsAutofilled } = require('../src/click');
-const { readFieldState, readFieldStateInPage, sliderStateOf } = require('../src/core');
+const {
+  readFieldState, readFieldStateInPage, sliderStateOf,
+  SCROLL_TO_BOTTOM, RESTORE_SCROLL, TEXT_AT_FRAGMENT,
+} = require('../src/core');
 const { describeElement, locateElement } = require('../src/place');
 const { extractSource } = require('../src/source_html');
 const { extractForEdbrowse, resolveDescriptor } = require('../src/edb_page');
@@ -42,6 +45,9 @@ const { bidiCallFunctionTrace } = require('./parity/protocol-trace-v1');
 // parity-id: asset.slider-state
 // parity-id: asset.describe-element
 // parity-id: asset.locate-element
+// parity-id: asset.scroll-to-bottom
+// parity-id: asset.restore-scroll
+// parity-id: asset.text-at-fragment
 
 async function withEndpoint(onMessage, run) {
   const server = http.createServer();
@@ -741,6 +747,71 @@ test('both runtimes describe and relocate a held element in its frame', async ()
     assert.deepEqual(disposed.params, {
       handles: ['place-handle'], target: { context: 'place-frame' },
     }, label);
+  }
+});
+
+test('both runtimes invoke load-more and fragment assets on the acting page', async () => {
+  const implementations = firefoxHandleImplementations({
+    bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard, pierceAndRun,
+    clickThrough, prepareRealClick, submitsAutofilled,
+  });
+  const assets = [
+    { fn: SCROLL_TO_BOTTOM, marker: 'SCROLL_TO_BOTTOM' },
+    { fn: RESTORE_SCROLL, marker: 'RESTORE_SCROLL' },
+    { fn: TEXT_AT_FRAGMENT, marker: 'TEXT_AT_FRAGMENT' },
+  ];
+  for (const implementation of implementations) {
+    const received = [];
+    const isAsset = (source, asset) => source === asset.fn.toString()
+      || source.includes(`Generated from src/core.js ${asset.marker};`);
+    const observations = await withEndpoint((message, peer) => {
+      received.push(message);
+      let result = {};
+      if (message.method === 'session.new') result = { sessionId: 'session-1' };
+      if (message.method === 'script.callFunction') {
+        const source = message.params.functionDeclaration;
+        let value;
+        if (isAsset(source, assets[0])) {
+          value = { type: 'object', value: [
+            ['elements', { type: 'number', value: 14 }],
+            ['scrollable', { type: 'boolean', value: false }],
+            ['moved', { type: 'boolean', value: false }],
+            ['target', { type: 'string', value: 'nothing' }],
+          ] };
+        } else if (isAsset(source, assets[1])) {
+          value = { type: 'boolean', value: true };
+        } else if (isAsset(source, assets[2])) {
+          value = { type: 'string', value: 'Target words' };
+        } else {
+          value = { type: 'null' };
+        }
+        result = { type: 'success', result: value };
+      }
+      peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+    }, (url) => implementation.handleScenario(url, [
+      { op: 'frame', context: 'utility-frame', url: 'https://utility.test/' },
+      { op: 'load_more_assets' },
+      { op: 'fragment_asset', hash: 'main-content', blocks: ['Before', 'Target words here'] },
+    ]));
+    const label = implementation.name;
+    assert.deepEqual(observations, [
+      null,
+      { grew: false, scrollable: false, moved: false, target: 'nothing' },
+      1,
+    ], label);
+
+    const calls = received.filter(({ method }) => method === 'script.callFunction');
+    const traces = assets.map((asset) => calls
+      .filter(({ params }) => isAsset(params.functionDeclaration, asset))
+      .map(bidiCallFunctionTrace));
+    assert.deepEqual(traces.map((entries) => entries.length), [1, 1, 1], label);
+    for (const trace of traces.flat()) {
+      assert.deepEqual(trace.target, { context: 'utility-frame' }, label);
+    }
+    assert.deepEqual(traces[0][0].arguments, [], `${label} scroll arguments`);
+    assert.deepEqual(traces[1][0].arguments, [], `${label} restore arguments`);
+    assert.deepEqual(traces[2][0].arguments,
+      [{ type: 'string', value: 'main-content' }], `${label} fragment arguments`);
   }
 });
 
