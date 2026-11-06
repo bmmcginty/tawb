@@ -7,7 +7,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const REPORTER = path.join(__dirname, '..', 'tools', 'fail_on_skips_reporter.js');
+const ROOT = path.join(__dirname, '..');
+const REPORTER = path.join(ROOT, 'tools', 'fail_on_skips_reporter.js');
+const BROWSER_RUNNER = path.join(ROOT, 'tools', 'test_crystal_browser.sh');
 
 function reporterRun(source) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tawb-parity-reporter-'));
@@ -28,6 +30,11 @@ function reporterRun(source) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 }
+
+test('the browser gate gives Node an absolute reporter path', () => {
+  const runner = fs.readFileSync(BROWSER_RUNNER, 'utf8');
+  assert.match(runner, /--test-reporter="\$ROOT\/tools\/fail_on_skips_reporter\.js"/);
+});
 
 test('the parity reporter leaves a complete run successful', () => {
   const result = reporterRun("require('node:test')('complete', () => {});\n");

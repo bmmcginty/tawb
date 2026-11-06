@@ -56,7 +56,7 @@ fi
 # into a failing parity gate.
 exec tools/run_isolated.sh node --test --test-concurrency=1 \
   --test-reporter=spec \
-  --test-reporter=tools/fail_on_skips_reporter.js \
+  --test-reporter="$ROOT/tools/fail_on_skips_reporter.js" \
   --test-reporter-destination=stdout \
   --test-reporter-destination=stderr \
   "$@"
