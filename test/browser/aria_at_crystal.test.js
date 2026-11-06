@@ -164,3 +164,77 @@ for (const engine of ['chromium', 'firefox']) {
       }
     });
 }
+
+// The web-platform-tests gate reads many pages through one native scan, and
+// compares the native items with the expectations the page marks in its own
+// markup. The collection script runs in the document the native extraction
+// read, so an axIndex has to name the same element on both sides for a case to
+// be judged at all.
+const COLLECT = () => {
+  const nodes = window[Symbol.for('tweb.ax')] || [];
+  const el = document.querySelector('#toggle');
+  return [{ index: nodes.indexOf(el), tag: el.tagName.toLowerCase() }];
+};
+
+for (const engine of ['chromium', 'firefox']) {
+  test(`the batch scan used by the WPT gate agrees with the JavaScript tree through ${engine}`,
+    { skip }, async () => {
+      const root = tempDir(`tawb-aria-scan-${engine}-`);
+      const native = path.join(root, 'native');
+      const other = path.join(root, 'javascript');
+      const fixture = path.join(root, 'toggle.html');
+      fs.writeFileSync(fixture, PAGE);
+      const url = `file://${fixture}`;
+      const env = {
+        ...process.env,
+        HOME: path.join(root, 'home'),
+        XDG_CONFIG_HOME: path.join(root, 'config'),
+        XDG_DATA_HOME: path.join(root, 'data'),
+        XDG_CACHE_HOME: path.join(root, 'cache'),
+      };
+      fs.mkdirSync(env.HOME, { recursive: true });
+      try {
+        const launched = await run(BINARY, [
+          '--dump', '--keep-browser', '--browser', engine, '--profile', native, url,
+        ], { cwd: ROOT, env });
+        assert.equal(launched.status, 0, launched.stderr);
+        const endpoint = engine === 'firefox'
+          ? ''
+          : `http://127.0.0.1:${portFrom(native)}`;
+        const scanned = await callAsync('aria.scan', {
+          endpoint, engine, profile: native, urls: [url], collect: COLLECT.toString(),
+        }, { timeoutMs: 120000 });
+        assert.equal(scanned.length, 1);
+        assert.equal(scanned[0].url, url);
+
+        const driver = await openDriver({ engine, profile: other, log: () => {} });
+        let items;
+        let cases;
+        try {
+          const page = driver.context.pages()[0] || await driver.context.newPage();
+          await page.goto(url, { waitUntil: 'domcontentloaded' });
+          const core = new Core({ driver, page, source: 'ax', sources: ['ax'] });
+          items = (await core.rescan({ page })).map((block) => ({
+            axIndex: block.item?.axIndex ?? null,
+            role: block.item?.role ?? null,
+            name: block.item?.name ?? null,
+          }));
+          cases = await page.evaluate(COLLECT);
+        } finally {
+          await driver.close().catch(() => {});
+        }
+        assert.deepEqual(scanned[0].items, items);
+        assert.deepEqual(scanned[0].cases, cases);
+        const toggle = cases.find((entry) => entry.tag === 'a');
+        assert.ok(toggle && toggle.index >= 0, 'the toggle did not name a scanned element');
+        const item = scanned[0].items.find((entry) => entry.axIndex === toggle.index);
+        assert.ok(item, 'the collected index named no scanned item');
+        assert.equal(item.role, 'button');
+        assert.equal(item.name, 'Mute');
+      } finally {
+        killProfile(native);
+        killProfile(other);
+        removeTempDir(root);
+      }
+    });
+}

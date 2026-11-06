@@ -550,6 +550,8 @@ module Tawb
         cdp_library_scenario(payload)
       when "core.view_blocks"
         core_view_blocks(payload)
+      when "aria.scan"
+        aria_scan(payload)
       when "aria.scenario"
         aria_scenario(payload)
       when "core.layout_scenario"
@@ -4206,6 +4208,75 @@ module Tawb
         kept[name] = object[name] if object.has_key?(name)
       end
       JSON::Any.new(kept)
+    end
+
+    # The accessible names and roles of many pages, read by the native
+    # extraction. The web-platform-tests pages mark the element under test in
+    # the markup, so the expectations travel with the page and the same batch
+    # is judged whichever tree produced the answer. One browser serves the
+    # whole batch, and each page's own collect script runs in the document
+    # the extraction just read, which is what makes an axIndex comparable.
+    private def self.aria_scan(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      urls = object["urls"].as_a.map(&.as_s)
+      collect = object["collect"]?.try(&.as_s?)
+      chromium = object["engine"]?.try(&.as_s?) != "firefox"
+      session = nil.as(Engine::Session?)
+      page = nil.as(Engine::Page?)
+      begin
+        if chromium
+          opened = Cdp::BrowserSession.new(object["endpoint"].as_s)
+          session = opened
+          page = opened.create_page
+        else
+          profile = object["profile"].as_s
+          started = FirefoxLaunch.launch(profile)
+          opened = FirefoxDriver::BrowserSession.new(
+            Broker.ensure(profile, started.endpoint)[:url])
+          session = opened
+          opened.start
+          page = opened.create_page
+        end
+        acting = page.not_nil!
+        entries = urls.map do |url|
+          items = [] of JSON::Any
+          cases = JSON::Any.new([] of JSON::Any)
+          begin
+            acting.goto(url, "domcontentloaded")
+            Dump.settle_embedded_frames(acting)
+            Core.new(source: "ax", page: acting).rescan.each do |block|
+              item = block.item.as_h?
+              next unless item
+              items << JSON::Any.new({
+                "axIndex" => item["axIndex"]? || JSON::Any.new(nil),
+                "role"    => item["role"]? || JSON::Any.new(nil),
+                "name"    => item["name"]? || JSON::Any.new(nil),
+              })
+            end
+            cases = acting.evaluate(collect) if collect
+          rescue
+            # A page that cannot be read contributes no items rather than
+            # failing the rest of the batch; the judge reports it as a miss.
+          end
+          JSON::Any.new({
+            "url"   => JSON::Any.new(url),
+            "items" => JSON::Any.new(items),
+            "cases" => cases,
+          })
+        end
+        JSON::Any.new(entries)
+      ensure
+        page.try { |held| held.close rescue nil }
+        session.try do |held|
+          case held
+          when FirefoxDriver::BrowserSession
+            held.protocol.command(Broker::RETAIN_SESSION) rescue nil
+            held.close(false) rescue nil
+          when Cdp::BrowserSession
+            held.close rescue nil
+          end
+        end
+      end
     end
 
     # The adapted ARIA-AT toggle-button plan, against a real browser: the

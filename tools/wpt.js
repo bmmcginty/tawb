@@ -4,6 +4,7 @@
 //
 //   npm run wpt                     # accessible names and roles, Chromium
 //   npm run wpt -- --browser firefox
+//   npm run wpt -- --native --browser firefox   # read with the native extraction
 //   npm run test:wai-aria           # WAI-ARIA role tests, fail on mismatches
 //   npm run wpt -- --filter labelledby
 //   npm run wpt -- --verbose        # every case, not just the failures
@@ -26,14 +27,24 @@
 // reftests, no js-driven cases — those pages are reported as producing no
 // cases rather than as failures. It is the name-and-role slice of the suite,
 // which is the slice ax_own.js is an implementation of.
+//
+// `--native` judges the native Crystal extraction instead of ax_own.js. The
+// pages are handed to one conformance call that launches a single browser and
+// runs each page's own collect script in the document the native extraction
+// read, so an axIndex still names the same element on both sides.
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const { spawn } = require('child_process');
 
 const { openDriver } = require(path.join(__dirname, '..', 'src', 'driver.js'));
 const { extractAxItems } = require(path.join(__dirname, '..', 'src', 'ax_own.js'));
+const { processesUsing } = require(path.join(__dirname, '..', 'src', 'proc.js'));
+
+const ROOT = path.join(__dirname, '..');
+const BINARY = process.env.TAWB_CRYSTAL_BIN || path.join(ROOT, 'bin', 'tawb');
 
 const RAW = 'https://raw.githubusercontent.com/web-platform-tests/wpt/master';
 const API = 'https://api.github.com/repos/web-platform-tests/wpt/contents';
@@ -47,7 +58,7 @@ const CACHE = path.join(os.tmpdir(), 'tweb-wpt-cache');
 function parseArgs(argv) {
   const options = {
     engine: 'chromium', filter: null, suite: 'all', verbose: false,
-    refresh: false, failOnMismatch: false,
+    refresh: false, failOnMismatch: false, native: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -60,6 +71,7 @@ function parseArgs(argv) {
     else if (arg === '--verbose') options.verbose = true;
     else if (arg === '--refresh') options.refresh = true;
     else if (arg === '--fail-on-mismatch') options.failOnMismatch = true;
+    else if (arg === '--native') options.native = true;
   }
   if (options.suite !== 'all' && !SUITES[options.suite]) {
     throw new Error(`Unknown WPT suite ${JSON.stringify(options.suite)}; use all, accname, or wai-aria`);
@@ -132,9 +144,168 @@ const norm = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
 const isComparableExpectation = (value) => value != null
   && String(value).toLowerCase() !== 'spec_ambiguous_log_value';
 
+function portFrom(profile) {
+  for (const name of ['tawb-endpoint.json', '.tawb-devtools-port', 'DevToolsActivePort']) {
+    const file = path.join(profile, name);
+    if (!fs.existsSync(file)) continue;
+    const text = fs.readFileSync(file, 'utf8').trim();
+    if (name === 'DevToolsActivePort') return Number(text.split('\n')[0]);
+    try {
+      return Number(JSON.parse(text).port);
+    } catch {
+      return Number(text);
+    }
+  }
+  throw new Error(`no endpoint record under ${profile}`);
+}
+
+function killProfile(profile) {
+  for (const pid of processesUsing(profile)) {
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+  }
+}
+
+function run(command, args, options) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, options);
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+// One conformance call carries every page, so the native side launches one
+// browser for the whole suite rather than one per file. It also means the
+// page marks its own nodes in the same document the native extraction read,
+// which is what makes an axIndex comparable at all.
+function callNative(operation, payload, timeoutMs, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(BINARY, ['--conformance', operation], {
+      stdio: ['pipe', 'pipe', 'pipe'], env,
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`${operation} did not finish within ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+    child.on('error', (error) => { clearTimeout(timer); reject(error); });
+    child.on('close', (status) => {
+      clearTimeout(timer);
+      let response;
+      try {
+        response = JSON.parse(stdout.trim());
+      } catch {
+        reject(new Error(`${operation} returned no JSON: ${stderr}`));
+        return;
+      }
+      if (status !== 0 || !response.ok) {
+        reject(new Error(response.error || stderr || `${operation} failed`));
+        return;
+      }
+      resolve(response.value);
+    });
+    child.stdin.end(JSON.stringify(payload));
+  });
+}
+
+// The native extraction has to answer in the same browser that ran COLLECT,
+// so the pages are handed to it in one batch against a kept browser of its
+// own. That browser is launched by the native reader, exactly as the view
+// differentials launch one.
+async function nativeObservations(options, selected, urls) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tawb-wpt-native-'));
+  const profile = path.join(root, 'profile');
+  const env = {
+    ...process.env,
+    HOME: path.join(root, 'home'),
+    XDG_CONFIG_HOME: path.join(root, 'config'),
+    XDG_DATA_HOME: path.join(root, 'data'),
+    XDG_CACHE_HOME: path.join(root, 'cache'),
+    TAWB_A11Y_BUS: process.env.TAWB_A11Y_BUS || 'private',
+  };
+  fs.mkdirSync(env.HOME, { recursive: true });
+  try {
+    const launched = await run(BINARY, [
+      '--dump', '--keep-browser', '--browser', options.engine,
+      '--profile', profile, urls[0],
+    ], { cwd: ROOT, env });
+    if (launched.status !== 0) {
+      throw new Error(`the native browser did not start: ${launched.stderr}`);
+    }
+    const endpoint = options.engine === 'firefox'
+      ? '' : `http://127.0.0.1:${portFrom(profile)}`;
+    const answers = await callNative('aria.scan', {
+      engine: options.engine, endpoint, profile, urls, collect: COLLECT.toString(),
+    }, 1_800_000, env);
+    return selected.map((entry, index) => ({
+      name: entry.name,
+      items: answers[index]?.items || [],
+      cases: answers[index]?.cases || [],
+    }));
+  } finally {
+    killProfile(profile);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function judge(observations, totals, unreached, failures) {
+  for (const entry of observations) {
+    totals.files += 1;
+    const { items, cases } = entry;
+    if (!cases.length) { totals.empty += 1; continue; }
+
+    const byIndex = new Map();
+    for (const item of items) {
+      if (typeof item.axIndex === 'number') byIndex.set(item.axIndex, item);
+    }
+
+    for (const c of cases) {
+      const compareLabel = isComparableExpectation(c.expectedLabel);
+      const compareRole = isComparableExpectation(c.expectedRole);
+      // WPT uses this sentinel in tentative tests where the specification
+      // deliberately has no expected answer. It asks implementations to log
+      // their result; treating that instruction as a literal role invents a
+      // conformance failure.
+      if (!compareLabel && !compareRole) continue;
+      const item = c.index >= 0 ? byIndex.get(c.index) : undefined;
+      if (!item) {
+        totals.unreached += 1;
+        const key = c.role ? `${c.tag}[role=${c.role}]` : c.tag;
+        unreached.set(key, (unreached.get(key) || 0) + 1);
+        continue;
+      }
+      if (compareLabel) {
+        const ok = norm(item.name) === norm(c.expectedLabel);
+        totals.label[ok ? 0 : 1] += 1;
+        if (!ok) {
+          failures.push(`  label  ${entry.name}  ${c.testname}\n`
+            + `           want ${JSON.stringify(norm(c.expectedLabel))}  got ${JSON.stringify(norm(item.name))}`);
+        }
+      }
+      if (compareRole) {
+        const want = norm(c.expectedRole).toLowerCase();
+        const ok = norm(item.role).toLowerCase() === want;
+        totals.role[ok ? 0 : 1] += 1;
+        if (!ok) {
+          failures.push(`  role   ${entry.name}  ${c.testname}\n`
+            + `           want ${JSON.stringify(want)}  got ${JSON.stringify(norm(item.role).toLowerCase())}`);
+        }
+      }
+    }
+  }
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const pages = await ensureSuite(options.refresh, selectedSuites(options.suite));
+  const selected = pages.filter((entry) => !options.filter
+    || `${entry.suite}/${entry.name}`.includes(options.filter));
 
   // Served rather than opened as files: a file:// document has an opaque
   // origin and its shadow and frame behaviour differs, and several of these
@@ -152,8 +323,6 @@ async function main() {
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}/`;
 
-  const driver = await openDriver({ engine: options.engine, log: () => {} });
-  const page = driver.context.pages()[0] || await driver.context.newPage();
   const totals = { label: [0, 0], role: [0, 0], unreached: 0, files: 0, empty: 0 };
   // What our tree said nothing at all about, by the shape of the element, so
   // that "no item" is a lead rather than a number.
@@ -161,58 +330,35 @@ async function main() {
   const failures = [];
 
   try {
-    for (const entry of pages) {
-      if (options.filter && !`${entry.suite}/${entry.name}`.includes(options.filter)) continue;
-      totals.files += 1;
-      const url = `${base}${entry.suite}/${entry.name}`;
-      await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
-      await new Promise((r) => setTimeout(r, 120));
-
-      const items = await page.evaluate(extractAxItems, {}).catch(() => []);
-      const cases = await page.evaluate(COLLECT).catch(() => []);
-      if (!cases.length) { totals.empty += 1; continue; }
-
-      const byIndex = new Map();
-      for (const item of items) {
-        if (typeof item.axIndex === 'number') byIndex.set(item.axIndex, item);
+    let observations;
+    if (options.native) {
+      if (!fs.existsSync(BINARY)) {
+        throw new Error(`${BINARY} is absent; build the native reader or set TAWB_CRYSTAL_BIN`);
       }
-
-      for (const c of cases) {
-        const compareLabel = isComparableExpectation(c.expectedLabel);
-        const compareRole = isComparableExpectation(c.expectedRole);
-        // WPT uses this sentinel in tentative tests where the specification
-        // deliberately has no expected answer. It asks implementations to log
-        // their result; treating that instruction as a literal role invents a
-        // conformance failure.
-        if (!compareLabel && !compareRole) continue;
-        const item = c.index >= 0 ? byIndex.get(c.index) : undefined;
-        if (!item) {
-          totals.unreached += 1;
-          const key = c.role ? `${c.tag}[role=${c.role}]` : c.tag;
-          unreached.set(key, (unreached.get(key) || 0) + 1);
-          continue;
+      observations = await nativeObservations(
+        options, selected, selected.map((entry) => `${base}${entry.suite}/${entry.name}`),
+      );
+    } else {
+      const driver = await openDriver({ engine: options.engine, log: () => {} });
+      try {
+        const page = driver.context.pages()[0] || await driver.context.newPage();
+        observations = [];
+        for (const entry of selected) {
+          const url = `${base}${entry.suite}/${entry.name}`;
+          await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
+          await new Promise((r) => setTimeout(r, 120));
+          observations.push({
+            name: entry.name,
+            items: await page.evaluate(extractAxItems, {}).catch(() => []),
+            cases: await page.evaluate(COLLECT).catch(() => []),
+          });
         }
-        if (compareLabel) {
-          const ok = norm(item.name) === norm(c.expectedLabel);
-          totals.label[ok ? 0 : 1] += 1;
-          if (!ok) {
-            failures.push(`  label  ${entry.name}  ${c.testname}\n`
-              + `           want ${JSON.stringify(norm(c.expectedLabel))}  got ${JSON.stringify(norm(item.name))}`);
-          }
-        }
-        if (compareRole) {
-          const want = norm(c.expectedRole).toLowerCase();
-          const ok = norm(item.role).toLowerCase() === want;
-          totals.role[ok ? 0 : 1] += 1;
-          if (!ok) {
-            failures.push(`  role   ${entry.name}  ${c.testname}\n`
-              + `           want ${JSON.stringify(want)}  got ${JSON.stringify(norm(item.role).toLowerCase())}`);
-          }
-        }
+      } finally {
+        await driver.close().catch(() => {});
       }
     }
+    judge(observations, totals, unreached, failures);
   } finally {
-    await driver.close().catch(() => {});
     server.close();
   }
 
@@ -224,7 +370,8 @@ async function main() {
   if (failures.length && options.verbose) console.log(failures.join('\n'));
   else if (failures.length) console.log(failures.slice(0, 40).join('\n')
     + (failures.length > 40 ? `\n  … and ${failures.length - 40} more (--verbose for all)` : ''));
-  console.log(`\n${options.engine}, ${totals.files} files (${totals.empty} with no inline expectations)`);
+  const implementation = options.native ? `native ${options.engine}` : options.engine;
+  console.log(`\n${implementation}, ${totals.files} files (${totals.empty} with no inline expectations)`);
   line('labels', totals.label);
   line('roles', totals.role);
   // Not all of these are wrong. Our tree speaks through a container rather

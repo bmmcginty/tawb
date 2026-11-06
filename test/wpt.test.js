@@ -24,6 +24,14 @@ test('tentative WPT logging sentinels are not treated as literal expected roles'
   assert.equal(isComparableExpectation(null), false);
 });
 
+test('the WPT gate can be pointed at the native extraction', () => {
+  const options = parseArgs(['--native', '--browser', 'firefox', '--suite', 'wai-aria']);
+  assert.equal(options.native, true);
+  assert.equal(options.engine, 'firefox');
+  assert.equal(options.suite, 'wai-aria');
+  assert.equal(parseArgs([]).native, false);
+});
+
 test('an unknown WPT suite is refused', () => {
   assert.throws(() => parseArgs(['--suite=html']), /use all, accname, or wai-aria/);
 });

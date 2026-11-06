@@ -782,7 +782,7 @@ machine-readable zero-gap summary.
 - [x] Add user-agent, open, and closed-root operation tests to both engines.
 - [x] Add frame/navigation/live/action race fixtures.
 - [x] Run native extraction through the adapted ARIA-AT gate.
-- [ ] Run native extraction through the adapted WAI-ARIA role gate.
+- [x] Run native extraction through the adapted WAI-ARIA role gate.
 - [x] Add direct video and long/streaming media alongside Ogg audio.
 
 ### P2: complete lifecycle and terminal proof

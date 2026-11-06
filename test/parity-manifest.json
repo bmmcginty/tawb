@@ -2700,6 +2700,7 @@
       ],
       "operations": [
         "aria.render_line",
+        "aria.scan",
         "aria.scenario"
       ],
       "surfaces": [
@@ -2713,7 +2714,8 @@
         "ax"
       ],
       "fixtures": [
-        "aria-at-toggle"
+        "aria-at-toggle",
+        "wai-aria-role"
       ],
       "levels": [
         "operation",
@@ -2721,7 +2723,8 @@
       ],
       "tests": [
         "test/browser/aria_at_crystal.test.js",
-        "test/crystal_impl.js"
+        "test/crystal_impl.js",
+        "test/wpt.test.js"
       ],
       "status": "single-surface",
       "differences": []
