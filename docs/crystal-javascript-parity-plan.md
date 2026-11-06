@@ -791,7 +791,7 @@ machine-readable zero-gap summary.
 - [ ] Expand tmux coverage to every mode and screen transition.
 - [ ] Add kept-browser and same-browser sequential differentials per feature.
 - [ ] Add failure/cleanup matrix and process-leak assertions.
-- [ ] Add native dialog, portal, and Flatpak parity to the unified manifest.
+- [x] Add native dialog, portal, and Flatpak parity to the unified manifest.
 
 ### P3: qualify retirement
 

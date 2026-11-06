@@ -967,10 +967,18 @@
       "surfaces": [],
       "engines": [],
       "views": [],
-      "fixtures": [],
-      "levels": [],
-      "tests": [],
-      "status": "uncovered",
+      "fixtures": [
+        "private-session-bus"
+      ],
+      "levels": [
+        "operation",
+        "protocol-transcript"
+      ],
+      "tests": [
+        "test/a11y_bus.test.js",
+        "test/a11y_bus_crystal.test.js"
+      ],
+      "status": "scripted-only",
       "differences": []
     },
     {
@@ -1037,10 +1045,18 @@
       "surfaces": [],
       "engines": [],
       "views": [],
-      "fixtures": [],
-      "levels": [],
-      "tests": [],
-      "status": "uncovered",
+      "fixtures": [
+        "atspi-install-prompt"
+      ],
+      "levels": [
+        "operation",
+        "protocol-transcript"
+      ],
+      "tests": [
+        "test/atspi.test.js",
+        "test/atspi_crystal.test.js"
+      ],
+      "status": "scripted-only",
       "differences": []
     },
     {
@@ -1293,10 +1309,18 @@
       "surfaces": [],
       "engines": [],
       "views": [],
-      "fixtures": [],
-      "levels": [],
-      "tests": [],
-      "status": "uncovered",
+      "fixtures": [
+        "dbus-bus-transcript"
+      ],
+      "levels": [
+        "operation",
+        "protocol-transcript"
+      ],
+      "tests": [
+        "test/dbus.test.js",
+        "test/dbus_crystal.test.js"
+      ],
+      "status": "scripted-only",
       "differences": []
     },
     {
@@ -1623,9 +1647,15 @@
       "surfaces": [],
       "engines": [],
       "views": [],
-      "fixtures": [],
-      "levels": [],
-      "tests": [],
+      "fixtures": [
+        "flatpak-document-export"
+      ],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/flatpak.test.js"
+      ],
       "status": "uncovered",
       "differences": []
     },
@@ -2171,10 +2201,18 @@
       "surfaces": [],
       "engines": [],
       "views": [],
-      "fixtures": [],
-      "levels": [],
-      "tests": [],
-      "status": "uncovered",
+      "fixtures": [
+        "native-install-prompt"
+      ],
+      "levels": [
+        "operation",
+        "protocol-transcript"
+      ],
+      "tests": [
+        "test/native_prompt.test.js",
+        "test/native_prompt_crystal.test.js"
+      ],
+      "status": "scripted-only",
       "differences": []
     },
     {
@@ -2225,10 +2263,17 @@
       "surfaces": [],
       "engines": [],
       "views": [],
-      "fixtures": [],
-      "levels": [],
-      "tests": [],
-      "status": "uncovered",
+      "fixtures": [
+        "portal-file-chooser"
+      ],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/portal.test.js",
+        "test/portal_crystal.test.js"
+      ],
+      "status": "scripted-only",
       "differences": []
     },
     {
@@ -2659,9 +2704,11 @@
       "views": [],
       "fixtures": [],
       "levels": [
-        "operation"
+        "operation",
+        "protocol-transcript"
       ],
       "tests": [
+        "test/a11y_bus_crystal.test.js",
         "test/crystal_impl.js"
       ],
       "status": "scripted-only",
@@ -2745,9 +2792,12 @@
       "views": [],
       "fixtures": [],
       "levels": [
-        "operation"
+        "operation",
+        "protocol-transcript"
       ],
       "tests": [
+        "test/atspi_bus.js",
+        "test/atspi_crystal.test.js",
         "test/crystal_impl.js"
       ],
       "status": "scripted-only",
@@ -2949,10 +2999,12 @@
       "views": [],
       "fixtures": [],
       "levels": [
-        "operation"
+        "operation",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_impl.js"
+        "test/crystal_impl.js",
+        "test/dbus_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -3674,10 +3726,12 @@
       "views": [],
       "fixtures": [],
       "levels": [
-        "operation"
+        "operation",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_impl.js"
+        "test/crystal_impl.js",
+        "test/native_prompt_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -3770,10 +3824,12 @@
       "views": [],
       "fixtures": [],
       "levels": [
-        "operation"
+        "operation",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_impl.js"
+        "test/crystal_impl.js",
+        "test/portal_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -3798,7 +3854,8 @@
       "tests": [
         "test/crystal_impl.js",
         "test/lynx_display_crystal.test.js",
-        "test/lynx_options_screen_crystal.test.js"
+        "test/lynx_options_screen_crystal.test.js",
+        "test/reader_dialog_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
