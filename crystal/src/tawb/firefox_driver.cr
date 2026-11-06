@@ -1126,13 +1126,17 @@ module Tawb
             }),
           ])
         end
+        options = [
+          option.call("layout", "boolean", JSON::Any.new(layout)),
+          option.call("visual", visual.is_a?(String) ? "string" : "boolean", JSON::Any.new(visual)),
+        ]
+        # Match the JavaScript caller's wire shape: pierce is absent on the
+        # ordinary pass and explicit only on the privileged pass. The page
+        # function defaults an omitted value to false.
+        options.push(option.call("pierce", "boolean", JSON::Any.new(true))) if pierce
         arguments = JSON::Any.new([JSON::Any.new({
-          "type" => JSON::Any.new("object"),
-          "value" => JSON::Any.new([
-            option.call("layout", "boolean", JSON::Any.new(layout)),
-            option.call("visual", visual.is_a?(String) ? "string" : "boolean", JSON::Any.new(visual)),
-            option.call("pierce", "boolean", JSON::Any.new(pierce)),
-          ]),
+          "type"  => JSON::Any.new("object"),
+          "value" => JSON::Any.new(options),
         })])
         result = @protocol.command("script.callFunction", {
           "functionDeclaration" => JSON::Any.new(declaration),

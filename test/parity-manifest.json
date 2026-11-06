@@ -271,14 +271,23 @@
         "crystal/assets/extract_ax_items.js"
       ],
       "surfaces": [],
-      "engines": [],
-      "views": [],
-      "fixtures": [],
+      "engines": [
+        "firefox"
+      ],
+      "views": [
+        "ax"
+      ],
+      "fixtures": [
+        "scripted-bidi-frame-tree"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_crystal_page.test.js",
+        "test/protocol_trace_parity.test.js"
       ],
       "status": "scripted-only",
       "differences": []

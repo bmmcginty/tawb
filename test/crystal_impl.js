@@ -3306,11 +3306,11 @@ function firefoxPageImplementations({ bidi, FirefoxPage, FirefoxFrame, extractAx
       const frameTree = async (context) => {
         const frame = new FirefoxFrame(session, context.context, page);
         frame._url = context.url || 'about:blank';
-        const ordinary = await frame.evaluate(extractAxItems, { layout });
+        const ordinary = await frame.evaluate(extractAxItems, { layout, visual: false });
         const media = await frame.evaluate(
           () => !!document.querySelector('video[controls],audio[controls]'));
         documents[context.context] = media
-          ? await frame.evaluate(extractAxItems, { layout, pierce: true })
+          ? await frame.evaluate(extractAxItems, { layout, visual: false, pierce: true })
           : ordinary;
         const children = await Promise.all((context.children || []).map(frameTree));
         return {
