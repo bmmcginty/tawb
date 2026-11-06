@@ -23,6 +23,7 @@
     "diagnose:firefox": "node tools/diagnose_firefox.js",
     "test:firefox-releases": "tools/test_firefox_releases.sh",
     "test:no-node": "tools/test_no_node.sh",
+    "test:mutations": "tools/test_mutations.sh",
     "browsers": "node tools/browsers.js",
     "test:browser": "node --test --test-concurrency=2 test/browser/*.test.js",
     "test:aria-at": "node --test --test-concurrency=1 test/browser/aria_at.test.js",

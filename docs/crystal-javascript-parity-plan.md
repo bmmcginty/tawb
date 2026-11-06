@@ -532,22 +532,38 @@ terminal mode may leak.
 ## Mutation tests for the parity suite
 
 A parity suite is credible only if representative regressions make it fail.
-Add a script that copies the tree to a temporary work directory, applies one
-small mutation, rebuilds, and requires the named gate to fail. Initial
-mutations should include:
+`tools/test_mutations.sh` copies HEAD to a scratch directory, applies one
+mutation from `tools/mutations.py`, rebuilds when the gate needs a binary, and
+requires the named gate to fail. Applying a mutation asserts that its target
+text appears exactly once, so a refactor cannot turn it into a silent no-op.
+`TAWB_MUTATION_ROTATE=1` selects one mutation by day for ordinary CI;
+`TAWB_MUTATION_KEEP=1` keeps the scratch tree and logs.
 
-- remove `pierce: true` from Firefox's privileged AX pass;
-- skip the media-controls probe;
-- omit one browser differential from test discovery;
-- drop `nativeControl` from canonical block serialization;
+Implemented and verified caught:
+
+- `privileged-media`: stop taking Firefox's privileged AX pass, which removes
+  native media controls from a direct media document;
+- `native-control-field`: drop `nativeControl` from canonical block
+  serialization;
+- `live-refresh-guard`: allow a live refresh while another is already running;
+- `browser-discovery`: omit the live-update browser differential from the
+  discovered suite;
+- `handle-dispose`: stop disowning the element handle an action held;
+- `scroll-region-reset`: repaint the list without resetting the terminal scroll
+  region.
+
+Still to wire, each with the gate it must break:
+
 - change a frame target to the top document;
 - omit handle disposal;
 - suppress one navigation event subscription;
 - make a status fallback paint before an action finishes;
-- disable a live-generation check;
-- ignore a non-zero update rename failure;
-- remove one action from a keymap dispatch;
-- leave the alternate screen without resetting the scroll region.
+- disable the live-generation check used by typed-row patching;
+- ignore a non-zero update rename failure. This one already survived a first
+  attempt: the read-only update test fails at the writability check, so the
+  rename is never reached. It needs a seam that injects a failing replacement
+  before it can be a mutation;
+- remove one action from a keymap dispatch.
 
 Run a rotating subset on ordinary CI and the full mutation set before a
 retirement milestone. A mutation that survives identifies a real coverage gap.
@@ -774,12 +790,13 @@ behavioural bugs by itself.
 
 ### P0: prove the suite catches regressions
 
-- [ ] Mutation testing. Add the scratch-tree mutation harness and the initial
-  mutation set from "Mutation tests for the parity suite". Each named gate must
-  fail when its mutation is applied; survivors are reported by name. Run a
-  rotating subset in ordinary CI and the full set before a retirement
-  milestone. Do this before adding breadth: a gate that survives a mutation is
-  not evidence for the behaviour it claims to cover.
+- [x] Mutation testing. Add the scratch-tree mutation harness and the first
+  six mutations from "Mutation tests for the parity suite". Each named gate
+  fails when its mutation is applied; survivors are reported by name and the
+  script exits non-zero. Run a rotating subset in ordinary CI and the full set
+  before a retirement milestone.
+- [ ] Extend the mutation set to the remaining named regressions in "Mutation
+  tests for the parity suite".
 
 ### P1: failure, race, and cleanup
 
