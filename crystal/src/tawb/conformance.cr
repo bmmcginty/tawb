@@ -4362,6 +4362,7 @@ module Tawb
     private def self.core_view_blocks(payload : JSON::Any) : JSON::Any
       object = payload.as_h
       if cases = object["cases"]?.try(&.as_a?)
+        return core_view_blocks_reusing_page(object, cases) if object["reuse_page"]?.try(&.as_bool?)
         answers = cases.map do |entry|
           merged = object.dup
           merged.delete("cases")
@@ -4370,7 +4371,6 @@ module Tawb
         end
         return JSON::Any.new(answers)
       end
-      source = object["source"].as_s
       chromium = object["engine"]?.try(&.as_s?) != "firefox"
       session = nil.as(Engine::Session?)
       page = nil.as(Engine::Page?)
@@ -4392,44 +4392,7 @@ module Tawb
           opened.start
           page = opened.create_page
         end
-        acting = page.not_nil!
-        acting.goto(object["url"].as_s, "domcontentloaded")
-        Dump.settle_embedded_frames(acting)
-        50.times do
-          ready = acting.evaluate("() => window.__ready === undefined || window.__ready === true")
-            .as_bool? || false
-          break if ready
-          sleep 100.milliseconds
-        end
-        core = Core.new(source: source, page: acting)
-        blocks = core.rescan
-        if operations = object["operations"]?.try(&.as_a?)
-          answers = operations.map do |operation|
-            wanted = operation.as_h
-            name = wanted["name"].as_s
-            role = wanted["role"]?.try(&.as_s?)
-            target = blocks.find do |block|
-              item = block.item.as_h? || {} of String => JSON::Any
-              item["name"]?.try(&.as_s?) == name &&
-                (role.nil? || item["role"]?.try(&.as_s?) == role)
-            end
-            if target
-              JSON::Any.new({
-                "found"  => JSON::Any.new(true),
-                "item"   => block_contract_value(target.item),
-                "answer" => core.activate(target.item, acting),
-              })
-            else
-              JSON::Any.new({"found" => JSON::Any.new(false)})
-            end
-          end
-          probe = object["probe"]?.try { |source_code| acting.evaluate(source_code.as_s) }
-          return JSON::Any.new({
-            "operations" => JSON::Any.new(answers),
-            "probe"      => probe || JSON::Any.new(nil),
-          })
-        end
-        JSON::Any.new(blocks.map { |block| block_contract_json(block) })
+        core_view_blocks_on_page(object, page.not_nil!)
       ensure
         page.try { |held| held.close rescue nil }
         session.try do |held|
@@ -4443,6 +4406,93 @@ module Tawb
           end
         end
       end
+    end
+
+    # Keep one protocol session and one tab while several documents replace
+    # each other. Fresh pages cannot reveal execution contexts, handles, or
+    # browser state that accidentally survive a navigation.
+    private def self.core_view_blocks_reusing_page(object : Hash(String, JSON::Any),
+                                                     cases : Array(JSON::Any)) : JSON::Any
+      chromium = object["engine"]?.try(&.as_s?) != "firefox"
+      session = nil.as(Engine::Session?)
+      page = nil.as(Engine::Page?)
+      begin
+        if chromium
+          opened = Cdp::BrowserSession.new(object["endpoint"].as_s)
+          session = opened
+          page = opened.create_page
+        else
+          profile = object["profile"].as_s
+          started = FirefoxLaunch.launch(profile)
+          opened = FirefoxDriver::BrowserSession.new(
+            Broker.ensure(profile, started.endpoint)[:url])
+          session = opened
+          opened.start
+          page = opened.create_page
+        end
+        acting = page.not_nil!
+        answers = cases.map do |entry|
+          merged = object.dup
+          merged.delete("cases")
+          merged.delete("reuse_page")
+          entry.as_h.each { |key, value| merged[key] = value }
+          core_view_blocks_on_page(merged, acting)
+        end
+        JSON::Any.new(answers)
+      ensure
+        page.try { |held| held.close rescue nil }
+        session.try do |held|
+          case held
+          when FirefoxDriver::BrowserSession
+            held.protocol.command(Broker::RETAIN_SESSION) rescue nil
+            held.close(false) rescue nil
+          when Cdp::BrowserSession
+            held.close rescue nil
+          end
+        end
+      end
+    end
+
+    private def self.core_view_blocks_on_page(object : Hash(String, JSON::Any),
+                                               acting : Engine::Page) : JSON::Any
+      acting.goto(object["url"].as_s, "domcontentloaded")
+      Dump.settle_embedded_frames(acting)
+      50.times do
+        ready = acting.evaluate("() => window.__ready === undefined || window.__ready === true")
+          .as_bool? || false
+        break if ready
+        sleep 100.milliseconds
+      end
+      source = object["source"].as_s
+      core = Core.new(source: source, page: acting)
+      blocks = core.rescan
+      if operations = object["operations"]?.try(&.as_a?)
+        answers = operations.map do |operation|
+          wanted = operation.as_h
+          name = wanted["name"].as_s
+          role = wanted["role"]?.try(&.as_s?)
+          target = blocks.find do |block|
+            item = block.item.as_h? || {} of String => JSON::Any
+            item["name"]?.try(&.as_s?) == name &&
+              (role.nil? || item["role"]?.try(&.as_s?) == role)
+          end
+          if target
+            JSON::Any.new({
+              "found"  => JSON::Any.new(true),
+              "item"   => block_contract_value(target.item),
+              "answer" => core.activate(target.item, acting),
+            })
+          else
+            JSON::Any.new({"found" => JSON::Any.new(false)})
+          end
+        end
+        probe = object["probe"]?.try { |source_code| acting.evaluate(source_code.as_s) }
+        return JSON::Any.new({
+          "operations" => JSON::Any.new(answers),
+          "probe"      => probe || JSON::Any.new(nil),
+        })
+      end
+      JSON::Any.new(blocks.map { |block| block_contract_json(block) })
     end
 
     # The diagnostic layouts against a real page: the fixture is read in each

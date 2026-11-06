@@ -114,12 +114,13 @@ async function javascriptOperations(engine, profile, url, operations, probe) {
   }
 }
 
-async function javascriptCases(engine, profile, cases) {
+async function javascriptCases(engine, profile, cases, { reusePage = false } = {}) {
   const driver = await openDriver({ engine, profile, log: () => {} });
   const answers = [];
+  const sharedPage = reusePage ? await driver.context.newPage() : null;
   try {
     for (const entry of cases) {
-      const page = await driver.context.newPage();
+      const page = sharedPage || await driver.context.newPage();
       try {
         await page.goto(entry.url, { waitUntil: 'domcontentloaded' });
         await page.waitForFunction(
@@ -129,11 +130,12 @@ async function javascriptCases(engine, profile, cases) {
         const core = new Core({ driver, page, source: entry.source, sources: [entry.source] });
         answers.push((await core.rescan({ page })).map(blockV1));
       } finally {
-        await page.close().catch(() => {});
+        if (!sharedPage) await page.close().catch(() => {});
       }
     }
     return answers;
   } finally {
+    if (sharedPage) await sharedPage.close().catch(() => {});
     await driver.close().catch(() => {});
   }
 }
@@ -265,8 +267,9 @@ for (const engine of ['chromium', 'firefox']) {
           ? '' : `http://127.0.0.1:${portFrom(native)}`;
         const [crystal, javascript] = await Promise.all([
           callAsync('core.view_blocks',
-            { endpoint, engine, profile: native, cases }, { timeoutMs: 300000 }),
-          javascriptCases(engine, other, cases),
+            { endpoint, engine, profile: native, cases, reuse_page: true },
+            { timeoutMs: 300000 }),
+          javascriptCases(engine, other, cases, { reusePage: true }),
         ]);
         assert.equal(crystal.length, cases.length);
         for (let index = 0; index < cases.length; index += 1) {

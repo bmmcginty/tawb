@@ -957,16 +957,16 @@ for (const engine of ['firefox', 'chromium']) {
 
 // Two readers, one browser at the same time. Whichever one quits — the reader
 // that launched the browser or the one that joined it — the other must keep
-// reading: the browser and the BiDi session it rides on are the shared thing,
-// and neither a departing owner nor a departing guest may end them while a
-// third process is still using them. The broker is exercised on its own in
-// broker_crystal, but not with two real readers and a real terminal.
-for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crystal']]) {
-  for (const leaver of ['launcher', 'joiner']) {
-    const stayingName = leaver === 'launcher' ? second : first;
-    test(`${first} and ${second} readers share one Firefox when the ${leaver} quits first`,
-      { skip }, async () => {
-        const label = `${first}-${leaver}`;
+// reading: the browser and its protocol endpoint are shared, and neither a
+// departing owner nor a departing guest may end them while a third process is
+// still using them. Firefox additionally takes this path through its broker.
+for (const engine of ['firefox', 'chromium']) {
+  for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crystal']]) {
+    for (const leaver of ['launcher', 'joiner']) {
+      const stayingName = leaver === 'launcher' ? second : first;
+      test(`${first} and ${second} readers share one ${engine} when the ${leaver} quits first`,
+        { skip }, async () => {
+        const label = `${engine}-${first}-${leaver}`;
         const root = tempDir(`tawb-shared-${label}-`);
         fs.writeFileSync(path.join(root, 'first.html'), FIRST);
         fs.writeFileSync(path.join(root, 'second.html'), SECOND);
@@ -979,14 +979,14 @@ for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crysta
         const launcher = new ReaderTty({
           session: `tawb-shared-${label}-launcher-${process.pid}`.toLowerCase(),
           command: launcherRuntime.command,
-          args: [...launcherRuntime.args, '--browser', 'firefox', '--profile', profile,
+          args: [...launcherRuntime.args, '--browser', engine, '--profile', profile,
             '--no-alt-screen', address],
           env,
         });
         const joiner = new ReaderTty({
           session: `tawb-shared-${label}-joiner-${process.pid}`.toLowerCase(),
           command: joinerRuntime.command,
-          args: [...joinerRuntime.args, '--browser', 'firefox', '--profile', profile,
+          args: [...joinerRuntime.args, '--browser', engine, '--profile', profile,
             '--no-alt-screen', address],
           env,
         });
@@ -1003,7 +1003,7 @@ for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crysta
             assert.ok(staying.alive(),
               `the ${stayingName} reader is still running after the other quit`);
             assert.ok(processesUsing(profile).length > 0,
-              'the shared Firefox is still running');
+              `the shared ${engine} is still running`);
             // The reader may be on the tab the other one opened, and the
             // browser moves the foreground around as that reader leaves. Let
             // the ticker settle on a tab of its own before steering.
@@ -1030,6 +1030,7 @@ for (const [first, second] of [['Crystal', 'JavaScript'], ['JavaScript', 'Crysta
           removeTempDir(root);
         }
       });
+    }
   }
 }
 

@@ -815,7 +815,7 @@ behavioural bugs by itself.
   temporary, and update files. Assert retained state and cleanup, not only the
   error text, and assert that no browser, broker, claim, handle, or temporary
   file survives.
-- [ ] Add kept-browser and same-browser sequential differentials per feature.
+- [x] Add kept-browser and same-browser sequential differentials per feature.
   Rejoin a browser a reader kept, run several documents through one tab, and
   run two readers against one browser while one leaves. Compare the same
   canonical observations as the independent-profile differentials, so state
