@@ -83,8 +83,33 @@ module Tawb
       case kind
       when "history"   then JSON::Any.new(max.to_i64)
       when "downloads" then JSON::Any.new(Time.utc.to_unix_ms + timeout_ms)
-      else                  nil
+      else                  JSON::Any.new(nil)
       end
+    end
+
+    def self.wait_until_ready(page : Cdp::Page, kind : String,
+                              timeout_ms : Int32 = READY_TIMEOUT_MS) : Nil
+      unless page.wait_for_function(READY[kind], timeout_ms, POLL_MS)
+        raise IO::Error.new("the browser's #{kind} page did not answer in time")
+      end
+    end
+
+    def self.read_page(page : Cdp::Page, kind : String,
+                       timeout_ms : Int32 = READY_TIMEOUT_MS,
+                       max : Int32 = Library::MAX_ENTRIES) : Array(JSON::Any)
+      answer = page.evaluate(READERS[kind], reader_argument(kind, timeout_ms, max))
+      Library.order_entries(kind, answer.as_a? || [] of JSON::Any, max)
+    end
+
+    def self.save_page(page : Cdp::Page, url : String, title : String) : JSON::Any
+      page.evaluate(SAVE_BOOKMARK, JSON::Any.new({
+        "url"   => JSON::Any.new(url),
+        "title" => JSON::Any.new(title),
+      }))
+    end
+
+    def self.remove_page(page : Cdp::Page, id : String) : JSON::Any
+      page.evaluate(REMOVE_BOOKMARK, JSON::Any.new(id))
     end
 
     # Opens the page that owns `kind`, asks it, and closes it again.
@@ -92,11 +117,9 @@ module Tawb
                   timeout_ms : Int32 = READY_TIMEOUT_MS,
                   max : Int32 = Library::MAX_ENTRIES) : Array(JSON::Any)
       url = PAGES[kind]? || raise ArgumentError.new(%(Unknown list "#{kind}".))
-      entries = on_page(session, url, kind, timeout_ms) do |page|
-        answer = page.evaluate(READERS[kind], reader_argument(kind, timeout_ms, max))
-        answer.as_a? || [] of JSON::Any
+      on_page(session, url, kind, timeout_ms) do |page|
+        read_page(page, kind, timeout_ms, max)
       end
-      Library.order_entries(kind, entries, max)
     end
 
     # Files a bookmark through the same page, and for the same reason: the
@@ -105,10 +128,7 @@ module Tawb
     def self.save(session : Cdp::BrowserSession, url : String, title : String,
                   timeout_ms : Int32 = READY_TIMEOUT_MS) : JSON::Any
       on_page(session, PAGES["bookmarks"], "bookmarks", timeout_ms) do |page|
-        page.evaluate(SAVE_BOOKMARK, JSON::Any.new({
-          "url"   => JSON::Any.new(url),
-          "title" => JSON::Any.new(title),
-        }))
+        save_page(page, url, title)
       end
     end
 
@@ -117,7 +137,7 @@ module Tawb
       id = entry.as_h?.try(&.["bookmarkId"]?).try(&.as_s?)
       raise IO::Error.new("bookmark has no browser identity") if id.nil? || id.empty?
       on_page(session, PAGES["bookmarks"], "bookmarks", timeout_ms) do |page|
-        page.evaluate(REMOVE_BOOKMARK, JSON::Any.new(id))
+        remove_page(page, id)
       end
     end
 
@@ -128,9 +148,7 @@ module Tawb
       page = session.create_internal_page
       begin
         page.goto(url, "domcontentloaded")
-        unless page.wait_for_function(READY[kind], timeout_ms, POLL_MS)
-          raise IO::Error.new("the browser's #{kind} page did not answer in time")
-        end
+        wait_until_ready(page, kind, timeout_ms)
         yield page
       ensure
         session.close_page(page) rescue nil

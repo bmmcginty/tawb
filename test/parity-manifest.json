@@ -15,10 +15,13 @@
       "views": [],
       "fixtures": [],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/cdp_interactive_crystal.test.js",
+        "test/protocol_trace_parity.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -35,10 +38,13 @@
       "views": [],
       "fixtures": [],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/cdp_interactive_crystal.test.js",
+        "test/protocol_trace_parity.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -55,10 +61,13 @@
       "views": [],
       "fixtures": [],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/cdp_interactive_crystal.test.js",
+        "test/protocol_trace_parity.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -75,10 +84,13 @@
       "views": [],
       "fixtures": [],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/cdp_interactive_crystal.test.js",
+        "test/protocol_trace_parity.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -95,10 +107,13 @@
       "views": [],
       "fixtures": [],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/cdp_interactive_crystal.test.js",
+        "test/protocol_trace_parity.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -115,10 +130,13 @@
       "views": [],
       "fixtures": [],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/cdp_interactive_crystal.test.js",
+        "test/protocol_trace_parity.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -135,10 +153,13 @@
       "views": [],
       "fixtures": [],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/cdp_interactive_crystal.test.js",
+        "test/protocol_trace_parity.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -155,10 +176,13 @@
       "views": [],
       "fixtures": [],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/cdp_interactive_crystal.test.js",
+        "test/protocol_trace_parity.test.js"
       ],
       "status": "scripted-only",
       "differences": []

@@ -3973,7 +3973,7 @@ function placeElementImplementations(place) {
 // events a keystroke becomes, the three mouse events a click is — is decided
 // before the socket. Recording the traffic is therefore the whole of what
 // there is to compare, and it needs no browser to compare it.
-function cdpImplementations({ CdpPage, clickSlider }) {
+function cdpImplementations({ CdpPage, clickSlider, chromiumLibrary }) {
   const scenario = async (script, replies = {}, after = {}) => {
     const sent = [];
     const session = {
@@ -4075,6 +4075,20 @@ function cdpImplementations({ CdpPage, clickSlider }) {
         case 'handle_dispose':
           await held.dispose();
           observations.push(null);
+          break;
+        case 'library_ready':
+          await chromiumLibrary.waitForChromiumLibraryPage(page, step.kind, step.timeout);
+          observations.push(true);
+          break;
+        case 'library_read':
+          observations.push(await chromiumLibrary.readChromiumLibraryPage(
+            page, step.kind, { timeout: step.timeout, max: step.max }));
+          break;
+        case 'library_save':
+          observations.push(await chromiumLibrary.saveChromiumBookmarkPage(page, step.entry));
+          break;
+        case 'library_remove':
+          observations.push(await chromiumLibrary.removeChromiumBookmarkPage(page, step.entry));
           break;
         case 'type':
           await page.keyboard.type(step.text);

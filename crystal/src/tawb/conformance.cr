@@ -3954,6 +3954,22 @@ module Tawb
         when "handle_dispose"
           held.not_nil!.dispose
           observations.push JSON::Any.new(nil)
+        when "library_ready"
+          ChromiumLibrary.wait_until_ready(page, step["kind"].as_s,
+            step["timeout"]?.try(&.as_i?) || ChromiumLibrary::READY_TIMEOUT_MS)
+          observations.push JSON::Any.new(true)
+        when "library_read"
+          entries = ChromiumLibrary.read_page(page, step["kind"].as_s,
+            step["timeout"]?.try(&.as_i?) || ChromiumLibrary::READY_TIMEOUT_MS,
+            step["max"]?.try(&.as_i?) || Library::MAX_ENTRIES)
+          observations.push JSON::Any.new(entries)
+        when "library_save"
+          entry = step["entry"].as_h
+          observations.push ChromiumLibrary.save_page(page,
+            entry["url"].as_s, entry["title"].as_s)
+        when "library_remove"
+          observations.push ChromiumLibrary.remove_page(page,
+            step["entry"].as_h["bookmarkId"].as_s)
         when "type"
           page.keyboard.type(step["text"].as_s)
           observations.push JSON::Any.new(nil)

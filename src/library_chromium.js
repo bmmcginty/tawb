@@ -239,6 +239,25 @@ const ARGUMENTS = {
 
 // ---------------------------------------------------------------------------
 
+async function waitForChromiumLibraryPage(page, kind, timeout = READY_TIMEOUT_MS) {
+  await page.waitForFunction(READY[kind], undefined, { timeout, polling: POLL_MS });
+}
+
+async function readChromiumLibraryPage(page, kind, { timeout = READY_TIMEOUT_MS, max = MAX_ENTRIES } = {}) {
+  const entries = await page.evaluate(READERS[kind], ARGUMENTS[kind]({ timeout, max }));
+  return orderEntries(kind, entries);
+}
+
+async function saveChromiumBookmarkPage(page, entry) {
+  return page.evaluate(saveBookmark, {
+    url: String(entry.url || ''), title: String(entry.title || ''),
+  });
+}
+
+async function removeChromiumBookmarkPage(page, entry) {
+  return page.evaluate(removeBookmark, entry.bookmarkId);
+}
+
 // Opens the page that owns `kind`, asks it, and closes it again.
 async function readChromiumLibrary(context, kind, { timeout = READY_TIMEOUT_MS, max = MAX_ENTRIES } = {}) {
   const url = PAGES[kind];
@@ -247,9 +266,8 @@ async function readChromiumLibrary(context, kind, { timeout = READY_TIMEOUT_MS, 
   const page = await context.newInternalPage();
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(READY[kind], undefined, { timeout, polling: POLL_MS });
-    const entries = await page.evaluate(READERS[kind], ARGUMENTS[kind]({ timeout, max }));
-    return orderEntries(kind, entries);
+    await waitForChromiumLibraryPage(page, kind, timeout);
+    return await readChromiumLibraryPage(page, kind, { timeout, max });
   } finally {
     await context.closePage(page).catch(() => { /* the answer is already in hand */ });
   }
@@ -262,10 +280,8 @@ async function saveChromiumBookmark(context, entry, { timeout = READY_TIMEOUT_MS
   const page = await context.newInternalPage();
   try {
     await page.goto(PAGES.bookmarks, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(READY.bookmarks, undefined, { timeout, polling: POLL_MS });
-    return await page.evaluate(saveBookmark, {
-      url: String(entry.url || ''), title: String(entry.title || ''),
-    });
+    await waitForChromiumLibraryPage(page, 'bookmarks', timeout);
+    return await saveChromiumBookmarkPage(page, entry);
   } finally {
     await context.closePage(page).catch(() => { /* it is filed either way */ });
   }
@@ -276,15 +292,17 @@ async function removeChromiumBookmark(context, entry, { timeout = READY_TIMEOUT_
   const page = await context.newInternalPage();
   try {
     await page.goto(PAGES.bookmarks, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(READY.bookmarks, undefined, { timeout, polling: POLL_MS });
-    return await page.evaluate(removeBookmark, entry.bookmarkId);
+    await waitForChromiumLibraryPage(page, 'bookmarks', timeout);
+    return await removeChromiumBookmarkPage(page, entry);
   } finally {
     await context.closePage(page).catch(() => { /* it is removed either way */ });
   }
 }
 
 module.exports = {
-  readChromiumLibrary, saveChromiumBookmark, removeChromiumBookmark, PAGES,
+  readChromiumLibrary, saveChromiumBookmark, removeChromiumBookmark,
+  waitForChromiumLibraryPage, readChromiumLibraryPage,
+  saveChromiumBookmarkPage, removeChromiumBookmarkPage, PAGES,
   // The page-side half, exported so the native runtime can embed the same
   // functions (crystal/assets/chromium_*.js). These run in the WebUI page,
   // not here, so they are sent as their own source under either runtime.

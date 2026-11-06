@@ -771,7 +771,7 @@ machine-readable zero-gap summary.
 - [x] Verify binary revision/assets before browser tests.
 - [x] Inventory every asset invocation contract (caller, target, arguments,
   retry, ownership, and cleanup).
-- [ ] Add option/target protocol traces for every asset invocation.
+- [x] Add option/target protocol traces for every asset invocation.
 - [x] Replace narrow block serializers with the canonical block contract.
 
 ### P1: expand real-browser breadth

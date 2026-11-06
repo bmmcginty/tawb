@@ -18,10 +18,19 @@ const assert = require('node:assert');
 
 const { CdpPage } = require('../src/cdp_page');
 const { clickSlider, sliderTrack } = require('../src/driver_chromium');
+const chromiumLibrary = require('../src/library_chromium');
 const { cdpImplementations } = require('./crystal_impl');
 const { cdpCallFunctionTrace } = require('./parity/protocol-trace-v1');
 
 // parity-id: asset.slider-track
+// parity-id: asset.chromium-bookmarks
+// parity-id: asset.chromium-history
+// parity-id: asset.chromium-downloads
+// parity-id: asset.chromium-ready-bookmarks
+// parity-id: asset.chromium-ready-history
+// parity-id: asset.chromium-ready-downloads
+// parity-id: asset.chromium-save-bookmark
+// parity-id: asset.chromium-remove-bookmark
 
 // The announcement every evaluation waits for: the main document saying which
 // execution context it runs in.
@@ -195,7 +204,7 @@ const navigationScripts = {
   ],
 };
 
-const implementations = cdpImplementations({ CdpPage, clickSlider });
+const implementations = cdpImplementations({ CdpPage, clickSlider, chromiumLibrary });
 
 for (const implementation of implementations) {
   const check = (name, fn) => test(`${implementation.name}: ${name}`, fn);
@@ -283,6 +292,55 @@ for (const implementation of implementations) {
     const trace = cdpCallFunctionTrace(trackCalls[0]);
     assert.deepEqual(trace.target, { objectId: 'SLIDER-1', executionContextId: null });
     assert.deepEqual(trace.arguments, [{ value: false }]);
+  });
+
+  check('Chromium library assets keep their WebUI context and arguments', async () => {
+    const cases = [
+      ...['bookmarks', 'history', 'downloads'].map((kind) => ({
+        label: `ready-${kind}`, step: { op: 'library_ready', kind, timeout: 8000 },
+        reply: true, expected: [], marker: chromiumLibrary.READY[kind],
+      })),
+      ...['bookmarks', 'history', 'downloads'].map((kind) => ({
+        label: `read-${kind}`, step: { op: 'library_read', kind, timeout: 8000, max: 50 },
+        reply: [], expected: kind === 'bookmarks' ? [{ value: null }]
+          : kind === 'history' ? [{ value: 50 }] : null,
+        marker: chromiumLibrary.READERS[kind],
+      })),
+      {
+        label: 'save-bookmark',
+        step: { op: 'library_save', entry: { url: 'https://saved.test/', title: 'Saved' } },
+        reply: { existed: false },
+        expected: [{ value: { url: 'https://saved.test/', title: 'Saved' } }],
+        marker: chromiumLibrary.saveBookmark,
+      },
+      {
+        label: 'remove-bookmark',
+        step: { op: 'library_remove', entry: { bookmarkId: 'bookmark-7' } },
+        reply: { removed: true }, expected: [{ value: 'bookmark-7' }],
+        marker: chromiumLibrary.removeBookmark,
+      },
+    ];
+    for (const item of cases) {
+      const seen = await implementation.scenario([
+        CONTEXT, item.step, { op: 'sent' },
+      ], {
+        ...replies,
+        'Runtime.callFunctionOn': { result: { value: item.reply } },
+      });
+      const calls = seen[2].filter((entry) => entry.method === 'Runtime.callFunctionOn'
+        && (entry.params.functionDeclaration.includes(item.marker.toString())
+          || entry.params.functionDeclaration.includes(` ${item.marker.name};`)));
+      assert.equal(calls.length, 1, `${implementation.name} ${item.label}`);
+      const trace = cdpCallFunctionTrace(calls[0]);
+      assert.deepEqual(trace.target,
+        { objectId: null, executionContextId: 7 }, `${implementation.name} ${item.label}`);
+      if (item.label === 'read-downloads') {
+        assert.equal(trace.arguments.length, 1);
+        assert.equal(typeof trace.arguments[0].value, 'number');
+      } else {
+        assert.deepEqual(trace.arguments, item.expected, `${implementation.name} ${item.label}`);
+      }
+    }
   });
 
   check('typing carries the character on the keydown', async () => {
