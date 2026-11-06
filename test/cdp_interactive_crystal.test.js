@@ -17,7 +17,11 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { CdpPage } = require('../src/cdp_page');
+const { clickSlider, sliderTrack } = require('../src/driver_chromium');
 const { cdpImplementations } = require('./crystal_impl');
+const { cdpCallFunctionTrace } = require('./parity/protocol-trace-v1');
+
+// parity-id: asset.slider-track
 
 // The announcement every evaluation waits for: the main document saying which
 // execution context it runs in.
@@ -191,7 +195,7 @@ const navigationScripts = {
   ],
 };
 
-const implementations = cdpImplementations({ CdpPage });
+const implementations = cdpImplementations({ CdpPage, clickSlider });
 
 for (const implementation of implementations) {
   const check = (name, fn) => test(`${implementation.name}: ${name}`, fn);
@@ -255,6 +259,30 @@ for (const implementation of implementations) {
       'a pointer arriving somewhere is one event, and it stays where it was put');
     const altClicked = seen[8].filter((entry) => entry.method === 'Input.dispatchMouseEvent');
     assert.deepEqual(altClicked.map((entry) => entry.params.modifiers), [1, 1, 1]);
+  });
+
+  check('a slider track invocation keeps its handle target and orientation', async () => {
+    const sliderReplies = {
+      ...replies,
+      'Runtime.callFunctionOn': { result: {
+        objectId: 'SLIDER-1',
+        value: { x: 10, y: 20, width: 100, height: 50, start: 10, end: 90, size: 100 },
+      } },
+    };
+    const seen = await implementation.scenario([
+      CONTEXT,
+      { op: 'evaluate_handle', fn: '() => document.querySelector("[role=slider]")' },
+      { op: 'sent' },
+      { op: 'handle_click_slider', ratio: 0.25, orientation: 'horizontal' },
+      { op: 'sent' },
+    ], sliderReplies);
+    assert.equal(seen[1], 'SLIDER-1');
+    const trackCalls = seen[4].filter((entry) => entry.method === 'Runtime.callFunctionOn'
+      && entry.params.functionDeclaration.includes(sliderTrack.toString()));
+    assert.equal(trackCalls.length, 1);
+    const trace = cdpCallFunctionTrace(trackCalls[0]);
+    assert.deepEqual(trace.target, { objectId: 'SLIDER-1', executionContextId: null });
+    assert.deepEqual(trace.arguments, [{ value: false }]);
   });
 
   check('typing carries the character on the keydown', async () => {

@@ -3973,7 +3973,7 @@ function placeElementImplementations(place) {
 // events a keystroke becomes, the three mouse events a click is — is decided
 // before the socket. Recording the traffic is therefore the whole of what
 // there is to compare, and it needs no browser to compare it.
-function cdpImplementations({ CdpPage }) {
+function cdpImplementations({ CdpPage, clickSlider }) {
   const scenario = async (script, replies = {}, after = {}) => {
     const sent = [];
     const session = {
@@ -4066,6 +4066,10 @@ function cdpImplementations({ CdpPage }) {
           break;
         case 'handle_hover':
           await held.hover();
+          observations.push(null);
+          break;
+        case 'handle_click_slider':
+          await clickSlider(held, step.ratio, step.orientation ?? null);
           observations.push(null);
           break;
         case 'handle_dispose':

@@ -78,6 +78,28 @@ if (track) { start = track.start; end = track.end; }
 return { start, end: Math.max(start, end), size: isVertical ? root.height : root.width };
 }
 
+async function clickSlider(handle, ratio, orientation = null) {
+  let box = await handle.clickBox();
+  if (!box) throw new Error('the slider has no box on screen');
+  const pageObject = handle.frame.pageObject;
+  const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  await pageObject.session.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved', x: Math.round(center.x), y: Math.round(center.y), buttons: 0,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  box = await handle.clickBox();
+  if (!box) throw new Error('the slider disappeared when hovered');
+  const vertical = orientation === 'vertical'
+    || (!orientation && box.height > box.width * 1.5);
+  const track = await handle.evaluate(sliderTrack, vertical);
+  const start = track.start / track.size;
+  const end = track.end / track.size;
+  const along = start + (vertical ? 1 - ratio : ratio) * (end - start);
+  const x = vertical ? box.x + box.width / 2 : box.x + along * box.width;
+  const y = vertical ? box.y + along * box.height : box.y + box.height / 2;
+  await pageObject.clickAt(x, y);
+}
+
 async function openChromium({
   connect = null, profile = null, keepBrowser = false, log = () => {}, onStartup = () => {},
   browserTimeoutMs = null, portal = 'system',
@@ -611,25 +633,7 @@ async function openChromium({
     // track only then), remeasure, and click the requested fraction with real
     // browser input. The result is verified by the core rather than assumed.
     async clickSlider(scope, handle, ratio, orientation = null) {
-      let box = await handle.clickBox();
-      if (!box) throw new Error('the slider has no box on screen');
-      const pageObject = handle.frame.pageObject;
-      const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-      await pageObject.session.send('Input.dispatchMouseEvent', {
-        type: 'mouseMoved', x: Math.round(center.x), y: Math.round(center.y), buttons: 0,
-      });
-      await new Promise((resolve) => setTimeout(resolve, 120));
-      box = await handle.clickBox();
-      if (!box) throw new Error('the slider disappeared when hovered');
-      const vertical = orientation === 'vertical'
-        || (!orientation && box.height > box.width * 1.5);
-      const track = await handle.evaluate(sliderTrack, vertical);
-      const start = track.start / track.size;
-      const end = track.end / track.size;
-      const along = start + (vertical ? 1 - ratio : ratio) * (end - start);
-      const x = vertical ? box.x + box.width / 2 : box.x + along * box.width;
-      const y = vertical ? box.y + along * box.height : box.y + box.height / 2;
-      await pageObject.clickAt(x, y);
+      await clickSlider(handle, ratio, orientation);
     },
 
     // Chromium's native save-target gesture. It keeps the current tab in
@@ -704,4 +708,4 @@ async function openChromium({
   };
 }
 
-module.exports = { openChromium, sliderTrack };
+module.exports = { openChromium, sliderTrack, clickSlider };

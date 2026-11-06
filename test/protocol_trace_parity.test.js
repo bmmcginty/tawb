@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const {
-  FIELDS, protocolTraceV1, bidiCallFunctionTrace,
+  FIELDS, protocolTraceV1, cdpCallFunctionTrace, bidiCallFunctionTrace,
 } = require('./parity/protocol-trace-v1');
 
 // parity-id: asset.extract-ax-items
@@ -36,6 +36,28 @@ test('protocol-trace-v1 refuses omitted and ad hoc fields', () => {
   assert.throws(() => protocolTraceV1([withoutTarget]), /omits target/);
   assert.throws(() => protocolTraceV1([{ ...complete, context: 'hidden omission' }]),
     /unknown field context/);
+});
+
+test('CDP function calls preserve source, object target, and wire arguments', () => {
+  const command = {
+    method: 'Runtime.callFunctionOn',
+    params: {
+      functionDeclaration: '(vertical) => sliderTrack(this, vertical)',
+      objectId: 'slider-object',
+      arguments: [{ value: true }],
+      awaitPromise: true,
+      returnByValue: true,
+    },
+  };
+  assert.deepEqual(cdpCallFunctionTrace(command), {
+    operation: 'Runtime.callFunctionOn',
+    source: command.params.functionDeclaration,
+    target: { objectId: 'slider-object', executionContextId: null },
+    arguments: command.params.arguments,
+    result: null,
+    error: null,
+    handles: ['slider-object'],
+  });
 });
 
 test('BiDi function calls preserve source, target, and wire arguments', () => {

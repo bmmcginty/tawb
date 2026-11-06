@@ -41,6 +41,25 @@ function protocolTraceV1(records) {
   });
 }
 
+function cdpCallFunctionTrace(message) {
+  if (!message || message.method !== 'Runtime.callFunctionOn') {
+    throw new TypeError('expected a CDP Runtime.callFunctionOn command');
+  }
+  const params = message.params || {};
+  return protocolTraceV1([{
+    operation: message.method,
+    source: params.functionDeclaration ?? null,
+    target: {
+      objectId: params.objectId ?? null,
+      executionContextId: params.executionContextId ?? null,
+    },
+    arguments: params.arguments ?? [],
+    result: null,
+    error: null,
+    handles: params.objectId == null ? [] : [params.objectId],
+  }])[0];
+}
+
 function bidiCallFunctionTrace(message) {
   if (!message || message.method !== 'script.callFunction') {
     throw new TypeError('expected a BiDi script.callFunction command');
@@ -57,4 +76,6 @@ function bidiCallFunctionTrace(message) {
   }])[0];
 }
 
-module.exports = { FIELDS, protocolTraceV1, bidiCallFunctionTrace };
+module.exports = {
+  FIELDS, protocolTraceV1, cdpCallFunctionTrace, bidiCallFunctionTrace,
+};

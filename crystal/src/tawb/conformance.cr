@@ -3948,6 +3948,9 @@ module Tawb
         when "handle_hover"
           held.not_nil!.hover
           observations.push JSON::Any.new(nil)
+        when "handle_click_slider"
+          held.not_nil!.click_slider(step["ratio"].as_f, step["orientation"]?)
+          observations.push JSON::Any.new(nil)
         when "handle_dispose"
           held.not_nil!.dispose
           observations.push JSON::Any.new(nil)
