@@ -2608,6 +2608,8 @@
       "fixtures": [
         "authored-shadow-operations",
         "content-coverage",
+        "direct-video",
+        "long-streaming-audio",
         "user-agent-shadow-operations",
         "views-scenario-catalog"
       ],

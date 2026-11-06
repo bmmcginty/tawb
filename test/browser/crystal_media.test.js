@@ -19,7 +19,21 @@ const { callAsync } = require('../crystal_impl');
 const { tempDir, removeTempDir } = require('../tmpdir');
 
 const enabled = process.env.TAWB_TEST_CRYSTAL_BROWSER === '1';
-const AUDIO = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'direct-audio.ogg'));
+const fixture = (name) => fs.readFileSync(path.join(__dirname, '..', 'fixtures', name));
+const SCENARIOS = [
+  {
+    name: 'direct Ogg audio', path: 'stream.ogg', type: 'audio/ogg',
+    body: fixture('direct-audio.ogg'), stream: false,
+  },
+  {
+    name: 'direct WebM video', path: 'movie.webm', type: 'video/webm',
+    body: fixture('direct-video.webm'), stream: false,
+  },
+  {
+    name: 'long chunked Ogg audio', path: 'long.ogg', type: 'audio/ogg',
+    body: fixture('streaming-audio.ogg'), stream: true,
+  },
+];
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -95,47 +109,63 @@ async function javascriptScenario(profile, url) {
   }
 }
 
-test('native Firefox exposes and operates controls in a direct Ogg stream',
-  { skip: !enabled }, async () => {
-    const root = tempDir('tawb-crystal-media-');
-    const nativeProfile = path.join(root, 'native');
-    const javascriptProfile = path.join(root, 'javascript');
-    const server = http.createServer((_request, response) => {
-      response.writeHead(200, {
-        'content-type': 'audio/ogg',
-        'content-length': AUDIO.length,
-        'cache-control': 'no-store',
+for (const scenario of SCENARIOS) {
+  test(`native Firefox exposes and operates controls in ${scenario.name}`,
+    { skip: !enabled }, async () => {
+      const root = tempDir('tawb-crystal-media-');
+      const nativeProfile = path.join(root, 'native');
+      const javascriptProfile = path.join(root, 'javascript');
+      const server = http.createServer((_request, response) => {
+        const headers = {
+          'content-type': scenario.type,
+          'cache-control': 'no-store',
+        };
+        if (!scenario.stream) headers['content-length'] = scenario.body.length;
+        response.writeHead(200, headers);
+        if (!scenario.stream) {
+          response.end(scenario.body);
+          return;
+        }
+        let offset = 0;
+        const send = () => {
+          if (response.destroyed) return;
+          const next = Math.min(offset + 256, scenario.body.length);
+          response.write(scenario.body.subarray(offset, next));
+          offset = next;
+          if (offset === scenario.body.length) response.end();
+          else setTimeout(send, 10);
+        };
+        send();
       });
-      response.end(AUDIO);
+      await listen(server);
+      const url = `http://127.0.0.1:${server.address().port}/${scenario.path}`;
+
+      try {
+        const javascript = await javascriptScenario(javascriptProfile, url);
+        const crystal = await callAsync('core.media_scenario', {
+          profile: nativeProfile,
+          url,
+        }, { timeoutMs: 120000 });
+
+        assert.deepEqual(crystal, javascript, 'native media handling differs from JavaScript');
+        assert.ok(crystal.controls.some((control) => control.role === 'button'
+          && /play|pause/i.test(control.name)), 'the browser play control is absent');
+        assert.ok(crystal.controls.some((control) => control.role === 'button'
+          && /mute/i.test(control.name)), 'the browser mute control is absent');
+        assert.ok(crystal.controls.some((control) => control.role === 'slider'
+          && /position|time scrubber/i.test(control.name)), 'the browser position control is absent');
+        assert.ok(crystal.controls.some((control) => control.role === 'slider'
+          && /volume/i.test(control.name)), 'the browser volume control is absent');
+        assert.equal(crystal.muteToggled, true, 'Mute did not operate the stream');
+        assert.equal(crystal.positionFocused, true, 'the position slider could not be focused');
+        assert.equal(crystal.positionMoved, true, 'ArrowRight did not move the position slider');
+        assert.equal(crystal.sourceHasUserAgent, true, 'SOURCE omitted the user-agent root');
+        assert.equal(crystal.sourceHasControls, true, 'SOURCE omitted native media controls');
+      } finally {
+        stopProfile(nativeProfile);
+        stopProfile(javascriptProfile);
+        await closeServer(server);
+        removeTempDir(root);
+      }
     });
-    await listen(server);
-    const url = `http://127.0.0.1:${server.address().port}/stream.ogg`;
-
-    try {
-      const javascript = await javascriptScenario(javascriptProfile, url);
-      const crystal = await callAsync('core.media_scenario', {
-        profile: nativeProfile,
-        url,
-      }, { timeoutMs: 120000 });
-
-      assert.deepEqual(crystal, javascript, 'native media handling differs from JavaScript');
-      assert.ok(crystal.controls.some((control) => control.role === 'button'
-        && /play|pause/i.test(control.name)), 'the browser play control is absent');
-      assert.ok(crystal.controls.some((control) => control.role === 'button'
-        && /mute/i.test(control.name)), 'the browser mute control is absent');
-      assert.ok(crystal.controls.some((control) => control.role === 'slider'
-        && /position|time scrubber/i.test(control.name)), 'the browser position control is absent');
-      assert.ok(crystal.controls.some((control) => control.role === 'slider'
-        && /volume/i.test(control.name)), 'the browser volume control is absent');
-      assert.equal(crystal.muteToggled, true, 'Mute did not operate the stream');
-      assert.equal(crystal.positionFocused, true, 'the position slider could not be focused');
-      assert.equal(crystal.positionMoved, true, 'ArrowRight did not move the position slider');
-      assert.equal(crystal.sourceHasUserAgent, true, 'SOURCE omitted the user-agent root');
-      assert.equal(crystal.sourceHasControls, true, 'SOURCE omitted native media controls');
-    } finally {
-      stopProfile(nativeProfile);
-      stopProfile(javascriptProfile);
-      await closeServer(server);
-      removeTempDir(root);
-    }
-  });
+}
