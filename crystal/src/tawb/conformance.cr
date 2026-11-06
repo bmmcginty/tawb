@@ -550,6 +550,8 @@ module Tawb
         cdp_library_scenario(payload)
       when "core.view_blocks"
         core_view_blocks(payload)
+      when "aria.scenario"
+        aria_scenario(payload)
       when "core.layout_scenario"
         core_layout_scenario(payload)
       when "core.media_scenario"
@@ -4204,6 +4206,80 @@ module Tawb
         kept[name] = object[name] if object.has_key?(name)
       end
       JSON::Any.new(kept)
+    end
+
+    # The adapted ARIA-AT toggle-button plan, against a real browser: the
+    # control is found through the native accessibility extraction, its
+    # announcement is rendered, it is operated through the ordinary action
+    # route, and the document is read again so the changed state is observed
+    # rather than assumed. Before and after items and rendered lines are both
+    # returned; the JavaScript runtime answers the same shape.
+    private def self.aria_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      chromium = object["engine"]?.try(&.as_s?) != "firefox"
+      session = nil.as(Engine::Session?)
+      page = nil.as(Engine::Page?)
+      begin
+        if chromium
+          opened = Cdp::BrowserSession.new(object["endpoint"].as_s)
+          session = opened
+          page = opened.create_page
+        else
+          profile = object["profile"].as_s
+          started = FirefoxLaunch.launch(profile)
+          opened = FirefoxDriver::BrowserSession.new(
+            Broker.ensure(profile, started.endpoint)[:url])
+          session = opened
+          opened.start
+          page = opened.create_page
+        end
+        acting = page.not_nil!
+        acting.goto(object["url"].as_s, "domcontentloaded")
+        Dump.settle_embedded_frames(acting)
+        core = Core.new(source: "ax", page: acting)
+        name = object["name"].as_s
+        role = object["role"]?.try(&.as_s?)
+        matching = ->(blocks : Array(Core::Block)) do
+          blocks.find do |block|
+            item = block.item.as_h? || {} of String => JSON::Any
+            item["name"]?.try(&.as_s?) == name &&
+              (role.nil? || item["role"]?.try(&.as_s?) == role)
+          end
+        end
+        before = matching.call(core.rescan)
+        unless before
+          return JSON::Any.new({"found" => JSON::Any.new(false)})
+        end
+        activation = core.activate(before.item, acting)
+        after = matching.call(core.rescan)
+        observed = ->(block : Core::Block) do
+          item = block.item
+          JSON::Any.new({
+            "item" => block_contract_value(item),
+            "line" => JSON::Any.new(Aria.render_line(item)),
+          })
+        end
+        probe = object["probe"]?.try { |source_code| acting.evaluate(source_code.as_s) }
+        JSON::Any.new({
+          "found"      => JSON::Any.new(true),
+          "before"     => observed.call(before),
+          "activation" => activation,
+          "after"      => after ? observed.call(after) : JSON::Any.new({"found" => JSON::Any.new(false)}),
+          "probe"      => probe || JSON::Any.new(nil),
+        })
+      ensure
+        page.try { |held| held.close rescue nil }
+        session.try do |held|
+          case held
+          when FirefoxDriver::BrowserSession
+            # The broker keeps the browser's session for whoever comes next.
+            held.protocol.command(Broker::RETAIN_SESSION) rescue nil
+            held.close(false) rescue nil
+          when Cdp::BrowserSession
+            held.close rescue nil
+          end
+        end
+      end
     end
 
     # One page read in one view, against a real browser. The four views are

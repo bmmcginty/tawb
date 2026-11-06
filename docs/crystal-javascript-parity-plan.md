@@ -781,7 +781,8 @@ machine-readable zero-gap summary.
   runtime differential rather than one representative page.
 - [x] Add user-agent, open, and closed-root operation tests to both engines.
 - [x] Add frame/navigation/live/action race fixtures.
-- [ ] Run native extraction through adapted ARIA-AT and WAI-ARIA gates.
+- [x] Run native extraction through the adapted ARIA-AT gate.
+- [ ] Run native extraction through the adapted WAI-ARIA role gate.
 - [x] Add direct video and long/streaming media alongside Ogg audio.
 
 ### P2: complete lifecycle and terminal proof

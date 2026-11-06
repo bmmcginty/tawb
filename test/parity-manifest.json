@@ -2699,19 +2699,31 @@
         "crystal/src/tawb/conformance.cr"
       ],
       "operations": [
-        "aria.render_line"
+        "aria.render_line",
+        "aria.scenario"
       ],
-      "surfaces": [],
-      "engines": [],
-      "views": [],
-      "fixtures": [],
+      "surfaces": [
+        "dump"
+      ],
+      "engines": [
+        "chromium",
+        "firefox"
+      ],
+      "views": [
+        "ax"
+      ],
+      "fixtures": [
+        "aria-at-toggle"
+      ],
       "levels": [
-        "operation"
+        "operation",
+        "real-browser"
       ],
       "tests": [
+        "test/browser/aria_at_crystal.test.js",
         "test/crystal_impl.js"
       ],
-      "status": "scripted-only",
+      "status": "single-surface",
       "differences": []
     },
     {
