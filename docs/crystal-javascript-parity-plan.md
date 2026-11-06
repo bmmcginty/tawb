@@ -798,7 +798,7 @@ machine-readable zero-gap summary.
 - [ ] Performance corpus and budgets.
 - [ ] Long soak and leak tests.
 - [ ] Browser release matrix for the native artifact.
-- [ ] No-Node deployment test.
+- [x] No-Node deployment test.
 - [ ] Two release cycles with zero unexplained parity incidents.
 
 ## Reporting progress
