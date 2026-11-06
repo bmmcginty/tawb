@@ -4548,6 +4548,15 @@ module Tawb
           when "activate_item"
             core = Core.new(source: step["source"]?.try(&.as_s?) || "ax", page: acting)
             observations.push(core.activate(step["item"], acting))
+          when "focus_assets"
+            tracker = Focus.arm(current.not_nil!, handle.not_nil!)
+            focused = Focus.focused_by(tracker, Time::Span.zero, Time::Span.zero)
+            focused.try(&.handle.dispose)
+            cancelled = Focus.cancel(Focus.arm(current.not_nil!, handle.not_nil!))
+            observations.push(JSON::Any.new({
+              "found"     => JSON::Any.new(!focused.nil?),
+              "cancelled" => JSON::Any.new(cancelled),
+            }))
           when "focus_control"
             observations.push(Actions.focus_control(handle.not_nil!))
           when "submits_autofilled"

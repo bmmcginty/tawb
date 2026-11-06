@@ -3345,7 +3345,8 @@ function firefoxPageImplementations({ bidi, FirefoxPage, FirefoxFrame, extractAx
 // so the assertions cover both the answers and the exact wire traffic —
 // which is the contract, since a real Firefox parses the same bytes.
 function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard,
-  pierceAndRun, clickThrough, prepareRealClick, submitsAutofilled }) {
+  pierceAndRun, clickThrough, prepareRealClick, submitsAutofilled,
+  armActivationFocus, focusedByActivation, cancelActivationFocus }) {
   const handleScenario = async (url, script) => {
     const session = await bidi.connect(url);
     const observations = [];
@@ -3473,6 +3474,15 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, Firefox
               item.pressFrame = new FirefoxFrame(session, item.pressFrame.id, acting);
             }
             observations.push(await core.activate(item, acting));
+            break;
+          }
+          case 'focus_assets': {
+            const tracker = await armActivationFocus(current, handle);
+            const focused = await focusedByActivation(tracker, { waitMs: 0, pollMs: 0 });
+            if (focused) await focused.handle.dispose();
+            const cancelled = await cancelActivationFocus(
+              await armActivationFocus(current, handle));
+            observations.push({ found: !!focused, cancelled });
             break;
           }
           case 'focus_control':

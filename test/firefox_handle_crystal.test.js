@@ -17,6 +17,10 @@ const {
 const { clickThrough, prepareRealClick, submitsAutofilled } = require('../src/click');
 const { extractSource } = require('../src/source_html');
 const { extractForEdbrowse, resolveDescriptor } = require('../src/edb_page');
+const {
+  armActivationFocus, focusedByActivation, cancelActivationFocus,
+  armFocusTracker, focusTrackerHasTarget, takeFocusTrackerTarget, clearFocusTracker,
+} = require('../src/focus');
 const { acceptWebSocket } = require('../src/broker');
 const { firefoxHandleImplementations } = require('./crystal_impl');
 const { bidiCallFunctionTrace } = require('./parity/protocol-trace-v1');
@@ -28,6 +32,10 @@ const { bidiCallFunctionTrace } = require('./parity/protocol-trace-v1');
 // parity-id: asset.prepare-real-click
 // parity-id: asset.slider-geometry
 // parity-id: asset.submits-autofilled
+// parity-id: asset.focus-arm
+// parity-id: asset.focus-has-target
+// parity-id: asset.focus-take-target
+// parity-id: asset.focus-clear
 
 async function withEndpoint(onMessage, run) {
   const server = http.createServer();
@@ -499,6 +507,86 @@ test('both runtimes invoke action assets with the same target and arguments', as
       target: { context: 'action-frame' },
       arguments: [...receiver, { type: 'null' }],
     }, `${label} sliderGeometry`);
+  }
+});
+
+test('both runtimes keep focus-tracker assets on one frame and token', async () => {
+  const implementations = firefoxHandleImplementations({
+    bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard, pierceAndRun,
+    clickThrough, prepareRealClick, submitsAutofilled,
+    armActivationFocus, focusedByActivation, cancelActivationFocus,
+  });
+  const assets = [
+    { fn: armFocusTracker },
+    { fn: focusTrackerHasTarget },
+    { fn: takeFocusTrackerTarget },
+    { fn: clearFocusTracker },
+  ];
+  for (const implementation of implementations) {
+    const received = [];
+    let roots = 0;
+    const isAsset = (source, asset) => source === asset.fn.toString()
+      || source.includes(`Generated from src/focus.js ${asset.fn.name};`);
+    const observations = await withEndpoint((message, peer) => {
+      received.push(message);
+      let result = {};
+      if (message.method === 'session.new') result = { sessionId: 'session-1' };
+      if (message.method === 'script.callFunction') {
+        let value;
+        if (message.params.resultOwnership === 'root') {
+          roots += 1;
+          value = {
+            type: 'node', handle: `focus-handle-${roots}`, sharedId: `focus-shared-${roots}`,
+          };
+        } else if (isAsset(message.params.functionDeclaration, assets[1])) {
+          value = { type: 'boolean', value: true };
+        } else {
+          value = { type: 'boolean', value: true };
+        }
+        result = { type: 'success', result: value };
+      }
+      peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+    }, (url) => implementation.handleScenario(url, [
+      { op: 'frame', context: 'focus-frame', url: 'https://focus.test/' },
+      { op: 'evaluate_handle', fn: '(el) => el' },
+      { op: 'focus_assets' },
+    ]));
+    const label = implementation.name;
+    assert.deepEqual(observations, [
+      null,
+      { handle: 'focus-handle-1', sharedId: 'focus-shared-1' },
+      { found: true, cancelled: true },
+    ], label);
+
+    const calls = received.filter(({ method }) => method === 'script.callFunction');
+    const tracesFor = (asset) => calls
+      .filter(({ params }) => isAsset(params.functionDeclaration, asset))
+      .map((call) => ({ call, trace: bidiCallFunctionTrace(call) }));
+    const [arms, checks, takes, clears] = assets.map(tracesFor);
+    assert.equal(arms.length, 2, `${label} arm count`);
+    assert.equal(checks.length, 1, `${label} check count`);
+    assert.equal(takes.length, 1, `${label} take count`);
+    assert.equal(clears.length, 2, `${label} clear count`);
+    for (const { trace } of [...arms, ...checks, ...takes, ...clears]) {
+      assert.deepEqual(trace.target, { context: 'focus-frame' }, label);
+    }
+    assert.deepEqual(arms.map(({ trace }) => trace.arguments[0]), [
+      { handle: 'focus-handle-1' }, { handle: 'focus-handle-1' },
+    ], label);
+    const firstToken = arms[0].trace.arguments[1];
+    const secondToken = arms[1].trace.arguments[1];
+    assert.equal(firstToken.type, 'string');
+    assert.equal(secondToken.type, 'string');
+    assert.notEqual(firstToken.value, secondToken.value, `${label} reused an activation token`);
+    assert.deepEqual(checks[0].trace.arguments, [firstToken], label);
+    assert.deepEqual(takes[0].trace.arguments, [firstToken], label);
+    assert.deepEqual(clears.map(({ trace }) => trace.arguments), [
+      [firstToken], [secondToken],
+    ], label);
+    assert.equal(takes[0].call.params.resultOwnership, 'root', label);
+    const disposed = received.find(({ method, params }) => method === 'script.disown'
+      && params.handles.includes('focus-handle-2'));
+    assert.ok(disposed, `${label} did not dispose the focused target`);
   }
 });
 

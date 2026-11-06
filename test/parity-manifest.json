@@ -431,15 +431,23 @@
       "crystal": [
         "crystal/assets/focus_arm.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-focus-frame"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -451,15 +459,23 @@
       "crystal": [
         "crystal/assets/focus_clear.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-focus-frame"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -471,15 +487,23 @@
       "crystal": [
         "crystal/assets/focus_has_target.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-focus-frame"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -491,15 +515,23 @@
       "crystal": [
         "crystal/assets/focus_take_target.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-focus-frame"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
