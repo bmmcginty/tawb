@@ -456,6 +456,11 @@ module Tawb
         JSON::Any.new(Blocks.build(payload.as_h["items"].as_a))
       when "blocks.fold"
         JSON::Any.new(Blocks.fold(payload.as_h["blocks"].as_a))
+      when "parity.block_v1"
+        object = payload.as_h
+        block_contract_json(Core::Block.new(
+          object["text"]?.try(&.as_s?) || "", object["item"]? || JSON::Any.new(nil),
+          object["kind"]?, object["startsBlock"]?, object["isParagraph"]?, object["spans"]?))
       when "core.scenario"
         core_scenario(payload)
       when "core.tab_scenario"
@@ -4156,22 +4161,7 @@ module Tawb
         Dump.settle_embedded_frames(acting)
         core = Core.new(source: source, page: acting)
         blocks = core.rescan
-        JSON::Any.new(blocks.map do |block|
-          item = block.item.as_h? || {} of String => JSON::Any
-          entry = {
-            "text" => JSON::Any.new(block.text),
-            "role" => item["role"]? || JSON::Any.new(nil),
-            "name" => item["name"]? || JSON::Any.new(nil),
-          } of String => JSON::Any
-          # The element each line came from, where the view numbers them. The
-          # number is the view's own and means the same thing in both
-          # runtimes; the frame it belongs to is a protocol handle and does
-          # not, so only whether there is one is reported.
-          entry["index"] = item["renderIndex"]? || item["domIndex"]? ||
-                           item["axIndex"]? || JSON::Any.new(nil)
-          entry["framed"] = JSON::Any.new(!(item["frame"]?.nil? || item["frame"]?.try(&.raw).nil?))
-          JSON::Any.new(entry)
-        end)
+        JSON::Any.new(blocks.map { |block| block_contract_json(block) })
       ensure
         page.try { |held| held.close rescue nil }
         session.try do |held|
@@ -4342,19 +4332,45 @@ module Tawb
       end
     end
 
-    # The cross-runtime shape of one block in a layout observation. The view's
-    # own index survives; the frame is a protocol handle and is reported only
-    # as whether there is one.
-    private def self.layout_block_json(block : Core::Block) : JSON::Any
-      item = block.item.as_h? || {} of String => JSON::Any
+    # Version 1 of the complete extraction-block observation. Frame values are
+    # protocol-owned handles and therefore normalize to presence; every other
+    # item field survives recursively so new extractor metadata cannot be
+    # hidden by a narrow, hand-picked serializer.
+    private def self.block_contract_value(value : JSON::Any, key = "") : JSON::Any
+      if key == "frame" || key == "pressFrame"
+        return JSON::Any.new(value.raw.nil? ? nil : true)
+      end
+      case raw = value.raw
+      when Hash
+        normalized = {} of String => JSON::Any
+        raw.keys.sort.each do |name|
+          # JavaScript JSON omits optional undefined fields, while some native
+          # protocol converters retain the same absence as null.
+          next if raw[name].raw.nil?
+          normalized[name] = block_contract_value(raw[name], name)
+        end
+        JSON::Any.new(normalized)
+      when Array
+        JSON::Any.new(raw.map { |entry| block_contract_value(entry) })
+      else
+        value
+      end
+    end
+
+    private def self.block_contract_json(block : Core::Block) : JSON::Any
+      null = JSON::Any.new(nil)
       JSON::Any.new({
-        "text"    => JSON::Any.new(block.text),
-        "role"    => item["role"]? || JSON::Any.new(nil),
-        "name"    => item["name"]? || JSON::Any.new(nil),
-        "index"   => item["renderIndex"]? || item["domIndex"]? ||
-                     item["axIndex"]? || JSON::Any.new(nil),
-        "framed"  => JSON::Any.new(!(item["frame"]?.nil? || item["frame"]?.try(&.raw).nil?)),
+        "kind"        => block.kind.try { |value| block_contract_value(value) } || null,
+        "text"        => JSON::Any.new(block.text),
+        "startsBlock" => block.starts_block.try { |value| block_contract_value(value) } || null,
+        "isParagraph" => block.is_paragraph.try { |value| block_contract_value(value) } || null,
+        "spans"       => block.spans.try { |value| block_contract_value(value) } || null,
+        "item"        => block_contract_value(block.item),
       })
+    end
+
+    private def self.layout_block_json(block : Core::Block) : JSON::Any
+      block_contract_json(block)
     end
 
     private def self.firefox_launch_scenario(payload : JSON::Any) : JSON::Any

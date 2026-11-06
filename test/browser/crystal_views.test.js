@@ -20,6 +20,7 @@ const { processesUsing } = require('../../src/proc');
 const { callAsync } = require('../crystal_impl');
 const { openDriver } = require('../../src/driver');
 const { Core } = require('../../src/core');
+const { blockV1, firstDifference } = require('../parity/block-v1');
 
 const ROOT = path.join(__dirname, '..', '..');
 const BINARY = process.env.TAWB_CRYSTAL_BIN || path.join(ROOT, 'bin', 'tawb');
@@ -76,23 +77,6 @@ function killProfile(profile) {
   }
 }
 
-// Only what means the same thing in both runtimes: the index is the view's own
-// numbering, while the frame is a protocol handle and is reported only as
-// whether there is one.
-function kept(block) {
-  const item = block.item || {};
-  const index = item.renderIndex !== undefined ? item.renderIndex
-    : item.domIndex !== undefined ? item.domIndex
-      : item.axIndex !== undefined ? item.axIndex : null;
-  return {
-    text: block.text,
-    role: item.role === undefined ? null : item.role,
-    name: item.name === undefined ? null : item.name,
-    index: index === undefined ? null : index,
-    framed: !!item.frame,
-  };
-}
-
 // A browser of its own, because this is about what an extraction says of a
 // document rather than about one browser answering two clients: Firefox's one
 // protocol session belongs to whichever reader holds it, and sharing it here
@@ -104,7 +88,7 @@ async function javascriptBlocks(engine, profile, url, source) {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
     const core = new Core({ driver, page, source, sources: [source] });
     const blocks = await core.rescan({ page });
-    return blocks.map(kept);
+    return blocks.map(blockV1);
   } finally {
     await driver.close().catch(() => {});
   }
@@ -147,8 +131,9 @@ for (const engine of ['chromium', 'firefox']) {
             { endpoint, engine, url, source, profile: native }, { timeoutMs: 120000 });
           const javascript = await javascriptBlocks(engine, other, url, source);
 
-          assert.deepEqual(crystal, javascript,
-            `the ${source} view differs between the runtimes`);
+          const difference = firstDifference(crystal, javascript);
+          assert.equal(difference, null,
+            `the ${source} view differs between the runtimes: ${JSON.stringify(difference)}`);
           assert.ok(crystal.length > 0, 'and it read something');
           if (source === 'source') {
             assert.ok(crystal.some((block) => block.text.includes('Closed view control')),

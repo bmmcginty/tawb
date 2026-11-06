@@ -21,6 +21,7 @@ const { processesUsing } = require('../../src/proc');
 const { callAsync } = require('../crystal_impl');
 const { openDriver } = require('../../src/driver');
 const { Core } = require('../../src/core');
+const { blockV1, firstDifference } = require('../parity/block-v1');
 
 const ROOT = path.join(__dirname, '..', '..');
 const BINARY = process.env.TAWB_CRYSTAL_BIN || path.join(ROOT, 'bin', 'tawb');
@@ -63,20 +64,6 @@ function killProfile(profile) {
   }
 }
 
-function kept(block) {
-  const item = block.item || {};
-  const index = item.renderIndex !== undefined ? item.renderIndex
-    : item.domIndex !== undefined ? item.domIndex
-      : item.axIndex !== undefined ? item.axIndex : null;
-  return {
-    text: block.text,
-    role: item.role === undefined ? null : item.role,
-    name: item.name === undefined ? null : item.name,
-    index: index === undefined ? null : index,
-    framed: !!item.frame,
-  };
-}
-
 async function javascriptLayout(engine, profile) {
   const driver = await openDriver({ engine, profile, log: () => {} });
   const page = driver.context.pages()[0] || await driver.context.newPage();
@@ -93,7 +80,7 @@ async function javascriptLayout(engine, profile) {
         observations.push({
           source,
           order,
-          blocks: blocks.map(kept),
+          blocks: blocks.map(blockV1),
           activated: !!target,
           presses: await page.evaluate(() => window.presses || 0),
         });
@@ -137,8 +124,9 @@ for (const engine of ['chromium', 'firefox']) {
         }, { timeoutMs: 120000 });
         const javascript = await runWithRetry(() => javascriptLayout(engine, other));
 
-        assert.deepEqual(nativeLayout, javascript,
-          `the diagnostic layout differs between the runtimes through ${engine}`);
+        const difference = firstDifference(nativeLayout, javascript);
+        assert.equal(difference, null,
+          `the diagnostic layout differs between the runtimes through ${engine}: ${JSON.stringify(difference)}`);
         for (const observation of nativeLayout) {
           assert.equal(observation.activated, true,
             `${observation.source}/${observation.order} lost the Add to cart button`);

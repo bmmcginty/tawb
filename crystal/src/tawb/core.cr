@@ -131,8 +131,18 @@ module Tawb
     class Block
       property text : String
       property item : JSON::Any
+      # Extraction metadata is retained for the canonical parity contract.
+      # Reader policy currently needs text and item, but dropping the rest here
+      # used to let startsBlock, paragraph, span, or kind mismatches pass every
+      # real-browser differential unnoticed.
+      property kind : JSON::Any?
+      property starts_block : JSON::Any?
+      property is_paragraph : JSON::Any?
+      property spans : JSON::Any?
 
-      def initialize(@text : String, @item : JSON::Any = JSON::Any.new(nil))
+      def initialize(@text : String, @item : JSON::Any = JSON::Any.new(nil),
+                     @kind : JSON::Any? = nil, @starts_block : JSON::Any? = nil,
+                     @is_paragraph : JSON::Any? = nil, @spans : JSON::Any? = nil)
       end
     end
 
@@ -528,7 +538,8 @@ module Tawb
       extracted = built.map do |entry|
         object = entry.as_h
         Block.new(object["text"]?.try(&.as_s?) || "",
-          object["item"]? || JSON::Any.new(nil))
+          object["item"]? || JSON::Any.new(nil), object["kind"]?,
+          object["startsBlock"]?, object["isParagraph"]?, object["spans"]?)
       end
       @blocks = LayoutOrder.order(extracted, @layout_order)
       restore_attached_files(target.tab_id)

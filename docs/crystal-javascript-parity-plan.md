@@ -770,7 +770,7 @@ machine-readable zero-gap summary.
 - [x] Make the browser gate fail on unexpected skips.
 - [x] Verify binary revision/assets before browser tests.
 - [ ] Inventory every asset invocation and add option/target traces.
-- [ ] Replace narrow block serializers with the canonical block contract.
+- [x] Replace narrow block serializers with the canonical block contract.
 
 ### P1: expand real-browser breadth
 

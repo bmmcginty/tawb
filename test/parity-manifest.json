@@ -3428,6 +3428,29 @@
       "differences": []
     },
     {
+      "id": "operation.parity",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "parity.block_v1"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/block_parity.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
       "id": "operation.place",
       "kind": "operation",
       "javascript": [],
