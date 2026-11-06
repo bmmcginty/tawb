@@ -4561,6 +4561,11 @@ module Tawb
             observations.push(Actions.focus_control(handle.not_nil!))
           when "submits_autofilled"
             observations.push(Actions.submits_autofilled(handle.not_nil!))
+          when "read_field_state"
+            observations.push(Fields.read_field_state(handle.not_nil!))
+          when "adjust_control"
+            observations.push(Actions.adjust_control(handle.not_nil!,
+              step["role"]?.try(&.as_s?), step["key"].as_s))
           when "set_files"
             paths = step["paths"].as_a.map(&.as_s)
             observations.push(JSON::Any.new(handle.not_nil!.set_files(paths)))

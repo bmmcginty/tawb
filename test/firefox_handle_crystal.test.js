@@ -15,6 +15,7 @@ const {
   toRemoteArgument,
 } = require('../src/driver_firefox');
 const { clickThrough, prepareRealClick, submitsAutofilled } = require('../src/click');
+const { readFieldState, readFieldStateInPage, sliderStateOf } = require('../src/core');
 const { extractSource } = require('../src/source_html');
 const { extractForEdbrowse, resolveDescriptor } = require('../src/edb_page');
 const {
@@ -36,6 +37,8 @@ const { bidiCallFunctionTrace } = require('./parity/protocol-trace-v1');
 // parity-id: asset.focus-has-target
 // parity-id: asset.focus-take-target
 // parity-id: asset.focus-clear
+// parity-id: asset.read-field-state
+// parity-id: asset.slider-state
 
 async function withEndpoint(onMessage, run) {
   const server = http.createServer();
@@ -587,6 +590,81 @@ test('both runtimes keep focus-tracker assets on one frame and token', async () 
     const disposed = received.find(({ method, params }) => method === 'script.disown'
       && params.handles.includes('focus-handle-2'));
     assert.ok(disposed, `${label} did not dispose the focused target`);
+  }
+});
+
+test('both runtimes read field and slider state from the held control', async () => {
+  const implementations = firefoxHandleImplementations({
+    bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard, pierceAndRun,
+    clickThrough, prepareRealClick, submitsAutofilled, readFieldState,
+  });
+  for (const implementation of implementations) {
+    const received = [];
+    let sliderReads = 0;
+    const isAsset = (source, fn) => source === fn.toString()
+      || source.includes(`Generated from src/core.js ${fn.name};`);
+    const observations = await withEndpoint((message, peer) => {
+      received.push(message);
+      let result = {};
+      if (message.method === 'session.new') result = { sessionId: 'session-1' };
+      if (message.method === 'script.callFunction') {
+        const source = message.params.functionDeclaration;
+        let value;
+        if (message.params.resultOwnership === 'root') {
+          value = { type: 'node', handle: 'state-handle', sharedId: 'state-shared' };
+        } else if (isAsset(source, readFieldStateInPage)) {
+          value = { type: 'object', value: [
+            ['value', { type: 'string', value: 'hello' }],
+            ['caret', { type: 'number', value: 2 }],
+          ] };
+        } else if (isAsset(source, sliderStateOf)) {
+          sliderReads += 1;
+          value = { type: 'object', value: [
+            ['value', { type: 'number', value: sliderReads === 1 ? 5 : 6 }],
+            ['min', { type: 'number', value: 0 }],
+            ['max', { type: 'number', value: 10 }],
+            ['step', { type: 'number', value: 1 }],
+            ['orientation', { type: 'string', value: 'horizontal' }],
+          ] };
+        } else {
+          value = { type: 'null' };
+        }
+        result = { type: 'success', result: value };
+      }
+      peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+    }, (url) => implementation.handleScenario(url, [
+      { op: 'frame', context: 'state-frame', url: 'https://state.test/' },
+      { op: 'evaluate_handle', fn: '(el) => el' },
+      { op: 'read_field_state' },
+      { op: 'adjust_control', role: 'slider', key: 'ArrowRight' },
+      { op: 'handle_dispose' },
+    ]));
+    const label = implementation.name;
+    assert.deepEqual(observations, [
+      null,
+      { handle: 'state-handle', sharedId: 'state-shared' },
+      { value: 'hello', caret: 2 },
+      { changed: true, fallback: false, before: 5, after: 6 },
+      null,
+    ], label);
+
+    const calls = received.filter(({ method }) => method === 'script.callFunction');
+    const tracesFor = (fn) => calls
+      .filter(({ params }) => isAsset(params.functionDeclaration, fn))
+      .map(bidiCallFunctionTrace);
+    const field = tracesFor(readFieldStateInPage);
+    const sliders = tracesFor(sliderStateOf);
+    assert.equal(field.length, 1, `${label} field-state count`);
+    assert.equal(sliders.length, 2, `${label} slider-state count`);
+    for (const trace of [...field, ...sliders]) {
+      assert.deepEqual({ target: trace.target, arguments: trace.arguments }, {
+        target: { context: 'state-frame' }, arguments: [{ handle: 'state-handle' }],
+      }, label);
+    }
+    const disposed = received.find(({ method }) => method === 'script.disown');
+    assert.deepEqual(disposed.params, {
+      handles: ['state-handle'], target: { context: 'state-frame' },
+    }, label);
   }
 });
 
