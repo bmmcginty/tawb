@@ -11,7 +11,8 @@ const assert = require('node:assert');
 const http = require('node:http');
 const bidi = require('../src/bidi');
 const {
-  FirefoxPage, FirefoxFrame, FirefoxKeyboard, pierceAndRun, toRemoteArgument,
+  FirefoxPage, FirefoxFrame, FirefoxKeyboard, pierceAndRun, sliderGeometry,
+  toRemoteArgument,
 } = require('../src/driver_firefox');
 const { clickThrough, prepareRealClick, submitsAutofilled } = require('../src/click');
 const { extractSource } = require('../src/source_html');
@@ -23,6 +24,10 @@ const { bidiCallFunctionTrace } = require('./parity/protocol-trace-v1');
 // parity-id: asset.extract-source
 // parity-id: asset.edb-extract
 // parity-id: asset.edb-resolve
+// parity-id: asset.click-through
+// parity-id: asset.prepare-real-click
+// parity-id: asset.slider-geometry
+// parity-id: asset.submits-autofilled
 
 async function withEndpoint(onMessage, run) {
   const server = http.createServer();
@@ -414,6 +419,88 @@ for (const implementation of firefoxHandleImplementations({
     ], 'a character outside the basic plane is one keystroke');
   });
 }
+
+test('both runtimes invoke action assets with the same target and arguments', async () => {
+  const implementations = firefoxHandleImplementations({
+    bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard, pierceAndRun,
+    clickThrough, prepareRealClick, submitsAutofilled,
+  });
+  for (const implementation of implementations) {
+    const received = [];
+    const observations = await withEndpoint((message, peer) => {
+      received.push(message);
+      let result = {};
+      if (message.method === 'session.new') result = { sessionId: 'session-1' };
+      if (message.method === 'script.callFunction') {
+        const source = message.params.functionDeclaration;
+        let value;
+        if (message.params.resultOwnership === 'root') {
+          value = { type: 'node', handle: 'asset-handle', sharedId: 'asset-shared' };
+        } else if (source === clickThrough.toString()) {
+          value = { type: 'boolean', value: true };
+        } else if (source === prepareRealClick.toString()) {
+          value = { type: 'object', value: [
+            ['ok', { type: 'boolean', value: true }],
+            ['x', { type: 'number', value: 20 }],
+            ['y', { type: 'number', value: 30 }],
+            ['fromX', { type: 'number', value: 20 }],
+            ['fromY', { type: 'number', value: 10 }],
+            ['placed', { type: 'string', value: 'center' }],
+          ] };
+        } else if (source === submitsAutofilled.toString()) {
+          value = { type: 'boolean', value: false };
+        } else if (source === sliderGeometry.toString()) {
+          value = { type: 'object', value: [
+            ['width', { type: 'number', value: 100 }],
+            ['height', { type: 'number', value: 20 }],
+            ['vertical', { type: 'boolean', value: false }],
+            ['start', { type: 'number', value: 2 }],
+            ['end', { type: 'number', value: 98 }],
+          ] };
+        } else {
+          value = { type: 'null' };
+        }
+        result = { type: 'success', result: value };
+      }
+      peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+    }, (url) => implementation.handleScenario(url, [
+      { op: 'frame', context: 'action-frame', url: 'https://action.test/' },
+      { op: 'evaluate_handle', fn: '(el) => el' },
+      { op: 'activate' },
+      { op: 'real_click' },
+      { op: 'submits_autofilled' },
+      { op: 'click_slider', ratio: 0.5 },
+    ]));
+    const label = implementation.name;
+    assert.deepEqual(observations, [
+      null,
+      { handle: 'asset-handle', sharedId: 'asset-shared' },
+      true,
+      { ok: true },
+      false,
+      null,
+    ], label);
+
+    const calls = received.filter(({ method }) => method === 'script.callFunction');
+    const traceFor = (source) => {
+      const call = calls.find((candidate) => candidate.params.functionDeclaration === source);
+      assert.ok(call, `${label} did not invoke ${source.slice(0, 40)}`);
+      return bidiCallFunctionTrace(call);
+    };
+    const receiver = [{ handle: 'asset-handle' }];
+    for (const source of [clickThrough, prepareRealClick, submitsAutofilled]) {
+      const trace = traceFor(source.toString());
+      assert.deepEqual({ target: trace.target, arguments: trace.arguments }, {
+        target: { context: 'action-frame' }, arguments: receiver,
+      }, `${label} ${source.name}`);
+    }
+    const geometry = traceFor(sliderGeometry.toString());
+    assert.deepEqual({ target: geometry.target, arguments: geometry.arguments }, {
+      target: { context: 'action-frame' },
+      arguments: [...receiver, { type: 'null' }],
+    }, `${label} sliderGeometry`);
+  }
+});
 
 test('both runtimes probe and retry privileged assets in the same frame', async () => {
   const implementations = firefoxHandleImplementations({

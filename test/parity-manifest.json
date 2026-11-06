@@ -170,15 +170,23 @@
       "crystal": [
         "crystal/assets/click_through.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-action-frame"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -583,15 +591,23 @@
       "crystal": [
         "crystal/assets/prepare_real_click.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-action-frame"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -663,15 +679,23 @@
       "crystal": [
         "crystal/assets/slider_geometry.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-action-frame"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -723,15 +747,23 @@
       "crystal": [
         "crystal/assets/submits_autofilled.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-action-frame"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/firefox_handle_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
