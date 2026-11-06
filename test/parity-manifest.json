@@ -2606,7 +2606,9 @@
         "source"
       ],
       "fixtures": [
+        "authored-shadow-operations",
         "content-coverage",
+        "user-agent-shadow-operations",
         "views-scenario-catalog"
       ],
       "levels": [

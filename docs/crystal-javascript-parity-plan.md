@@ -779,7 +779,7 @@ machine-readable zero-gap summary.
 - [x] Run content coverage as a native differential on both engines/all views.
 - [x] Port the complete `test/browser/views.test.js` scenario set into a
   runtime differential rather than one representative page.
-- [ ] Add user-agent, open, and closed-root operation tests to both engines.
+- [x] Add user-agent, open, and closed-root operation tests to both engines.
 - [ ] Add frame/navigation/live/action race fixtures.
 - [ ] Run native extraction through adapted ARIA-AT and WAI-ARIA gates.
 - [ ] Add direct video and long/streaming media alongside Ogg audio.

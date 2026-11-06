@@ -4195,6 +4195,32 @@ module Tawb
         end
         core = Core.new(source: source, page: acting)
         blocks = core.rescan
+        if operations = object["operations"]?.try(&.as_a?)
+          answers = operations.map do |operation|
+            wanted = operation.as_h
+            name = wanted["name"].as_s
+            role = wanted["role"]?.try(&.as_s?)
+            target = blocks.find do |block|
+              item = block.item.as_h? || {} of String => JSON::Any
+              item["name"]?.try(&.as_s?) == name &&
+                (role.nil? || item["role"]?.try(&.as_s?) == role)
+            end
+            if target
+              JSON::Any.new({
+                "found"  => JSON::Any.new(true),
+                "item"   => block_contract_value(target.item),
+                "answer" => core.activate(target.item, acting),
+              })
+            else
+              JSON::Any.new({"found" => JSON::Any.new(false)})
+            end
+          end
+          probe = object["probe"]?.try { |source_code| acting.evaluate(source_code.as_s) }
+          return JSON::Any.new({
+            "operations" => JSON::Any.new(answers),
+            "probe"      => probe || JSON::Any.new(nil),
+          })
+        end
         JSON::Any.new(blocks.map { |block| block_contract_json(block) })
       ensure
         page.try { |held| held.close rescue nil }

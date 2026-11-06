@@ -21,7 +21,7 @@ const { callAsync } = require('../crystal_impl');
 const { openDriver } = require('../../src/driver');
 const { Core } = require('../../src/core');
 const { blockV1, firstDifference } = require('../parity/block-v1');
-const { VIEW_SCENARIOS } = require('./views_scenarios');
+const { MEDIA_PAGE, VIEW_SCENARIOS } = require('./views_scenarios');
 
 const ROOT = path.join(__dirname, '..', '..');
 const BINARY = process.env.TAWB_CRYSTAL_BIN || path.join(ROOT, 'bin', 'tawb');
@@ -87,6 +87,33 @@ async function javascriptBlocks(engine, profile, url, source) {
   return (await javascriptCases(engine, profile, [{ url, source }]))[0];
 }
 
+async function javascriptOperations(engine, profile, url, operations, probe) {
+  const driver = await openDriver({ engine, profile, log: () => {} });
+  const page = driver.context.pages()[0] || await driver.context.newPage();
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(
+      () => window.__ready === undefined || window.__ready === true,
+      null, { timeout: 5000 },
+    ).catch(() => {});
+    const core = new Core({ driver, page, source: 'ax', sources: ['ax'] });
+    const blocks = await core.rescan({ page });
+    const answers = [];
+    for (const wanted of operations) {
+      const target = blocks.find((block) => block.item?.name === wanted.name
+        && (!wanted.role || block.item.role === wanted.role));
+      answers.push(target ? {
+        found: true,
+        item: blockV1(target).item,
+        answer: await core.activate(target.item, page),
+      } : { found: false });
+    }
+    return { operations: answers, probe: await page.evaluate((0, eval)(probe)) };
+  } finally {
+    await driver.close().catch(() => {});
+  }
+}
+
 async function javascriptCases(engine, profile, cases) {
   const driver = await openDriver({ engine, profile, log: () => {} });
   const answers = [];
@@ -111,7 +138,103 @@ async function javascriptCases(engine, profile, cases) {
   }
 }
 
+const SHADOW_OPERATION_PAGE = `<!doctype html><meta charset="utf-8"><title>shadow operations</title>
+<div id="open"></div><div id="closed"></div>
+<script>
+  window.shadowPresses = { open: 0, closed: 0 };
+  const install = (host, mode, name, key) => {
+    const root = host.attachShadow({ mode });
+    root.innerHTML = '<button aria-label="' + name + '">' + name + '</button>';
+    root.querySelector('button').addEventListener('click', () => { window.shadowPresses[key] += 1; });
+  };
+  install(document.getElementById('open'), 'open', 'Open shadow action', 'open');
+  install(document.getElementById('closed'), 'closed', 'Closed shadow action', 'closed');
+</script>`;
+const SHADOW_OPERATIONS = [
+  { name: 'Open shadow action', role: 'button' },
+  { name: 'Closed shadow action', role: 'button' },
+];
+const SHADOW_PROBE = '() => window.shadowPresses';
+
 for (const engine of ['chromium', 'firefox']) {
+  test(`authored shadow-root operations agree through ${engine}`, { skip }, async () => {
+    const root = tempDir(`tawb-shadow-operations-${engine}-`);
+    const native = path.join(root, 'native');
+    const other = path.join(root, 'javascript');
+    const fixture = path.join(root, 'shadow.html');
+    fs.writeFileSync(fixture, SHADOW_OPERATION_PAGE);
+    const url = `file://${fixture}`;
+    const env = { ...process.env, HOME: path.join(root, 'home') };
+    fs.mkdirSync(env.HOME, { recursive: true });
+    try {
+      const launched = await run(BINARY, [
+        '--dump', '--keep-browser', '--browser', engine, '--profile', native, url,
+      ], { cwd: ROOT, env });
+      assert.equal(launched.status, 0, launched.stderr);
+      const endpoint = engine === 'firefox'
+        ? '' : `http://127.0.0.1:${portFrom(native)}`;
+      const [crystal, javascript] = await Promise.all([
+        callAsync('core.view_blocks', {
+          endpoint, engine, profile: native, url, source: 'ax',
+          operations: SHADOW_OPERATIONS, probe: SHADOW_PROBE,
+        }, { timeoutMs: 120000 }),
+        javascriptOperations(engine, other, url, SHADOW_OPERATIONS, SHADOW_PROBE),
+      ]);
+      assert.deepEqual(crystal, javascript);
+      assert.equal(crystal.operations[0].found, true, 'the open-root control was not offered');
+      assert.equal(crystal.probe.open, 1, 'the open-root control did not operate');
+      // Neither protocol can currently recover an authored closed root. Pin
+      // the explicit refusal rather than silently pretending it was tested.
+      assert.equal(crystal.operations[1].found, false,
+        'closed-root support changed; promote this assertion to a successful operation');
+      assert.equal(crystal.probe.closed, 0);
+    } finally {
+      killProfile(native);
+      killProfile(other);
+      removeTempDir(root);
+    }
+  });
+
+  test(`user-agent shadow controls operate the same through ${engine}`, { skip }, async () => {
+    const root = tempDir(`tawb-ua-operations-${engine}-`);
+    const native = path.join(root, 'native');
+    const other = path.join(root, 'javascript');
+    const fixture = path.join(root, 'media.html');
+    fs.writeFileSync(fixture, MEDIA_PAGE);
+    const url = `file://${fixture}`;
+    const operations = engine === 'chromium'
+      ? [{ name: 'mute', role: 'button' }, { name: 'play', role: 'button' }]
+      : [{ name: 'Mute', role: 'button' }, { name: 'Play', role: 'button' }];
+    const probe = `() => {
+      const media = document.querySelector('audio');
+      return { muted: media.muted, paused: media.paused };
+    }`;
+    const env = { ...process.env, HOME: path.join(root, 'home') };
+    fs.mkdirSync(env.HOME, { recursive: true });
+    try {
+      const launched = await run(BINARY, [
+        '--dump', '--keep-browser', '--browser', engine, '--profile', native, url,
+      ], { cwd: ROOT, env });
+      assert.equal(launched.status, 0, launched.stderr);
+      const endpoint = engine === 'firefox'
+        ? '' : `http://127.0.0.1:${portFrom(native)}`;
+      const [crystal, javascript] = await Promise.all([
+        callAsync('core.view_blocks', {
+          endpoint, engine, profile: native, url, source: 'ax', operations, probe,
+        }, { timeoutMs: 120000 }),
+        javascriptOperations(engine, other, url, operations, probe),
+      ]);
+      assert.deepEqual(crystal, javascript);
+      assert.ok(crystal.operations.every((answer) => answer.found),
+        'a browser-owned media control was not offered');
+      assert.deepEqual(crystal.probe, { muted: true, paused: false });
+    } finally {
+      killProfile(native);
+      killProfile(other);
+      removeTempDir(root);
+    }
+  });
+
   test(`every views.test.js extraction scenario agrees through ${engine}`,
     { skip }, async () => {
       const root = tempDir(`tawb-view-scenarios-${engine}-`);

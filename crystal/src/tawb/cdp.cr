@@ -1689,7 +1689,7 @@ module Tawb
       # own is offset by the box its parent put it in, and a frame nested
       # inside another such frame by each containing offset in turn.
       def session_offset(session_id : String?) : Point?
-        return Point.new(0.0, 0.0) if session_id.nil?
+        return Point.new(0.0, 0.0) if session_id.nil? || session_id == @root_session_id
         frame_id = @frames.each.find { |_id, record| record.own_session == session_id }
           .try(&.[0]) || return nil
         parent_id = @frames[frame_id].parent_id || return nil
