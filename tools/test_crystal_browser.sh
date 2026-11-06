@@ -47,4 +47,12 @@ fi
 # Run under tools/run_isolated.sh so a run cut short does not leave the
 # browsers it started behind; see that script for why a process group is not
 # enough to reach them.
-exec tools/run_isolated.sh node --test --test-concurrency=1 "$@"
+# Node normally treats skipped tests as success. Keep the ordinary spec output
+# while a second reporter turns any skip (including a missing browser or tmux)
+# into a failing parity gate.
+exec tools/run_isolated.sh node --test --test-concurrency=1 \
+  --test-reporter=spec \
+  --test-reporter=tools/fail_on_skips_reporter.js \
+  --test-reporter-destination=stdout \
+  --test-reporter-destination=stderr \
+  "$@"
