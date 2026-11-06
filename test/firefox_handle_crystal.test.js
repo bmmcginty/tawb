@@ -16,6 +16,7 @@ const {
 } = require('../src/driver_firefox');
 const { clickThrough, prepareRealClick, submitsAutofilled } = require('../src/click');
 const { readFieldState, readFieldStateInPage, sliderStateOf } = require('../src/core');
+const { describeElement, locateElement } = require('../src/place');
 const { extractSource } = require('../src/source_html');
 const { extractForEdbrowse, resolveDescriptor } = require('../src/edb_page');
 const {
@@ -39,6 +40,8 @@ const { bidiCallFunctionTrace } = require('./parity/protocol-trace-v1');
 // parity-id: asset.focus-clear
 // parity-id: asset.read-field-state
 // parity-id: asset.slider-state
+// parity-id: asset.describe-element
+// parity-id: asset.locate-element
 
 async function withEndpoint(onMessage, run) {
   const server = http.createServer();
@@ -664,6 +667,79 @@ test('both runtimes read field and slider state from the held control', async ()
     const disposed = received.find(({ method }) => method === 'script.disown');
     assert.deepEqual(disposed.params, {
       handles: ['state-handle'], target: { context: 'state-frame' },
+    }, label);
+  }
+});
+
+test('both runtimes describe and relocate a held element in its frame', async () => {
+  const implementations = firefoxHandleImplementations({
+    bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard, pierceAndRun,
+    clickThrough, prepareRealClick, submitsAutofilled, describeElement, locateElement,
+  });
+  for (const implementation of implementations) {
+    const received = [];
+    const isAsset = (source, fn) => source === fn.toString()
+      || source.includes(`Generated from src/place.js ${fn.name};`);
+    const observations = await withEndpoint((message, peer) => {
+      received.push(message);
+      let result = {};
+      if (message.method === 'session.new') result = { sessionId: 'session-1' };
+      if (message.method === 'script.callFunction') {
+        const source = message.params.functionDeclaration;
+        let value;
+        if (message.params.resultOwnership === 'root') {
+          value = { type: 'node', handle: 'place-handle', sharedId: 'place-shared' };
+        } else if (isAsset(source, describeElement)) {
+          value = { type: 'object', value: [
+            ['label', { type: 'string', value: 'Account' }],
+            ['ordinal', { type: 'number', value: 2 }],
+            ['total', { type: 'number', value: 4 }],
+          ] };
+        } else if (isAsset(source, locateElement)) {
+          value = { type: 'object', value: [
+            ['index', { type: 'number', value: 7 }],
+            ['exact', { type: 'boolean', value: true }],
+          ] };
+        } else {
+          value = { type: 'null' };
+        }
+        result = { type: 'success', result: value };
+      }
+      peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+    }, (url) => implementation.handleScenario(url, [
+      { op: 'frame', context: 'place-frame', url: 'https://place.test/' },
+      { op: 'evaluate_handle', fn: '(el) => el' },
+      { op: 'describe_element' },
+      { op: 'locate_element', array: 'tweb.page' },
+      { op: 'handle_dispose' },
+    ]));
+    const label = implementation.name;
+    assert.deepEqual(observations, [
+      null,
+      { handle: 'place-handle', sharedId: 'place-shared' },
+      { label: 'Account', ordinal: 2, total: 4 },
+      { index: 7, exact: true },
+      null,
+    ], label);
+
+    const calls = received.filter(({ method }) => method === 'script.callFunction');
+    const tracesFor = (fn) => calls
+      .filter(({ params }) => isAsset(params.functionDeclaration, fn))
+      .map(bidiCallFunctionTrace);
+    const described = tracesFor(describeElement);
+    const located = tracesFor(locateElement);
+    assert.equal(described.length, 1, `${label} describe count`);
+    assert.equal(located.length, 1, `${label} locate count`);
+    assert.deepEqual({ target: described[0].target, arguments: described[0].arguments }, {
+      target: { context: 'place-frame' }, arguments: [{ handle: 'place-handle' }],
+    }, label);
+    assert.deepEqual({ target: located[0].target, arguments: located[0].arguments }, {
+      target: { context: 'place-frame' },
+      arguments: [{ handle: 'place-handle' }, { type: 'string', value: 'tweb.page' }],
+    }, label);
+    const disposed = received.find(({ method }) => method === 'script.disown');
+    assert.deepEqual(disposed.params, {
+      handles: ['place-handle'], target: { context: 'place-frame' },
     }, label);
   }
 });

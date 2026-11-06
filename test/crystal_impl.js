@@ -3346,7 +3346,8 @@ function firefoxPageImplementations({ bidi, FirefoxPage, FirefoxFrame, extractAx
 // which is the contract, since a real Firefox parses the same bytes.
 function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard,
   pierceAndRun, clickThrough, prepareRealClick, submitsAutofilled,
-  armActivationFocus, focusedByActivation, cancelActivationFocus, readFieldState }) {
+  armActivationFocus, focusedByActivation, cancelActivationFocus, readFieldState,
+  describeElement, locateElement }) {
   const handleScenario = async (url, script) => {
     const session = await bidi.connect(url);
     const observations = [];
@@ -3493,6 +3494,12 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, Firefox
             break;
           case 'read_field_state':
             observations.push(await readFieldState(handle));
+            break;
+          case 'describe_element':
+            observations.push(await handle.evaluate(describeElement));
+            break;
+          case 'locate_element':
+            observations.push(await handle.evaluate(locateElement, step.array));
             break;
           case 'adjust_control': {
             const { Core } = require('../src/core');

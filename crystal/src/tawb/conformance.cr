@@ -4563,6 +4563,11 @@ module Tawb
             observations.push(Actions.submits_autofilled(handle.not_nil!))
           when "read_field_state"
             observations.push(Fields.read_field_state(handle.not_nil!))
+          when "describe_element"
+            observations.push(Actions.describe_element(handle.not_nil!) || JSON::Any.new(nil))
+          when "locate_element"
+            observations.push(Actions.locate_element(handle.not_nil!, step["array"].as_s) ||
+              JSON::Any.new(nil))
           when "adjust_control"
             observations.push(Actions.adjust_control(handle.not_nil!,
               step["role"]?.try(&.as_s?), step["key"].as_s))
