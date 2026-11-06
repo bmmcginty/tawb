@@ -511,15 +511,23 @@
       "crystal": [
         "crystal/assets/live_drain.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-live-frames"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/live_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -531,15 +539,23 @@
       "crystal": [
         "crystal/assets/live_observer.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-live-frames"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/live_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []
@@ -551,15 +567,23 @@
       "crystal": [
         "crystal/assets/live_pulse.js"
       ],
-      "surfaces": [],
-      "engines": [],
+      "surfaces": [
+        "interactive"
+      ],
+      "engines": [
+        "firefox"
+      ],
       "views": [],
-      "fixtures": [],
+      "fixtures": [
+        "scripted-bidi-live-frames"
+      ],
       "levels": [
-        "asset-contract"
+        "asset-contract",
+        "protocol-transcript"
       ],
       "tests": [
-        "test/crystal_assets.test.js"
+        "test/crystal_assets.test.js",
+        "test/live_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []

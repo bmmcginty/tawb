@@ -10,6 +10,11 @@ const http = require('node:http');
 const live = require('../src/live');
 const { acceptWebSocket } = require('../src/broker');
 const { liveImplementations } = require('./crystal_impl');
+const { bidiCallFunctionTrace } = require('./parity/protocol-trace-v1');
+
+// parity-id: asset.live-observer
+// parity-id: asset.live-drain
+// parity-id: asset.live-pulse
 
 const implementations = liveImplementations(live);
 
@@ -133,9 +138,10 @@ if (implementations.length > 1) {
         implementations[0].refreshDue(base, 10000));
     }
   });
+}
 
-  test('Crystal installs, drains, pulses, and re-arms live page observers', async () => {
-    const crystal = implementations.find((implementation) => implementation.watcherScenario);
+for (const implementation of implementations.filter((candidate) => candidate.watcherScenario)) {
+  test(`${implementation.name}: live assets keep their frame and option contracts`, async () => {
     const server = http.createServer();
     const sockets = new Set();
     const traffic = [];
@@ -157,8 +163,8 @@ if (implementations.length > 1) {
       let peer;
       peer = acceptWebSocket(request, socket, (text) => {
         const message = JSON.parse(text);
+        traffic.push(message);
         const { method, params = {} } = message;
-        traffic.push({ method, context: params.target?.context || null });
         let result = {};
         if (method === 'browsingContext.getTree') {
           result = { contexts: [{ context: 'main', url: 'https://example.test/', children: [
@@ -166,11 +172,13 @@ if (implementations.length > 1) {
           ] }] };
         } else if (method === 'script.callFunction') {
           const declaration = params.functionDeclaration;
-          if (declaration.includes("Symbol.for('tweb.queue')")) {
+          const isAsset = (fn, name) => declaration === fn.toString()
+            || declaration.includes(`Generated from src/live.js ${name};`);
+          if (isAsset(live.DRAIN_SCRIPT, 'DRAIN_SCRIPT')) {
             result = { result: remote(params.target.context === 'main'
               ? [{ announcements: [], mutations: 1, patches: [], pureText: false }]
               : [{ announcements: [{ politeness: 'polite', text: 'ready' }], mutations: 1 }]) };
-          } else if (declaration.includes('observing:')) {
+          } else if (isAsset(live.PULSE_SCRIPT, 'PULSE_SCRIPT')) {
             pulse += 1;
             result = { result: remote({
               observing: pulse > 1,
@@ -188,7 +196,7 @@ if (implementations.length > 1) {
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const { port } = server.address();
     try {
-      const observed = await crystal.watcherScenario(`ws://127.0.0.1:${port}/session`, [
+      const observed = await implementation.watcherScenario(`ws://127.0.0.1:${port}/session`, [
         { op: 'install' },
         { op: 'arm_rendered', contexts: ['child'] },
         { op: 'collect' },
@@ -210,11 +218,29 @@ if (implementations.length > 1) {
       ]);
       assert.equal(observed[6].dirty, true);
       assert.equal(observed[6].navigated, true);
-      assert.deepEqual(traffic.map(({ method }) => method), [
-        'script.addPreloadScript', 'script.callFunction', 'browsingContext.getTree',
-        'script.callFunction', 'browsingContext.getTree', 'script.callFunction',
-        'script.callFunction', 'script.callFunction', 'script.callFunction',
-        'script.callFunction',
+
+      const matchesAsset = (source, fn, name) => source === fn.toString()
+        || source.includes(`Generated from src/live.js ${name};`);
+      const preload = traffic.find(({ method }) => method === 'script.addPreloadScript');
+      assert.ok(matchesAsset(
+        preload.params.functionDeclaration, live.OBSERVER_SCRIPT, 'OBSERVER_SCRIPT'));
+      const calls = traffic.filter(({ method }) => method === 'script.callFunction')
+        .map(bidiCallFunctionTrace);
+      const shape = (fn, name) => calls
+        .filter((trace) => matchesAsset(trace.source, fn, name))
+        .map(({ target, arguments: args }) => ({ target, arguments: args }));
+      assert.deepEqual(shape(live.OBSERVER_SCRIPT, 'OBSERVER_SCRIPT'), [
+        { target: { context: 'main' }, arguments: [{ type: 'boolean', value: false }] },
+        { target: { context: 'child' }, arguments: [{ type: 'boolean', value: true }] },
+        { target: { context: 'main' }, arguments: [{ type: 'boolean', value: true }] },
+      ]);
+      assert.deepEqual(shape(live.DRAIN_SCRIPT, 'DRAIN_SCRIPT'), [
+        { target: { context: 'main' }, arguments: [] },
+        { target: { context: 'child' }, arguments: [] },
+      ]);
+      assert.deepEqual(shape(live.PULSE_SCRIPT, 'PULSE_SCRIPT'), [
+        { target: { context: 'main' }, arguments: [] },
+        { target: { context: 'main' }, arguments: [] },
       ]);
     } finally {
       for (const socket of sockets) socket.destroy();

@@ -3608,7 +3608,68 @@ function liveImplementations(javascript) {
     }
     return observations;
   };
-  const implementations = [{ name: 'JavaScript', ...javascript, scenario }];
+  const watcherScenario = async (url, script) => {
+    const bidi = require('../src/bidi');
+    const { FirefoxPage, FirefoxFrame } = require('../src/driver_firefox');
+    const session = await bidi.connect(url);
+    const context = {
+      async addInitScript(fn) {
+        await session.send('script.addPreloadScript', {
+          functionDeclaration: fn.toString(),
+        });
+      },
+    };
+    const page = new FirefoxPage(session, 'main', context);
+    page.setUrl('https://example.test/');
+    const { Core } = require('../src/core');
+    const core = new Core({ driver: {}, page, source: 'ax', sources: ['ax'] });
+    const frames = new Map();
+    for (const step of script) {
+      for (const id of step.op === 'arm_rendered' ? step.contexts : []) {
+        if (frames.has(id)) continue;
+        const frame = new FirefoxFrame(session, id, page);
+        frames.set(id, frame);
+        page.noteFrame(frame);
+      }
+    }
+    const live = core.live;
+    const observations = [];
+    try {
+      for (const step of script) {
+        switch (step.op) {
+          case 'install':
+            observations.push(await javascript.installLive(page));
+            break;
+          case 'arm_rendered': {
+            const rendered = step.contexts.map((id) => frames.get(id));
+            observations.push(await javascript.armRenderedFrames(rendered));
+            break;
+          }
+          case 'collect': {
+            const batches = await javascript.collect(page);
+            observations.push(batches.map((batch) => core.classify(batch)));
+            break;
+          }
+          case 'pulse': {
+            const result = await javascript.pulse(page, live, step.now);
+            observations.push(result ? {
+              changed: result.changed, navigated: result.navigated, rearmed: result.rearmed,
+            } : null);
+            break;
+          }
+          case 'state':
+            observations.push({ ...live });
+            break;
+          default:
+            throw new Error(`unknown live watcher op ${step.op}`);
+        }
+      }
+      return observations;
+    } finally {
+      session.close();
+    }
+  };
+  const implementations = [{ name: 'JavaScript', ...javascript, scenario, watcherScenario }];
   if (process.env.TAWB_TEST_CRYSTAL !== '1') return implementations;
   implementations.push({
     name: 'Crystal',
