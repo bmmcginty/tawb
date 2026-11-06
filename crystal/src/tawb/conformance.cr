@@ -4575,6 +4575,8 @@ module Tawb
             core = Core.new(page: acting)
             core.blocks = step["blocks"].as_a.map { |text| Core::Block.new(text.as_s) }
             observations.push(JSON::Any.new(core.block_at_fragment(step["hash"].as_s).to_i64))
+          when "edb_apply"
+            observations.push(current.not_nil!.evaluate(Edb::APPLY, step["entries"]))
           when "adjust_control"
             observations.push(Actions.adjust_control(handle.not_nil!,
               step["role"]?.try(&.as_s?), step["key"].as_s))

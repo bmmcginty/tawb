@@ -21,7 +21,7 @@ const {
 } = require('../src/core');
 const { describeElement, locateElement } = require('../src/place');
 const { extractSource } = require('../src/source_html');
-const { extractForEdbrowse, resolveDescriptor } = require('../src/edb_page');
+const { extractForEdbrowse, resolveDescriptor, applyFieldValues } = require('../src/edb_page');
 const {
   armActivationFocus, focusedByActivation, cancelActivationFocus,
   armFocusTracker, focusTrackerHasTarget, takeFocusTrackerTarget, clearFocusTracker,
@@ -48,6 +48,7 @@ const { bidiCallFunctionTrace } = require('./parity/protocol-trace-v1');
 // parity-id: asset.scroll-to-bottom
 // parity-id: asset.restore-scroll
 // parity-id: asset.text-at-fragment
+// parity-id: asset.edb-apply
 
 async function withEndpoint(onMessage, run) {
   const server = http.createServer();
@@ -812,6 +813,50 @@ test('both runtimes invoke load-more and fragment assets on the acting page', as
     assert.deepEqual(traces[1][0].arguments, [], `${label} restore arguments`);
     assert.deepEqual(traces[2][0].arguments,
       [{ type: 'string', value: 'main-content' }], `${label} fragment arguments`);
+  }
+});
+
+test('both runtimes apply edbrowse fields in the resolved frame', async () => {
+  const implementations = firefoxHandleImplementations({
+    bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard, pierceAndRun,
+    clickThrough, prepareRealClick, submitsAutofilled, applyFieldValues,
+  });
+  const entries = [
+    { path: '/form[0]/input[0]', tag: 'input', value: 'Ada' },
+    { path: '/form[0]/input[1]', tag: 'input', value: 'yes' },
+  ];
+  for (const implementation of implementations) {
+    const received = [];
+    const isAsset = (source) => source === applyFieldValues.toString()
+      || source.includes('Generated from src/edb_page.js applyFieldValues;');
+    const observations = await withEndpoint((message, peer) => {
+      received.push(message);
+      let result = {};
+      if (message.method === 'session.new') result = { sessionId: 'session-1' };
+      if (message.method === 'script.callFunction') {
+        const value = isAsset(message.params.functionDeclaration)
+          ? { type: 'object', value: [
+              ['applied', { type: 'number', value: 2 }],
+              ['missed', { type: 'array', value: [] }],
+            ] }
+          : { type: 'null' };
+        result = { type: 'success', result: value };
+      }
+      peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+    }, (url) => implementation.handleScenario(url, [
+      { op: 'frame', context: 'edb-frame', url: 'https://edb.test/' },
+      { op: 'edb_apply', entries },
+    ]));
+    const label = implementation.name;
+    assert.deepEqual(observations, [null, { applied: 2, missed: [] }], label);
+
+    const calls = received.filter(({ method, params }) =>
+      method === 'script.callFunction' && isAsset(params.functionDeclaration));
+    assert.equal(calls.length, 1, `${label} apply count`);
+    const trace = bidiCallFunctionTrace(calls[0]);
+    assert.deepEqual({ target: trace.target, arguments: trace.arguments }, {
+      target: { context: 'edb-frame' }, arguments: [toRemoteArgument(entries)],
+    }, label);
   }
 });
 

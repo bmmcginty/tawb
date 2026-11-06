@@ -3347,7 +3347,7 @@ function firefoxPageImplementations({ bidi, FirefoxPage, FirefoxFrame, extractAx
 function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard,
   pierceAndRun, clickThrough, prepareRealClick, submitsAutofilled,
   armActivationFocus, focusedByActivation, cancelActivationFocus, readFieldState,
-  describeElement, locateElement }) {
+  describeElement, locateElement, applyFieldValues }) {
   const handleScenario = async (url, script) => {
     const session = await bidi.connect(url);
     const observations = [];
@@ -3514,6 +3514,9 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, Firefox
             observations.push(await core.blockAtFragment(step.hash));
             break;
           }
+          case 'edb_apply':
+            observations.push(await current.evaluate(applyFieldValues, step.entries));
+            break;
           case 'adjust_control': {
             const { Core } = require('../src/core');
             const core = new Core({ driver: {}, page: acting, source: 'ax', sources: ['ax'] });
