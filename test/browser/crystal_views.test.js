@@ -21,6 +21,7 @@ const { callAsync } = require('../crystal_impl');
 const { openDriver } = require('../../src/driver');
 const { Core } = require('../../src/core');
 const { blockV1, firstDifference } = require('../parity/block-v1');
+const { VIEW_SCENARIOS } = require('./views_scenarios');
 
 const ROOT = path.join(__dirname, '..', '..');
 const BINARY = process.env.TAWB_CRYSTAL_BIN || path.join(ROOT, 'bin', 'tawb');
@@ -71,20 +72,96 @@ function killProfile(profile) {
 // document rather than about one browser answering two clients: Firefox's one
 // protocol session belongs to whichever reader holds it, and sharing it here
 // would be testing the sharing.
+function normalizedScenarioBlocks(entry, blocks) {
+  if (entry.id !== 'embedded-media' || entry.source !== 'source') return blocks;
+  // Chromium numbers the media-control animation class from the transient
+  // fade currently running. Independent profiles can be one animation apart;
+  // retain the class and normalize only that browser-owned counter.
+  return JSON.parse(JSON.stringify(blocks), (key, value) => (
+    typeof value === 'string'
+      ? value.replace(/\banimated-\d+\b/g, 'animated-*') : value
+  ));
+}
+
 async function javascriptBlocks(engine, profile, url, source) {
+  return (await javascriptCases(engine, profile, [{ url, source }]))[0];
+}
+
+async function javascriptCases(engine, profile, cases) {
   const driver = await openDriver({ engine, profile, log: () => {} });
-  const page = driver.context.pages()[0] || await driver.context.newPage();
+  const answers = [];
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded' });
-    const core = new Core({ driver, page, source, sources: [source] });
-    const blocks = await core.rescan({ page });
-    return blocks.map(blockV1);
+    for (const entry of cases) {
+      const page = await driver.context.newPage();
+      try {
+        await page.goto(entry.url, { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(
+          () => window.__ready === undefined || window.__ready === true,
+          null, { timeout: 5000 },
+        ).catch(() => {});
+        const core = new Core({ driver, page, source: entry.source, sources: [entry.source] });
+        answers.push((await core.rescan({ page })).map(blockV1));
+      } finally {
+        await page.close().catch(() => {});
+      }
+    }
+    return answers;
   } finally {
     await driver.close().catch(() => {});
   }
 }
 
 for (const engine of ['chromium', 'firefox']) {
+  test(`every views.test.js extraction scenario agrees through ${engine}`,
+    { skip }, async () => {
+      const root = tempDir(`tawb-view-scenarios-${engine}-`);
+      const native = path.join(root, 'native');
+      const other = path.join(root, 'javascript');
+      const cases = [];
+      for (const scenario of VIEW_SCENARIOS) {
+        const file = path.join(root, `${scenario.id}.html`);
+        fs.writeFileSync(file, scenario.html);
+        for (const source of scenario.views) {
+          cases.push({ id: scenario.id, source, url: `file://${file}` });
+        }
+      }
+      const env = {
+        ...process.env,
+        HOME: path.join(root, 'home'),
+        XDG_CONFIG_HOME: path.join(root, 'config'),
+        XDG_DATA_HOME: path.join(root, 'data'),
+        XDG_CACHE_HOME: path.join(root, 'cache'),
+      };
+      fs.mkdirSync(env.HOME, { recursive: true });
+      try {
+        const launched = await run(BINARY, [
+          '--dump', '--keep-browser', '--browser', engine, '--profile', native, cases[0].url,
+        ], { cwd: ROOT, env });
+        assert.equal(launched.status, 0, launched.stderr);
+        const endpoint = engine === 'firefox'
+          ? '' : `http://127.0.0.1:${portFrom(native)}`;
+        const [crystal, javascript] = await Promise.all([
+          callAsync('core.view_blocks',
+            { endpoint, engine, profile: native, cases }, { timeoutMs: 300000 }),
+          javascriptCases(engine, other, cases),
+        ]);
+        assert.equal(crystal.length, cases.length);
+        for (let index = 0; index < cases.length; index += 1) {
+          const entry = cases[index];
+          const difference = firstDifference(
+            normalizedScenarioBlocks(entry, crystal[index]),
+            normalizedScenarioBlocks(entry, javascript[index]),
+          );
+          assert.equal(difference, null,
+            `${entry.id}/${entry.source} differs: ${JSON.stringify(difference)}`);
+        }
+      } finally {
+        killProfile(native);
+        killProfile(other);
+        removeTempDir(root);
+      }
+    });
+
   for (const source of ['ax', 'render', 'inspect', 'source']) {
     test(`the ${source} view of a page reads the same in both runtimes through ${engine}`,
       { skip }, async () => {

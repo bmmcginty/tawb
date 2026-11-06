@@ -2606,7 +2606,8 @@
         "source"
       ],
       "fixtures": [
-        "content-coverage"
+        "content-coverage",
+        "views-scenario-catalog"
       ],
       "levels": [
         "real-browser",

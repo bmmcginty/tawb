@@ -4153,6 +4153,15 @@ module Tawb
     # themselves are what is compared, text and role and element index.
     private def self.core_view_blocks(payload : JSON::Any) : JSON::Any
       object = payload.as_h
+      if cases = object["cases"]?.try(&.as_a?)
+        answers = cases.map do |entry|
+          merged = object.dup
+          merged.delete("cases")
+          entry.as_h.each { |key, value| merged[key] = value }
+          core_view_blocks(JSON::Any.new(merged))
+        end
+        return JSON::Any.new(answers)
+      end
       source = object["source"].as_s
       chromium = object["engine"]?.try(&.as_s?) != "firefox"
       session = nil.as(Engine::Session?)
@@ -4178,6 +4187,12 @@ module Tawb
         acting = page.not_nil!
         acting.goto(object["url"].as_s, "domcontentloaded")
         Dump.settle_embedded_frames(acting)
+        50.times do
+          ready = acting.evaluate("() => window.__ready === undefined || window.__ready === true")
+            .as_bool? || false
+          break if ready
+          sleep 100.milliseconds
+        end
         core = Core.new(source: source, page: acting)
         blocks = core.rescan
         JSON::Any.new(blocks.map { |block| block_contract_json(block) })
