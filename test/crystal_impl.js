@@ -3514,6 +3514,14 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, Firefox
             observations.push(await core.blockAtFragment(step.hash));
             break;
           }
+          case 'render_scan': {
+            const { Core } = require('../src/core');
+            const core = new Core({ driver: {}, page: acting, source: 'render', sources: ['render'] });
+            core.layout = !!step.layout;
+            core.layoutOrder = step.visual ?? 'default';
+            observations.push((await core.rescan()).map((block) => block.text));
+            break;
+          }
           case 'edb_apply':
             observations.push(await current.evaluate(applyFieldValues, step.entries));
             break;

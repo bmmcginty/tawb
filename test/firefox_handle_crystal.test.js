@@ -21,6 +21,7 @@ const {
 } = require('../src/core');
 const { describeElement, locateElement } = require('../src/place');
 const { extractSource } = require('../src/source_html');
+const { extractVisible } = require('../src/render_html');
 const { extractForEdbrowse, resolveDescriptor, applyFieldValues } = require('../src/edb_page');
 const {
   armActivationFocus, focusedByActivation, cancelActivationFocus,
@@ -31,6 +32,7 @@ const { firefoxHandleImplementations } = require('./crystal_impl');
 const { bidiCallFunctionTrace } = require('./parity/protocol-trace-v1');
 
 // parity-id: asset.extract-source
+// parity-id: asset.extract-visible
 // parity-id: asset.edb-extract
 // parity-id: asset.edb-resolve
 // parity-id: asset.click-through
@@ -748,6 +750,47 @@ test('both runtimes describe and relocate a held element in its frame', async ()
     assert.deepEqual(disposed.params, {
       handles: ['place-handle'], target: { context: 'place-frame' },
     }, label);
+  }
+});
+
+test('both runtimes invoke visible extraction with view options in the acting frame', async () => {
+  const implementations = firefoxHandleImplementations({
+    bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard, pierceAndRun,
+    clickThrough, prepareRealClick, submitsAutofilled,
+  });
+  for (const implementation of implementations) {
+    const received = [];
+    const isExtractor = (source) => source === extractVisible.toString()
+      || source.includes('Generated from src/render_html.js extractVisible;');
+    const observations = await withEndpoint((message, peer) => {
+      received.push(message);
+      let result = {};
+      if (message.method === 'session.new') result = { sessionId: 'session-1' };
+      if (message.method === 'browsingContext.getTree') {
+        result = { contexts: [{ context: 'render-frame', url: 'https://render.test/', children: [] }] };
+      }
+      if (message.method === 'script.callFunction') {
+        result = { type: 'success', result: isExtractor(message.params.functionDeclaration)
+          ? { type: 'array', value: [] }
+          : { type: 'boolean', value: true } };
+      }
+      peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+    }, (url) => implementation.handleScenario(url, [
+      { op: 'frame', context: 'render-frame', url: 'https://render.test/' },
+      { op: 'render_scan', layout: true, visual: 'containers' },
+    ]));
+
+    assert.deepEqual(observations, [null, []], implementation.name);
+    const traces = received
+      .filter(({ method, params }) => method === 'script.callFunction'
+        && isExtractor(params.functionDeclaration))
+      .map(bidiCallFunctionTrace);
+    assert.equal(traces.length, 1, implementation.name);
+    assert.deepEqual(traces[0].target, { context: 'render-frame' }, implementation.name);
+    assert.deepEqual(traces[0].arguments, [{ type: 'object', value: [
+      ['layout', { type: 'boolean', value: true }],
+      ['visual', { type: 'string', value: 'containers' }],
+    ] }], implementation.name);
   }
 });
 

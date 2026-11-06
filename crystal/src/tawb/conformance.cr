@@ -4575,6 +4575,11 @@ module Tawb
             core = Core.new(page: acting)
             core.blocks = step["blocks"].as_a.map { |text| Core::Block.new(text.as_s) }
             observations.push(JSON::Any.new(core.block_at_fragment(step["hash"].as_s).to_i64))
+          when "render_scan"
+            core = Core.new(source: "render", page: acting,
+              layout: step["layout"]?.try(&.as_bool?) || false,
+              layout_order: step["visual"]?.try(&.as_s?) || "default")
+            observations.push(JSON::Any.new(core.rescan.map { |block| JSON::Any.new(block.text) }))
           when "edb_apply"
             observations.push(current.not_nil!.evaluate(Edb::APPLY, step["entries"]))
           when "adjust_control"
