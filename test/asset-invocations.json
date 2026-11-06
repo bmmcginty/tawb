@@ -1,0 +1,916 @@
+{
+  "version": 1,
+  "description": "Inventory of the invocation contract for every generated page asset. This records seams; protocol-transcript tests remain responsible for proving the contracts on the wire.",
+  "assets": [
+    {
+      "asset": "chromium_bookmarks.js",
+      "javascript": {
+        "callers": [
+          "src/library_chromium.js"
+        ],
+        "symbol": "READERS",
+        "target": "Chromium bookmarks WebUI page",
+        "arguments": "{timeout,max}",
+        "retry": "wait for READY.bookmarks, then one evaluation",
+        "ownership": "by-value result",
+        "cleanup": "close the temporary WebUI page"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/library_chromium.cr"
+        ],
+        "symbol": "READERS",
+        "target": "Chromium bookmarks WebUI page",
+        "arguments": "{timeout,max}",
+        "retry": "wait for READY[bookmarks], then one evaluation",
+        "ownership": "by-value result",
+        "cleanup": "close the temporary WebUI page"
+      }
+    },
+    {
+      "asset": "chromium_downloads.js",
+      "javascript": {
+        "callers": [
+          "src/library_chromium.js"
+        ],
+        "symbol": "READERS",
+        "target": "Chromium downloads WebUI page",
+        "arguments": "{timeout,max}",
+        "retry": "wait for READY.downloads, then one evaluation",
+        "ownership": "by-value result",
+        "cleanup": "close the temporary WebUI page"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/library_chromium.cr"
+        ],
+        "symbol": "READERS",
+        "target": "Chromium downloads WebUI page",
+        "arguments": "{timeout,max}",
+        "retry": "wait for READY[downloads], then one evaluation",
+        "ownership": "by-value result",
+        "cleanup": "close the temporary WebUI page"
+      }
+    },
+    {
+      "asset": "chromium_history.js",
+      "javascript": {
+        "callers": [
+          "src/library_chromium.js"
+        ],
+        "symbol": "READERS",
+        "target": "Chromium history WebUI page",
+        "arguments": "{timeout,max}",
+        "retry": "wait for READY.history, then one evaluation",
+        "ownership": "by-value result",
+        "cleanup": "close the temporary WebUI page"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/library_chromium.cr"
+        ],
+        "symbol": "READERS",
+        "target": "Chromium history WebUI page",
+        "arguments": "{timeout,max}",
+        "retry": "wait for READY[history], then one evaluation",
+        "ownership": "by-value result",
+        "cleanup": "close the temporary WebUI page"
+      }
+    },
+    {
+      "asset": "chromium_ready_bookmarks.js",
+      "javascript": {
+        "callers": [
+          "src/library_chromium.js"
+        ],
+        "symbol": "READY",
+        "target": "Chromium bookmarks WebUI page",
+        "arguments": "none",
+        "retry": "poll every 100ms up to timeout",
+        "ownership": "by-value predicate",
+        "cleanup": "none"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/library_chromium.cr"
+        ],
+        "symbol": "READY",
+        "target": "Chromium bookmarks WebUI page",
+        "arguments": "none",
+        "retry": "poll every POLL_MS up to timeout",
+        "ownership": "by-value predicate",
+        "cleanup": "none"
+      }
+    },
+    {
+      "asset": "chromium_ready_downloads.js",
+      "javascript": {
+        "callers": [
+          "src/library_chromium.js"
+        ],
+        "symbol": "READY",
+        "target": "Chromium downloads WebUI page",
+        "arguments": "none",
+        "retry": "poll every 100ms up to timeout",
+        "ownership": "by-value predicate",
+        "cleanup": "none"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/library_chromium.cr"
+        ],
+        "symbol": "READY",
+        "target": "Chromium downloads WebUI page",
+        "arguments": "none",
+        "retry": "poll every POLL_MS up to timeout",
+        "ownership": "by-value predicate",
+        "cleanup": "none"
+      }
+    },
+    {
+      "asset": "chromium_ready_history.js",
+      "javascript": {
+        "callers": [
+          "src/library_chromium.js"
+        ],
+        "symbol": "READY",
+        "target": "Chromium history WebUI page",
+        "arguments": "none",
+        "retry": "poll every 100ms up to timeout",
+        "ownership": "by-value predicate",
+        "cleanup": "none"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/library_chromium.cr"
+        ],
+        "symbol": "READY",
+        "target": "Chromium history WebUI page",
+        "arguments": "none",
+        "retry": "poll every POLL_MS up to timeout",
+        "ownership": "by-value predicate",
+        "cleanup": "none"
+      }
+    },
+    {
+      "asset": "chromium_remove_bookmark.js",
+      "javascript": {
+        "callers": [
+          "src/library_chromium.js"
+        ],
+        "symbol": "removeBookmark",
+        "target": "Chromium bookmarks WebUI page",
+        "arguments": "bookmark id",
+        "retry": "wait for ready, then one evaluation",
+        "ownership": "by-value result",
+        "cleanup": "close the temporary WebUI page"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/library_chromium.cr"
+        ],
+        "symbol": "REMOVE_BOOKMARK",
+        "target": "Chromium bookmarks WebUI page",
+        "arguments": "bookmark id",
+        "retry": "wait for ready, then one evaluation",
+        "ownership": "by-value result",
+        "cleanup": "close the temporary WebUI page"
+      }
+    },
+    {
+      "asset": "chromium_save_bookmark.js",
+      "javascript": {
+        "callers": [
+          "src/library_chromium.js"
+        ],
+        "symbol": "saveBookmark",
+        "target": "Chromium bookmarks WebUI page",
+        "arguments": "{url,title}",
+        "retry": "wait for ready, then one evaluation",
+        "ownership": "by-value result",
+        "cleanup": "close the temporary WebUI page"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/library_chromium.cr"
+        ],
+        "symbol": "SAVE_BOOKMARK",
+        "target": "Chromium bookmarks WebUI page",
+        "arguments": "{url,title}",
+        "retry": "wait for ready, then one evaluation",
+        "ownership": "by-value result",
+        "cleanup": "close the temporary WebUI page"
+      }
+    },
+    {
+      "asset": "click_through.js",
+      "javascript": {
+        "callers": [
+          "src/dom.js",
+          "src/core.js",
+          "src/edb_server.js"
+        ],
+        "symbol": "clickThrough",
+        "target": "owned element handle",
+        "arguments": "element as receiver",
+        "retry": "once; trusted click fallback is caller policy",
+        "ownership": "existing handle",
+        "cleanup": "caller disposes handle"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/actions.cr"
+        ],
+        "symbol": "CLICK_THROUGH",
+        "target": "owned element handle",
+        "arguments": "element as receiver",
+        "retry": "once; trusted click fallback is caller policy",
+        "ownership": "existing handle",
+        "cleanup": "caller disposes handle"
+      }
+    },
+    {
+      "asset": "describe_element.js",
+      "javascript": {
+        "callers": [
+          "src/place.js"
+        ],
+        "symbol": "describeElement",
+        "target": "owned element handle",
+        "arguments": "element as receiver",
+        "retry": "once",
+        "ownership": "existing handle; by-value result",
+        "cleanup": "caller disposes handle"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/actions.cr"
+        ],
+        "symbol": "DESCRIBE_ELEMENT",
+        "target": "owned element handle",
+        "arguments": "element as receiver",
+        "retry": "once",
+        "ownership": "existing handle; by-value result",
+        "cleanup": "caller disposes handle"
+      }
+    },
+    {
+      "asset": "edb_apply.js",
+      "javascript": {
+        "callers": [
+          "src/edb_server.js"
+        ],
+        "symbol": "applyFieldValues",
+        "target": "resolved edbrowse document/frame",
+        "arguments": "field entry array",
+        "retry": "once per submitted batch",
+        "ownership": "by-value result",
+        "cleanup": "resolved page globals cleared by subsequent resolution"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/edb.cr"
+        ],
+        "symbol": "APPLY",
+        "target": "resolved edbrowse document/frame",
+        "arguments": "field entry array",
+        "retry": "once per submitted batch",
+        "ownership": "by-value result",
+        "cleanup": "resolved page globals cleared by subsequent resolution"
+      }
+    },
+    {
+      "asset": "edb_extract.js",
+      "javascript": {
+        "callers": [
+          "src/edb_server.js"
+        ],
+        "symbol": "extractForEdbrowse",
+        "target": "each readable document/frame; privileged retry when empty",
+        "arguments": "ordinary options, then {pairs,pierce:true}",
+        "retry": "privileged second pass only when ordinary output is empty",
+        "ownership": "by-value entries plus page node arrays",
+        "cleanup": "failed privileged pass retains ordinary output"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/edb.cr"
+        ],
+        "symbol": "EXTRACT",
+        "target": "each readable document/frame; privileged retry when empty",
+        "arguments": "{pierce:false}, then {pairs:this,pierce:true}",
+        "retry": "privileged second pass only when ordinary output is empty",
+        "ownership": "by-value entries plus page node arrays",
+        "cleanup": "failed privileged pass retains ordinary output"
+      }
+    },
+    {
+      "asset": "edb_resolve.js",
+      "javascript": {
+        "callers": [
+          "src/edb_server.js"
+        ],
+        "symbol": "resolveDescriptor",
+        "target": "descriptor's document/frame; privileged retry when unresolved",
+        "arguments": "{desc}, then {desc,pairs,pierce:true}",
+        "retry": "privileged second pass only when ordinary resolution fails",
+        "ownership": "stores resolved element in page global",
+        "cleanup": "later resolve replaces the page global"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/edb.cr"
+        ],
+        "symbol": "RESOLVE",
+        "target": "descriptor's document/frame; privileged retry when unresolved",
+        "arguments": "{desc}, then {desc,pairs:this,pierce:true}",
+        "retry": "privileged second pass only when ordinary resolution fails",
+        "ownership": "stores resolved element in page global",
+        "cleanup": "later resolve replaces the page global"
+      }
+    },
+    {
+      "asset": "extract_ax_items.js",
+      "javascript": {
+        "callers": [
+          "src/driver_chromium.js",
+          "src/driver_firefox.js"
+        ],
+        "symbol": "extractAxItems",
+        "target": "each readable frame; engine privileged root path",
+        "arguments": "{layout,visual}; privileged pass adds pairs and pierce:true",
+        "retry": "privileged pass according to root/media probe; retain first pass on failure",
+        "ownership": "by-value items plus page node arrays",
+        "cleanup": "dispose transient root handles"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/cdp.cr",
+          "crystal/src/tawb/firefox_driver.cr"
+        ],
+        "symbol": "EXTRACT_AX",
+        "target": "each readable frame; engine privileged root path",
+        "arguments": "{layout,visual}; privileged pass adds pairs and pierce:true",
+        "retry": "privileged pass according to root/media probe; retain first pass on failure",
+        "ownership": "by-value items plus page node arrays",
+        "cleanup": "dispose transient root handles"
+      }
+    },
+    {
+      "asset": "extract_source.js",
+      "javascript": {
+        "callers": [
+          "src/source_html.js",
+          "src/frames.js"
+        ],
+        "symbol": "extractSource",
+        "target": "each readable frame; privileged root retry",
+        "arguments": "ordinary defaults; privileged pass adds pairs and pierce:true",
+        "retry": "privileged pass when privileged roots exist and ordinary output is empty where required",
+        "ownership": "by-value entries plus page node arrays",
+        "cleanup": "failed privileged pass retains ordinary output"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/views.cr",
+          "crystal/src/tawb/core.cr"
+        ],
+        "symbol": "EXTRACT_SOURCE",
+        "target": "each readable frame; privileged root retry",
+        "arguments": "{pierce:false}; privileged pass {pairs:this,pierce:true}",
+        "retry": "privileged pass after ordinary pass; retain ordinary output on failure",
+        "ownership": "by-value entries plus page node arrays",
+        "cleanup": "failed privileged pass retains ordinary output"
+      }
+    },
+    {
+      "asset": "extract_visible.js",
+      "javascript": {
+        "callers": [
+          "src/render_html.js"
+        ],
+        "symbol": "extractVisible",
+        "target": "each readable frame",
+        "arguments": "{layout,visual}",
+        "retry": "once per snapshot",
+        "ownership": "by-value entries plus page node arrays",
+        "cleanup": "page arrays replaced by next extraction"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/views.cr",
+          "crystal/src/tawb/core.cr"
+        ],
+        "symbol": "EXTRACT_VISIBLE",
+        "target": "each readable frame",
+        "arguments": "{layout,visual}",
+        "retry": "once per snapshot",
+        "ownership": "by-value entries plus page node arrays",
+        "cleanup": "page arrays replaced by next extraction"
+      }
+    },
+    {
+      "asset": "firefox_clear.js",
+      "javascript": {
+        "callers": [
+          "src/firefox.js"
+        ],
+        "symbol": "CLEAR_SCRIPT",
+        "target": "Firefox parent process through Marionette",
+        "arguments": "empty args array",
+        "retry": "once during automation-flag clearing",
+        "ownership": "by-value result",
+        "cleanup": "Marionette connection closed by owner"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/marionette.cr"
+        ],
+        "symbol": "CLEAR_SCRIPT",
+        "target": "Firefox parent process through Marionette",
+        "arguments": "empty args array",
+        "retry": "once during automation-flag clearing",
+        "ownership": "by-value result",
+        "cleanup": "Marionette connection closed by owner"
+      }
+    },
+    {
+      "asset": "firefox_library.js",
+      "javascript": {
+        "callers": [
+          "src/firefox.js"
+        ],
+        "symbol": "libraryParentScript",
+        "target": "Firefox parent process through Marionette",
+        "arguments": "empty args array",
+        "retry": "once during library-agent setup",
+        "ownership": "by-value result",
+        "cleanup": "Marionette connection closed by owner"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/marionette.cr"
+        ],
+        "symbol": "LIBRARY_PARENT_SCRIPT",
+        "target": "Firefox parent process through Marionette",
+        "arguments": "empty args array",
+        "retry": "once during library-agent setup",
+        "ownership": "by-value result",
+        "cleanup": "Marionette connection closed by owner"
+      }
+    },
+    {
+      "asset": "firefox_pierce.js",
+      "javascript": {
+        "callers": [
+          "src/firefox.js"
+        ],
+        "symbol": "PIERCE_PARENT_SCRIPT",
+        "target": "Firefox parent process through Marionette",
+        "arguments": "empty args array",
+        "retry": "once during privileged helper setup",
+        "ownership": "by-value result",
+        "cleanup": "Marionette connection closed by owner"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/marionette.cr"
+        ],
+        "symbol": "PIERCE_PARENT_SCRIPT",
+        "target": "Firefox parent process through Marionette",
+        "arguments": "empty args array",
+        "retry": "once during privileged helper setup",
+        "ownership": "by-value result",
+        "cleanup": "Marionette connection closed by owner"
+      }
+    },
+    {
+      "asset": "focus_arm.js",
+      "javascript": {
+        "callers": [
+          "src/focus.js"
+        ],
+        "symbol": "armFocusTracker",
+        "target": "source element handle",
+        "arguments": "tracker token",
+        "retry": "once before action",
+        "ownership": "listener and tracker state in page",
+        "cleanup": "focus_clear in finally path"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/focus.cr"
+        ],
+        "symbol": "ARM",
+        "target": "source element handle",
+        "arguments": "tracker token",
+        "retry": "once before action",
+        "ownership": "listener and tracker state in page",
+        "cleanup": "CLEAR in ensure path"
+      }
+    },
+    {
+      "asset": "focus_clear.js",
+      "javascript": {
+        "callers": [
+          "src/focus.js"
+        ],
+        "symbol": "clearFocusTracker",
+        "target": "tracker scope",
+        "arguments": "tracker token",
+        "retry": "best-effort once",
+        "ownership": "removes page tracker state",
+        "cleanup": "errors suppressed during final cleanup"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/focus.cr"
+        ],
+        "symbol": "CLEAR",
+        "target": "tracker scope",
+        "arguments": "tracker token",
+        "retry": "best-effort once",
+        "ownership": "removes page tracker state",
+        "cleanup": "errors suppressed during final cleanup"
+      }
+    },
+    {
+      "asset": "focus_has_target.js",
+      "javascript": {
+        "callers": [
+          "src/focus.js"
+        ],
+        "symbol": "focusTrackerHasTarget",
+        "target": "tracker scope",
+        "arguments": "tracker token",
+        "retry": "poll until timeout/action completion",
+        "ownership": "by-value predicate",
+        "cleanup": "focus_clear"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/focus.cr"
+        ],
+        "symbol": "HAS_TARGET",
+        "target": "tracker scope",
+        "arguments": "tracker token",
+        "retry": "poll until timeout/action completion",
+        "ownership": "by-value predicate",
+        "cleanup": "CLEAR"
+      }
+    },
+    {
+      "asset": "focus_take_target.js",
+      "javascript": {
+        "callers": [
+          "src/focus.js"
+        ],
+        "symbol": "takeFocusTrackerTarget",
+        "target": "tracker scope",
+        "arguments": "tracker token",
+        "retry": "once after has-target succeeds",
+        "ownership": "returns owned element handle",
+        "cleanup": "caller disposes handle; focus_clear removes listener"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/focus.cr"
+        ],
+        "symbol": "TAKE",
+        "target": "tracker scope",
+        "arguments": "tracker token",
+        "retry": "once after has-target succeeds",
+        "ownership": "returns owned element handle",
+        "cleanup": "caller disposes handle; CLEAR removes listener"
+      }
+    },
+    {
+      "asset": "live_drain.js",
+      "javascript": {
+        "callers": [
+          "src/live.js"
+        ],
+        "symbol": "DRAIN_SCRIPT",
+        "target": "each armed frame",
+        "arguments": "none",
+        "retry": "once per drain cycle",
+        "ownership": "by-value mutation payloads",
+        "cleanup": "drains page queue"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/live.cr"
+        ],
+        "symbol": "DRAIN_SCRIPT",
+        "target": "each armed frame",
+        "arguments": "none",
+        "retry": "once per drain cycle",
+        "ownership": "by-value mutation payloads",
+        "cleanup": "drains page queue"
+      }
+    },
+    {
+      "asset": "live_observer.js",
+      "javascript": {
+        "callers": [
+          "src/live.js"
+        ],
+        "symbol": "OBSERVER_SCRIPT",
+        "target": "new-document preload and each current frame",
+        "arguments": "force boolean for current-frame call",
+        "retry": "install preload once; arm each frame with bounded guard",
+        "ownership": "observer and queue in page globals",
+        "cleanup": "replaced on navigation"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/live.cr"
+        ],
+        "symbol": "OBSERVER_SCRIPT",
+        "target": "new-document preload and each current frame",
+        "arguments": "force boolean for current-frame call",
+        "retry": "install preload once; arm each frame",
+        "ownership": "observer and queue in page globals",
+        "cleanup": "replaced on navigation"
+      }
+    },
+    {
+      "asset": "live_pulse.js",
+      "javascript": {
+        "callers": [
+          "src/live.js"
+        ],
+        "symbol": "PULSE_SCRIPT",
+        "target": "top-level main frame",
+        "arguments": "none",
+        "retry": "one bounded evaluation per pulse",
+        "ownership": "by-value counters",
+        "cleanup": "none"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/live.cr"
+        ],
+        "symbol": "PULSE_SCRIPT",
+        "target": "top-level main frame",
+        "arguments": "none",
+        "retry": "one evaluation per pulse",
+        "ownership": "by-value counters",
+        "cleanup": "none"
+      }
+    },
+    {
+      "asset": "locate_element.js",
+      "javascript": {
+        "callers": [
+          "src/place.js"
+        ],
+        "symbol": "locateElement",
+        "target": "owned element handle",
+        "arguments": "view node-array name",
+        "retry": "once for exact restore and once for fallback place policy",
+        "ownership": "existing handle; by-value result",
+        "cleanup": "caller disposes handle"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/actions.cr"
+        ],
+        "symbol": "LOCATE_ELEMENT",
+        "target": "owned element handle",
+        "arguments": "view node-array name",
+        "retry": "once per restore attempt",
+        "ownership": "existing handle; by-value result",
+        "cleanup": "caller disposes handle"
+      }
+    },
+    {
+      "asset": "prepare_real_click.js",
+      "javascript": {
+        "callers": [
+          "src/core.js",
+          "src/edb_server.js"
+        ],
+        "symbol": "prepareRealClick",
+        "target": "owned element handle",
+        "arguments": "element as receiver",
+        "retry": "once before each trusted pointer action",
+        "ownership": "existing handle; by-value geometry",
+        "cleanup": "caller disposes handle and releases input actions"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/actions.cr",
+          "crystal/src/tawb/core.cr"
+        ],
+        "symbol": "PREPARE_REAL_CLICK",
+        "target": "owned element handle",
+        "arguments": "element as receiver",
+        "retry": "once before each trusted pointer action",
+        "ownership": "existing handle; by-value geometry",
+        "cleanup": "caller disposes handle and releases input actions"
+      }
+    },
+    {
+      "asset": "read_field_state.js",
+      "javascript": {
+        "callers": [
+          "src/core.js"
+        ],
+        "symbol": "readFieldStateInPage",
+        "target": "owned field handle",
+        "arguments": "element as receiver",
+        "retry": "once per read-back",
+        "ownership": "existing handle; by-value state",
+        "cleanup": "caller disposes handle"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/fields.cr"
+        ],
+        "symbol": "READ_FIELD_STATE",
+        "target": "owned field handle",
+        "arguments": "element as receiver",
+        "retry": "once per read-back",
+        "ownership": "existing handle; by-value state",
+        "cleanup": "caller disposes handle"
+      }
+    },
+    {
+      "asset": "restore_scroll.js",
+      "javascript": {
+        "callers": [
+          "src/core.js"
+        ],
+        "symbol": "RESTORE_SCROLL",
+        "target": "current top-level page",
+        "arguments": "none",
+        "retry": "best-effort once after load-more probe",
+        "ownership": "page scroll globals",
+        "cleanup": "clears saved scroll state"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/core.cr"
+        ],
+        "symbol": "RESTORE_SCROLL",
+        "target": "current top-level page",
+        "arguments": "none",
+        "retry": "best-effort once after load-more probe",
+        "ownership": "page scroll globals",
+        "cleanup": "clears saved scroll state"
+      }
+    },
+    {
+      "asset": "scroll_to_bottom.js",
+      "javascript": {
+        "callers": [
+          "src/core.js"
+        ],
+        "symbol": "SCROLL_TO_BOTTOM",
+        "target": "current top-level page",
+        "arguments": "none",
+        "retry": "once per load-more probe",
+        "ownership": "stores prior scroll state in page",
+        "cleanup": "restore_scroll"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/core.cr"
+        ],
+        "symbol": "SCROLL_TO_BOTTOM",
+        "target": "current top-level page",
+        "arguments": "none",
+        "retry": "once per load-more probe",
+        "ownership": "stores prior scroll state in page",
+        "cleanup": "RESTORE_SCROLL"
+      }
+    },
+    {
+      "asset": "slider_geometry.js",
+      "javascript": {
+        "callers": [
+          "src/driver_firefox.js"
+        ],
+        "symbol": "sliderGeometry",
+        "target": "owned Firefox slider handle",
+        "arguments": "requested orientation",
+        "retry": "once per pointer slider action",
+        "ownership": "existing handle; by-value geometry",
+        "cleanup": "release pointer actions"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/firefox_driver.cr",
+          "crystal/src/tawb/actions.cr"
+        ],
+        "symbol": "SLIDER_GEOMETRY",
+        "target": "owned Firefox slider handle",
+        "arguments": "requested orientation",
+        "retry": "once per pointer slider action",
+        "ownership": "existing handle; by-value geometry",
+        "cleanup": "release pointer actions"
+      }
+    },
+    {
+      "asset": "slider_state.js",
+      "javascript": {
+        "callers": [
+          "src/core.js"
+        ],
+        "symbol": "sliderStateOf",
+        "target": "owned slider handle",
+        "arguments": "element as receiver",
+        "retry": "before action and after each fallback route",
+        "ownership": "existing handle; by-value state",
+        "cleanup": "caller disposes handle"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/actions.cr"
+        ],
+        "symbol": "SLIDER_STATE",
+        "target": "owned slider handle",
+        "arguments": "element as receiver",
+        "retry": "before action and after each fallback route",
+        "ownership": "existing handle; by-value state",
+        "cleanup": "caller disposes handle"
+      }
+    },
+    {
+      "asset": "slider_track.js",
+      "javascript": {
+        "callers": [
+          "src/driver_chromium.js"
+        ],
+        "symbol": "sliderTrack",
+        "target": "owned Chromium slider handle",
+        "arguments": "vertical boolean",
+        "retry": "once per pointer slider action",
+        "ownership": "existing handle; by-value geometry",
+        "cleanup": "release pointer actions"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/cdp.cr"
+        ],
+        "symbol": "SLIDER_TRACK",
+        "target": "owned Chromium slider handle",
+        "arguments": "vertical boolean",
+        "retry": "once per pointer slider action",
+        "ownership": "existing handle; by-value geometry",
+        "cleanup": "release pointer actions"
+      }
+    },
+    {
+      "asset": "submits_autofilled.js",
+      "javascript": {
+        "callers": [
+          "src/core.js"
+        ],
+        "symbol": "submitsAutofilled",
+        "target": "owned button handle",
+        "arguments": "element as receiver",
+        "retry": "best-effort once before activation",
+        "ownership": "existing handle; by-value predicate",
+        "cleanup": "caller disposes handle"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/actions.cr"
+        ],
+        "symbol": "SUBMITS_AUTOFILLED",
+        "target": "owned button handle",
+        "arguments": "element as receiver",
+        "retry": "best-effort once before activation",
+        "ownership": "existing handle; by-value predicate",
+        "cleanup": "caller disposes handle"
+      }
+    },
+    {
+      "asset": "text_at_fragment.js",
+      "javascript": {
+        "callers": [
+          "src/core.js"
+        ],
+        "symbol": "TEXT_AT_FRAGMENT",
+        "target": "current acting frame/page",
+        "arguments": "URL fragment hash",
+        "retry": "best-effort once after fragment navigation",
+        "ownership": "by-value text",
+        "cleanup": "none"
+      },
+      "crystal": {
+        "callers": [
+          "crystal/src/tawb/core.cr"
+        ],
+        "symbol": "TEXT_AT_FRAGMENT",
+        "target": "current acting frame/page",
+        "arguments": "URL fragment hash",
+        "retry": "best-effort once after fragment navigation",
+        "ownership": "by-value text",
+        "cleanup": "none"
+      }
+    }
+  ]
+}

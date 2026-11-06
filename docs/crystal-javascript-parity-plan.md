@@ -769,7 +769,9 @@ machine-readable zero-gap summary.
 - [x] Add the parity manifest and fail on unclassified surfaces.
 - [x] Make the browser gate fail on unexpected skips.
 - [x] Verify binary revision/assets before browser tests.
-- [ ] Inventory every asset invocation and add option/target traces.
+- [x] Inventory every asset invocation contract (caller, target, arguments,
+  retry, ownership, and cleanup).
+- [ ] Add option/target protocol traces for every asset invocation.
 - [x] Replace narrow block serializers with the canonical block contract.
 
 ### P1: expand real-browser breadth
