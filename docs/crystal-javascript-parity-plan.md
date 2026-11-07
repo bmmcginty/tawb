@@ -807,14 +807,16 @@ behavioural bugs by itself.
 
 ### P1: failure, race, and cleanup
 
-- [ ] Add failure/cleanup matrix and process-leak assertions. Cover browser
+- [x] Add failure/cleanup matrix and process-leak assertions. Cover browser
   close before, during, and after an action; frame detach between extraction
   passes and during activation; navigation that never settles; stale or
   double-disposed handles; broker death during ownership transfer; EOF,
   signals, and resize during slow operations; and unwritable settings, log,
   temporary, and update files. Assert retained state and cleanup, not only the
   error text, and assert that no browser, broker, claim, handle, or temporary
-  file survives.
+  file survives. Each seam below has both runtimes' retained state and cleanup
+  asserted, and the slow-navigation cases use a response that never settles
+  before the signal, resize, or end of input.
   - [x] Refused log writes disable diagnostics in both runtimes without
     crashing or leaving a partial diagnostics file.
   - [x] Refused settings replacement retains the previous target and accepted
