@@ -193,8 +193,69 @@ module Tawb
       launched = opened.launched
       terminal = Runtime::Terminal.new(STDOUT, STDIN.fd, options["altScreen"].as_bool)
       reader = nil.as(Input::KeyReader?)
+      native = nil.as(NativePrompt::Armed?)
+      signals = [] of Signal
+      shutting_down = false
+      cleaned = false
       page = nil.as(Engine::Page?)
       adopted = false
+      # Everything this reader opened is closed once, whichever path left the
+      # reading loop: a key, a signal, or an exception. A signal's watchdog and
+      # the ordinary ensure both call this, and the guard makes the second call
+      # harmless.
+      cleanup = -> do
+        unless cleaned
+          cleaned = true
+          signals.each(&.reset) rescue nil
+          Signal::WINCH.reset rescue nil
+          native.try(&.stop) rescue nil
+          reader.try(&.close)
+          terminal.restore
+          if options["closeInitialTabOnExit"].as_bool && !adopted && page
+            count = browser.list_pages.reject(&.closed?).size rescue 0
+            Runtime.close_initial_tab(Interactive::Page.new(page.not_nil!), count,
+              options["keepBrowser"].as_bool,
+              ->(event : String, fields : Hash(String, JSON::Any)) { logger.write(event, fields); nil })
+          end
+          if release_port = URI.parse(endpoint).port
+            Session.release_tab(release_port.to_i32) rescue nil
+          end
+          keep = options["keepBrowser"].as_bool || adopted
+          case session = browser
+          when FirefoxDriver::BrowserSession
+            if keep
+              # The broker holds the BiDi session for the next reader, which is
+              # what keeps a kept browser usable rather than merely running.
+              session.protocol.command(Broker::RETAIN_SESSION) rescue nil
+              session.close(false)
+            else
+              session.close
+            end
+          when Cdp::BrowserSession
+            # Detach this reader's flat target sessions and close its persistent
+            # connection; the tabs and browser belong to their own processes.
+            session.close
+          end
+          keep_browser = options["keepBrowser"].as_bool
+          browser_stays = if started = launched
+                            started.release(keep_browser)
+                          elsif chromium_session = opened.chromium
+                            chromium_session.release(keep_browser)
+                          else
+                            true # a browser reached through --connect is not ours
+                          end
+          # A browser that stays — deliberately or because another reader is in
+          # it — keeps the bus it was started with. The registry owns that bus
+          # until the browser itself is forgotten.
+          if bus = opened.a11y
+            if browser_stays && bus.owned?
+              bus.leave_running rescue nil
+            else
+              bus.close rescue nil
+            end
+          end
+        end
+      end
       begin
         begin
           # Firefox announces navigation on the session; Chromium announces
@@ -277,6 +338,35 @@ module Tawb
         # and keyboard must belong to the reader before that navigation starts.
         terminal.acquire
         reader = Input::KeyReader.new(STDIN)
+        # A signal is a request to leave, not a reason to abandon the browser
+        # and the broker. Ending the keyboard wakes the reading loop, so the
+        # ordinary ensure below still closes what this reader opened. A second
+        # signal gets the reader out even if the first cleanup is stuck.
+        signals = [Signal::INT, Signal::TERM, Signal::HUP]
+        signals.each do |signal|
+          signal.trap do
+            if shutting_down
+              exit 0
+            else
+              shutting_down = true
+              logger.write("signal", {"signal" => JSON::Any.new(signal.to_s)}) rescue nil
+              reader.try(&.close)
+              # Ending the keyboard is enough when the loop is waiting for a
+              # key. It is not enough while a browser command is outstanding:
+              # a navigation that never answers would hold the reader past any
+              # useful shutdown. Give the ordinary path the same bounded grace
+              # the JavaScript reader allows, then finish the cleanup here.
+              spawn do
+                sleep 1500.milliseconds
+                if shutting_down
+                  logger.write("shutdown.forced", {} of String => JSON::Any) rescue nil
+                  Runtime::Shutdown.new(terminal, -> { cleanup.call }).run
+                  exit 0
+                end
+              end
+            end
+          end
+        end
         keyboard = Interactive::Keyboard.new(reader.not_nil!)
         credentials = Auth::Credentials.new(
           ->(challenge : JSON::Any, refused : Bool, _attempt : Int32) {
@@ -451,53 +541,7 @@ module Tawb
           end
         end
       ensure
-        Signal::WINCH.reset rescue nil
-        native.try(&.stop) rescue nil
-        reader.try(&.close)
-        terminal.restore
-        if options["closeInitialTabOnExit"].as_bool && !adopted && page
-          count = browser.list_pages.reject(&.closed?).size rescue 0
-          Runtime.close_initial_tab(Interactive::Page.new(page.not_nil!), count,
-            options["keepBrowser"].as_bool,
-            ->(event : String, fields : Hash(String, JSON::Any)) { logger.write(event, fields); nil })
-        end
-        if release_port = URI.parse(endpoint).port
-          Session.release_tab(release_port.to_i32) rescue nil
-        end
-        keep = options["keepBrowser"].as_bool || adopted
-        case session = browser
-        when FirefoxDriver::BrowserSession
-          if keep
-            # The broker holds the BiDi session for the next reader, which is
-            # what keeps a kept browser usable rather than merely running.
-            session.protocol.command(Broker::RETAIN_SESSION) rescue nil
-            session.close(false)
-          else
-            session.close
-          end
-        when Cdp::BrowserSession
-          # Detach this reader's flat target sessions and close its persistent
-          # connection; the tabs and browser belong to their own processes.
-          session.close
-        end
-        keep_browser = options["keepBrowser"].as_bool
-        browser_stays = if started = launched
-                          started.release(keep_browser)
-                        elsif chromium = opened.chromium
-                          chromium.release(keep_browser)
-                        else
-                          true # a browser reached through --connect is not ours
-                        end
-        # A browser that stays — deliberately or because another reader is in
-        # it — keeps the bus it was started with. The registry owns that bus
-        # until the browser itself is forgotten.
-        if bus = opened.a11y
-          if browser_stays && bus.owned?
-            bus.leave_running rescue nil
-          else
-            bus.close rescue nil
-          end
-        end
+        cleanup.call
       end
     end
 

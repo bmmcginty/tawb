@@ -193,7 +193,10 @@ module Tawb
       end
 
       # Deliberate teardown ends the stream as far as this reader is concerned,
-      # so a call for a key made after it answers rather than hanging.
+      # so a call for a key made after it answers rather than hanging — and a
+      # call made before it is woken with the same end, so the reading loop can
+      # leave instead of staying parked on a keyboard that is gone. That is what
+      # lets a signal handler ask the loop to shut down cleanly.
       #
       # JavaScript also detaches the stream's listeners and pauses it, which
       # keeps Node's event loop from staying alive on nothing; a background
@@ -201,8 +204,20 @@ module Tawb
       # pause. Like close() there, a pending lone Escape is simply dropped —
       # nobody is waiting to be told about it.
       def close : Nil
+        doomed = nil.as(Array(Waiter)?)
         @mutex.synchronize do
+          return if @ended
           @ended = true
+          doomed = @waiters
+          @waiters = [] of Waiter
+        end
+        # Everybody hears it: whoever holds the claim, and the reading loop
+        # parked behind them. Both have to — a prompt so it can decline the
+        # challenge it is holding open, the loop so it can shut the session
+        # down.
+        doomed.not_nil!.each do |waiter|
+          waiter.delivered = true
+          waiter.channel.send(EOF)
         end
       end
 

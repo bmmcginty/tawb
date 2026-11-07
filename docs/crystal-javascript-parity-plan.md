@@ -832,6 +832,11 @@ behavioural bugs by itself.
     closure before the next action refuses it without replaying the first.
   - [x] Frame removal during activation, live mutation, and navigation converges
     on the new document without retaining the detached frame or its text.
+  - [x] A signal during a slow navigation leaves within the shutdown grace,
+    closes the browser, and leaves no process naming the profile in both
+    runtimes.
+  - [x] A resize during a slow navigation applies the new size to the arriving
+    document and leaves both runtimes drawing the same screen and cursor.
 - [x] Add kept-browser and same-browser sequential differentials per feature.
   Rejoin a browser a reader kept, run several documents through one tab, and
   run two readers against one browser while one leaves. Compare the same

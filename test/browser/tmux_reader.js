@@ -104,6 +104,27 @@ class ReaderTty {
     return { column, row };
   }
 
+  panePid() {
+    const answer = run('tmux', [
+      'display-message', '-p', '-t', this.session, '#{pane_pid}',
+    ]).stdout.trim();
+    return Number(answer) || null;
+  }
+
+  // A signal belongs to the whole pane, not just the program the pane names:
+  // the browser and broker this reader started were put in the same process
+  // group, and a shutdown that misses them is not a shutdown.
+  signal(name = 'SIGTERM') {
+    const pid = this.panePid();
+    if (!pid) return false;
+    try {
+      process.kill(-pid, name);
+      return true;
+    } catch {
+      try { process.kill(pid, name); return true; } catch { return false; }
+    }
+  }
+
   async quiet({ settle = 150, timeout = 8000 } = {}) {
     let current = this.raw();
     for (const deadline = Date.now() + timeout; Date.now() < deadline;) {
