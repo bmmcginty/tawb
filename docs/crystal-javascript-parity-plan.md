@@ -820,6 +820,8 @@ behavioural bugs by itself.
   - [x] Refused settings replacement retains the previous target and accepted
     in-session state, reports the failure, and removes the temporary file in
     both runtimes.
+  - [x] Double disposal releases a held Chromium object exactly once in both
+    runtimes; the second disposal emits no protocol cleanup command.
 - [x] Add kept-browser and same-browser sequential differentials per feature.
   Rejoin a browser a reader kept, run several documents through one tab, and
   run two readers against one browser while one leaves. Compare the same
