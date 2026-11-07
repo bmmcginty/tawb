@@ -822,6 +822,8 @@ behavioural bugs by itself.
     both runtimes.
   - [x] Double disposal releases a held Chromium object exactly once in both
     runtimes; the second disposal emits no protocol cleanup command.
+  - [x] Refused update replacement and digest failure preserve the installed
+    artifact and remove every downloaded temporary file.
 - [x] Add kept-browser and same-browser sequential differentials per feature.
   Rejoin a browser a reader kept, run several documents through one tab, and
   run two readers against one browser while one leaves. Compare the same
