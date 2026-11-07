@@ -2213,12 +2213,29 @@ module Tawb
         height = object["height"]?.try(&.as_i64?).try(&.to_i32)
         if scroll == state.scroll && height == viewport_height(state)
           previous = object["rows"]?.try(&.as_a?) || [] of JSON::Any
-          return patch_visible_rows(output, state, page_url, previous)
+          repainted = patch_visible_rows(output, state, page_url, previous)
+          # The same event and field names the JavaScript reader logs, so the
+          # rows one runtime repainted for a key can be compared with the rows
+          # the other repainted for it. A row that is written again is read
+          # again by a screen reader, so scope is an observable, not an
+          # internal detail.
+          state.logger.write("repaint", {
+            "rows"   => JSON::Any.new(repainted.to_i64),
+            "of"     => JSON::Any.new(height.not_nil!.to_i64),
+            "source" => JSON::Any.new(state.core.source),
+          })
+          return repainted
         end
       end
 
       draw_list(output, state)
       park_cursor(output, state, page_url)
+      state.logger.write("repaint", {
+        "rows"   => JSON::Any.new(viewport_height(state).to_i64),
+        "of"     => JSON::Any.new(viewport_height(state).to_i64),
+        "full"   => JSON::Any.new(true),
+        "source" => JSON::Any.new(state.core.source),
+      })
       nil
     end
 

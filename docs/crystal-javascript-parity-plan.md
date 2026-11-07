@@ -875,6 +875,14 @@ behavioural bugs by itself.
   - [x] Put a polite and an assertive live-region announcement on the status
     row of both interfaces through a real browser and tty, spaced past the
     polite hold, and compare the rows both runtimes drew.
+  - [x] Compare how much of the screen a key repaints, through both real
+    terminals. The native reader now logs the `repaint` record JavaScript
+    already logged — rows patched, list height, whole-screen flag, view — and a
+    fixed key sequence that presses a button, rescans, moves and toggles the
+    status row must repaint the same rows in both runtimes. A native full
+    repaint where the reference patched six rows fails the gate, and that
+    regression is registered as a mutation. The Lynx selection patch is not
+    instrumented in either runtime, so it is not compared here.
 
 ### P3: performance and endurance
 
