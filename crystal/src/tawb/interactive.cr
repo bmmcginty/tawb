@@ -354,8 +354,10 @@ module Tawb
         end
         events.each { |event| apply(event, page, wrapper) }
         # A previous batch may have been held by the input grace period. A
-        # payload-free cycle advances that dirty buffer once it becomes due.
-        apply(nil, page, wrapper) if events.empty? || @core.live.dirty
+        # payload-free cycle advances that dirty buffer once it becomes due;
+        # with nothing dirty there is nothing to redraw, and redrawing anyway
+        # costs a pass over the visible rows on every idle tick.
+        apply(nil, page, wrapper) if @core.live.dirty
         if @core.live.pulse_errors > 0
           @logger.count("pulseErrors", @core.live.pulse_errors.to_i64)
           @core.live.pulse_errors = 0
