@@ -829,6 +829,8 @@ behavioural bugs by itself.
   - [x] Browser closure during a BiDi action fails the outstanding action;
     closure after its reply retains the completed side effect and answer, and
     closure before the next action refuses it without replaying the first.
+  - [x] Frame removal during activation, live mutation, and navigation converges
+    on the new document without retaining the detached frame or its text.
 - [x] Add kept-browser and same-browser sequential differentials per feature.
   Rejoin a browser a reader kept, run several documents through one tab, and
   run two readers against one browser while one leaves. Compare the same
