@@ -156,6 +156,24 @@ for (const implementation of implementations) {
     assert.equal(result.settingsFileExists, true);
   });
 
+  test(`${implementation.name}: a refused save leaves no temporary settings file`, () => {
+    const directory = tempDir(`tawb-options-refused-${implementation.name}-`);
+    const file = path.join(directory, 'settings.lynx.json');
+    fs.mkdirSync(file);
+    const result = implementation.screen({
+      keys: ['@', ' ', '\r', '>'], settingsFile: file,
+    });
+    assert.equal(result.mode, 'options', 'a failed save silently left the options screen');
+    assert.equal(result.preferences.showCursor, true,
+      'a failed save discarded the accepted in-session choice');
+    assert.match(result.events.filter((entry) => entry[0] === 'status').at(-1)[1],
+      /Could not save options:.*(?:directory|EISDIR|ENOTEMPTY|exist)/i);
+    assert.equal(fs.statSync(file).isDirectory(), true,
+      'the failed save changed the previous target');
+    assert.deepEqual(fs.readdirSync(directory), ['settings.lynx.json'],
+      'the failed save left its temporary settings file');
+  });
+
   test(`${implementation.name}: a value chosen and not accepted is not saved`, () => {
     const file = path.join(tempDir(`tawb-options-cancel-${implementation.name}-`), 'settings.lynx.json');
     const result = implementation.screen({ keys: ['@', ' ', 'q', '>'], settingsFile: file });

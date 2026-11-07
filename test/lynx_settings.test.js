@@ -45,6 +45,18 @@ test('Lynx settings are written atomically under a lynx key', () => {
   });
 });
 
+test('a refused Lynx settings replacement leaves the old target and no temporary file', () => {
+  const directory = tempDir('tawb-lynx-settings-refused-');
+  const file = path.join(directory, 'settings.lynx.json');
+  fs.mkdirSync(file);
+  assert.throws(() => writeLynxSettings({ showCursor: true }, { file }),
+    /directory|EISDIR|ENOTEMPTY|exist/i);
+  assert.equal(fs.statSync(file).isDirectory(), true,
+    'the failed replacement changed the previous target');
+  assert.deepEqual(fs.readdirSync(directory), ['settings.lynx.json'],
+    'the failed replacement left its temporary settings file');
+});
+
 test('a Lynx setting outside the lynx key is an error', () => {
   const directory = tempDir('tawb-lynx-settings-global-');
   const file = path.join(directory, 'settings.lynx.json');

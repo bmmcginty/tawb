@@ -98,8 +98,14 @@ module Tawb
       validate_lynx_settings(document, target)
       Dir.mkdir_p(File.dirname(target))
       temporary = "#{target}.#{Process.pid}.tmp"
-      File.write(temporary, "#{document.to_pretty_json}\n", perm: File::Permissions.new(0o600))
-      File.rename(temporary, target)
+      begin
+        File.write(temporary, "#{document.to_pretty_json}\n", perm: File::Permissions.new(0o600))
+        File.rename(temporary, target)
+      ensure
+        # Keep only the previous settings when replacement is refused. After
+        # success the temporary name has moved, so this is a harmless no-op.
+        File.delete(temporary) if File.file?(temporary)
+      end
     end
 
     # The derived preferences the Lynx dump needs: what TAWB holds, over the

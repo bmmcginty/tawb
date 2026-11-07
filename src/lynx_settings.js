@@ -95,9 +95,16 @@ function writeLynxSettings(settings, {
   validateLynxSettings(document, target);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const temporary = `${target}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 });
-  fs.renameSync(temporary, target);
-  return target;
+  try {
+    fs.writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 });
+    fs.renameSync(temporary, target);
+    return target;
+  } finally {
+    // A refused rename must not leave a settings document that looks usable
+    // but will never be read. Removing after success is harmless (the name
+    // moved); removing after failure preserves the previous target alone.
+    try { fs.rmSync(temporary, { force: true }); } catch { /* retain the original failure */ }
+  }
 }
 
 module.exports = {
