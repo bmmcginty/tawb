@@ -858,6 +858,10 @@ behavioural bugs by itself.
   EOF, signal, slow action, held key, and live announcement at least one real
   terminal path through both interfaces. Compare bytes, cursor, side effects,
   and repaint count.
+  - [x] Drive the find, command, page-keyboard, forms, control, file, number,
+    and field-command modes through a real tmux pane in both runtimes. The
+    default and Lynx interfaces each cover the modes they actually implement:
+    Lynx keeps forms in its browse map and has no separate forms mode.
 
 ### P3: performance and endurance
 
