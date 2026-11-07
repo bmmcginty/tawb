@@ -37,6 +37,9 @@ const FIXTURE = `<!doctype html>
   <label>Your name <input aria-label="Name field"></label>
   <button>Submit button</button>
   <label>Attach a file <input type="file" aria-label="Attachment field"></label>
+  <label>Color choice <select aria-label="Color choice">
+    <option>Red</option><option>Green</option><option>Blue</option>
+  </select></label>
   <label>Screen light <input type="range" aria-label="Brightness slider" min="0" max="100" value="50"></label>
 </body></html>`;
 
@@ -58,6 +61,19 @@ async function waitForRaw(reader, pattern, timeout = 10000) {
     await sleep(200);
   }
   return pattern.test(reader.raw());
+}
+
+async function moveToField(reader, pattern, limit = 10) {
+  for (let step = 0; step < limit; step += 1) {
+    if (pattern.test(selectedLine(reader))) return;
+    await reader.press('f');
+  }
+  for (let step = 0; step < limit; step += 1) {
+    if (pattern.test(selectedLine(reader))) return;
+    await reader.press('F');
+  }
+  assert.ok(pattern.test(selectedLine(reader)),
+    `never reached field ${pattern}; selected ${selectedLine(reader)}`);
 }
 
 async function moveTo(reader, pattern, limit = 30) {
@@ -182,6 +198,36 @@ async function runJourney(root, runtime, interfaceName, server) {
       assert.ok(await waitForStatus(reader, 'Left forms mode', 10000),
         `${name} did not leave forms mode`);
     }
+
+    // Chooser: Enter on a native select opens its own list, the arrows move
+    // through it, and Enter writes the choice back to the page. Escape on the
+    // next visit leaves the selection as it was.
+    if (lynx) {
+      await moveTo(reader, /Color choice/);
+      await reader.press('Escape');
+    } else {
+      await moveToField(reader, /Color choice/);
+    }
+    await reader.press('Enter');
+    assert.ok(await waitForRaw(reader, /Choosing —/),
+      `${name} did not open the select list; screen:\n${reader.raw()}`);
+    await reader.press('Down');
+    await reader.press('Down');
+    await reader.press('Enter');
+    assert.ok(await waitForStatus(reader, 'Chose "Blue".', 10000),
+      `${name} did not choose the select option; status ${reader.status()}`);
+    if (lynx) {
+      await moveTo(reader, /Color choice/);
+      await reader.press('Escape');
+    } else {
+      await moveToField(reader, /Color choice/);
+    }
+    await reader.press('Enter');
+    assert.ok(await waitForRaw(reader, /Choosing —/),
+      `${name} did not reopen the select list; screen:\n${reader.raw()}`);
+    await reader.press('Escape');
+    assert.ok(await waitForStatus(reader, 'Left "Color choice" as it was.', 10000),
+      `${name} did not cancel the select list; status ${reader.status()}`);
 
     // Control: Enter on a slider takes the arrows, and Escape stops.
     await moveTo(reader, /Brightness slider/);

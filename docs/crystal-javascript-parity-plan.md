@@ -868,6 +868,10 @@ behavioural bugs by itself.
     keyboard wizard, and the Lynx options screen through both real terminals.
     Each screen takes the rows it owns and gives the page back on Escape; the
     wizard's save question is answered and the options screen is cancelled.
+  - [x] Open a native select from the page, move through its choices, write
+    one back, and cancel a second visit, in both terminals. The ordinary
+    interface reaches the select as a form field; Lynx enters its line editor
+    first and Escape gives Enter the control itself.
 
 ### P3: performance and endurance
 
