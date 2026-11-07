@@ -880,6 +880,13 @@ behavioural bugs by itself.
   - [x] Put a polite and an assertive live-region announcement on the status
     row of both interfaces through a real browser and tty, spaced past the
     polite hold, and compare the rows both runtimes drew.
+  - [x] Hold a key across a mode transition through a real terminal. Three
+    cursor moves, the key that opens the address bar, and four more moves are
+    written to the tty in one chunk, which is what a held key looks like to a
+    reader. Both runtimes open the address bar, leave the address naming the
+    page that was loaded, draw identical screens while the extra keys land, and
+    return to the unchanged page on Escape. The Lynx interface uses its own
+    address keys and is not part of this case.
   - [x] Compare how much of the screen a key repaints, through both real
     terminals. The native reader now logs the `repaint` record JavaScript
     already logged — rows patched, list height, whole-screen flag, view — and a
