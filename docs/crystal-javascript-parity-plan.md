@@ -877,6 +877,14 @@ behavioural bugs by itself.
 - [ ] Long soak and leak tests. Run the live, idle, and action paths for an
   hour with growth, descriptor, handle, and process assertions. A bounded
   short soak may run in CI, but it does not replace the long run.
+  - [x] Add a soak that keeps a real page mutating on two scales, drives the
+    reader through movement, refresh and activation, samples the reader and
+    browser process group from outside, and asserts bounded descriptors,
+    resident memory, process count, continued responsiveness and complete
+    cleanup. The browser gate runs 30 seconds per runtime as a smoke case;
+    `tools/test_soak.sh` runs the same assertions for an hour per runtime.
+    Browser-side handle lifetime remains on the wire assertions in the
+    double-disposal and protocol-trace tests.
 
 ### P4: release qualification
 
