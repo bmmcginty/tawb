@@ -1,3 +1,5 @@
+require "./log"
+
 # The native port of the buffer half of src/core.js: everything about a page
 # that is not about a terminal and not about a browser.
 #
@@ -417,11 +419,13 @@ module Tawb
                    layout_order : String = "default",
                    driver : Engine::Session? = nil,
                    page : Engine::Page? = nil,
-                   browser_port : Int32? = nil)
+                   browser_port : Int32? = nil,
+                   logger : Log? = nil)
       @source = source
       @driver = driver
       @page = page
       @browser_port = browser_port
+      @logger = logger
       # Whether the extraction records the inline-flow and table-cell placement
       # the Lynx display lays a page out with. Nothing else reads it, so a
       # reader who has not asked for Lynx does not pay for it.
@@ -535,6 +539,7 @@ module Tawb
       end
       started = Time.instant
       built = snapshot_blocks(target)
+      extracted_at = Time.instant
       extracted = built.map do |entry|
         object = entry.as_h
         Block.new(object["text"]?.try(&.as_s?) || "",
@@ -542,6 +547,7 @@ module Tawb
           object["startsBlock"]?, object["isParagraph"]?, object["spans"]?)
       end
       @blocks = LayoutOrder.order(extracted, @layout_order)
+      ordered_at = Time.instant
       restore_attached_files(target.tab_id)
       @generation += 1
       # The Firefox driver queues navigation events until somebody drains them,
@@ -556,8 +562,20 @@ module Tawb
       # may detach between its snapshot and this call.
       frames = target.all_frames
       arm_live_frames(frames)
-      @snapshot_cost_ms = (Time.instant - started).total_milliseconds.to_i64
+      finished = Time.instant
+      @snapshot_cost_ms = (finished - started).total_milliseconds.to_i64
       @live.snapshot_cost_ms = @snapshot_cost_ms
+      # The same phases the JavaScript snapshot log records, so a slow refresh
+      # can be told apart from a slow extraction instead of being guessed at.
+      @logger.try(&.write("snapshot", {
+        "source"      => JSON::Any.new(@source),
+        "layoutOrder" => JSON::Any.new(@layout_order),
+        "ms"          => JSON::Any.new(@snapshot_cost_ms),
+        "extractMs"   => JSON::Any.new((extracted_at - started).total_milliseconds.to_i64),
+        "orderMs"     => JSON::Any.new((ordered_at - extracted_at).total_milliseconds.to_i64),
+        "blocks"      => JSON::Any.new(@blocks.size.to_i64),
+        "frames"      => JSON::Any.new(frames.size.to_i64),
+      }))
       @blocks
     end
 

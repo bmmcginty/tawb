@@ -874,6 +874,26 @@ behavioural bugs by itself.
   latency, memory, handles, and idle pulse cost over small, large, frame-heavy,
   shadow-heavy, and live pages. Enforce ratio and absolute budgets with phase
   logs on failure.
+  - [x] Add a five-page Firefox corpus that records startup, key-to-status
+    latency, a complete refresh, first and settled idle CPU, resident memory,
+    descriptors, and live-pulse/refresh/snapshot counts for both runtimes. The
+    gate enforces native/reference ratios and absolute ceilings and prints
+    every phase plus the diagnostic event counts on failure.
+    `TAWB_PERF_ONLY` narrows the corpus while calibrating and
+    `TAWB_PERF_REVERSE` flips the runtime order so an order bias is visible.
+    Native snapshot extraction currently measures around 1.5-1.7 times the
+    JavaScript phase on the frame, shadow, and live pages; that ratio is
+    recorded but not yet budgeted, so this item stays open. Chromium,
+    privileged-scan, protocol-command, frame-query, and handle counts remain
+    with the wire-level gates.
+  - [x] Log the native snapshot's extraction and ordering phases under the same
+    `snapshot` event and field names as JavaScript, so a slow refresh can be
+    attributed rather than guessed at.
+  - [x] Stop applying a payload-free live cycle when the buffer is clean. The
+    unconditional idle repaint cost about 500ms of native reader CPU per four
+    idle seconds on a 1500-paragraph page; gating the cycle on dirty state
+    brought it to about 40ms and the whole reader-plus-browser idle cost to the
+    JavaScript level.
 - [ ] Long soak and leak tests. Run the live, idle, and action paths for an
   hour with growth, descriptor, handle, and process assertions. A bounded
   short soak may run in CI, but it does not replace the long run.

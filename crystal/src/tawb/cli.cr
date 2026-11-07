@@ -286,7 +286,7 @@ module Tawb
         end
         page ||= browser.create_page.as(Engine::Page)
         core = Core.new(source: "ax", layout: layout, driver: browser,
-          page: page, browser_port: browser_port)
+          page: page, browser_port: browser_port, logger: logger)
         core.adopt_tab(page.not_nil!)
         binding = Interactive::CoreBinding.new(core)
         tabs = Interactive::Tabs.new(core, browser, page.not_nil!)
