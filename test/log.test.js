@@ -11,6 +11,26 @@ const {
   log, enableLog, getLogPath, defaultLogPath, closeLog,
 } = require('../src/log');
 
+test('an unwritable log path disables diagnostics without taking down the process', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tawb-log-refused-'));
+  try {
+    const obstruction = path.join(home, 'not-a-directory');
+    fs.writeFileSync(obstruction, 'occupied');
+    const probe = spawnSync(process.execPath, ['-e', `
+      const log = require(${JSON.stringify(path.join(__dirname, '..', 'src', 'log.js'))});
+      log.enableLog({ directory: ${JSON.stringify(path.join(obstruction, 'logs'))} });
+      log.log('before-failure', { answer: 42 });
+      log.log('after-failure');
+    `], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
+    assert.equal(probe.status, 0, probe.stderr);
+    assert.equal(fs.readFileSync(obstruction, 'utf8'), 'occupied');
+    assert.deepEqual(fs.readdirSync(home), ['not-a-directory'],
+      'a refused logger left a partial diagnostics file');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('logging is off until --log enables a timestamped private file', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tawb-log-'));
   try {

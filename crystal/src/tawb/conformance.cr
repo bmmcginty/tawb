@@ -206,10 +206,12 @@ module Tawb
         end
       end
       logger.close
+      exists = File.file?(path)
       JSON::Any.new({
         "path"     => JSON::Any.new(path),
-        "contents" => JSON::Any.new(File.read(path)),
-        "mode"     => JSON::Any.new((File.info(path).permissions.value & 0o777).to_i64),
+        "exists"   => JSON::Any.new(exists),
+        "contents" => JSON::Any.new(exists ? File.read(path) : ""),
+        "mode"     => JSON::Any.new(exists ? (File.info(path).permissions.value & 0o777).to_i64 : 0_i64),
       })
     end
 

@@ -56,6 +56,7 @@ test('native logging is opt-in, private, structured, and counted', { skip }, () 
     });
     assert.equal(result.path,
       path.join(directory, '.tawb.20260827140509.4321.log'));
+    assert.equal(result.exists, true);
     assert.equal(result.mode, 0o600);
     assert.match(result.contents,
       /^# tawb log .* pid \d+ commit (?:[0-9a-f]{40,64}|unknown)\n/);
@@ -68,6 +69,30 @@ test('native logging is opt-in, private, structured, and counted', { skip }, () 
     assert.deepEqual({ event: records[2].event,
       pendingAtClose: records[2].pendingAtClose },
     { event: 'counters', pendingAtClose: 3 });
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('native logging disables itself when its directory becomes unwritable', { skip }, () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tawb-crystal-log-refused-'));
+  try {
+    const obstruction = path.join(home, 'not-a-directory');
+    fs.writeFileSync(obstruction, 'occupied');
+    const result = call('log.scenario', {
+      now: Date.now(), pid: 4321, home, directory: path.join(obstruction, 'logs'),
+      events: [
+        { op: 'write', event: 'before-failure', fields: { answer: 42 } },
+        { op: 'count', name: 'afterFailure', amount: 1 },
+        { op: 'flush_counters', fields: { refreshes: 1 } },
+      ],
+    });
+    assert.equal(result.exists, false,
+      'a refused logger left a partial diagnostics file');
+    assert.equal(result.contents, '');
+    assert.equal(result.mode, 0);
+    assert.equal(fs.readFileSync(obstruction, 'utf8'), 'occupied',
+      'logging changed the obstruction after its write failed');
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
