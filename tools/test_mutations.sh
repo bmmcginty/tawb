@@ -136,6 +136,19 @@ run_gate() {
           tools/test_crystal.sh --test-name-pattern='write during a browser edit' \
             test/reader_modes_crystal.test.js )
       ;;
+    repaint-scope)
+      ( cd "$work" && env \
+          TAWB_TEST_CRYSTAL=1 \
+          TAWB_TEST_CRYSTAL_BROWSER=1 \
+          TAWB_CRYSTAL_BIN="$work/bin/tawb" \
+          TAWB_A11Y_BUS=private \
+          tools/run_isolated.sh node --test --test-concurrency=1 \
+            --test-reporter=spec \
+            --test-reporter="$work/tools/fail_on_skips_reporter.js" \
+            --test-reporter-destination=stdout \
+            --test-reporter-destination=stderr \
+            test/browser/crystal_repaint.test.js )
+      ;;
     *)
       echo "test_mutations: no gate for $name" >&2
       return 2

@@ -62,6 +62,10 @@ MUTATIONS = {
         'summary': 'keep the old caret column after a write invalidated the typed-row patch',
         'build': True,
     },
+    'repaint-scope': {
+        'summary': 'repaint the whole list where only a few rows changed',
+        'build': True,
+    },
 }
 
 
@@ -196,6 +200,15 @@ def typed_row_generation(root):
     )
 
 
+def repaint_scope(root):
+    replace(
+        root,
+        'crystal/src/tawb/reader.cr',
+        '        if scroll == state.scroll && height == viewport_height(state)\n',
+        '        if false && scroll == state.scroll && height == viewport_height(state)\n',
+    )
+
+
 APPLY = {
     'privileged-media': privileged_media,
     'native-control-field': native_control_field,
@@ -209,6 +222,7 @@ APPLY = {
     'keymap-action': keymap_action,
     'update-rename-failure': update_rename_failure,
     'typed-row-generation': typed_row_generation,
+    'repaint-scope': repaint_scope,
 }
 
 

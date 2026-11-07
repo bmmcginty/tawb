@@ -566,11 +566,16 @@ Implemented and verified caught:
   The local release-server seam `TAWB_UPDATE_FAIL_REPLACE` reaches the rename
   failure after every earlier check has passed; a read-only binary alone stops
   at the writability check and never exercises it.
+- `repaint-scope`: repaint the whole list where only a few rows changed. The
+  repaint differential records 72 rows and 4 whole screens against the
+  reference's 6 patched rows.
 
 The navigation, typed-row, and replacement cases needed contract tests before
 they could catch their mutations: the default subscription list is asserted on
 the wire, a scripted concurrent terminal write forces the typed-row patch to
 choose its absolute start, and the update test injects a refused replacement.
+The repaint case needed the native reader to log the repaint record JavaScript
+already logged, which is what makes the patched rows comparable at all.
 
 Run a rotating subset on ordinary CI and the full mutation set before a
 retirement milestone. A mutation that survives identifies a real coverage gap.
