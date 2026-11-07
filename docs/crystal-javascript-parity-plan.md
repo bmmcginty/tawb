@@ -815,6 +815,11 @@ behavioural bugs by itself.
   temporary, and update files. Assert retained state and cleanup, not only the
   error text, and assert that no browser, broker, claim, handle, or temporary
   file survives.
+  - [x] Refused log writes disable diagnostics in both runtimes without
+    crashing or leaving a partial diagnostics file.
+  - [x] Refused settings replacement retains the previous target and accepted
+    in-session state, reports the failure, and removes the temporary file in
+    both runtimes.
 - [x] Add kept-browser and same-browser sequential differentials per feature.
   Rejoin a browser a reader kept, run several documents through one tab, and
   run two readers against one browser while one leaves. Compare the same
