@@ -2181,6 +2181,10 @@ module Tawb
           return {ok: value[:ok], fault: value[:fault], cancelled: false}
         end
         key = answer.key
+        # The end of the keyboard is input in the same sense a key is: it
+        # stopped whatever was running, and the live scheduler must not think
+        # the reader is still idle behind a navigation that is being cancelled.
+        Reader.note_input(state)
         if key.is_a?(Input::Eof)
           begin
             page.stop_loading
@@ -2190,7 +2194,6 @@ module Tawb
           keyboard.release(token)
           return {ok: false, fault: nil, cancelled: true}
         end
-        Reader.note_input(state)
         chunk = key.as(String)
         action = keymap_for(state).action_for(chunk)
         next unless key_is(chunk, "Escape", state) || action == "interrupt"

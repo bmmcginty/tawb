@@ -837,6 +837,9 @@ behavioural bugs by itself.
     runtimes.
   - [x] A resize during a slow navigation applies the new size to the arriving
     document and leaves both runtimes drawing the same screen and cursor.
+  - [x] The keyboard ending during a slow navigation cancels it in both
+    runtimes and records the interruption as input, so a live refresh cannot
+    mistake the cancelled action for an idle reader.
 - [x] Add kept-browser and same-browser sequential differentials per feature.
   Rejoin a browser a reader kept, run several documents through one tab, and
   run two readers against one browser while one leaves. Compare the same

@@ -316,6 +316,15 @@ test('escape stops a load that is still running', { skip: needsCrystal }, async 
   assert.equal(result.state.mode, 'browse');
 });
 
+test('the keyboard going away stops a load that is still running', { skip: needsCrystal }, async () => {
+  const state = plainState({ mode: 'address', address: { text: 'https://slow.test/', caret: 18, scroll: 0 } }, {});
+  const result = await runBoth('interrupt-eof', state, [
+    { op: 'addressKey', chunk: '\r', keys: ['<eof>'] },
+  ], { url: PAGE_URL, gotoHang: true });
+  assert.equal(result.state.statusMsg, 'Stopped loading https://slow.test/.');
+  assert.equal(result.state.mode, 'browse');
+});
+
 test('the address bar edits like a line editor', { skip: needsCrystal }, async () => {
   const state = plainState({ mode: 'address', address: { text: 'https://example.test/pag', caret: 24, scroll: 0 } });
   const result = await runBoth('edit', state, [
