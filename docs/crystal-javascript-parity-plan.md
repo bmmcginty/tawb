@@ -878,25 +878,29 @@ behavioural bugs by itself.
 
 ### P3: performance and endurance
 
-- [ ] Performance corpus and budgets. Record startup, extraction, ordering,
+- [x] Performance corpus and budgets. Record startup, extraction, ordering,
   privileged scans, protocol commands, frame queries, refresh phases, key
   latency, memory, handles, and idle pulse cost over small, large, frame-heavy,
   shadow-heavy, and live pages. Enforce ratio and absolute budgets with phase
-  logs on failure.
-  - [x] Add a five-page Firefox corpus that records startup, key-to-status
-    latency, a complete refresh, first and settled idle CPU, resident memory,
-    descriptors, and live-pulse/refresh/snapshot counts for both runtimes. The
-    gate enforces native/reference ratios and absolute ceilings and prints
-    every phase plus the diagnostic event counts on failure.
-    `TAWB_PERF_ONLY` narrows the corpus while calibrating and
-    `TAWB_PERF_REVERSE` flips the runtime order so an order bias is visible.
-    Native snapshot extraction measures around 1.3-1.6 times the JavaScript
-    phase on the frame, shadow, and live pages, and the ratio is now budgeted
-    per snapshot at 2.5 times the reference phase plus a fixed allowance, with
-    the block count of every snapshot compared exactly so a cheaper reading
-    cannot pass by reading less. The remaining item is Chromium; privileged
-    scan, protocol-command, frame-query, and handle counts remain with the
-    wire-level gates.
+  logs on failure. The corpus below budgets the phases that only a real
+  terminal can observe; privileged-scan, protocol-command, frame-query and
+  handle counts are compared for equality by the protocol-trace and
+  double-disposal gates, which is stricter than a ratio budget because any
+  count difference fails there.
+  - [x] Add a five-page corpus, on Firefox and Chromium, that records startup,
+    key-to-status latency, a complete refresh, first and settled idle CPU,
+    resident memory, descriptors, and live-pulse/refresh/snapshot counts for
+    both runtimes. Every comparison is made within one engine, and a browser
+    that is missing from the environment is reported rather than quietly
+    halving the matrix. The gate enforces native/reference ratios and absolute
+    ceilings and prints every phase plus the diagnostic event counts on
+    failure. `TAWB_PERF_ONLY` and `TAWB_PERF_ENGINE` narrow the corpus while
+    calibrating and `TAWB_PERF_REVERSE` flips the runtime order so an order
+    bias is visible. Native snapshot extraction measures around 1.3-1.6 times
+    the JavaScript phase on the frame, shadow, and live pages, and the ratio is
+    budgeted per snapshot at 2.5 times the reference phase plus a fixed
+    allowance, with the block count of every snapshot compared exactly so a
+    cheaper reading cannot pass by reading less.
   - [x] Log the native snapshot's extraction and ordering phases under the same
     `snapshot` event and field names as JavaScript, so a slow refresh can be
     attributed rather than guessed at.
