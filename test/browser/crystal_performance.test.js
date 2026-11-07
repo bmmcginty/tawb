@@ -14,12 +14,25 @@
 //
 // The budgets are ratios with an allowance for scheduler noise plus absolute
 // ceilings a local action should never cross. They are smoke budgets, not the
-// full performance qualification: extraction and ordering phases, privileged
-// scan counts, protocol command counts, frame queries and handle lifecycles
-// are counted by the snapshot log, protocol-trace and ARIA/role gates where
-// the wire is observable. A failure reports every phase for both runtimes,
-// including the live-pulse and refresh counts from the diagnostic log, so a
-// slow number can be read as work rather than guessed at.
+// full performance qualification: privileged scan counts, protocol command
+// counts, frame queries and handle lifecycles are counted by the
+// protocol-trace and ARIA/role gates where the wire is observable. A failure
+// reports every phase for both runtimes, including the live-pulse and refresh
+// counts from the diagnostic log, so a slow number can be read as work rather
+// than guessed at.
+//
+// Snapshot extraction and ordering are budgeted per snapshot, taken from the
+// median of the `snapshot` records each runtime writes, because the number of
+// snapshots a page takes depends on how many live pulses landed in the
+// window. The two runtimes send the same page functions with the same
+// arguments, so an extraction that reads the same blocks in twice the time is
+// work, not a missing call: the native client parses the accessibility
+// answers into Crystal values where the reference keeps the decoded JSON, and
+// that conversion measured between 1.3 and 2.3 times the reference phase on
+// the frame, shadow and live pages. The budget is therefore a ceiling that
+// catches a second scan or a per-block round trip, not a claim of equality;
+// the block counts are compared exactly so a faster extraction that dropped
+// blocks fails.
 //
 // TAWB_PERF_ONLY=large narrows the corpus while calibrating a budget, and
 // TAWB_PERF_REVERSE=1 runs the runtimes in the opposite order so a budget
@@ -47,6 +60,18 @@ const KEY_CEILING_MS = 400;
 const REFRESH_CEILING_MS = 15000;
 const STARTUP_CEILING_MS = 90000;
 const LIVE_CPU_CEILING_MS = 45000;
+// A whole-page extraction is one page evaluation per document plus the media
+// probe, so its cost should not grow faster than the reference's. The
+// allowance covers the difference between a reference that decodes JSON and a
+// native client that builds typed values from it; a second scan of the same
+// document, or a round trip per block, crosses it.
+const EXTRACT_RATIO = 2.5;
+const EXTRACT_ALLOWANCE_MS = 30;
+const ORDER_RATIO = 2.5;
+const ORDER_ALLOWANCE_MS = 10;
+// Snapshots taken for the same reason land in the same window; a runtime that
+// re-read the page on its own clock would take materially more.
+const SNAPSHOT_PASS_ALLOWANCE = 2;
 
 const CORPUS = {
   small() {
@@ -209,12 +234,12 @@ async function waitForStatusWhere(reader, pattern, timeout) {
 
 function logSummary(directory) {
   const counts = {};
-  const totals = { extractMs: 0, orderMs: 0, snapshotMs: 0 };
+  const snapshots = [];
   let files = [];
   try {
     files = fs.readdirSync(directory).filter((name) => name.includes('.tawb.'));
   } catch {
-    return { counts, totals };
+    return { counts, snapshots, extractMs: 0, orderMs: 0, blocks: 0 };
   }
   for (const file of files) {
     let text = '';
@@ -229,16 +254,55 @@ function logSummary(directory) {
         const record = JSON.parse(line);
         if (record.event) counts[record.event] = (counts[record.event] || 0) + 1;
         if (record.event === 'snapshot') {
-          totals.extractMs += Number(record.extractMs) || 0;
-          totals.orderMs += Number(record.orderMs) || 0;
-          totals.snapshotMs += Number(record.ms) || 0;
+          snapshots.push({
+            extractMs: Number(record.extractMs) || 0,
+            orderMs: Number(record.orderMs) || 0,
+            ms: Number(record.ms) || 0,
+            blocks: Number(record.blocks) || 0,
+          });
         }
       } catch {
         // A record cut short by shutdown is not a count.
       }
     }
   }
-  return { counts, totals };
+  // The median phase of a snapshot, so one startup snapshot taken against a
+  // cold page does not decide the budget. The block count is the median too,
+  // and is compared exactly: the two runtimes must have read the same page.
+  return {
+    counts,
+    snapshots,
+    extractMs: snapshots.length ? median(snapshots.map((entry) => entry.extractMs)) : 0,
+    orderMs: snapshots.length ? median(snapshots.map((entry) => entry.orderMs)) : 0,
+    blocks: snapshots.length ? median(snapshots.map((entry) => entry.blocks)) : 0,
+  };
+}
+
+// The live ticker's own clock is not the reader's. Wait until the diagnostic
+// log shows the page has been pulsed a few times, so the idle window measures
+// a steady ticker instead of the burst of first passes over a frame-heavy
+// document, and the pages that never pulse simply spend the timeout.
+async function waitForTicker(logDirectory, pulses = 2, timeout = 8000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if ((logSummary(logDirectory).counts['live.pulse'] || 0) >= pulses) return true;
+    await sleep(200);
+  }
+  return false;
+}
+
+// The status row is not only the reader's: a live page that announces itself
+// puts its own words there, and on that page the answer to a key can be
+// replaced before a capture reads it. The ticker's own log is the barrier
+// that cannot be overwritten, so a key counts as answered when the row says
+// so or when the pulses it restarts appear.
+async function waitForPulsesAfter(logDirectory, before, timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if ((logSummary(logDirectory).counts['live.pulse'] || 0) > before) return true;
+    await sleep(100);
+  }
+  return false;
 }
 
 async function measure(runtime, kind, root, server) {
@@ -268,7 +332,11 @@ async function measure(runtime, kind, root, server) {
     await sleep(750);
 
     // The first idle window is the ticker alone on a settled page, before any
-    // of the measured keys have asked for a refresh.
+    // of the measured keys have asked for a refresh. Taking it once the
+    // ticker has pulsed gives every frame of a frame-heavy page time to be
+    // armed, so the reading is the steady cost and not the startup burst.
+    await waitForTicker(logDirectory);
+    await sleep(250);
     const startupIdleStart = residents(profile, reader.panePid());
     await sleep(2000);
     const startupIdleEnd = residents(profile, reader.panePid());
@@ -317,8 +385,10 @@ async function measure(runtime, kind, root, server) {
       refreshTimings.push(Date.now() - startedRefresh);
       await sleep(100);
     }
+    const pulsesBefore = logSummary(logDirectory).counts['live.pulse'] || 0;
     reader.send('L');
-    assert.ok(await waitForStatusWhere(reader, /Live updates on/, 5000),
+    assert.ok(await waitForStatusWhere(reader, /Live updates on/, 5000)
+      || await waitForPulsesAfter(logDirectory, pulsesBefore),
       `${runtime.name} did not restart live updates after the refresh measurement`);
     await sleep(500);
 
@@ -353,8 +423,10 @@ async function measure(runtime, kind, root, server) {
       rssMb: final.rssMb,
       fds: final.fds,
       logCounts: logs.counts,
-      snapshotExtractMs: logs.totals.extractMs,
-      snapshotOrderMs: logs.totals.orderMs,
+      snapshotCount: logs.snapshots.length,
+      snapshotExtractMs: logs.extractMs,
+      snapshotOrderMs: logs.orderMs,
+      snapshotBlocks: logs.blocks,
       profile,
     };
   } finally {
@@ -374,7 +446,8 @@ function line(result) {
     + `idle cpu ${result.idleCpuMs}ms/${4000}ms (first ${result.startupIdleCpuMs}ms/2000ms) `
     + `(reader ${result.idleReaderMs}, browser ${result.idleBrowserMs}), `
     + `${result.rssMb}MB, ${result.fds} descriptors, `
-    + `extract ${result.snapshotExtractMs}ms, order ${result.snapshotOrderMs}ms`
+    + `snapshot ${result.snapshotExtractMs}ms extract + ${result.snapshotOrderMs}ms order `
+    + `for ${result.snapshotBlocks} blocks`
     + (events ? `, ${events}` : '');
 }
 
@@ -415,6 +488,20 @@ test('both runtimes stay within the performance budgets on the corpus', { skip }
         check('idle CPU', crystal.idleCpuMs, javascript.idleCpuMs, 2, 250);
         check('resident memory', crystal.rssMb, javascript.rssMb, 1.25, 150);
         check('descriptors', crystal.fds, javascript.fds, 1, 16);
+        check('snapshot extraction', crystal.snapshotExtractMs, javascript.snapshotExtractMs,
+          EXTRACT_RATIO, EXTRACT_ALLOWANCE_MS);
+        check('snapshot ordering', crystal.snapshotOrderMs, javascript.snapshotOrderMs,
+          ORDER_RATIO, ORDER_ALLOWANCE_MS);
+        // A budget that passes because the native reader read less of the page
+        // would be worse than no budget.
+        if (crystal.snapshotBlocks !== javascript.snapshotBlocks) {
+          failures.push(`${kind}: snapshot read ${crystal.snapshotBlocks} blocks, `
+            + `JavaScript read ${javascript.snapshotBlocks}`);
+        }
+        if (crystal.snapshotCount > javascript.snapshotCount + SNAPSHOT_PASS_ALLOWANCE) {
+          failures.push(`${kind}: ${crystal.snapshotCount} snapshots against `
+            + `JavaScript's ${javascript.snapshotCount}`);
+        }
         if (crystal.keyMs > KEY_CEILING_MS) {
           failures.push(`${kind}: key latency ${crystal.keyMs}ms > ${KEY_CEILING_MS}ms`);
         }
