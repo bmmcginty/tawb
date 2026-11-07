@@ -864,7 +864,13 @@ behavioural bugs by itself.
   mode, screen-stack ownership boundary, odd terminal escape family, resize,
   EOF, signal, slow action, held key, and live announcement at least one real
   terminal path through both interfaces. Compare bytes, cursor, side effects,
-  and repaint count.
+  and repaint count. What the sub-items below now cover through a real pty in
+  both runtimes: every mode, the screens that own rows, resize, signal, a slow
+  navigation, a held key crossing a mode transition, live announcements, and
+  repaint scope. What remains is an odd terminal escape family — SS3 or CSI-u
+  arrows from an application-cursor-mode terminal — and EOF arriving while the
+  reader is idle in browse mode; the end of the keyboard during a slow
+  navigation is covered by the scripted failure matrix in P1, not by a tty.
   - [x] Drive the find, command, page-keyboard, forms, control, file, number,
     and field-command modes through a real tmux pane in both runtimes. The
     default and Lynx interfaces each cover the modes they actually implement:
