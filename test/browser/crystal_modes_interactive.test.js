@@ -22,7 +22,7 @@ const { tempDir, removeTempDir } = require('../tmpdir');
 const { processesUsing } = require('../../src/proc');
 const {
   RUNTIMES, ReaderTty, sleep, browserTestSkip, environment,
-  waitForProfileToDrain, killProfile, waitForStatus,
+  waitForProfileToDrain, killProfile, waitForRow, waitForStatus,
 } = require('./tmux_reader');
 
 const skip = browserTestSkip();
@@ -42,6 +42,14 @@ const FIXTURE = `<!doctype html>
 
 function selectedLine(reader) {
   return reader.rows()[reader.cursor().row].trim();
+}
+
+async function waitForStatusMatch(reader, pattern, timeout = 10000) {
+  for (const deadline = Date.now() + timeout; Date.now() < deadline;) {
+    if (pattern.test(reader.status())) return true;
+    await sleep(200);
+  }
+  return pattern.test(reader.status());
 }
 
 async function waitForRaw(reader, pattern, timeout = 10000) {
@@ -222,6 +230,54 @@ async function runJourney(root, runtime, interfaceName, server) {
       assert.ok(await waitForStatus(reader, 'Command cancelled', 10000),
         `${name} did not return to the field after cancelling the command`);
       await reader.press('Escape');
+    }
+
+    // Address: the bar takes the hint row and gives the page back on Escape
+    // without navigating anywhere. The ordinary interface edits the current
+    // address; Lynx's g starts an empty one.
+    await reader.press(lynx ? 'g' : 'C-l');
+    assert.ok(await waitForRaw(reader, /Address — Enter: go/),
+      `${name} did not open the address bar`);
+    await reader.press('Escape');
+    assert.ok(await waitForRow(reader, 'Modes fixture', 10000),
+      `${name} did not return to the page after the address bar`);
+    assert.doesNotMatch(reader.raw(), /Address — Enter: go/,
+      `${name} left the address hint up after cancelling`);
+
+    // The browser's own bookmark list is a screen of its own: it replaces the
+    // page and closing it puts the reader back where they were standing.
+    await reader.press(lynx ? 'v' : 'C-o');
+    assert.ok(await waitForStatusMatch(reader, /Nothing here yet|entr/, 20000),
+      `${name} did not draw the bookmarks list; status ${reader.status()}`);
+    await reader.press('Escape');
+    assert.ok(await waitForStatus(reader, 'Closed bookmarks.', 10000),
+      `${name} did not close the bookmarks list; status ${reader.status()}`);
+
+    // The keyboard screen shares the session's screen rather than taking an
+    // alternate one, and leaving it asks about saving before the page returns.
+    await reader.press(lynx ? 'k' : 'M-?');
+    assert.ok(await waitForRaw(reader, /keyboard shortcuts/i),
+      `${name} did not draw the keyboard screen`);
+    await reader.press('Escape');
+    assert.ok(await waitForRaw(reader, /Save keyboard changes\? y\/n/),
+      `${name} did not ask about saving the keyboard`);
+    await reader.press('n');
+    assert.ok(await waitForStatus(reader, 'Keyboard shortcuts unchanged.', 10000),
+      `${name} did not leave the keyboard screen; status ${reader.status()}`);
+    assert.ok(await waitForRow(reader, 'Modes fixture', 10000),
+      `${name} did not return to the page after the keyboard screen`);
+
+    if (lynx) {
+      // Options is a Lynx screen: it owns the whole terminal and Escape
+      // restores the page without keeping any provisional change.
+      await reader.press('o');
+      assert.ok(await waitForRaw(reader, /Options/),
+        `${name} did not draw the options screen`);
+      await reader.press('Escape');
+      assert.ok(await waitForStatus(reader, 'Options unchanged.', 10000),
+        `${name} did not leave the options screen; status ${reader.status()}`);
+      assert.ok(await waitForRow(reader, 'Modes fixture', 10000),
+        `${name} did not return to the page after the options screen`);
     }
 
     await reader.quit();

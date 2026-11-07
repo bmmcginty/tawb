@@ -862,6 +862,10 @@ behavioural bugs by itself.
     and field-command modes through a real tmux pane in both runtimes. The
     default and Lynx interfaces each cover the modes they actually implement:
     Lynx keeps forms in its browse map and has no separate forms mode.
+  - [x] Open and leave the address bar, the browser's bookmark list, the
+    keyboard wizard, and the Lynx options screen through both real terminals.
+    Each screen takes the rows it owns and gives the page back on Escape; the
+    wizard's save question is answered and the options screen is cancelled.
 
 ### P3: performance and endurance
 
