@@ -725,6 +725,7 @@ module Tawb
 
       private def call(fn : String, arg : JSON::Any?, expression : Bool,
                        by_value : Bool) : Hash(String, JSON::Any)
+        raise IO::Error.new("that element handle is stale") if @disposed
         arguments = arg ? [Cdp.call_argument(arg)] : [] of JSON::Any
         parameters = {
           "objectId" => JSON::Any.new(@object_id),

@@ -80,9 +80,14 @@ class CdpHandle {
     return this.frame.session();
   }
 
+  #assertLive() {
+    if (this.disposed) throw new Error('that element handle is stale');
+  }
+
   // The handle is the function's first argument, as Playwright has it, not
   // its `this`. Callers are written `(el, arg) => ...` and stay that way.
   async evaluate(fn, arg) {
+    this.#assertLive();
     const args = arg === undefined ? [] : [toCallArgument(arg)];
     const result = await this.#session().send('Runtime.callFunctionOn', {
       objectId: this.objectId,
@@ -96,6 +101,7 @@ class CdpHandle {
   }
 
   async evaluateHandle(fn, arg) {
+    this.#assertLive();
     const args = arg === undefined ? [] : [toCallArgument(arg)];
     const result = await this.#session().send('Runtime.callFunctionOn', {
       objectId: this.objectId,

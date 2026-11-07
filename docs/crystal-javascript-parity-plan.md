@@ -821,7 +821,8 @@ behavioural bugs by itself.
     in-session state, reports the failure, and removes the temporary file in
     both runtimes.
   - [x] Double disposal releases a held Chromium object exactly once in both
-    runtimes; the second disposal emits no protocol cleanup command.
+    runtimes; the second disposal emits no protocol cleanup command, and later
+    use of that stale handle is refused without browser traffic.
   - [x] Refused update replacement and digest failure preserve the installed
     artifact and remove every downloaded temporary file.
   - [x] Broker death during a command or ownership handoff replaces the broker,

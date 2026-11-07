@@ -4096,6 +4096,14 @@ function cdpImplementations({ CdpPage, clickSlider, chromiumLibrary }) {
         case 'handle_evaluate':
           observations.push(await held.evaluate(code(step), step.arg) ?? null);
           break;
+        case 'handle_stale_evaluate':
+          try {
+            await held.evaluate(code(step), step.arg);
+            observations.push({ error: null });
+          } catch (error) {
+            observations.push({ error: error.message });
+          }
+          break;
         case 'handle_click_box': {
           const box = await held.clickBox();
           observations.push(box

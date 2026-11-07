@@ -4001,6 +4001,14 @@ module Tawb
         when "handle_evaluate"
           observations.push held.not_nil!.evaluate(step["fn"].as_s, step["arg"]?,
             step["expression"]?.try(&.as_bool?) || false)
+        when "handle_stale_evaluate"
+          begin
+            held.not_nil!.evaluate(step["fn"].as_s, step["arg"]?,
+              step["expression"]?.try(&.as_bool?) || false)
+            observations.push JSON::Any.new({"error" => JSON::Any.new(nil)})
+          rescue error
+            observations.push JSON::Any.new({"error" => JSON::Any.new(error.message || error.to_s)})
+          end
         when "handle_click_box"
           box = held.not_nil!.click_box
           observations.push(box ? JSON::Any.new({

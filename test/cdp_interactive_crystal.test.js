@@ -110,6 +110,10 @@ const scripts = {
     // Disposing twice is one release: the reference is already gone.
     { op: 'handle_dispose' },
     { op: 'sent' },
+    // A stale reference is refused locally: it cannot accidentally operate a
+    // same-numbered object from a replacement document.
+    { op: 'handle_stale_evaluate', fn: '(el) => el.tagName' },
+    { op: 'sent' },
   ],
 
   'an element is brought on screen before it is measured': [
@@ -246,6 +250,8 @@ for (const implementation of implementations) {
       params: { objectId: 'OBJECT-1' },
     }]);
     assert.deepEqual(seen[8], [], 'the second disposal has nothing left to release');
+    assert.deepEqual(seen[9], { error: 'that element handle is stale' });
+    assert.deepEqual(seen[10], [], 'a stale handle emitted no browser command');
   });
 
   check('a measurement scrolls first and reads the quads', async () => {
