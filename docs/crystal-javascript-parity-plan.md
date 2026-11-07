@@ -872,6 +872,9 @@ behavioural bugs by itself.
     one back, and cancel a second visit, in both terminals. The ordinary
     interface reaches the select as a form field; Lynx enters its line editor
     first and Escape gives Enter the control itself.
+  - [x] Put a polite and an assertive live-region announcement on the status
+    row of both interfaces through a real browser and tty, spaced past the
+    polite hold, and compare the rows both runtimes drew.
 
 ### P3: performance and endurance
 
