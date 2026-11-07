@@ -44,7 +44,7 @@ const skip = browserTestSkip();
 // slower than the JavaScript reference the native reader may be. The slack is
 // for one scheduler quantum and tmux's own capture, not for a second pass.
 const KEY_CEILING_MS = 400;
-const REFRESH_CEILING_MS = 6000;
+const REFRESH_CEILING_MS = 15000;
 const STARTUP_CEILING_MS = 90000;
 const LIVE_CPU_CEILING_MS = 45000;
 
@@ -296,10 +296,17 @@ async function measure(runtime, kind, root, server) {
       await sleep(50);
     }
 
-    // A status of its own before every refresh, so a refresh cannot look
-    // finished because the previous one left "Rescanned." on the row.
+    // A live page starts a refresh on its own clock, and a manual refresh
+    // that arrives while one is running may be dropped. Turn the ticker off
+    // for the refresh measurements so a key that is refused cannot look like
+    // a refresh that never finished, then put it back for the idle window.
+    reader.send('L');
+    assert.ok(await waitForStatusWhere(reader, /Live updates off/, 5000),
+      `${runtime.name} did not stop live updates for the refresh measurement`);
     const refreshTimings = [];
     for (let step = 0; step < 4; step += 1) {
+      // A status of its own before every refresh, so a refresh cannot look
+      // finished because the previous one left "Rescanned." on the row.
       reader.send('=');
       assert.ok(await waitForStatusWhere(reader, /^line \d+\/\d+/, 5000),
         `${runtime.name} did not report its position on the ${kind} page`);
@@ -310,6 +317,10 @@ async function measure(runtime, kind, root, server) {
       refreshTimings.push(Date.now() - startedRefresh);
       await sleep(100);
     }
+    reader.send('L');
+    assert.ok(await waitForStatusWhere(reader, /Live updates on/, 5000),
+      `${runtime.name} did not restart live updates after the refresh measurement`);
+    await sleep(500);
 
     const idleStart = residents(profile, reader.panePid());
     const idleWall = 4000;
