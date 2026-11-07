@@ -331,6 +331,14 @@ async function measure(runtime, kind, root, server) {
     const idleReaderMs = Math.max(0, idleCpuMs - idleBrowserMs);
 
     const final = residents(profile, reader.panePid());
+    // The budgets below compare readings from /proc. If the reader's process
+    // is outside this test's view — a tmux server started outside the run's
+    // namespace, for instance — every reading is zero and the gate would pass
+    // by measuring nothing.
+    assert.ok(final.fds > 0,
+      `${runtime.name}'s descriptors were not visible under /proc/${reader.panePid()}`);
+    assert.ok(final.rssMb > 0,
+      `${runtime.name}'s resident memory was not visible under /proc/${reader.panePid()}`);
     const logs = logSummary(logDirectory);
     return {
       kind,
