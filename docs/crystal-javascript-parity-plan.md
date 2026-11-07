@@ -826,6 +826,9 @@ behavioural bugs by itself.
     artifact and remove every downloaded temporary file.
   - [x] Broker death during a command or ownership handoff replaces the broker,
     serves the waiting reader, and clears the departed broker's record.
+  - [x] Browser closure during a BiDi action fails the outstanding action;
+    closure after its reply retains the completed side effect and answer, and
+    closure before the next action refuses it without replaying the first.
 - [x] Add kept-browser and same-browser sequential differentials per feature.
   Rejoin a browser a reader kept, run several documents through one tab, and
   run two readers against one browser while one leaves. Compare the same

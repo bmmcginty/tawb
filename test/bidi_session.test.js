@@ -93,6 +93,38 @@ for (const implementation of bidiImplementations(javascript)) {
     assert.deepEqual(values[1], { result: { contexts: [] } });
   });
 
+  test(`${implementation.name}: a browser closing after an action retains its answer and refuses the next action`,
+    async () => {
+      let sideEffects = 0;
+      const values = await withEndpoint((message, peer) => {
+        if (message.method === 'input.performActions') {
+          sideEffects += 1;
+          peer.send(JSON.stringify({ id: message.id, type: 'success', result: {} }));
+          // The side effect and reply have happened; only then does the
+          // browser disappear. The pause in the script lets close delivery
+          // precede the next command deterministically.
+          setTimeout(() => {
+            try { peer.socket.end(); } catch { /* already gone */ }
+            try { peer.socket.destroy(); } catch { /* already gone */ }
+          }, 10);
+          return;
+        }
+        peer.send(JSON.stringify({ id: message.id, type: 'success', result: {} }));
+      }, (url) => implementation.sessionScenario(url, [
+        { type: 'command', method: 'input.performActions', params: {
+          context: 'main', actions: [],
+        } },
+        { type: 'pause', ms: 50 },
+        { type: 'command', method: 'input.releaseActions', params: { context: 'main' } },
+      ]));
+
+      assert.equal(sideEffects, 1, 'the completed action was repeated after close');
+      assert.deepEqual(values[0], { result: {} },
+        'the answer completed before close was discarded');
+      assert.match(values[1].error, /clos/i,
+        'an action started after browser close did not fail as closed');
+    });
+
   // The other half of the idle case: the socket does not merely go quiet, it
   // goes away. A command already in flight has no reply coming, and the
   // session must say so rather than leave its caller waiting on a browser
