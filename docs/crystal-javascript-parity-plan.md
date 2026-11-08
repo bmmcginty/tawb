@@ -922,11 +922,15 @@ behavioural bugs by itself.
     ceilings and prints every phase plus the diagnostic event counts on
     failure. `TAWB_PERF_ONLY` and `TAWB_PERF_ENGINE` narrow the corpus while
     calibrating and `TAWB_PERF_REVERSE` flips the runtime order so an order
-    bias is visible. Native snapshot extraction measures around 1.3-1.6 times
-    the JavaScript phase on the frame, shadow, and live pages, and the ratio is
-    budgeted per snapshot at 2.5 times the reference phase plus a fixed
-    allowance, with the block count of every snapshot compared exactly so a
-    cheaper reading cannot pass by reading less.
+    bias is visible. The corpus is measured on the optimized artifact, which
+    `tools/test_performance.sh` builds and passes to the test: extraction then
+    runs at the JavaScript phase's speed on the large, frame, shadow, and live
+    pages, so the ratio is budgeted per snapshot at 1.2 times the reference
+    phase plus a fixed allowance. The development binary is still measured by
+    the ordinary browser gate against a wider smoke ceiling, because its
+    unoptimized JSON parser, not the extraction work, pays for every protocol
+    reply. The block count of every snapshot is compared exactly so a cheaper
+    reading cannot pass by reading less.
   - [x] Log the native snapshot's extraction and ordering phases under the same
     `snapshot` event and field names as JavaScript, so a slow refresh can be
     attributed rather than guessed at.
