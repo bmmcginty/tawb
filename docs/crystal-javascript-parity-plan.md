@@ -860,17 +860,17 @@ behavioural bugs by itself.
 
 ### P2: reader and terminal
 
-- [ ] Expand tmux coverage to every mode and screen transition. Give every
+- [x] Expand tmux coverage to every mode and screen transition. Give every
   mode, screen-stack ownership boundary, odd terminal escape family, resize,
   EOF, signal, slow action, held key, and live announcement at least one real
   terminal path through both interfaces. Compare bytes, cursor, side effects,
-  and repaint count. What the sub-items below now cover through a real pty in
-  both runtimes: every mode, the screens that own rows, resize, signal, a slow
-  navigation, a held key crossing a mode transition, live announcements, and
-  repaint scope. What remains is an odd terminal escape family — SS3 or CSI-u
-  arrows from an application-cursor-mode terminal — and EOF arriving while the
-  reader is idle in browse mode; the end of the keyboard during a slow
-  navigation is covered by the scripted failure matrix in P1, not by a tty.
+  and repaint count. The sub-items below cover through a real pty in both
+  runtimes: every mode, the screens that own rows, resize, signal, a slow
+  navigation, a held key crossing a mode transition, live announcements,
+  repaint scope, an application-cursor-mode keyboard, and end of input while
+  the reader is idle in browse mode. The end of the keyboard during a slow
+  navigation remains covered by the scripted failure matrix in P1, not by a
+  tty.
   - [x] Drive the find, command, page-keyboard, forms, control, file, number,
     and field-command modes through a real tmux pane in both runtimes. The
     default and Lynx interfaces each cover the modes they actually implement:
@@ -901,6 +901,17 @@ behavioural bugs by itself.
     repaint where the reference patched six rows fails the gate, and that
     regression is registered as a mutation. The Lynx selection patch is not
     instrumented in either runtime, so it is not compared here.
+  - [x] Send application-cursor-mode arrows (SS3 `ESC O A` through `ESC O D`)
+    as raw bytes to both tmux panes and compare the cursor and screen. The
+    ordinary tests send tmux key names, which arrive as CSI sequences; a
+    reader that only recognizes those moves differently from a real terminal
+    in this mode.
+  - [x] End the reader's input while it is idle in browse mode, through both
+    real terminals. A pty cannot deliver EOF while the reader holds it raw
+    and bytes sent to it are ordinary keys, so each reader's standard input is
+    a named pipe opened by the pane and closed by the test. Both runtimes
+    leave the reading loop, close the browser they started, and leave no
+    process naming the profile, without a signal or a quit key.
 
 ### P3: performance and endurance
 
