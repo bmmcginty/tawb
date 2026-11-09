@@ -71,7 +71,7 @@ const WIZARD_SECTIONS = [
     title: 'Views and updates',
     actions: [
       'cycle-view', 'source-view',
-      'refresh', 'reload-page', 'reload-no-cache', 'interrupt',
+      'refresh', 'reload-page', 'reload-no-cache', 'reader-mode', 'interrupt',
       'next-change', 'previous-change',
       'toggle-live', 'toggle-link-address', 'toggle-short-links',
     ],

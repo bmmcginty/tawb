@@ -122,6 +122,7 @@ module Tawb
       {id: "refresh", label: "Rescan page view", defaults: ["r"]},
       {id: "reload-page", label: "Reload page", defaults: ["F5"]},
       {id: "reload-no-cache", label: "Reload page without cache", defaults: [] of String},
+      {id: "reader-mode", label: "Reader view (Firefox)", defaults: ["Alt+R"]},
       {id: "interrupt", label: "Stop loading", defaults: [] of String},
       {id: "toggle-trace", label: "Toggle trace logging", defaults: [] of String},
       {id: "trace-log", label: "View trace log", defaults: [] of String},

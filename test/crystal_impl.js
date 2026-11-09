@@ -101,6 +101,12 @@ function addressImplementations(javascript) {
     searchUrl(words, template = javascript.DEFAULT_SEARCH) {
       return call('address.search_url', { words, template });
     },
+    readerModeUrl(url) {
+      return call('address.reader_url', { url });
+    },
+    readerSourceUrl(url) {
+      return call('address.reader_source', { url });
+    },
   });
   return implementations;
 }

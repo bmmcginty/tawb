@@ -82,6 +82,7 @@ module Tawb
       "refresh"                 => ["Ctrl+L", "Ctrl+W"],
       "reload-page"             => ["Ctrl+R"],
       "reload-no-cache"         => ["x", "X"],
+      "reader-mode"             => ["Alt+R"],
       "interrupt"               => ["z", "Z"],
       "toggle-trace"            => ["Ctrl+T"],
       "trace-log"               => [";"],

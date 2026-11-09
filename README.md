@@ -177,6 +177,7 @@ if you would rather not hear an address on every link. Start with these keys:
 | `\` | Switch to another page view |
 | `r` | Rescan TAWB's view without reloading the page |
 | `F5` | Reload the page in the browser |
+| `Alt+R` | Open Firefox's Reader view, or leave it |
 | `Alt+?` | Open keyboard help and change bindings |
 | `:` | Run any keyboard-wizard action by name |
 | `Alt+K` / `Ctrl+\\` | Toggle webpage keyboard mode |
@@ -203,6 +204,12 @@ no DOM click method of its own — an SVG icon, for example — TAWB presses tha
 control with a trusted pointer click automatically. It does the same for
 controls inside a media player's application widget, because playback requires
 user activation and a player ignores an untrusted click.
+
+Press `Alt+R` to open the page in Firefox's Reader view. It asks Firefox to
+extract the article and show it without the site's navigation, sidebars, and
+other clutter; pressing `Alt+R` again returns to the original address. This is
+a Firefox feature. Chromium and Chrome have no reader mode, so the command
+reports that and leaves the page alone.
 
 Press `Alt+M` to put the pointer on the line under the cursor without pressing
 anything, the way a sighted user rests a mouse on a menu to see what is in it.

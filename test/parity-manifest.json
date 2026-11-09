@@ -2722,6 +2722,8 @@
         "crystal/src/tawb/conformance.cr"
       ],
       "operations": [
+        "address.reader_source",
+        "address.reader_url",
         "address.resolve",
         "address.search_url"
       ],

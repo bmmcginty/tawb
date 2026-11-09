@@ -454,6 +454,17 @@ module Tawb
       @exhausted = nil
     end
 
+    # Which browser engine this core drives, for the few messages that have
+    # to name the browser rather than the page. A scripted core in the tests
+    # has no engine and says so.
+    def driver_name : String
+      case @driver
+      when Cdp::BrowserSession then "chromium"
+      when FirefoxDriver::BrowserSession then "firefox"
+      else "scripted"
+      end
+    end
+
     # The reader did something. Live refreshes hold off while this is recent,
     # so the buffer is never swapped mid-keystroke. A socket front end treats
     # request arrival as this same one-way signal.

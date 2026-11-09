@@ -168,6 +168,10 @@ module Tawb
       abstract def stop_loading : Nil
       # Read the same address again, with or without the cache.
       abstract def reload(ignore_cache : Bool) : Nil
+      # Whether Firefox's Reader View has finished building the article, or
+      # reported that it could not. A page that cannot be asked answers true,
+      # because waiting on a question it will never answer helps nobody.
+      abstract def reader_view_ready : Bool
       abstract def history_identity : String
       abstract def history_go(direction : Int32) : Bool
     end

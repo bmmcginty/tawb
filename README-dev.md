@@ -823,6 +823,18 @@ way to scroll a visual feed upward again when scrolling down hid its controls.
 For example, Instagram Reels uses `Space` for play/pause and `m` for
 mute/unmute.
 
+### Firefox Reader view
+
+`Alt+R` opens the current page in Firefox's Reader view by navigating to
+`about:reader?url=<encoded address>`. Firefox downloads and parses the article
+itself, so the reader waits for the page's own finished marker — `loaded` on
+the body, or `isError` on the document — before taking the first snapshot;
+otherwise the buffer would open on the toolbar and the word “Loading…”. The
+same key reads the source address back out of the `url` parameter and returns
+there, which is why the round trip lives in `address.js` and `address.cr`
+rather than in either key handler. Chromium and Chrome draw no reader mode, so
+the command reports that and does not navigate.
+
 ### Everything else
 
 | Key      | Action                                                          |
@@ -847,6 +859,7 @@ mute/unmute.
 | `c` / `C`| Jump to the next / previous area that changed                    |
 | `r`      | Rescan the current view without reloading the page                |
 | `F5`     | Reload the page in the browser                                   |
+| `Alt+R`  | Open Firefox's Reader view, or leave it                          |
 | `L`      | Turn live updating on or off                                     |
 | `=`      | Say where you are (line, column, what kind of thing it is)       |
 | `q`      | Quit                                                             |

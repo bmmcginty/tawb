@@ -27,6 +27,7 @@ module Tawb
       "TAWB_PREVIOUS_TAB"     => "previous-tab",
       "TAWB_CLOSE_TAB"        => "close-tab",
       "TAWB_MESSAGES"         => "messages",
+      "TAWB_READER_MODE"      => "reader-mode",
       "TAWB_LAYOUT_DEFAULT"   => "layout-default",
       "TAWB_LAYOUT_CONTAINER" => "layout-container",
       "TAWB_LAYOUT_RECTANGLE" => "layout-rectangle",

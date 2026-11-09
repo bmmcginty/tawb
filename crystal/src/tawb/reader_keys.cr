@@ -1,5 +1,6 @@
 require "./portal"
 require "json"
+require "./address"
 require "./reader"
 require "./aria"
 require "./edit"
@@ -4018,6 +4019,64 @@ module Tawb
       end
     end
 
+    # Firefox's Reader View is a page of its own, loaded through
+    # about:reader. The page spends a moment downloading and parsing the
+    # article after the navigation commits, so its body marks the finished
+    # state: "loaded" on the body for an article, and an isError flag on the
+    # document for a page Firefox could not read. Waiting for that is what
+    # keeps the first buffer from being a toolbar over the word "Loading…".
+    # Chromium has no reader mode at all, so there is nothing to wait for
+    # there and nothing to navigate to.
+    READER_READY_TIMEOUT = 10.seconds
+    READER_READY_STEP    = 100.milliseconds
+
+    private def self.wait_for_reader_view(page : Reader::PageEnv) : Nil
+      deadline = Time.instant + READER_READY_TIMEOUT
+      until page.reader_view_ready
+        break if Time.instant >= deadline
+        sleep READER_READY_STEP
+      end
+    end
+
+    private def self.toggle_reader_mode(output : Screen::Output, state : Reader::State,
+                                        page : Reader::PageEnv) : Nil
+      unless state.core.driver_name == "firefox"
+        Reader.set_status(output, state, page.url,
+          "Reader view is a Firefox feature; this browser has no reader mode.")
+        return
+      end
+
+      current = page.url
+      source = Address.reader_source_url(current)
+      # about:reader is Firefox's own page. Without a source address in it
+      # there is no article to name and nowhere to return to, so leaving it
+      # alone is the only safe answer.
+      if source.nil? && current.starts_with?("about:reader?")
+        Reader.set_status(output, state, page.url,
+          "This Reader View page does not name the page it came from.")
+        return
+      end
+
+      target = source || Address.reader_mode_url(current)
+      anchor = state.core.anchor
+      screen = Reader.screen_before(state)
+      Reader.set_status(output, state, page.url,
+        source ? "Leaving Reader View…" : "Opening Reader View…")
+
+      begin
+        page.goto(target)
+        wait_for_reader_view(page) unless source
+        Reader.refresh(state, page, false, anchor)
+        Reader.repaint_list(output, state, page.url, screen)
+        Reader.set_status(output, state, page.url,
+          source ? "Reader view closed." : "Reader view.")
+      rescue err
+        reason = (err.message || err.to_s).lines.first? || err.to_s
+        Reader.set_status(output, state, page.url,
+          "Could not #{source ? "leave" : "open"} Reader View: #{reason}.")
+      end
+    end
+
     private def self.reload_page(output : Screen::Output, state : Reader::State,
                                  page : Reader::PageEnv, ignore_cache : Bool) : Nil
       anchor = state.core.anchor
@@ -4518,6 +4577,10 @@ module Tawb
       end
       if action == "reload-no-cache"
         reload_page(output, state, page, true)
+        return nil
+      end
+      if action == "reader-mode"
+        toggle_reader_mode(output, state, page)
         return nil
       end
       if action == "interrupt"

@@ -32,6 +32,13 @@ module Tawb
       def goto(url : String) : Nil; @raw.goto(url); end
       def stop_loading : Nil; @raw.stop_loading; end
       def reload(ignore_cache : Bool) : Nil; @raw.reload(ignore_cache: ignore_cache); end
+      def reader_view_ready : Bool
+        @raw.evaluate("() => Boolean(document.body && document.body.classList.contains('loaded')) || " \
+                      "Boolean(document.documentElement && document.documentElement.dataset && " \
+                      "document.documentElement.dataset.isError === 'true')").as_bool? || false
+      rescue
+        true
+      end
       def history_identity : String
         key = @raw.evaluate("() => globalThis.navigation?.currentEntry?.key || null").as_s?
         key ? "entry:#{key}" : "url:#{url}"
@@ -222,7 +229,7 @@ module Tawb
       end
       def change_index : Int32; @core.change_index; end
       def change_index=(value : Int32) : Nil; @core.change_index = value; end
-      def driver_name : String; "firefox"; end
+      def driver_name : String; @core.driver_name; end
 
       private def anchor_json(value : Core::Anchor) : JSON::Any
         JSON::Any.new({

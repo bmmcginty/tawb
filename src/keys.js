@@ -158,6 +158,11 @@ const ACTIONS = [
   ['refresh', 'Rescan page view', ['r']],
   ['reload-page', 'Reload page', ['F5']],
   ['reload-no-cache', 'Reload page without cache', []],
+  // Firefox's Reader View, reached through its own about:reader page. F9 is
+  // the browser's shortcut, but function keys beyond F5 have no names here,
+  // and Alt+R costs nothing: R for the reading view. Chromium draws no reader
+  // mode, so the command reports that rather than navigating nowhere.
+  ['reader-mode', 'Reader view (Firefox)', ['Alt+R']],
   ['interrupt', 'Stop loading', []],
   ['toggle-trace', 'Toggle trace logging', []],
   ['trace-log', 'View trace log', []],

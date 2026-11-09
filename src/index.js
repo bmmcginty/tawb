@@ -48,7 +48,7 @@ const {
   createListState, entriesOf, selectedIndex, select, setFilter, move: moveList,
   beginFilter, filterKey, filterHint, printable: filterCharacter,
 } = require('./list_screen');
-const { resolveAddress, DEFAULT_SEARCH } = require('./address');
+const { resolveAddress, readerModeUrl, readerSourceUrl, DEFAULT_SEARCH } = require('./address');
 const { readSettings } = require('./settings');
 const {
   BROWSER_OPTIONS, EDB_OPTIONS, HELP_OPTION, frontEndName, parseCommandLine,
@@ -768,6 +768,79 @@ async function reloadPage(state, page, { ignoreCache = false } = {}) {
     setStatus(state, `${ignoreCache ? 'Reloaded without cache' : 'Reloaded'} ${page.url()}.`);
   } catch (err) {
     setStatus(state, `Could not reload the page: ${String(err.message || err).split('\n')[0]}`);
+  }
+}
+
+// Firefox's Reader View is a page of its own, loaded through about:reader.
+// The page spends a moment downloading and parsing the article after the
+// navigation commits, so its body marks the finished state: "loaded" on the
+// body for an article, and an isError flag on the document for a page Firefox
+// could not read. Waiting for that is what keeps the first buffer from being
+// a toolbar over the word "Loading…". Chromium has no reader mode at all, so
+// there is nothing to wait for there and nothing to navigate to.
+const READER_READY_TIMEOUT_MS = 10000;
+const READER_READY_STEP_MS = 100;
+
+async function readerViewReady(page) {
+  try {
+    return await page.evaluate(() => {
+      const body = document.body;
+      const root = document.documentElement;
+      return Boolean(body && body.classList.contains('loaded'))
+        || Boolean(root && root.dataset && root.dataset.isError === 'true');
+    });
+  } catch {
+    // A page that cannot be asked is not one worth waiting on. The refresh
+    // that follows reads whatever document is there and reports its own
+    // fault if there is one.
+    return true;
+  }
+}
+
+async function waitForReaderView(page) {
+  const deadline = Date.now() + READER_READY_TIMEOUT_MS;
+  for (;;) {
+    if (await readerViewReady(page)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, READER_READY_STEP_MS));
+  }
+}
+
+async function toggleReaderMode(state, page) {
+  if (state.core.driver.name !== 'firefox') {
+    setStatus(state, 'Reader view is a Firefox feature; this browser has no reader mode.');
+    return;
+  }
+
+  const current = page.url();
+  const source = readerSourceUrl(current);
+  // about:reader is Firefox's own page. Without a source address in it there
+  // is no article to name and nowhere to return to, so leaving it alone is
+  // the only safe answer.
+  if (!source && /^about:reader\?/i.test(current)) {
+    setStatus(state, 'This Reader View page does not name the page it came from.');
+    return;
+  }
+
+  const target = source || readerModeUrl(current);
+  const anchor = anchorFor(state);
+  const screen = screenBefore(state);
+  setStatus(state, `${source ? 'Leaving Reader View' : 'Opening Reader View'}…`);
+
+  const went = await navigate(page, target);
+  if (!went.ok) {
+    setStatus(state, `Could not ${source ? 'leave' : 'open'} Reader View: ${went.fault}.`);
+    return;
+  }
+  if (!source) await waitForReaderView(page);
+
+  try {
+    await refresh(state, page, { anchor });
+    repaintList(state, page, screen);
+    setStatus(state, source ? 'Reader view closed.' : 'Reader view.');
+  } catch (err) {
+    setStatus(state, `Could not ${source ? 'leave' : 'open'} Reader View: `
+      + `${String(err.message || err).split('\n')[0]}`);
   }
 }
 
@@ -2760,6 +2833,7 @@ async function handleBrowseKey(chunk, state, page, actionOverride = null) {
 
   if (action === 'reload-page') return reloadPage(state, page);
   if (action === 'reload-no-cache') return reloadPage(state, page, { ignoreCache: true });
+  if (action === 'reader-mode') return toggleReaderMode(state, page);
   if (action === 'interrupt') return interruptLoading(state, page);
 
   // Cycle views, keeping the reader on the same content.

@@ -1,4 +1,5 @@
 require "json"
+require "uri"
 
 module Tawb
   module Address
@@ -30,6 +31,35 @@ module Tawb
     def self.search_url(words : String, template : String = DEFAULT_SEARCH) : String
       encoded = encode_component(words)
       template.includes?("%s") ? template.sub("%s", encoded) : template + encoded
+    end
+
+    # Firefox's Reader View is a page of its own, loaded through an about:
+    # URI that names the article to extract. Chromium has no equivalent, so
+    # this is only ever asked for when the reader chose Firefox.
+    READER_URL = /^about:reader\?/i
+
+    def self.reader_mode_url(url : String) : String
+      "about:reader?url=#{encode_component(url)}"
+    end
+
+    # The address a Reader View page came from, or nil when the address is
+    # not one or the page did not name a source. The source is decoded
+    # exactly as Firefox encoded it: the article URL may itself carry a query
+    # and fragment.
+    def self.reader_source_url(url : String) : String?
+      return nil unless READER_URL.matches?(url)
+      query = URI.parse(url).query
+      return nil unless query
+      query.split('&').each do |part|
+        key, value = part.split('=', 2)
+        next unless key == "url" && value
+        source = URI.decode(value)
+        return nil if source.empty? || READER_URL.matches?(source)
+        return source
+      end
+      nil
+    rescue URI::Error
+      nil
     end
 
     def self.resolve(typed : String?, search : String = DEFAULT_SEARCH) : Hash(String, JSON::Any)

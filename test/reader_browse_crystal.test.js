@@ -187,6 +187,43 @@ test('reloading reads the page again, and says when it cannot', { skip: needsCry
   assert.equal(refused.state.statusMsg, 'Could not reload the page: the navigation was refused');
 });
 
+test('Reader view is Firefox-only, and comes back to the page it left',
+  { skip: needsCrystal }, async () => {
+    // Alt+R is the ordinary interface's default, so no test binding is needed.
+    const FIREFOX = { driverName: 'firefox' };
+    const entered = await runBoth('reader entered', stateFor(BUTTONS, {}, FIREFOX), [
+      { op: 'browseKey', chunk: '\x1br' },
+    ], { url: PAGE_URL });
+    assert.equal(entered.state.statusMsg, 'Reader view.');
+
+    const source = 'https://example.test/page.html';
+    const readerUrl = `about:reader?url=${encodeURIComponent(source)}`;
+    const left = await runBoth('reader left', stateFor(BUTTONS, {}, FIREFOX), [
+      { op: 'browseKey', chunk: '\x1br' },
+    ], { url: readerUrl });
+    assert.equal(left.state.statusMsg, 'Reader view closed.');
+
+    // A page that will not navigate has to say so instead of claiming the
+    // view opened. This is the same refusal every other navigation reports.
+    const refused = await runBoth('reader refused', stateFor(BUTTONS, {}, FIREFOX), [
+      { op: 'browseKey', chunk: '\x1br' },
+    ], { url: PAGE_URL, gotoFault: 'the page refused' });
+    assert.equal(refused.state.statusMsg, 'Could not open Reader View: the page refused.');
+
+    const nameless = await runBoth('reader without a source', stateFor(BUTTONS, {}, FIREFOX), [
+      { op: 'browseKey', chunk: '\x1br' },
+    ], { url: 'about:reader?url=' });
+    assert.equal(nameless.state.statusMsg,
+      'This Reader View page does not name the page it came from.');
+
+    const chromium = await runBoth('reader on chromium',
+      stateFor(BUTTONS, {}, { driverName: 'chromium' }), [
+        { op: 'browseKey', chunk: '\x1br' },
+      ], { url: PAGE_URL });
+    assert.equal(chromium.state.statusMsg,
+      'Reader view is a Firefox feature; this browser has no reader mode.');
+  });
+
 test('stopping a load says so', { skip: needsCrystal }, async () => {
   const state = stateFor(BUTTONS);
   const result = await runBoth('interrupt', { ...state, interface: 'lynx', keys: { profile: 'lynx' } }, [

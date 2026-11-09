@@ -18,7 +18,7 @@ const { addressImplementations } = require('./crystal_impl');
 // shipping JavaScript while tools/test_crystal.sh adds the native port to the
 // same loop, so migration cannot quietly change an edge case.
 for (const implementation of addressImplementations(javascript)) {
-  const { resolveAddress, searchUrl, DEFAULT_SEARCH } = implementation;
+  const { resolveAddress, searchUrl, readerModeUrl, readerSourceUrl, DEFAULT_SEARCH } = implementation;
   const test = (name, fn) => nodeTest(`${implementation.name}: ${name}`, fn);
 
   test('an address with a scheme is taken exactly as it was typed', () => {
@@ -62,6 +62,23 @@ for (const implementation of addressImplementations(javascript)) {
     assert.deepEqual(resolveAddress(''), { error: 'nothing to open' });
     assert.deepEqual(resolveAddress('   '), { error: 'nothing to open' });
     assert.deepEqual(resolveAddress(null), { error: 'nothing to open' });
+  });
+
+  test('a Reader View address names its source and gives it back', () => {
+    // Firefox loads Reader View through about:reader and carries the article's
+    // own address in a query parameter. The query and fragment have to survive
+    // the round trip, since they are part of the page the reader asked for.
+    const source = 'https://example.test/a%20b?q=1&x=%20#frag';
+    const reader = readerModeUrl(source);
+    assert.equal(reader, `about:reader?url=${encodeURIComponent(source)}`);
+    assert.equal(readerSourceUrl(reader), source);
+    assert.equal(readerSourceUrl('about:reader?url='), null);
+    assert.equal(readerSourceUrl('about:reader?url=' + encodeURIComponent(
+      'about:reader?url=https%3A%2F%2Fexample.test%2F')), null,
+    'a Reader View address never names another Reader View address');
+    assert.equal(readerSourceUrl(source), null);
+    assert.equal(readerSourceUrl('about:blank'), null);
+    assert.equal(readerSourceUrl(null), null);
   });
 
   test('the search engine is the reader\'s to choose', () => {

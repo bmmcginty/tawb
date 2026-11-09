@@ -39,6 +39,27 @@ function searchUrl(words, template = DEFAULT_SEARCH) {
   return template.includes('%s') ? template.replace('%s', encoded) : template + encoded;
 }
 
+// Firefox's Reader View is a page of its own, loaded through an about: URI
+// that names the article to extract. Chromium has no equivalent, so this is
+// only ever asked for when the reader chose Firefox.
+const READER_URL = /^about:reader\?/i;
+
+function readerModeUrl(url) {
+  return `about:reader?url=${encodeURIComponent(String(url || ''))}`;
+}
+
+// The address a Reader View page came from, or null when the address is not
+// one or the page did not name a source. The source is decoded exactly as
+// Firefox encoded it: the article URL may itself carry a query and fragment.
+function readerSourceUrl(url) {
+  const text = String(url || '');
+  if (!READER_URL.test(text)) return null;
+  let source;
+  try { source = new URL(text).searchParams.get('url'); } catch { return null; }
+  if (!source || READER_URL.test(source)) return null;
+  return source;
+}
+
 // The answer is always somewhere the browser can be sent, so nothing above
 // this has to decide what to do with a non-address. `searched` says the text
 // was taken as words rather than as an address, which is worth saying on the
@@ -59,4 +80,6 @@ function resolveAddress(typed, { search = DEFAULT_SEARCH } = {}) {
   return { url: searchUrl(wanted, search), searched: true, words: wanted };
 }
 
-module.exports = { resolveAddress, searchUrl, DEFAULT_SEARCH };
+module.exports = {
+  resolveAddress, searchUrl, readerModeUrl, readerSourceUrl, DEFAULT_SEARCH,
+};

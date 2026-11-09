@@ -408,6 +408,11 @@ module Tawb
         words = object["words"].as_s
         template = object["template"]?.try(&.as_s?) || Address::DEFAULT_SEARCH
         JSON::Any.new(Address.search_url(words, template))
+      when "address.reader_url"
+        JSON::Any.new(Address.reader_mode_url(payload.as_h["url"]?.try(&.as_s?) || ""))
+      when "address.reader_source"
+        source = Address.reader_source_url(payload.as_h["url"]?.try(&.as_s?) || "")
+        source ? JSON::Any.new(source) : JSON::Any.new(nil)
       when "aria.render_line"
         JSON::Any.new(Aria.render_line(payload.as_h["item"]))
       when "auth.normalise"
@@ -1909,6 +1914,10 @@ module Tawb
 
       def reload(ignore_cache : Bool) : Nil
         raise IO::Error.new(@reload_fault.not_nil!) if @reload_fault
+      end
+
+      def reader_view_ready : Bool
+        true
       end
 
       def history_identity : String
