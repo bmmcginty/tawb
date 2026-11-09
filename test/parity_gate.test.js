@@ -36,6 +36,15 @@ test('the browser gate gives Node an absolute reporter path', () => {
   assert.match(runner, /--test-reporter="\$ROOT\/tools\/fail_on_skips_reporter\.js"/);
 });
 
+test('the browser gate keeps node options ahead of the discovered files', () => {
+  const runner = fs.readFileSync(BROWSER_RUNNER, 'utf8');
+  // node reads a test option that follows a file name as another file, so a
+  // pattern appended after the discovered suite selects everything instead of
+  // narrowing it. A gate that claims to narrow must pass the option first.
+  assert.match(runner, /set -- "\$@" \$\(tools\/browser_tests\.sh\)/,
+    'the discovered files must follow the caller\'s node options');
+});
+
 test('the parity reporter leaves a complete run successful', () => {
   const result = reporterRun("require('node:test')('complete', () => {});\n");
   assert.equal(result.status, 0, result.stderr);

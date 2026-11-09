@@ -27,6 +27,7 @@ const ROOT = path.join(__dirname, '..');
 const CONFORMANCE = path.join(ROOT, 'crystal', 'src', 'tawb', 'conformance.cr');
 const IMPLEMENTATIONS = path.join(__dirname, 'crystal_impl.js');
 const BROWSER_RUNNER = path.join(ROOT, 'tools', 'test_crystal_browser.sh');
+const DISCOVERY = path.join(ROOT, 'tools', 'browser_tests.sh');
 const SELF = path.basename(__filename);
 const TEST_DIRS = ['test', path.join('test', 'browser')];
 
@@ -143,10 +144,16 @@ test('every implementation pair is used by a test', () => {
 
 test('the browser differential runner discovers every conventionally named suite', () => {
   const runner = fs.readFileSync(BROWSER_RUNNER, 'utf8');
-  assert.match(runner, /test\/browser\/crystal_\*\.test\.js/,
-    'the browser runner has a hand-maintained crystal test list that can drift');
+  // The runner takes its file set from one discovery script rather than
+  // carrying a list of its own, so the set it runs is the set every other
+  // gate -- the release matrix included -- names before running.
+  assert.match(runner, /tools\/browser_tests\.sh/,
+    'the browser runner must take its file set from the shared discovery');
+  const discovery = fs.readFileSync(DISCOVERY, 'utf8');
+  assert.match(discovery, /test\/browser\/crystal_\*\.test\.js/,
+    'the browser discovery has a hand-maintained crystal test list that can drift');
   for (const legacy of ['layout_order_crystal.test.js', 'live_crystal.test.js']) {
-    assert.ok(runner.includes(legacy), `the browser runner omits ${legacy}`);
+    assert.ok(discovery.includes(legacy), `the browser discovery omits ${legacy}`);
   }
 });
 

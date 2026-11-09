@@ -15,6 +15,9 @@ out/
 # Logs produced by the stable/beta/nightly Firefox container matrix.
 firefox-diagnostics/
 
+# Per-run logs, results, and summary written by tools/test_release_matrix.sh.
+release-matrix/
+
 # The edbrowse side of the integration — the plugin, its .ebrc fragment, the
 # patches to edbrowse and the study — is its own repository living here. It
 # carries its own .git and its own edbrowse checkout; it is not ours to
