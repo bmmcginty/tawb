@@ -639,6 +639,15 @@ Rules for the script:
 Nightly/release gates additionally run the browser-version matrix, Flatpak,
 full mutation tests, long live-page soak, and static-artifact/no-Node test.
 
+Until `tools/test_parity.sh` exists, the gates that take hours rather than
+minutes are driven by `long-tests.sh`, which runs them one at a time with a
+deadline, one log directory and one summary: the soak phase runs
+`tools/test_soak.sh` for an hour per runtime, the matrix phase runs
+`tools/test_release_matrix.sh` against the artifact built from `HEAD`, and the
+cycle phase rehearses items 1-11 above plus the performance corpus, the
+no-Node artifact check and a manifest status report. A rehearsal is not a
+release cycle; only two shipped releases close that item.
+
 No documentation may say "all browser differentials" unless test discovery is
 programmatic and the run summary proves none were skipped.
 
@@ -952,7 +961,10 @@ behavioural bugs by itself.
     JavaScript level.
 - [ ] Long soak and leak tests. Run the live, idle, and action paths for an
   hour with growth, descriptor, handle, and process assertions. A bounded
-  short soak may run in CI, but it does not replace the long run.
+  short soak may run in CI, but it does not replace the long run. The
+  `soak` phase of `long-tests.sh` is the run this item waits on: it must be an
+  hour per runtime, and its summary says when a shorter window was only a
+  smoke case.
   - [x] Add a soak that keeps a real page mutating on two scales, drives the
     reader through movement, refresh and activation, samples the reader and
     browser process group from outside, and asserts bounded descriptors,
@@ -966,10 +978,17 @@ behavioural bugs by itself.
 
 - [ ] Browser release matrix for the native artifact. Run the exact candidate
   artifact against distribution Chromium and Firefox stable, beta, and nightly,
-  including Flatpak and no-desktop environments.
+  including Flatpak and no-desktop environments. The `matrix` phase of
+  `long-tests.sh` builds that artifact from `HEAD`, verifies its revision and
+  embedded page programs, and runs every discovered differential in every
+  environment; an environment it could not run is reported, never counted as
+  a pass.
 - [ ] Two release cycles with zero unexplained parity incidents. Freeze Node
   behaviour except fixes that arrive with a Crystal parity test, and keep both
   runtimes shipping until the manifest is complete on two consecutive releases.
+  The `cycles` phase of `long-tests.sh` rehearses the gates those releases must
+  pass; it cannot produce the calendar evidence, so this item stays open until
+  two releases have actually shipped.
 
 ### Completed
 
