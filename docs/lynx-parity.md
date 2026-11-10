@@ -140,6 +140,20 @@ The rows matter because TAWB's Lynx presentation reflows a paragraph or a table
 row onto one display row, which is exactly the case where "the next link" and
 "the link below" come apart.
 
+## Printing
+
+`p` / `PRINT` opens the same fixed Printing Options screen Lynx draws. TAWB
+offers the one option that does not need another program or another screen:
+Save to a local file. The screen keeps Lynx's document, line count, and
+approximate page count; the filename prompt suggests a name derived from the
+address or title and completes paths like the file-input prompt. An existing
+file is confirmed with Lynx's own "File exists. Overwrite? (y/n)".
+
+What is saved is the current TAWB buffer, not a fresh fetch from the browser.
+Each row carries the margin, marker, and suffix the Lynx presentation is
+showing, so SOURCE saves source and numbering stays numbering. Lynx's Mail,
+Print to the screen, and printer choices are not offered.
+
 ## The Lynx keyboard's own extensions
 
 Five things TAWB can do and Lynx cannot get a control key that Lynx never
@@ -229,6 +243,7 @@ on the title and user-agent rows.
 | The title and user-agent rows | TAWB names itself, and its agent is one word where Lynx's wraps | nothing; the difference is the point |
 | `(X)` local execution shown | TAWB cannot ask a build which options were compiled in | importing the option roster, which `-show_cfg` does not publish |
 | Values for browser-owned options | TAWB has no editor, DISPLAY, mail address, user agent or charset | deliberately out of scope; the screen says so when chosen |
+| PRINT choices other than saving | mailing and printing need another program or another screen | deliberately out of scope; the Printing Options screen offers Save to a local file |
 
 ### A note on the forms options screen
 

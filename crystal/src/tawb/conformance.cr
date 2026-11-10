@@ -39,6 +39,7 @@ require "./lynx_actions"
 require "./lynx_config"
 require "./lynx_options"
 require "./lynx_options_screen"
+require "./lynx_print_screen"
 require "./lynx_pages"
 require "./lynx_display"
 require "./lynx_keymap"
@@ -1089,6 +1090,8 @@ module Tawb
         lynx_options_model(payload)
       when "lynx_options.screen"
         lynx_options_screen(payload)
+      when "lynx_print.scenario"
+        lynx_print_scenario(payload)
       when "lynx_pages.call"
         lynx_pages_call(payload)
       when "lynx_state.keymap"
@@ -1595,6 +1598,131 @@ module Tawb
         "cursor"             => JSON::Any.new(state.cursor.to_i64),
         "settingsFileExists" => file ? JSON::Any.new(File.exists?(file)) : JSON::Any.new(false),
       })
+    end
+
+    private def self.lynx_print_scenario(payload : JSON::Any) : JSON::Any
+      object = payload.as_h
+      method = object["method"]?.try(&.as_s?) || "screen"
+      title = object["title"]?.try(&.as_s?) || "The page"
+      url = object["url"]?.try(&.as_s?) || "https://example.test/page"
+      case method
+      when "filename"
+        JSON::Any.new(LynxPrintScreen.save_filename(title, url))
+      when "text"
+        rows = (object["lines"]?.try(&.as_a?) || [] of JSON::Any).map do |entry|
+          line = entry.as_h
+          indent = " " * (line["displayIndent"]?.try(&.as_i64?) || 0).to_i
+          indent + (line["displayPrefix"]?.try(&.as_s?) || "") +
+            (line["text"]?.try(&.as_s?) || "") +
+            (line["displaySuffix"]?.try(&.as_s?) || "")
+        end
+        JSON::Any.new(LynxPrintScreen.page_text(rows))
+      when "screen", "open", "keys"
+        state = LynxPrintScreen::State.new
+        state.keys = Keys::Keymap.new(
+          terminfo: {} of String => String, profile: "lynx", read_file: false)
+        state.title = title
+        state.url = url
+        state.line_count = (object["lineCount"]?.try(&.as_i64?) || 0).to_i32
+        state.rows = (object["rows"]?.try(&.as_i64?) || 24).to_i32
+        state.cursor = (object["cursor"]?.try(&.as_i64?) || 0).to_i32
+        state.col = (object["col"]?.try(&.as_i64?) || 0).to_i32
+        state.scroll = (object["scroll"]?.try(&.as_i64?) || 0).to_i32
+
+        lines = LynxPrintScreen.screen_lines(state)
+        if method == "screen"
+          return JSON::Any.new({
+            "lines"      => JSON::Any.new(lines.map { |line| JSON::Any.new(line.text) }),
+            "optionRow"  => JSON::Any.new(LynxPrintScreen.option_row(lines).to_i64),
+            "pageLabel"  => JSON::Any.new(LynxPrintScreen.page_label(state.line_count)),
+          })
+        end
+
+        host = LynxPrintProbeHost.new(state.rows)
+        LynxPrintScreen.open_print(host, state, nil)
+        if method == "open"
+          return JSON::Any.new({
+            "mode"   => JSON::Any.new(state.mode),
+            "events" => JSON::Any.new(host.events),
+          })
+        end
+
+        results = [] of JSON::Any
+        (object["keys"]?.try(&.as_a?) || [] of JSON::Any).each do |entry|
+          host.events.clear
+          chunk = entry.as_s
+          verdict = LynxPrintScreen.handle_print_key(host, chunk, state, nil)
+          results << JSON::Any.new({
+            "key"     => JSON::Any.new(chunk),
+            "verdict" => verdict ? JSON::Any.new(verdict) : JSON::Any.new(nil),
+            "mode"    => JSON::Any.new(state.mode),
+            "status"  => JSON::Any.new(host.status),
+            "events"  => JSON::Any.new(host.events.dup),
+          })
+        end
+        JSON::Any.new({
+          "mode"    => JSON::Any.new(state.mode),
+          "results" => JSON::Any.new(results),
+        })
+      else
+        raise ArgumentError.new("unknown lynx print scenario method #{method}")
+      end
+    end
+
+    # The fake terminal the Printing Options screen runs against over the
+    # wire. Its event strings are the same shape the JavaScript test's host
+    # records, so the two streams can be compared directly.
+    private class LynxPrintProbeHost
+      include LynxPrintScreen::Host
+
+      getter events : Array(JSON::Any)
+      getter status : String
+
+      def initialize(@row_count : Int32)
+        @events = [] of JSON::Any
+        @status = ""
+      end
+
+      def write_line(row : Int32, text : String) : Nil
+        @events << JSON::Any.new("row #{row}:#{text}")
+      end
+
+      def move_cursor(row : Int32, col : Int32) : Nil
+        @events << JSON::Any.new("cursor #{row}:#{col}")
+      end
+
+      def clear_screen : Nil
+        @events << JSON::Any.new("clear")
+      end
+
+      def reset_scroll_region : Nil
+        @events << JSON::Any.new("reset")
+      end
+
+      def set_status(state : LynxPrintScreen::State, message : String) : Nil
+        @status = message
+      end
+
+      def relayout(state : LynxPrintScreen::State) : Nil
+      end
+
+      def render(state : LynxPrintScreen::State, page, force : Bool) : Nil
+      end
+
+      def clamp_col(state : LynxPrintScreen::State) : Nil
+      end
+
+      def clamp_scroll(state : LynxPrintScreen::State) : Nil
+      end
+
+      def key_is(chunk : String, name : String, state : LynxPrintScreen::State) : Bool
+        (state.keys || Keys::Keymap.new(
+          terminfo: {} of String => String, profile: "lynx", read_file: false)).is_key(chunk, name)
+      end
+
+      def rows : Int32
+        @row_count
+      end
     end
 
     # The fake terminal the Options screen runs against over the wire: it

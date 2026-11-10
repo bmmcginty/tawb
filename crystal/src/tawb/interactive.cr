@@ -339,6 +339,10 @@ module Tawb
         # the pulse has already recorded what changed, and the next tick after
         # the prompt closes applies it.
         return if ReaderKeys.prompting?(@state)
+        # The Printing Options screen owns the terminal until it closes. Its
+        # save prompt is a real prompt and already covered above; the menu
+        # itself is not, so a live repaint must wait too.
+        return if @state.mode == "print"
         wrapper = @tabs.current_page
         case @core.external_navigation(page.url)
         when :navigated

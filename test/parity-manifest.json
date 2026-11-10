@@ -2102,6 +2102,24 @@
       "differences": []
     },
     {
+      "id": "module.lynx-print-screen",
+      "kind": "module",
+      "javascript": [
+        "src/lynx_print_screen.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/lynx_print_screen.cr"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
       "id": "module.lynx-pages",
       "kind": "module",
       "javascript": [
@@ -3637,6 +3655,29 @@
       ],
       "tests": [
         "test/crystal_impl.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
+      "id": "operation.lynx-print",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "lynx_print.scenario"
+      ],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/lynx_print_crystal.test.js"
       ],
       "status": "scripted-only",
       "differences": []

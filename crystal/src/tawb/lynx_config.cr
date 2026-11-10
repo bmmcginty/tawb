@@ -29,6 +29,7 @@ module Tawb
       "INFO" => "document-info", "OPTIONS" => "options", "F_LINK_NUM" => "link-number",
       "WHEREIS" => "find-forward", "NEXT" => "repeat-find-forward", "PREV" => "repeat-find-backward",
       "REFRESH" => "refresh", "RELOAD" => "reload-page", "NOCACHE" => "reload-no-cache", "INTERRUPT" => "interrupt",
+      "PRINT" => "print-page",
       "TRACE_TOGGLE" => "toggle-trace", "TRACE_LOG" => "trace-log",
       "SOURCE" => "source-view", "KEYMAP" => "keyboard-wizard", "HELP" => "help", "DWIMHELP" => "context-help",
       "MAIN_MENU" => "main-menu",

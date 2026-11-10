@@ -30,6 +30,7 @@ const {
 const { writeLynxSettings } = require('./lynx_settings');
 const { lynxKeymapFor, lynxPreferences } = require('./lynx_state');
 const optionsScreen = require('./lynx_options_screen');
+const printScreen = require('./lynx_print_screen');
 const { noteVisitedLink, notePageVisit } = require('./lynx_session');
 const { parseLynxNumberExpression, relativeLinkNumber } = require('./lynx_number');
 const {
@@ -444,7 +445,7 @@ function currentLine(state) {
 // the browser's own lists is open it is that list: the buffer on screen is no
 // longer the tab, and everything that reads lines has to agree about which.
 function activeBlocks(state) {
-  if (state.options) return [];
+  if (state.options || state.printMenu) return [];
   // A browser question is an input layer above whatever raised it. It must
   // win over a library or chooser underneath, or its lines would be hidden
   // behind the screen it interrupted while its title and keys took over.
@@ -1008,6 +1009,7 @@ function hintText(state) {
   }
   if (state.mode === 'line') return `${state.line.label} — Enter: save  Esc: cancel`;
   if (state.mode === 'files') {
+    if (state.files.saving) return 'Save page — Tab: complete  Enter: save  Esc: cancel';
     const { chosen, multiple } = state.files;
     const done = multiple && chosen.length ? '  Enter on an empty line: done' : '';
     return `Attach a file — Tab: complete  Enter: attach${done}  Esc: cancel`;
@@ -1034,9 +1036,12 @@ function hintText(state) {
 // it, which is the churn the split exists to avoid — the banner should stay
 // untouched while reading. Press '=' when the position is actually wanted.
 function drawHint(state, { force = false } = {}) {
-  // The options screen owns the whole terminal and has no hint row of its own;
-  // writing one would land on a row of Lynx's screen.
-  if (state.mode === 'options') return;
+  // The options and print screens own the whole terminal and have no hint row
+  // of their own; writing one would land on a row of Lynx's screen. A prompt
+  // raised from the print screen keeps the menu underneath, so its hint is
+  // suppressed too.
+  if (state.mode === 'options' || state.mode === 'print') return;
+  if (state.printMenu && state.mode !== 'browse') return;
   const rendered = hintText(state).slice(0, termSize().cols);
   if (!force && rendered === state.drawn.hint) return;
   state.drawn.hint = rendered;
@@ -2834,6 +2839,7 @@ async function handleBrowseKey(chunk, state, page, actionOverride = null) {
   if (action === 'reload-page') return reloadPage(state, page);
   if (action === 'reload-no-cache') return reloadPage(state, page, { ignoreCache: true });
   if (action === 'reader-mode') return toggleReaderMode(state, page);
+  if (action === 'print-page') { openPrint(state, page); return; }
   if (action === 'interrupt') return interruptLoading(state, page);
 
   // Cycle views, keeping the reader on the same content.
@@ -4025,6 +4031,20 @@ const OPTIONS_HOST = {
   },
 };
 
+const PRINT_HOST = {
+  writeLine,
+  resetScrollRegion,
+  moveCursor,
+  clearScreen: () => writeTerminal('\x1b[2J'),
+  relayout,
+  render,
+  clampCol,
+  clampScroll,
+  setStatus,
+  keyIs,
+  rows: () => termSize().rows,
+};
+
 function drawOptionsScreen(state) {
   return optionsScreen.drawOptionsScreen(OPTIONS_HOST, state);
 }
@@ -4043,6 +4063,33 @@ function closeOptions(state, page, note) {
 
 function handleOptionsKey(chunk, state, page) {
   return optionsScreen.handleOptionsKey(OPTIONS_HOST, chunk, state, page);
+}
+
+function drawPrintScreen(state) {
+  return printScreen.drawPrintScreen(PRINT_HOST, state);
+}
+
+function placePrintCursor(state, lines) {
+  return printScreen.placePrintCursor(PRINT_HOST, state, lines);
+}
+
+function openPrint(state, page) {
+  return printScreen.openPrint(PRINT_HOST, state, page);
+}
+
+function closePrint(state, page, note) {
+  return printScreen.closePrint(PRINT_HOST, state, page, note);
+}
+
+async function handlePrintKey(chunk, state, page) {
+  const verdict = printScreen.handlePrintKey(PRINT_HOST, chunk, state, page);
+  if (verdict === 'save') {
+    await saveCurrentPage(state, page);
+    // The save prompt and its overwrite question leave the cursor on the
+    // status row, where those prompts live. Put it back on the print option.
+    placePrintCursor(state);
+  }
+  return verdict;
 }
 
 function openDocumentInfo(state, page) {
@@ -4550,6 +4597,114 @@ async function askForFilePaths(state, { asking, multiple = false, accept = '' } 
     state.files = null;
     state.statusMsg = previousStatus;
     drawHint(state, { force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Naming a file for the page being printed
+//
+// Lynx's PRINT screen saves the rendered document after asking for a filename.
+// The prompt is the same terminal path prompt used for file inputs, with the
+// same completion, but it accepts a file that does not exist yet and checks
+// the directory the reader is about to write into instead.
+// ---------------------------------------------------------------------------
+
+function savePathTarget(text) {
+  const full = expandPath(text);
+  if (!full) return { error: 'no filename given' };
+  let info = null;
+  try { info = fs.statSync(full); } catch { info = null; }
+  if (info && info.isDirectory()) return { error: `${full} is a directory` };
+  const directory = path.dirname(full);
+  let parent = null;
+  try { parent = fs.statSync(directory); } catch { parent = null; }
+  if (!parent || !parent.isDirectory()) return { error: `${directory} is not a directory` };
+  try { fs.accessSync(info ? full : directory, fs.constants.W_OK); } catch {
+    return { error: info ? `${full} cannot be written` : `${directory} cannot be written` };
+  }
+  return { path: full, exists: !!info };
+}
+
+async function askForSavePath(state, initial) {
+  if (!state.keyReader) return null;
+  const previousMode = state.mode;
+  const previousStatus = state.statusMsg;
+  state.mode = 'files';
+  state.files = {
+    saving: true,
+    label: printScreen.FILE_PROMPT_LABEL,
+    buffer: { text: initial || '', caret: (initial || '').length },
+  };
+  const token = state.keyReader.claim();
+  drawHint(state, { force: true });
+  drawFilePrompt(state);
+
+  try {
+    for (;;) {
+      const chunk = await state.keyReader.next(token);
+      if (chunk === EOF || keyIs(chunk, 'Escape', state)) return null;
+      markInput(state);
+      const buffer = state.files.buffer;
+
+      if (chunk === '\t') {
+        const { text, note } = completePath(buffer.text);
+        buffer.text = text;
+        buffer.caret = text.length;
+        if (note) setStatus(state, note);
+        drawFilePrompt(state);
+        continue;
+      }
+
+      if (chunk === '\r' || chunk === '\n') {
+        if (!buffer.text.trim()) return null;
+        const target = savePathTarget(buffer.text);
+        if (target.error) {
+          setStatus(state, `Not saved: ${target.error}.`);
+          drawFilePrompt(state);
+          continue;
+        }
+        return target;
+      }
+
+      const editing = editAction(chunk, state.keys || FALLBACK_KEYMAP);
+      if (editing) applyBufferEdit(buffer, editing);
+      else if (keyIs(chunk, 'Ctrl+L', state)) {
+        buffer.text = '';
+        buffer.caret = 0;
+      } else if (!chunk.startsWith(ESC) && chunk >= ' ') {
+        buffer.text = buffer.text.slice(0, buffer.caret) + chunk + buffer.text.slice(buffer.caret);
+        buffer.caret += chunk.length;
+      }
+      drawFilePrompt(state);
+    }
+  } finally {
+    state.keyReader.release(token);
+    state.mode = previousMode;
+    state.files = null;
+    state.statusMsg = previousStatus;
+    drawHint(state, { force: true });
+  }
+}
+
+async function saveCurrentPage(state, page) {
+  const initial = printScreen.saveFilename(state.title, page.url());
+  const target = await askForSavePath(state, initial);
+  if (!target) {
+    setStatus(state, 'Save cancelled.');
+    return false;
+  }
+  if (target.exists && !await askYesNo(state, 'File exists. Overwrite?')) {
+    setStatus(state, 'Save cancelled.');
+    return false;
+  }
+  try {
+    const text = printScreen.pageText(state.lines);
+    fs.writeFileSync(target.path, text, 'utf8');
+    setStatus(state, `Saved ${state.lines.length} line${state.lines.length === 1 ? '' : 's'} to ${target.path}.`);
+    return true;
+  } catch (err) {
+    setStatus(state, `Could not save the page: ${String(err.message || err).split('\n')[0]}`);
+    return false;
   }
 }
 
@@ -6122,6 +6277,12 @@ async function main() {
       placeOptionsCursor(state);
       return;
     }
+    if (state.mode === 'print') {
+      writeTerminal('\x1b[2J');
+      drawPrintScreen(state);
+      placePrintCursor(state);
+      return;
+    }
     redrawAfterResize(state, state.core.page);
   });
 
@@ -6159,8 +6320,11 @@ async function main() {
       result = await handleLibraryKey(chunk, state, current);
     } else if (screen && screen.mode === state.mode && screen.mode === 'options') {
       result = await handleOptionsKey(chunk, state, current);
+    } else if (screen && screen.mode === state.mode && screen.mode === 'print') {
+      result = await handlePrintKey(chunk, state, current);
     } else if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
     else if (state.mode === 'options') result = await handleOptionsKey(chunk, state, current);
+    else if (state.mode === 'print') result = await handlePrintKey(chunk, state, current);
     else if (state.mode === 'library') result = await handleLibraryKey(chunk, state, current);
     else if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
     else if (state.mode === 'field-command') result = await handleFieldCommandKey(chunk, state, current);
@@ -6349,6 +6513,8 @@ module.exports = {
   handleAuthKey, authPromptText, askForPassword,
   openLibrary, openLinkList, openDocumentInfo, openOptions, openHelp, openTraceLog, openMainMenu,
   closeOptions, drawOptionsScreen, placeOptionsCursor,
+  openPrint, closePrint, drawPrintScreen, placePrintCursor, handlePrintKey,
+  askForSavePath, savePathTarget, saveCurrentPage,
   openVisitedLinks, openSessionHistory, openAddressList,
   noteVisitedLink, notePageVisit,
   closeLibrary, showLibrary, handleLibraryKey, handleOptionsKey,

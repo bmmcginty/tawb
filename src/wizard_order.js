@@ -81,6 +81,7 @@ const WIZARD_SECTIONS = [
     title: 'Information and saved items',
     actions: [
       'where', 'messages', 'document-info',
+      'print-page',
       'list-links', 'list-addresses',
       'bookmarks', 'add-bookmark', 'delete-bookmark',
       'history', 'downloads',

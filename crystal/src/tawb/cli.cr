@@ -454,6 +454,8 @@ module Tawb
               terminal, state, tabs.current_page.url) rescue nil
           elsif state.mode == "options"
             ReaderKeys.redraw_lynx_options(terminal, state, tabs.current_page.url) rescue nil
+          elsif state.mode == "print"
+            ReaderKeys.redraw_lynx_print(terminal, state, tabs.current_page.url) rescue nil
           elsif state.mode != "keyboard"
             Reader.redraw_after_resize(terminal, state, tabs.current_page.url) rescue nil
           end
@@ -493,6 +495,8 @@ module Tawb
                       ReaderKeys.handle_choose_key(terminal, state, current, chunk); nil
                     elsif top_screen.mode == state.mode && top_screen.mode == "options"
                       ReaderKeys.handle_lynx_options_key(terminal, state, current, chunk); nil
+                    elsif top_screen.mode == state.mode && top_screen.mode == "print"
+                      ReaderKeys.handle_lynx_print_key(terminal, state, current, keyboard, chunk); nil
                     else
                       case state.mode
                       when "type"
@@ -516,6 +520,8 @@ module Tawb
                         ReaderKeys.handle_number_key(terminal, state, current, keyboard, chunk); nil
                       when "options"
                         ReaderKeys.handle_lynx_options_key(terminal, state, current, chunk); nil
+                      when "print"
+                        ReaderKeys.handle_lynx_print_key(terminal, state, current, keyboard, chunk); nil
                       else
                         ReaderKeys.handle_browse_key(terminal, state, current, keyboard, chunk,
                           Time.utc.to_unix_ms)

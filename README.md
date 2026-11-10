@@ -318,6 +318,7 @@ The common Lynx commands include:
 | `l` / `A` | List references by name / by address |
 | `a` / `v` | Add a bookmark / view bookmarks |
 | `V` | Links followed in this session |
+| `p` | Printing options — save the displayed page to a file |
 | `Backspace` / `Ctrl+H` | Documents held in this session |
 | `Alt+D` | Remove the selected bookmark while viewing bookmarks |
 | `=` | Information about the current document and selected item (j/k move; / filters) |
@@ -335,6 +336,12 @@ The common Lynx commands include:
 | `Ctrl+_` | Return to a question the browser asked |
 | `Ctrl+T` / `;` | Toggle TAWB tracing / view its trace log |
 | `\\` | Toggle source and presentation |
+
+`p` opens Lynx's Printing Options screen. TAWB offers the one option that
+belongs to this interface without another program: Save to a local file. It
+writes the page exactly as the current view displays it, with Lynx's margins
+and markers, and asks before replacing an existing file. Lynx's mail, screen,
+and printer choices are not offered.
 
 Links and controls use Lynx-like terminal forms and the current control is
 shown in reverse video. Prose and inline links from one HTML block reflow
@@ -528,7 +535,8 @@ tawb --front-end=lynx --dump https://example.com
 
 A Lynx dump uses the preferences TAWB has already saved, but never runs Lynx
 or writes configuration; the import is done by an interactive or `--keyboard`
-Lynx run.
+Lynx run. In an interactive Lynx session, `p` saves the page as it is currently
+displayed instead; `--dump` is for non-interactive use.
 
 `--dump` and `--keyboard` are flags on a reader front end, not front ends of
 their own, and cannot be combined with each other. The `edb` front end has

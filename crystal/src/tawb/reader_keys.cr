@@ -15,6 +15,7 @@ require "./library"
 require "./list_screen"
 require "./lynx_pages"
 require "./lynx_options_screen"
+require "./lynx_print_screen"
 require "./lynx_settings"
 require "./auth"
 require "./unicode_escape"
@@ -1428,6 +1429,147 @@ module Tawb
       files_object["buffer"].as_h["caret"] = JSON::Any.new(buffer.caret.to_i64)
     end
 
+    # What a filename typed for saving would become, or why it cannot be
+    # written. Unlike a file being attached, the file does not have to exist;
+    # the directory it goes into must.
+    def self.save_path_target(text : String) : JSON::Any
+      full = expand_path(text)
+      if full.empty?
+        return JSON::Any.new({"error" => JSON::Any.new("no filename given")})
+      end
+      info = File.info?(full)
+      if info && info.directory?
+        return JSON::Any.new({"error" => JSON::Any.new("#{full} is a directory")})
+      end
+      directory = File.dirname(full)
+      parent = File.info?(directory)
+      unless parent && parent.directory?
+        return JSON::Any.new({"error" => JSON::Any.new("#{directory} is not a directory")})
+      end
+      target = info ? full : directory
+      unless File::Info.writable?(target)
+        message = info ? "#{full} cannot be written" : "#{directory} cannot be written"
+        return JSON::Any.new({"error" => JSON::Any.new(message)})
+      end
+      JSON::Any.new({
+        "path"   => JSON::Any.new(full),
+        "exists" => JSON::Any.new(!info.nil?),
+      })
+    end
+
+    # The filename prompt PRINT opens, with the same completion as the file
+    # input prompt. An empty answer cancels.
+    def self.ask_for_save_path(output : Screen::Output, state : Reader::State,
+                               page_url : String, keyboard : Keyboard?,
+                               initial : String) : JSON::Any?
+      return nil unless keyboard
+      previous_mode = state.mode
+      previous_status = state.status_msg
+      state.mode = "files"
+      state.files = JSON::Any.new({
+        "saving" => JSON::Any.new(true),
+        "label"  => JSON::Any.new(LynxPrintScreen::FILE_PROMPT_LABEL),
+        "buffer" => JSON::Any.new({
+          "text"  => JSON::Any.new(initial),
+          "caret" => JSON::Any.new(initial.size.to_i64),
+        }),
+      })
+      files_object = state.files.not_nil!.as_h
+      token = keyboard.claim
+      Reader.draw_hint(output, state, force: true)
+      draw_file_prompt(output, state)
+
+      answer = nil.as(JSON::Any?)
+      begin
+        loop do
+          chunk = keyboard.next_key(token)
+          if chunk.is_a?(Input::Eof) || key_is(chunk.as(String), "Escape", state)
+            break
+          end
+          chunk = chunk.as(String)
+          Reader.note_input(state)
+          buffer = Edit::Buffer.new(
+            files_object["buffer"].as_h["text"]?.try(&.as_s?) || "",
+            (files_object["buffer"].as_h["caret"]?.try(&.as_i64?) || 0).to_i32)
+
+          if chunk == "\t"
+            completion = complete_path(buffer.text)
+            buffer.text = completion[:text]
+            buffer.caret = completion[:text].size
+            if note = completion[:note]
+              Reader.set_status(output, state, page_url, note)
+            end
+            write_buffer(files_object, buffer)
+            draw_file_prompt(output, state)
+            next
+          end
+
+          if chunk == "\r" || chunk == "\n"
+            break if buffer.text.strip.empty?
+            target = save_path_target(buffer.text)
+            if error = target.as_h["error"]?
+              Reader.set_status(output, state, page_url, "Not saved: #{error.as_s?}.")
+              write_buffer(files_object, buffer)
+              draw_file_prompt(output, state)
+              next
+            end
+            answer = target
+            break
+          end
+
+          editing = Edit.edit_action(chunk, keymap_for(state))
+          if editing
+            Edit.apply_buffer_edit(buffer, editing)
+          elsif key_is(chunk, "Ctrl+L", state)
+            buffer.text = ""
+            buffer.caret = 0
+          elsif !chunk.starts_with?(ESC) && chunk >= " "
+            buffer.text = buffer.text[0, buffer.caret] + chunk + buffer.text[buffer.caret..]
+            buffer.caret += chunk.size
+          end
+          write_buffer(files_object, buffer)
+          draw_file_prompt(output, state)
+        end
+      ensure
+        keyboard.release(token)
+        state.mode = previous_mode
+        state.files = nil
+        state.status_msg = previous_status
+        Reader.draw_hint(output, state, force: true)
+      end
+      answer
+    end
+
+    def self.save_current_page(output : Screen::Output, state : Reader::State,
+                               page : Reader::PageEnv, keyboard : Keyboard?) : Bool
+      initial = LynxPrintScreen.save_filename(state.title, page.url)
+      target = ask_for_save_path(output, state, page.url, keyboard, initial)
+      unless target
+        Reader.set_status(output, state, page.url, "Save cancelled.")
+        return false
+      end
+      if target.as_h["exists"]?.try(&.as_bool?) == true
+        unless ask_yes_no(output, state, keyboard, "File exists. Overwrite?", false)
+          Reader.set_status(output, state, page.url, "Save cancelled.")
+          return false
+        end
+      end
+      path = target.as_h["path"].as_s
+      text = LynxPrintScreen.page_text(state.lines.map { |line| Reader.lynx_row_text(line, line.text) })
+      begin
+        File.write(path, text)
+        count = state.lines.size
+        Reader.set_status(output, state, page.url,
+          "Saved #{count} line#{"s" unless count == 1} to #{path}.")
+        true
+      rescue error
+        reason = (error.message || error.to_s).lines.first? || error.to_s
+        Reader.set_status(output, state, page.url,
+          "Could not save the page: #{reason}")
+        false
+      end
+    end
+
     # ------------------------------------------------------------------
     # Lynx's number prompt
     #
@@ -1775,6 +1917,136 @@ module Tawb
         # themselves are the reader's to draw.
         state.lines = Array.new(@reader.lines.size) { JSON::Any.new(nil) }
       end
+    end
+
+    # The Printing Options screen, driven through the same terminal host
+    # arrangement as Options. It has its own state so the fixed rows can be
+    # tested without a terminal; the reader keeps the page underneath.
+    class PrintScreenHost
+      include LynxPrintScreen::Host
+
+      def initialize(@output : Screen::Output, @reader : Reader::State, @page_url : String)
+      end
+
+      def reset_scroll_region : Nil
+        @output.write("\e[r")
+      end
+
+      def write_line(row : Int32, text : String) : Nil
+        Screen.write_line(@output, row, text)
+      end
+
+      def move_cursor(row : Int32, col : Int32) : Nil
+        @output.write("\e[#{row};#{col}H")
+      end
+
+      def clear_screen : Nil
+        @output.write("\e[2J")
+      end
+
+      def set_status(state : LynxPrintScreen::State, message : String) : Nil
+        Reader.set_status(@output, @reader, @page_url, message)
+      end
+
+      def relayout(state : LynxPrintScreen::State) : Nil
+        carry_to_reader(state)
+        Reader.relayout(@reader)
+        carry_from_reader(state)
+      end
+
+      def render(state : LynxPrintScreen::State, page, force : Bool) : Nil
+        carry_to_reader(state)
+        # A close renders the page after the screen has already changed mode;
+        # let draw_hint see that, so the page's own hint row comes back.
+        @reader.mode = state.mode
+        Reader.render(@output, @reader, @page_url, force)
+      end
+
+      def clamp_col(state : LynxPrintScreen::State) : Nil
+        carry_to_reader(state)
+        Reader.clamp_col(@reader)
+        state.col = @reader.col
+      end
+
+      def clamp_scroll(state : LynxPrintScreen::State) : Nil
+        carry_to_reader(state)
+        Reader.clamp_scroll(@reader)
+        state.scroll = @reader.scroll
+      end
+
+      def key_is(chunk : String, name : String, state : LynxPrintScreen::State) : Bool
+        (state.keys || FALLBACK_KEYMAP).is_key(chunk, name)
+      end
+
+      def rows : Int32
+        @reader.rows
+      end
+
+      private def carry_to_reader(state : LynxPrintScreen::State) : Nil
+        @reader.cursor = state.cursor
+        @reader.col = state.col
+        @reader.scroll = state.scroll
+        @reader.title = state.title
+      end
+
+      private def carry_from_reader(state : LynxPrintScreen::State) : Nil
+        state.cursor = @reader.cursor
+        state.col = @reader.col
+        state.scroll = @reader.scroll
+        state.line_count = @reader.lines.size
+      end
+    end
+
+    # Open Lynx's Printing Options screen over the page.
+    def self.open_lynx_print(output : Screen::Output, reader : Reader::State,
+                             page : Reader::PageEnv) : Nil
+      screen = LynxPrintScreen::State.new
+      screen.keys = reader.keys
+      screen.url = page.url
+      screen.line_count = reader.lines.size
+      screen.rows = reader.rows
+      screen.cursor = reader.cursor
+      screen.col = reader.col
+      screen.scroll = reader.scroll
+      screen.title = reader.title
+      reader.lynx_print = screen
+      reader.mode = "print"
+      reader.screens.push("print", "lynx-print")
+      reader.core.set_live("refreshing", JSON::Any.new(true))
+      LynxPrintScreen.open_print(PrintScreenHost.new(output, reader, page.url), screen, page)
+    end
+
+    def self.redraw_lynx_print(output : Screen::Output, reader : Reader::State,
+                               page_url : String) : Nil
+      screen = reader.lynx_print
+      return unless screen
+      output.write("\e[2J")
+      LynxPrintScreen.draw_print_screen(
+        PrintScreenHost.new(output, reader, page_url), screen)
+    end
+
+    def self.handle_lynx_print_key(output : Screen::Output, reader : Reader::State,
+                                   page : Reader::PageEnv, keyboard : Keyboard?,
+                                   chunk : String) : Nil
+      screen = reader.lynx_print
+      return unless screen
+      host = PrintScreenHost.new(output, reader, page.url)
+      verdict = LynxPrintScreen.handle_print_key(host, chunk, screen, page)
+      if verdict == "save"
+        save_current_page(output, reader, page, keyboard)
+        # The prompt and its overwrite question leave the cursor on the status
+        # row. Put it back on the one option the screen offers.
+        LynxPrintScreen.place_print_cursor(host, screen)
+      end
+      return unless screen.mode == "browse"
+      reader.title = screen.title
+      reader.cursor = screen.cursor
+      reader.col = screen.col
+      reader.scroll = screen.scroll
+      reader.mode = "browse"
+      reader.screens.pop("print")
+      reader.lynx_print = nil
+      reader.core.set_live("refreshing", JSON::Any.new(false))
     end
 
     # Open Lynx's Options screen over the page. The keymap is shared with the
@@ -4581,6 +4853,10 @@ module Tawb
       end
       if action == "reader-mode"
         toggle_reader_mode(output, state, page)
+        return nil
+      end
+      if action == "print-page"
+        open_lynx_print(output, state, page)
         return nil
       end
       if action == "interrupt"

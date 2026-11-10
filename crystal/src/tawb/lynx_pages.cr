@@ -31,6 +31,7 @@ module Tawb
         "l / A: list references / list reference addresses.",
         "a / v: add a bookmark / view bookmarks; r removes the selected bookmark.",
         "d: download the current link.",
+        "p: print or save the displayed page to a file.",
         "o: options menu.  k: keymap and keyboard bindings.",
         "m: return to the main screen.  \\: toggle source.",
         "x: reload without cache.  z: stop loading.",

@@ -4,6 +4,7 @@ require "./unicode_escape"
 require "./unicode_text"
 require "./lynx_display"
 require "./lynx_options_screen"
+require "./lynx_print_screen"
 require "./lynx_session"
 require "./log"
 require "./layout"
@@ -951,6 +952,8 @@ module Tawb
       # can be driven without a terminal; the loop keeps it here so it
       # survives between keystrokes.
       property lynx_options : LynxOptionsScreen::State?
+      # The Lynx Printing Options screen, open on the same terms.
+      property lynx_print : LynxPrintScreen::State?
       # The slider the control mode is adjusting, and the dropdown whose
       # entries are on screen: each mode's own record of what it is acting on.
       property controlling : JSON::Any?
@@ -1023,6 +1026,7 @@ module Tawb
         @logger = Log.new
         @log_dir = nil
         @lynx_options = nil
+        @lynx_print = nil
         @controlling = nil
         @chooser = nil
         @last_find = nil
@@ -1092,7 +1096,7 @@ module Tawb
       # fresh JSON list from the core on every call and the identity never
       # held — so the Lynx vocabulary, numbering included, was never applied
       # to a real page.
-      page_blocks = state.options.nil? && state.library.nil? && state.dialog.nil?
+      page_blocks = state.options.nil? && state.library.nil? && state.dialog.nil? && state.lynx_print.nil?
       blocks = active_blocks(state)
       convert = ->(text : String) { UnicodeText.present(text, state.unicode, state.escape_unicode) }
       if lynx_active?(state) && page_blocks
@@ -1477,7 +1481,7 @@ module Tawb
     # screen is no longer the tab, and everything that reads lines has to
     # agree about which.
     def self.active_blocks(state : State) : Array(JSON::Any)
-      return [] of JSON::Any if state.options
+      return [] of JSON::Any if state.options || state.lynx_print
       # A browser question is an input layer above whatever raised it. It must
       # win over a library or chooser underneath, or its lines would be hidden
       # behind the screen it interrupted while its title and keys took over.
@@ -1562,7 +1566,7 @@ module Tawb
       # the page. With a list of bookmarks on screen, line 12 is the twelfth
       # bookmark, and telling the core the reader is standing on the page's
       # twelfth block would let a text patch land where they are not.
-      return if state.options || state.library || state.dialog
+      return if state.options || state.lynx_print || state.library || state.dialog
       line = state.lines[state.cursor]?
       # The index itself, not a block handed back to Array#index: JavaScript
       # compares blocks by identity, and JSON::Any compares by value, so two
@@ -1734,6 +1738,9 @@ module Tawb
       elsif mode == "line"
         return "#{state.line_prompt.try(&.label)} — Enter: save  Esc: cancel"
       elsif mode == "files"
+        if state.files.try(&.as_h?).try(&.["saving"]?).try(&.as_bool?)
+          return "Save page — Tab: complete  Enter: save  Esc: cancel"
+        end
         done = ""
         if files = state.files
           multiple = files.as_h["multiple"]?.try(&.as_bool?) || false
@@ -1767,9 +1774,12 @@ module Tawb
     # with it, which is the churn the split exists to avoid. Press '=' when
     # the position is actually wanted.
     def self.draw_hint(output : Screen::Output, state : State, force = false) : Nil
-      # The options screen owns the whole terminal and has no hint row of its
-      # own; writing one would land on a row of Lynx's screen.
-      return if state.mode == "options"
+      # The options and print screens own the whole terminal and have no hint
+      # row of their own; writing one would land on a row of Lynx's screen. A
+      # prompt raised from the print screen keeps the menu underneath, so its
+      # hint is suppressed too.
+      return if state.mode == "options" || state.mode == "print"
+      return if state.lynx_print && state.mode != "browse"
       rendered = hint_text(state)[0, state.cols]
       return if !force && rendered == state.drawn.hint
       state.drawn.hint = rendered

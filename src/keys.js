@@ -158,6 +158,10 @@ const ACTIONS = [
   ['refresh', 'Rescan page view', ['r']],
   ['reload-page', 'Reload page', ['F5']],
   ['reload-no-cache', 'Reload page without cache', []],
+  // Lynx's PRINT function: a fixed screen with the print choices, of which
+  // TAWB offers saving the displayed page to a file. Lynx-only, so its key
+  // lives in LYNX_BINDINGS rather than in this action's defaults.
+  ['print-page', 'Print or save this page', []],
   // Firefox's Reader View, reached through its own about:reader page. F9 is
   // the browser's shortcut, but function keys beyond F5 have no names here,
   // and Alt+R costs nothing: R for the reading view. Chromium draws no reader

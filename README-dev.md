@@ -928,6 +928,20 @@ off the page, on parks it on the reader's line the way the ordinary interface
 always does. Prompts, choosers, lists, and dialogs keep the cursor where their
 own code put it, as Lynx does.
 
+### Printing and saving
+
+`p` opens Lynx's Printing Options screen. The screen is fixed and drawn by
+`src/lynx_print_screen.js`, not by the page list, so it owns the terminal while
+it is open. TAWB offers one standard print option: Save to a local file. The
+filename prompt reuses the file-input path completion, accepts a new file,
+checks the directory, and asks before overwriting an existing one.
+
+The saved text is the current buffer, not a new browser fetch: every line is
+written with the same margin, marker, and suffix the Lynx display uses, so a
+source view saves source and a numbered presentation keeps its numbers. Lynx's
+mail, print-to-screen, and printer choices are deliberately absent; each would
+mean handing the document to another program or another screen.
+
 `src/lynx_settings.js` owns `$XDG_CONFIG_HOME/tawb/settings.lynx.json`. Its
 versioned document requires every preference below a `lynx` key; misplaced,
 unknown, or malformed values are errors. `keymapForOptions()` opens it only for
