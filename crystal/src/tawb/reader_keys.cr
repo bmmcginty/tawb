@@ -2186,7 +2186,7 @@ module Tawb
         # the field is read back like any other keystroke. An <input> has one
         # line by definition, so Enter there stays the form's submission.
         if typing.multiline
-          page.keyboard_press("Enter")
+          page.keyboard_press_for(typing.item, "Enter")
           refresh_typed_row(output, state, typing, old_caret_col, output_generation)
           return
         end
@@ -2194,7 +2194,7 @@ module Tawb
         remember_history_place(state, page)
         screen = Reader.screen_before(state)
         anchor = state.core.anchor
-        page.keyboard_press("Enter")
+        page.keyboard_press_for(typing.item, "Enter")
         page.wait_for_load
         state.mode = "browse"
         state.typing = nil
@@ -2231,11 +2231,11 @@ module Tawb
 
       editing = Edit.edit_action(chunk, keymap_for(state))
       if editing
-        Edit.send_field_edit(->(key : String) { page.keyboard_press(key) }, editing)
+        Edit.send_field_edit(->(key : String) { page.keyboard_press_for(typing.item, key) }, editing)
       elsif chunk.starts_with?(ESC) || chunk < " "
         return
       else
-        page.keyboard_press(chunk)
+        page.keyboard_press_for(typing.item, chunk)
         typing.caret += chunk.size
       end
 

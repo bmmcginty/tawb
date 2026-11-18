@@ -28,6 +28,23 @@ module Tawb
       def keyboard_press(key : String) : Nil
         @raw.keyboard.press(key)
       end
+
+      def keyboard_press_for(item : JSON::Any, key : String) : Nil
+        context = frame_context_id(item)
+        frame = context ? (@raw.frame_for(context) rescue nil) : nil
+        (frame || @raw).keyboard.press(key)
+      end
+
+      # Which document an item says it came from, spelled the ways the three
+      # extractors spell it. The same rule Core uses to find an element.
+      private def frame_context_id(item : JSON::Any) : String?
+        frame = item.as_h? || return nil
+        value = frame["frame"]? || return nil
+        return value.as_s? if value.as_s?
+        object = value.as_h? || return nil
+        object["id"]?.try(&.as_s?) || object["contextId"]?.try(&.as_s?) ||
+          object["context"]?.try(&.as_s?)
+      end
       def wait_for_load : Nil; @raw.wait_for_load_state; end
       def goto(url : String) : Nil; @raw.goto(url); end
       def stop_loading : Nil; @raw.stop_loading; end

@@ -825,6 +825,12 @@ module Tawb
         @page.click_at(x, y, 0, @page.frame_session(@frame_id))
       end
 
+      # Keys for a document travel on that document's own session, the same
+      # way its clicks do.
+      def keyboard : Keyboard
+        Keyboard.new(@page, @page.frame_session(@frame_id))
+      end
+
       private def call(fn : String, arg : JSON::Any?, expression : Bool,
                        by_value : Bool, retry_context = true) : Hash(String, JSON::Any)
         context = @page.context_for(@frame_id)

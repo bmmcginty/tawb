@@ -1637,7 +1637,7 @@ module Tawb
                               "reason" => JSON::Any.new("not a select")}) if key.raw.nil?
         return JSON::Any.new({"changed" => JSON::Any.new(false),
                               "reason" => JSON::Any.new("already chosen")}) if key.as_s == "already"
-        target.keyboard.press(key.as_s)
+        handle.keyboard.press(key.as_s)
         JSON::Any.new({"changed" => JSON::Any.new(true)})
       ensure
         handle.dispose rescue nil

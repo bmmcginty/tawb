@@ -3502,6 +3502,14 @@ function firefoxHandleImplementations({ bidi, FirefoxFrame, FirefoxPage, Firefox
             current = frame;
             observations.push(null);
             break;
+          case 'frame_keyboard':
+            await current.keyboard.type(step.text);
+            observations.push(null);
+            break;
+          case 'handle_keyboard':
+            await handle.keyboard.type(step.text);
+            observations.push(null);
+            break;
           case 'activate':
             observations.push(await handle.evaluate(clickThrough));
             break;

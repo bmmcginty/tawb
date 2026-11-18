@@ -443,6 +443,38 @@ for (const implementation of firefoxHandleImplementations({
   });
 }
 
+for (const implementation of firefoxHandleImplementations({
+  bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard, pierceAndRun,
+  clickThrough, prepareRealClick, submitsAutofilled,
+})) {
+  test(`${implementation.name}: a document's keyboard names that document`, async () => {
+    const received = [];
+    const observations = await withEndpoint((message, peer) => {
+      received.push(message);
+      let result = {};
+      if (message.method === 'session.new') result = { sessionId: 'session-1' };
+      if (message.method === 'script.callFunction') {
+        result = message.params.resultOwnership === 'root'
+          ? { type: 'success', result: { type: 'node', handle: 'h-child', sharedId: 's-child' } }
+          : { type: 'success', result: { type: 'boolean', value: true } };
+      }
+      peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+    }, (url) => implementation.handleScenario(url, [
+      { op: 'frame', context: 'child-a', url: 'https://child.test/a' },
+      { op: 'frame_keyboard', text: 'hi' },
+      { op: 'evaluate_handle', fn: '(x) => x', arg: true },
+      { op: 'handle_keyboard', text: 'yo' },
+    ]));
+
+    assert.deepEqual(observations, [null, null, { handle: 'h-child', sharedId: 's-child' }, null]);
+    const keys = received.filter((message) => message.method === 'input.performActions'
+      && message.params.actions[0].type === 'key');
+    assert.deepEqual(keys.map((message) => message.params.context),
+      ['child-a', 'child-a'],
+      'keys for a frame or a frame-held element are addressed to that document');
+  });
+}
+
 test('both runtimes invoke action assets with the same target and arguments', async () => {
   const implementations = firefoxHandleImplementations({
     bidi, FirefoxFrame, FirefoxPage, FirefoxKeyboard, pierceAndRun,

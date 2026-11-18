@@ -80,6 +80,11 @@ class CdpHandle {
     return this.frame.session();
   }
 
+  // The keyboard of the document this element belongs to.
+  get keyboard() {
+    return this.frame.keyboard;
+  }
+
   #assertLive() {
     if (this.disposed) throw new Error('that element handle is stale');
   }
@@ -208,6 +213,12 @@ class CdpFrame {
   // Ours is a live tree, so this must stay a method.
   page() {
     return this.pageObject;
+  }
+
+  // A frame's keyboard is its own session's keyboard where Chromium gives the
+  // frame one, so a focused element inside it receives the key.
+  get keyboard() {
+    return new CdpKeyboard({ session: this.session() });
   }
 
   // Whether this document had a process of its own and that process has gone.

@@ -174,6 +174,12 @@ class FirefoxFrame {
       return frame;
     });
   }
+
+  // BiDi input actions name the document that owns the focused element, so a
+  // frame's keyboard is not the tab's.
+  get keyboard() {
+    return new FirefoxKeyboard(this.session, this.contextId);
+  }
 }
 
 // A frame element identified by where it sits rather than by a handle, since
@@ -218,6 +224,12 @@ class FirefoxHandle {
       throw new Error(result.exceptionDetails?.text || 'the page threw while evaluating');
     }
     return bidi.fromRemoteValue(result.result);
+  }
+
+  // The keyboard of the document this element belongs to: a key reaches the
+  // element that has focus in that document, not in the tab's top one.
+  get keyboard() {
+    return new FirefoxKeyboard(this.session, this.contextId);
   }
 
   async contentFrame() {
@@ -306,14 +318,14 @@ const WEBDRIVER_KEYS = {
 // key events, so autocomplete, IME and a field's own handlers all behave as
 // they would under a human's fingers.
 class FirefoxKeyboard {
-  constructor(session, page) {
+  constructor(session, context) {
     this.session = session;
-    this.page = page;
+    this.contextId = typeof context === 'string' ? context : context.contextId;
   }
 
   async #perform(actions) {
     await this.session.send('input.performActions', {
-      context: this.page.contextId,
+      context: this.contextId,
       actions: [{ type: 'key', id: 'tweb-keyboard', actions }],
     });
   }
@@ -363,7 +375,7 @@ class FirefoxPage {
     this._seenFrames = [];
     this._loading = false;
     this._closed = false;
-    this.keyboard = new FirefoxKeyboard(session, this);
+    this.keyboard = new FirefoxKeyboard(session, contextId);
   }
 
   context() {

@@ -2028,6 +2028,10 @@ module Tawb
         @presses << key
       end
 
+      def keyboard_press_for(item : JSON::Any, key : String) : Nil
+        keyboard_press(key)
+      end
+
       def wait_for_load : Nil
       end
 
@@ -5007,6 +5011,12 @@ module Tawb
             end
           when "use_main"
             current = frame
+            observations.push JSON::Any.new(nil)
+          when "frame_keyboard"
+            current.not_nil!.keyboard.type(step["text"].as_s)
+            observations.push JSON::Any.new(nil)
+          when "handle_keyboard"
+            handle.not_nil!.keyboard.type(step["text"].as_s)
             observations.push JSON::Any.new(nil)
           when "activate"
             observations.push(Actions.activate(handle.not_nil!))

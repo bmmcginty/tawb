@@ -5395,6 +5395,11 @@ async function handleTypeKey(chunk, state, page) {
   markInput(state);
   const t = state.typing;
   if (!t) { state.mode = 'browse'; return; }
+  // A field in an embedded document has the embedded document's keyboard.
+  // Firefox's BiDi input actions name the browsing context that owns the
+  // focus, so sending them to the tab's top document does nothing there.
+  const keyboard = t.item && t.item.frame && t.item.frame.keyboard
+    ? t.item.frame.keyboard : page.keyboard;
   const oldCaretCol = typingText(state).caretCol;
   const outputGeneration = terminalGeneration;
 
@@ -5453,7 +5458,7 @@ async function handleTypeKey(chunk, state, page) {
     // the field is read back like any other keystroke. An <input> has one
     // line by definition, so Enter there stays the form's submission.
     if (t.multiline) {
-      await page.keyboard.press('Enter');
+      await keyboard.press('Enter');
       await updateTypedRow(state, t, oldCaretCol, outputGeneration);
       return;
     }
@@ -5461,7 +5466,7 @@ async function handleTypeKey(chunk, state, page) {
     await rememberCurrentHistoryPlace(state, page);
     const screen = screenBefore(state);
     const anchor = anchorFor(state);
-    await page.keyboard.press('Enter');
+    await keyboard.press('Enter');
     await page.waitForLoadState('domcontentloaded').catch(() => {});
     state.mode = 'browse';
     state.typing = null;
@@ -5491,11 +5496,11 @@ async function handleTypeKey(chunk, state, page) {
 
   const editing = editAction(chunk, keymap);
   if (editing) {
-    await sendFieldEdit(page.keyboard, editing);
+    await sendFieldEdit(keyboard, editing);
   } else if (chunk.startsWith(ESC) || chunk < ' ') {
     return;
   } else {
-    await page.keyboard.type(chunk);
+    await keyboard.type(chunk);
     t.caret += chunk.length;
   }
 

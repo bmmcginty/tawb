@@ -147,6 +147,41 @@ test('Enter inserts a line in a textarea and still submits a one-line input', as
   }
 });
 
+test('typing reaches a field inside an embedded document', async () => {
+  driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
+  const page = driver.context.pages()[0] || await driver.context.newPage();
+  await page.goto('data:text/html,' + encodeURIComponent(`
+    <iframe srcdoc="<input aria-label='Email' id='email'>"></iframe>
+  `));
+  const core = new Core({ driver, page, source: 'ax' });
+  await core.rescan();
+  const keys = new Keymap({ terminfo: {}, load: false });
+  const state = {
+    interface: 'default', core, driver, keys, lines: layoutLines(core.blocks, 79),
+    cursor: 0, col: 0, scroll: 0, mode: 'browse', typing: null,
+    historyPlaces: new WeakMap(), statusMsg: '', statusHeldUntil: 0,
+    drawn: { title: null, address: null, hint: null, status: null },
+    title: '', library: null, dialog: null, linkAddress: false,
+  };
+  const write = process.stdout.write;
+  process.stdout.write = () => true;
+  try {
+    state.cursor = lineNamed(state, 'Email');
+    assert.ok(state.cursor >= 0, 'the email field in the frame was not in the buffer');
+    await activateCurrent(state, page);
+    assert.equal(state.mode, 'type');
+    await handleTypeKey('u', state, page);
+    await handleTypeKey('s', state, page);
+    await handleTypeKey('e', state, page);
+    assert.equal(state.typing.text, 'use');
+    assert.equal(await page.evaluate(() => document.querySelector('iframe')
+      .contentDocument.getElementById('email').value), 'use');
+  } finally {
+    await core.releaseTypingField().catch(() => {});
+    process.stdout.write = write;
+  }
+});
+
 test('Tab keeps typing between fields, then leaves editing for a combobox', async () => {
   driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
   const page = driver.context.pages()[0] || await driver.context.newPage();

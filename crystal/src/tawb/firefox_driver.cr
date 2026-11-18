@@ -462,6 +462,12 @@ module Tawb
             object["url"]?.try(&.as_s?) || "about:blank")
         end
       end
+
+      # BiDi input actions name the document that owns the focused element, so
+      # a frame's keyboard is not the tab's.
+      def keyboard : Keyboard
+        Keyboard.new(@session, @context_id)
+      end
     end
 
     # An element held across calls. The handle is the realm-local name the

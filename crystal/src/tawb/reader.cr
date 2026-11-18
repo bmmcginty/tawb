@@ -156,6 +156,10 @@ module Tawb
       # One key into the page's own keyboard. Raises when the page or the
       # driver refuses; the caller says so on the status row.
       abstract def keyboard_press(key : String) : Nil
+      # One key into the document that owns `item`. A field in an embedded
+      # document has that document's keyboard, not the tab's top one: BiDi
+      # input actions are addressed to the browsing context that owns focus.
+      abstract def keyboard_press_for(item : JSON::Any, key : String) : Nil
       # Waits for the document to settle after a key that may navigate —
       # Enter submitting a form, chiefly. A page that refuses to say
       # anything is not an error; the refresh that follows reads whatever

@@ -1057,7 +1057,7 @@ class Core {
 
     if (key === null) return { changed: false, reason: 'not a select' };
     if (key === 'already') return { changed: false, reason: 'already chosen' };
-    await page.keyboard.press(key);
+    await (handle.keyboard || page.keyboard).press(key);
     return { changed: true };
   }
 
@@ -1317,7 +1317,7 @@ class Core {
       this.handleFor(item, page), ACTION_TIMEOUT_MS, 'Locating control');
     try {
       return await this.adjustControlHandle(
-        page.keyboard, item.frame || page, item.role, handle, key);
+        handle.keyboard || page.keyboard, item.frame || page, item.role, handle, key);
     } finally {
       await handle.dispose().catch(() => {});
     }
