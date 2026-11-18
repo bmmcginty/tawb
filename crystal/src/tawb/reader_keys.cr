@@ -4194,8 +4194,10 @@ module Tawb
                            tabs : Reader::TabEnv, page : Reader::PageEnv,
                            note : String = "") : Bool
       return false if page.same?(tabs.current_page)
+      remember_tab_place(state, tabs.current_page)
       tabs.adopt_tab(page)
       Reader.refresh(state, page, true)
+      restore_tab_place(state, page)
       Reader.render(output, state, page.url, true)
       position = tabs.tab_position(page)
       label = tabs.tab_label(page)
@@ -4203,6 +4205,35 @@ module Tawb
       message = "#{note} — tab #{position[:position]} of #{position[:of]}: #{label}" unless note.empty?
       Reader.set_status(output, state, page.url, message)
       true
+    end
+
+    private def self.remember_tab_place(state : Reader::State, page : Reader::PageEnv) : Nil
+      place = JSON::Any.new({
+        "url"    => JSON::Any.new(page.url),
+        "cursor" => JSON::Any.new(state.cursor.to_i64),
+        "col"    => JSON::Any.new(state.col.to_i64),
+        "scroll" => JSON::Any.new(state.scroll.to_i64),
+      })
+      state.tab_places[page.object_id] = place
+    rescue
+      nil
+    end
+
+    private def self.restore_tab_place(state : Reader::State, page : Reader::PageEnv) : Bool
+      saved = state.tab_places[page.object_id]? || return false
+      place = saved.as_h
+      # A tab that navigated while it was in the background is a different
+      # document now; its old line number would point at something else.
+      return false unless place["url"]?.try(&.as_s?) == page.url
+      state.cursor = Math.min(Math.max((place["cursor"]?.try(&.as_i64?) || 0).to_i32, 0),
+        Math.max(state.lines.size - 1, 0))
+      state.col = (place["col"]?.try(&.as_i64?) || 0).to_i32
+      state.scroll = (place["scroll"]?.try(&.as_i64?) || 0).to_i32
+      Reader.clamp_col(state)
+      Reader.clamp_scroll(state)
+      true
+    rescue
+      false
     end
 
     def self.cycle_tab(output : Screen::Output, state : Reader::State,

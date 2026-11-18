@@ -929,6 +929,10 @@ module Tawb
       property credentials : CredentialEnv?
       property browser_library : LibraryEnv?
       property history_places : Hash(String, JSON::Any)
+      # Where each tab was left, keyed by the tab wrapper's identity. A tab
+      # switch is not a history move: the reader returns to the line they
+      # were on in that tab even when it is a different address.
+      property tab_places : Hash(UInt64, JSON::Any)
       property keys : Keys::Keymap?
       property typing : Typing?
       property address : AddressBar?
@@ -1014,6 +1018,7 @@ module Tawb
         @credentials = nil
         @browser_library = nil
         @history_places = {} of String => JSON::Any
+        @tab_places = {} of UInt64 => JSON::Any
         @keys = nil
         @typing = nil
         @address = nil

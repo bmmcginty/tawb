@@ -2243,9 +2243,45 @@ const attachedPages = new WeakSet();
 // conclude it opened in the background.
 const NEW_TAB_SETTLE_MS = 1200;
 
+// Where each tab was left. A tab is not a document, and moving between tabs
+// is not moving between pages in one tab: the reader expects to come back to
+// the line they were on, even when the other tab is a different address and
+// its buffer was rebuilt from scratch.
+function rememberTabPlace(state, page) {
+  if (!page) return null;
+  if (!state.tabPlaces) state.tabPlaces = new WeakMap();
+  try {
+    const place = {
+      url: page.url(), cursor: state.cursor, col: state.col, scroll: state.scroll,
+    };
+    state.tabPlaces.set(page, place);
+    return place;
+  } catch {
+    return null;
+  }
+}
+
+function restoreTabPlace(state, page) {
+  if (!state.tabPlaces || !page) return false;
+  const place = state.tabPlaces.get(page);
+  if (!place) return false;
+  let url;
+  try { url = page.url(); } catch { return false; }
+  // A tab that navigated while it was in the background is a different
+  // document now; its old line number would point at something else.
+  if (place.url !== url) return false;
+  state.cursor = Math.min(Math.max(place.cursor, 0), Math.max(state.lines.length - 1, 0));
+  state.col = place.col;
+  state.scroll = place.scroll;
+  clampCol(state);
+  clampScroll(state);
+  return true;
+}
+
 async function switchToTab(state, page, { note = '' } = {}) {
   if (!page || page === state.core.page) return false;
 
+  rememberTabPlace(state, state.core.page);
   await state.core.adoptTab(page);
 
   if (!attachedPages.has(page)) {
@@ -2258,9 +2294,10 @@ async function switchToTab(state, page, { note = '' } = {}) {
   }
 
   await attachLive(state, page);
-  // The buffer described a different tab entirely, so there is no place to
-  // keep and nothing to reanchor against.
+  // The buffer described a different tab, so it has to be rebuilt; the tab's
+  // own remembered place puts the reader back where they left it.
   await refresh(state, page, { resetCursor: true });
+  const restored = restoreTabPlace(state, page);
   render(state, page, { force: true });
 
   const { position, of } = state.core.where(page);
@@ -2268,7 +2305,9 @@ async function switchToTab(state, page, { note = '' } = {}) {
   setStatus(state, note
     ? `${note} — tab ${position} of ${of}: ${label}`
     : `Tab ${position} of ${of}: ${label}`);
-  log('tab.switch', { position, of, url: page.url().slice(0, 120) });
+  log('tab.switch', {
+    position, of, restored, cursor: state.cursor, url: page.url().slice(0, 120),
+  });
   return true;
 }
 

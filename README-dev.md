@@ -1135,7 +1135,10 @@ is. The status line says so: *"Followed a new tab — tab 3 of 3: Page B"*.
 
 A tab that opens *behind* is announced and left alone, because nothing moves
 you without saying so. `Ctrl+T` opens a new blank tab and follows it. `>` and
-`<` step through everything open, wrapping at either end.
+`<` step through everything open, wrapping at either end. Each tab keeps the
+line, column and scroll position it was left at; switching back resumes there.
+A tab that navigated while it was in the background is a different document,
+so it starts at the top instead of restoring a stale line number.
 
 Tabs in separate windows are in that same list. Neither browser's protocol
 says which window a tab belongs to, and for reading purposes a window is just

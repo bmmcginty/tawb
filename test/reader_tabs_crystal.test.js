@@ -60,6 +60,49 @@ test('next and previous tab replace the document', { skip: needsCrystal }, async
   assert.equal(result.state.statusMsg, 'Tab 1 of 2: One page');
 });
 
+const longTabs = [
+  {
+    url: 'https://one.test/', title: 'One page',
+    blocks: ['one 0', 'one 1', 'one 2', 'one 3'].map((text) => ({
+      text, item: { role: 'text', name: text },
+    })),
+  },
+  {
+    url: 'https://two.test/', title: 'Two page',
+    blocks: ['two 0', 'two 1', 'two 2', 'two 3'].map((text) => ({
+      text, item: { role: 'text', name: text },
+    })),
+  },
+];
+
+function longState() {
+  return state({
+    cursor: 2,
+    lines: longTabs[0].blocks.map((block, blockIndex) => ({ text: block.text, blockIndex })),
+  }, {
+    tabs: longTabs, currentTab: 0, blocks: longTabs[0].blocks,
+  });
+}
+
+test('each tab keeps the line the reader left it on', { skip: needsCrystal }, async () => {
+  const back = await runBoth('back to the first tab', longState(), [
+    { op: 'browseKey', chunk: '>' },  // tab 2 starts at its top
+    { op: 'browseKey', chunk: 'j' },  // and the reader moves down one line
+    { op: 'browseKey', chunk: '<' },  // tab 1 returns to line 3
+  ]);
+  assert.equal(back.state.title, 'One page');
+  assert.equal(back.state.cursor, 2, 'the first tab lost the line it was left on');
+
+  const there = await runBoth('back to the second tab', longState(), [
+    { op: 'browseKey', chunk: '>' },
+    { op: 'browseKey', chunk: 'j' },
+    { op: 'browseKey', chunk: '<' },
+    { op: 'browseKey', chunk: '>' },
+  ]);
+  assert.equal(there.state.title, 'Two page');
+  assert.equal(there.state.cursor, 1, 'the second tab lost the line it was left on');
+});
+
 test('a key after switching acts on the new tab', { skip: needsCrystal }, async () => {
   const result = await runBoth('new current page', state(), [
     { op: 'browseKey', chunk: '>' },
