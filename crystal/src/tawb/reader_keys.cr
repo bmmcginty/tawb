@@ -664,7 +664,20 @@ module Tawb
                                 page : Reader::PageEnv,
                                 previous_texts : Array(String), anchor : JSON::Any) : Nil
       state.status_msg = "The page changed while that action ran; it was refreshed."
-      Reader.refresh(state, page, false, anchor, previous_texts)
+      begin
+        Reader.refresh(state, page, false, anchor, previous_texts)
+      rescue err
+        raise err unless Frames.frame_gone?(err)
+        # The frame that went was the one the anchor lived in. A fresh reading
+        # with no place to restore is the truthful state, and the place is
+        # lost rather than the page.
+        begin
+          Reader.refresh(state, page, true)
+        rescue again
+          raise again unless Frames.frame_gone?(again)
+          state.status_msg = "The page changed while that action ran; press r to rescan."
+        end
+      end
       Reader.render(output, state, page.url)
     end
 
@@ -710,8 +723,7 @@ module Tawb
       remember_history_place(state, page)
       anchor = state.core.anchor
       screen = Reader.screen_before(state)
-      fragment = Aria::LINK_ROLES.includes?(role) ? state.core.fragment_of(item.not_nil!) : nil
-      fragment_hash = fragment.try(&.as_s?)
+      fragment_hash = nil.as(String?)
       # Lynx remembers the links followed during a session; VLINKS lists them.
       if Aria::LINK_ROLES.includes?(role)
         href = item.not_nil!.as_h["href"]?.try(&.as_s?)
@@ -720,6 +732,12 @@ module Tawb
       focused : JSON::Any? = nil
 
       begin
+        # Reading the fragment asks the item's own frame. A frame removed
+        # since the buffer was built must recover here, before anything is
+        # pressed.
+        if Aria::LINK_ROLES.includes?(role)
+          fragment_hash = state.core.fragment_of(item.not_nil!).try(&.as_s?)
+        end
         Reader.set_status(output, state, page.url, "Activating \"#{name}\"...")
         if role == "slider"
           # A slider is driven by keystrokes, so adjustment needs the control
@@ -2122,8 +2140,27 @@ module Tawb
         "Nothing here to describe — move to a link, button or form field.")
     end
 
+    # A key sent into a field names the browsing context that owns it. A
+    # submit that navigates can remove that context while the keypress is
+    # still being answered, and a widget can replace its frame mid-edit. The
+    # key may already have done its work, so recover by reading the page
+    # again — never by sending it a second time.
     def self.handle_type_key(output : Screen::Output, state : Reader::State,
                              page : Reader::PageEnv, chunk : String) : Nil
+      handle_type_key_inner(output, state, page, chunk)
+    rescue err
+      raise err unless Frames.frame_gone?(err)
+      previous_texts = state.core.blocks.map do |block|
+        block.as_h["text"]?.try(&.as_s?) || ""
+      end
+      anchor = state.core.anchor
+      state.mode = "browse"
+      state.typing = nil
+      recover_gone_frame(output, state, page, previous_texts, anchor)
+    end
+
+    private def self.handle_type_key_inner(output : Screen::Output, state : Reader::State,
+                                           page : Reader::PageEnv, chunk : String) : Nil
       Reader.note_input(state)
       typing = state.typing
       unless typing

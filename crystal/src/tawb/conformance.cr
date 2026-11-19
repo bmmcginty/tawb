@@ -1995,6 +1995,7 @@ module Tawb
 
       getter presses : Array(String)
       property fail_press : Bool
+      property press_fault : String?
       property url : String
       property goto_fault : String?
       property goto_hang : Bool
@@ -2006,6 +2007,7 @@ module Tawb
 
       def initialize(@url : String, @title : String, @fail_press = false)
         @presses = [] of String
+        @press_fault = nil
         @goto_fault = nil
         @goto_hang = false
         @reload_fault = nil
@@ -2024,6 +2026,9 @@ module Tawb
       end
 
       def keyboard_press(key : String) : Nil
+        if fault = @press_fault
+          raise IO::Error.new(fault)
+        end
         raise IO::Error.new("the page refused") if @fail_press
         @presses << key
       end
@@ -2180,6 +2185,7 @@ module Tawb
       page = ScriptedPage.new(page_url, page_title,
         object["page"]?.try(&.as_h?).try(&.["failPress"]?.try(&.as_bool?)) || false)
       if page_spec = object["page"]?.try(&.as_h?)
+        page.press_fault = page_spec["pressFault"]?.try(&.as_s?)
         page.goto_fault = page_spec["gotoFault"]?.try(&.as_s?)
         page.goto_hang = page_spec["gotoHang"]?.try(&.as_bool?) || false
         page.reload_fault = page_spec["reloadFault"]?.try(&.as_s?)

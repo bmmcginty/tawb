@@ -3219,7 +3219,20 @@ async function recoverGoneFrame(state, page, item, previousTexts, anchor, event)
     name: String(name).slice(0, 80), source: state.core.source, inFrame,
   });
   state.statusMsg = 'The page changed while that action ran; it was refreshed.';
-  await refresh(state, page, { anchor, previousTexts });
+  try {
+    await refresh(state, page, { anchor, previousTexts });
+  } catch (err) {
+    if (!isGoneFrameError(err)) throw err;
+    // The frame that went was the one the anchor lived in. A fresh reading
+    // with no place to restore is the truthful state, and the place is lost
+    // rather than the page.
+    try {
+      await refresh(state, page, { resetCursor: true });
+    } catch (again) {
+      if (!isGoneFrameError(again)) throw again;
+      state.statusMsg = 'The page changed while that action ran; press r to rescan.';
+    }
+  }
   render(state, page, { force: true });
 }
 
@@ -3235,12 +3248,15 @@ async function activateCurrent(state, page) {
   await rememberCurrentHistoryPlace(state, page);
   const anchor = anchorFor(state);
   const screen = screenBefore(state);
-  const fragment = LINK_ROLES.has(item.role) ? await state.core.fragmentOf(item, page) : null;
   // Lynx remembers the links followed during a session; VLINKS lists them.
   if (LINK_ROLES.has(item.role) && item.href) noteVisitedLink(state, item);
   let focused = null;
+  let fragment = null;
 
   try {
+    // Reading the fragment asks the item's own frame. A frame removed since
+    // the buffer was built must recover here, before anything is pressed.
+    if (LINK_ROLES.has(item.role)) fragment = await state.core.fragmentOf(item, page);
     setStatus(state, `Activating "${item.name}"...`);
     if (item.role === 'slider') {
       const focused = await state.core.focusControl(item, page);
@@ -5445,7 +5461,25 @@ async function answerNativeDialog(state, dialog) {
   }
 }
 
+// A key sent into a field names the browsing context that owns it. A submit
+// that navigates can remove that context while the keypress is still being
+// answered, and a widget can replace its frame mid-edit. The key may already
+// have done its work, so recover by reading the page again — never by
+// sending it a second time.
 async function handleTypeKey(chunk, state, page) {
+  try {
+    return await handleTypeKeyInner(chunk, state, page);
+  } catch (err) {
+    if (!isGoneFrameError(err)) throw err;
+    const previousTexts = state.core.blocks.map((b) => b.text);
+    const anchor = anchorFor(state);
+    state.mode = 'browse';
+    state.typing = null;
+    await recoverGoneFrame(state, page, null, previousTexts, anchor, 'typing.frame-gone');
+  }
+}
+
+async function handleTypeKeyInner(chunk, state, page) {
   markInput(state);
   const t = state.typing;
   if (!t) { state.mode = 'browse'; return; }

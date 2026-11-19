@@ -258,6 +258,31 @@ test('enter submits the form and reads whatever came back', { skip: needsCrystal
   assert.equal(result.state.lines[2].text, 'results for q');
 });
 
+test('a key whose field frame disappeared is recovered without resending it',
+  { skip: needsCrystal }, async () => {
+    const EMAIL_FIELD = { role: 'textbox', name: 'Email' };
+    const blocks = [
+      { text: 'label', item: { role: 'text' } },
+      { text: '[Email]', item: EMAIL_FIELD },
+      { text: 'footer', item: { role: 'text' } },
+    ];
+    const state = stateFor(blocks, {
+      mode: 'type',
+      typing: { item: EMAIL_FIELD, text: 'me@example.test', caret: 14, drawn: '[Email: me@example.test]' },
+    }, { rescanBlocks: blocks });
+    const result = await runBoth('typing gone frame', state, [
+      { op: 'typeKey', chunk: '\r' },
+    ], {
+      url: PAGE_URL,
+      pressFault: 'no such frame: Browsing Context with id 77ab3d3b not found',
+    });
+    assert.equal(result.state.mode, 'browse');
+    assert.equal(result.state.typing, null);
+    assert.equal(result.state.statusMsg,
+      'The page changed while that action ran; it was refreshed.');
+    assert.ok(!result.state.statusMsg.includes('77ab3d3b'));
+  });
+
 test('typing into a textarea learns that Enter is a new line', { skip: needsCrystal }, async () => {
   const NOTES = { role: 'textbox', name: 'Notes' };
   const state = stateFor([

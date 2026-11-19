@@ -1922,9 +1922,11 @@ function readerImplementations(index, keysModule) {
           if (args.page?.reloadFault) throw new Error(args.page.reloadFault);
         },
         keyboard: { presses: [], async press(key) {
+          if (args.page?.pressFault) throw new Error(args.page.pressFault);
           if (args.page?.failPress) throw new Error('the page refused');
           this.presses.push(key);
         }, async type(text) {
+          if (args.page?.pressFault) throw new Error(args.page.pressFault);
           if (args.page?.failPress) throw new Error('the page refused');
           this.presses.push(text);
         } } };
