@@ -823,28 +823,38 @@ module Tawb
         return
       end
 
-      # A fragment link never left the document, whatever it did to the URL,
-      # so the buffer still stands and the reader keeps their place — until
-      # we move them deliberately, to where the link actually points.
-      if fragment_hash
-        Reader.refresh(state, page, false, anchor)
-        Reader.repaint_list(output, state, page.url, screen)
-        focus_name = follow_activation_focus(output, state, page.url, focused)
-        jumped = focus_name || jump_to_fragment(output, state, page, fragment_hash.not_nil!)
-        if focus_name
-          Reader.set_status(output, state, page.url, "Focus moved to \"#{focus_name}\".")
-        elsif jumped
-          Reader.set_status(output, state, page.url, "Moved to #{fragment_hash}.")
-        else
-          Reader.set_status(output, state, page.url,
-            "\"#{name}\" points at #{fragment_hash}, which is not in this view.")
+      begin
+        # A fragment link never left the document, whatever it did to the URL,
+        # so the buffer still stands and the reader keeps their place — until
+        # we move them deliberately, to where the link actually points.
+        if fragment_hash
+          Reader.refresh(state, page, false, anchor)
+          Reader.repaint_list(output, state, page.url, screen)
+          focus_name = follow_activation_focus(output, state, page.url, focused)
+          jumped = focus_name || jump_to_fragment(output, state, page, fragment_hash.not_nil!)
+          if focus_name
+            Reader.set_status(output, state, page.url, "Focus moved to \"#{focus_name}\".")
+          elsif jumped
+            Reader.set_status(output, state, page.url, "Moved to #{fragment_hash}.")
+          else
+            Reader.set_status(output, state, page.url,
+              "\"#{name}\" points at #{fragment_hash}, which is not in this view.")
+          end
+          return
         end
-        return
-      end
 
-      followed = report_after_action(output, state, page, previous_texts,
-        previous_url, anchor, screen, focused)
-      move_to_popup(output, state, page.url, item) unless followed
+        followed = report_after_action(output, state, page, previous_texts,
+          previous_url, anchor, screen, focused)
+        move_to_popup(output, state, page.url, item) unless followed
+      rescue err
+        # The click may already have run before its frame was replaced. Refresh
+        # the truthful page state, but never repeat an action with side effects.
+        if Frames.frame_gone?(err)
+          recover_gone_frame(output, state, page, previous_texts, anchor)
+          return
+        end
+        raise err
+      end
     end
 
     # ------------------------------------------------------------------

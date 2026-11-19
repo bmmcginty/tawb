@@ -1377,6 +1377,13 @@ function readerImplementations(index, keysModule) {
         };
       },
       async rescan() {
+        const failure = spec.core?.rescanFailure;
+        const failureApplies = failure
+          && (!failure.sources || failure.sources.includes(this.source));
+        if (failureApplies && (!failure.once || !this.rescanFailed)) {
+          this.rescanFailed = true;
+          throw new Error(failure.message ?? 'the rescan failed');
+        }
         // Each view has its own extractor, so a rescan after a view switch
         // answers with that view's own blocks.
         const perView = spec.core?.sourceBlocks?.[this.source];
@@ -3356,22 +3363,33 @@ function firefoxPageImplementations({ bidi, FirefoxPage, FirefoxFrame, extractAx
       // wire trace is the same and so this scenario exercises it.
       await page.mainFrame().evaluate(() => { const elements = Array.from(document.querySelectorAll('iframe,frame')); const positions = []; for (let index = 0; index < window.frames.length; index += 1) {   let element = null;   try {     element = elements.find((candidate) => candidate.contentWindow === window.frames[index]) || null;   } catch (e) { element = null; }   positions[index] = element ? elements.indexOf(element) : null; } return { hostCount: elements.length, positions };});
       const documents = {};
-      const frameTree = async (context) => {
-        const frame = new FirefoxFrame(session, context.context, page);
-        frame._url = context.url || 'about:blank';
-        const ordinary = await frame.evaluate(extractAxItems, { layout, visual: false });
-        const media = await frame.evaluate(
-          () => !!document.querySelector('video[controls],audio[controls]'));
-        documents[context.context] = media
-          ? await frame.evaluate(extractAxItems, { layout, visual: false, pierce: true })
-          : ordinary;
-        const children = await Promise.all((context.children || []).map(frameTree));
+      const treeFor = (context) => {
+        const children = (context.children || []).map(treeFor);
         return {
           frame: { id: context.context, url: context.url || 'about:blank' },
           ...(children.length ? { childFrames: children } : {}),
         };
       };
-      const tree = await frameTree(result.contexts[0]);
+      const extractDocuments = async (context, root = false) => {
+        const frame = new FirefoxFrame(session, context.context, page);
+        frame._url = context.url || 'about:blank';
+        try {
+          const ordinary = await frame.evaluate(extractAxItems, { layout, visual: false });
+          const media = await frame.evaluate(
+            () => !!document.querySelector('video[controls],audio[controls]'));
+          documents[context.context] = media
+            ? await frame.evaluate(extractAxItems, { layout, visual: false, pierce: true })
+            : ordinary;
+        } catch (error) {
+          const gone = /no such frame|browsing context with id .+ not found/i
+            .test(String(error && error.message ? error.message : error));
+          if (root || !gone) throw error;
+          return;
+        }
+        await Promise.all((context.children || []).map((child) => extractDocuments(child)));
+      };
+      const tree = treeFor(result.contexts[0]);
+      await extractDocuments(result.contexts[0], true);
       const made = await session.send('browsingContext.create', { type: 'tab', background: true });
       const created = new FirefoxPage(session, made.context, {});
       await created.close();

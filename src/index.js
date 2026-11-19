@@ -3339,27 +3339,38 @@ async function activateCurrent(state, page) {
     return;
   }
 
-  // A fragment link never left the document, whatever it did to the URL, so
-  // the buffer still stands and the reader keeps their place — until we move
-  // them deliberately, to where the link actually points.
-  if (fragment) {
-    await refresh(state, page, { anchor });
-    repaintList(state, page, screen);
-    const focusName = await followActivationFocus(state, page, focused);
-    const jumped = focusName || await jumpToFragment(state, page, fragment);
-    log('activate.fragment', { hash: fragment.slice(0, 60), jumped: !!jumped, focused: !!focusName });
-    setStatus(state, focusName
-      ? `Focus moved to "${focusName}".`
-      : (jumped
-        ? `Moved to ${fragment}.`
-        : `"${item.name}" points at ${fragment}, which is not in this view.`));
-    return;
-  }
+  try {
+    // A fragment link never left the document, whatever it did to the URL, so
+    // the buffer still stands and the reader keeps their place — until we move
+    // them deliberately, to where the link actually points.
+    if (fragment) {
+      await refresh(state, page, { anchor });
+      repaintList(state, page, screen);
+      const focusName = await followActivationFocus(state, page, focused);
+      const jumped = focusName || await jumpToFragment(state, page, fragment);
+      log('activate.fragment', { hash: fragment.slice(0, 60), jumped: !!jumped, focused: !!focusName });
+      setStatus(state, focusName
+        ? `Focus moved to "${focusName}".`
+        : (jumped
+          ? `Moved to ${fragment}.`
+          : `"${item.name}" points at ${fragment}, which is not in this view.`));
+      return;
+    }
 
-  const followed = await reportAfterAction(state, page, {
-    previousTexts, previousUrl, anchor, screen, focused,
-  });
-  if (!followed) moveToPopup(state, page, item);
+    const followed = await reportAfterAction(state, page, {
+      previousTexts, previousUrl, anchor, screen, focused,
+    });
+    if (!followed) moveToPopup(state, page, item);
+  } catch (err) {
+    // The click may already have run before its frame was replaced. Refresh
+    // the truthful page state, but never repeat an action with side effects.
+    if (isGoneFrameError(err)) {
+      await recoverGoneFrame(
+        state, page, item, previousTexts, anchor, 'activate.report.frame-gone');
+      return;
+    }
+    throw err;
+  }
 }
 
 // A control that opened something takes the reader to it. Without this the

@@ -195,4 +195,125 @@ for (const implementation of firefoxPageImplementations({
       created: 'created-context',
     });
   });
+
+  test(`${implementation.name}: a child removed between the frame census and extraction is omitted`, async () => {
+    const received = [];
+    const top = {
+      context: 'top-context',
+      url: 'https://example.test/final',
+      children: [{ context: 'child-context', url: 'https://frame.test/', children: [] }],
+    };
+    const value = await withEndpoint((message, peer) => {
+      received.push(message);
+      let result = {};
+      switch (message.method) {
+        case 'session.new':
+          result = { sessionId: 'session-1', capabilities: { browserName: 'firefox' } };
+          break;
+        case 'browsingContext.getTree':
+          result = { contexts: [top] };
+          break;
+        case 'browsingContext.navigate':
+          result = { navigation: 'navigation-1', url: top.url };
+          break;
+        case 'script.callFunction': {
+          const source = message.params.functionDeclaration;
+          const context = message.params.target.context;
+          if (source.includes('contentWindow === window.frames[index]')) {
+            result = {
+              type: 'success',
+              result: { type: 'object', value: [
+                ['hostCount', { type: 'number', value: 1 }],
+                ['positions', { type: 'array', value: [{ type: 'number', value: 0 }] }],
+              ] },
+            };
+          } else if (context === 'child-context') {
+            peer.send(JSON.stringify({
+              id: message.id,
+              type: 'error',
+              error: 'no such frame',
+              message: 'Browsing Context with id child-context not found',
+            }));
+            return;
+          } else if (source.includes('video[controls]')) {
+            result = { type: 'success', result: { type: 'boolean', value: false } };
+          } else {
+            result = remoteItems('document', 'Main', { childFrame: true });
+          }
+          break;
+        }
+        case 'browsingContext.create':
+          result = { context: 'created-context' };
+          break;
+        default:
+          result = {};
+      }
+      peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+    }, (url) => implementation.pageScenario(url, {
+      events: ['browsingContext.domContentLoaded'],
+      target: 'https://example.test/start',
+      layout: false,
+    }));
+
+    assert.ok(received.some(({ method, params }) => method === 'script.callFunction'
+      && params.target.context === 'child-context'), 'the disappearing child was not queried');
+    assert.deepEqual(value, {
+      session: { sessionId: 'session-1', capabilities: { browserName: 'firefox' } },
+      url: 'https://example.test/final',
+      tree: {
+        frame: { id: 'top-context', url: 'https://example.test/final' },
+        childFrames: [{ frame: { id: 'child-context', url: 'https://frame.test/' } }],
+      },
+      documents: {
+        'top-context': [
+          { role: 'document', name: 'Main' },
+          { role: 'iframe', name: 'Child frame', frameIndex: 0 },
+        ],
+      },
+      created: 'created-context',
+    });
+  });
+
+  test(`${implementation.name}: losing the root frame still fails the snapshot`, async () => {
+    const top = { context: 'top-context', url: 'https://example.test/final', children: [] };
+    await assert.rejects(withEndpoint((message, peer) => {
+      let result = {};
+      switch (message.method) {
+        case 'session.new':
+          result = { sessionId: 'session-1', capabilities: { browserName: 'firefox' } };
+          break;
+        case 'browsingContext.getTree':
+          result = { contexts: [top] };
+          break;
+        case 'browsingContext.navigate':
+          result = { navigation: 'navigation-1', url: top.url };
+          break;
+        case 'script.callFunction':
+          if (message.params.functionDeclaration.includes('contentWindow === window.frames[index]')) {
+            result = {
+              type: 'success',
+              result: { type: 'object', value: [
+                ['hostCount', { type: 'number', value: 0 }],
+                ['positions', { type: 'array', value: [] }],
+              ] },
+            };
+            break;
+          }
+          peer.send(JSON.stringify({
+            id: message.id,
+            type: 'error',
+            error: 'no such frame',
+            message: 'Browsing Context with id top-context not found',
+          }));
+          return;
+        default:
+          result = {};
+      }
+      peer.send(JSON.stringify({ id: message.id, type: 'success', result }));
+    }, (url) => implementation.pageScenario(url, {
+      events: ['browsingContext.domContentLoaded'],
+      target: 'https://example.test/start',
+      layout: false,
+    })), /no such frame: Browsing Context with id top-context not found/);
+  });
 }

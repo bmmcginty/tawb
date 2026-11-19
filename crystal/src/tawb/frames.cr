@@ -63,7 +63,16 @@ module Tawb
                                    items_for : String -> Array(JSON::Any)) : Nil
       object = tree.as_h
       frame_id = object["frame"].as_h["id"].as_s
-      items = items_for.call(frame_id)
+      items = begin
+        items_for.call(frame_id)
+      rescue err
+        # The tree is a census, not a lock. A child may disappear before its
+        # document is extracted; it then contributes no content, just as the
+        # JavaScript walker and the DOM views already do. Losing the root is a
+        # tab failure rather than a disposable-frame race, so keep surfacing it.
+        return if depth > 0 && frame_gone?(err)
+        raise err
+      end
       documents[frame_id] = items
       return if depth >= MAX_DEPTH || remaining[0] <= 0
 

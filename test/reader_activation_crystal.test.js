@@ -149,6 +149,29 @@ test('a control whose frame has gone is reported after the page is refreshed',
     assert.ok(!result.state.statusMsg.includes('49392123905'));
   });
 
+test('a frame that disappears during post-activation refresh is recovered without repeating the action',
+  { skip: needsCrystal }, async () => {
+    const blocks = [
+      { text: 'before', item: { role: 'text' } },
+      { text: '{Continue}', item: { role: 'link', name: 'Continue', href: '/next' } },
+      { text: 'after', item: { role: 'text' } },
+    ];
+    const state = stateFor(blocks, { cursor: 1 }, {
+      rescanFailure: {
+        message: 'no such frame: Browsing Context with id 485331304461 not found',
+        once: true,
+      },
+      rescanBlocks: blocks,
+    });
+    const result = await runBoth('frame gone after activation', state, [{ op: 'activate' }], {
+      url: PAGE_URL, title: 'Example',
+    });
+    assert.equal(result.state.statusMsg,
+      'The page changed while that action ran; it was refreshed.');
+    assert.equal(result.state.activated.length, 1, 'the possibly completed link was repeated');
+    assert.ok(!result.state.statusMsg.includes('485331304461'));
+  });
+
 test('a timed-out activation says how long was given', { skip: needsCrystal }, async () => {
   const blocks = [
     { text: 'before', item: { role: 'text' } },

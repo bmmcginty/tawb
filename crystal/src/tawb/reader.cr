@@ -855,13 +855,13 @@ module Tawb
 
       def rescan : Nil
         if failure = @rescan_failure
-          if views = failure.as_h["sources"]?.try(&.as_a?)
-            if views.any? { |view| view.as_s == @source }
-              raise IO::Error.new(failure.as_h["message"]?.try(&.as_s?) ||
-                                  "native interactive extraction for #{@source} is not ported")
-            end
-          else
-            raise IO::Error.new(failure.as_h["message"]?.try(&.as_s?) || "the rescan failed")
+          object = failure.as_h
+          views = object["sources"]?.try(&.as_a?)
+          applies = views.nil? || views.any? { |view| view.as_s == @source }
+          if applies
+            @rescan_failure = nil if object["once"]?.try(&.as_bool?)
+            raise IO::Error.new(object["message"]?.try(&.as_s?) ||
+                                (views ? "native interactive extraction for #{@source} is not ported" : "the rescan failed"))
           end
         end
         if incoming = @source_blocks[@source]?
