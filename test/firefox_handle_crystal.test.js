@@ -168,6 +168,13 @@ for (const implementation of firefoxHandleImplementations({
             value = { type: 'number', value: 3 };
           } else if (declaration.includes('el.checked')) {
             value = { type: 'boolean', value: true };
+          } else if (declaration.includes('contentWindow === window.frames[index]')) {
+            // childFrames asks the page which iframe element owns each child
+            // context. The one child is the first element here.
+            value = { type: 'object', value: [
+              ['hostCount', { type: 'number', value: 2 }],
+              ['positions', { type: 'array', value: [{ type: 'number', value: 0 }] }],
+            ] };
           } else if (declaration.includes('scrollIntoView')) {
             // prepareRealClick's answer: the point it vetted, and the
             // approach point three pixels above the element's holder. The
@@ -265,8 +272,9 @@ for (const implementation of firefoxHandleImplementations({
       '(sel) => document.querySelectorAll(sel).length');
     assert.deepEqual(counted.params.arguments, [{ type: 'string', value: 'iframe' }]);
 
-    assert.deepEqual(calls[10].params.target, { context: 'child-a' },
-      'a child frame answers from its own document');
+    const childCall = calls.find((call) => call.params.target.context === 'child-a');
+    assert.ok(childCall, 'a child frame answers from its own document');
+    assert.equal(childCall.params.functionDeclaration, '(el) => el.tagName');
 
     const disown = received.find((message) => message.method === 'script.disown');
     assert.deepEqual(disown.params, {

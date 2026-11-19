@@ -897,10 +897,10 @@ module Tawb
       end
 
       # The frame a descriptor names. Frames the markup mentioned are matched
-      # by position — the Nth frame element belongs to the Nth child context,
-      # the same assumption the reader has always made — and ones the markup
-      # did not mention are named by where they sat in the browser's own list,
-      # which is the only order they have.
+      # by document position — the child contexts have already been placed at
+      # the index of the element that owns them — and ones the markup did not
+      # mention are named by where they sat in the browser's own list, which
+      # is the only order they have.
       private def frame_for(scope : DocumentEnv, desc : JSON::Any) : DocumentEnv?
         found = unmentioned_frames(scope)
         path = desc.as_h["path"]?.try(&.as_s?) || ""
@@ -980,12 +980,15 @@ module Tawb
           next if child.nil? || depth + 1 > MAX_DEPTH || budget[0] <= 0
 
           url = child.url
-          # about:blank frames are placeholders, and a frame that reappears at
-          # the same url inside itself would recurse forever.
-          next if url.empty? || url == "about:blank" || seen.includes?(url)
+          # about:blank can hold a real document: Proton Mail writes the
+          # message being read into one. Read it, but do not descend into a
+          # frame that repeats a non-blank address, which would recurse forever.
+          blank = url.empty? || url == "about:blank"
+          next if url.empty? || (!blank && seen.includes?(url))
 
           budget[0] -= 1
-          walk_into(child, registry, frame_id, depth + 1, budget, seen | Set{url}, walked)
+          walk_into(child, registry, frame_id, depth + 1, budget,
+            blank ? seen : seen | Set{url}, walked)
         end
       end
 

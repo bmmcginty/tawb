@@ -731,7 +731,7 @@ async function startEdbServer({
     const ordered = await orderedChildFrames(frame).catch(() => []);
     const all = await everyChildFrame(frame);
     const placed = new Set(ordered.map(frameKey));
-    const hidden = all.filter((child) => !placed.has(frameKey(child)));
+    const hidden = all.filter((child) => child && !placed.has(frameKey(child)));
     return { ordered, hidden, mentioned };
   }
 
@@ -753,10 +753,10 @@ async function startEdbServer({
   }
 
   // The frame a descriptor names. Frames the markup mentioned are matched by
-  // position — the Nth frame element belongs to the Nth child context, the
-  // same assumption the reader has always made — and ones it did not are
-  // named by where they sat in the browser's own list, which is the only
-  // order they have.
+  // document position — the child contexts have already been placed at the
+  // index of the element that owns them — and ones it did not are named by
+  // where they sat in the browser's own list, which is the only order they
+  // have.
   async function frameFor(scope, desc) {
     const from = typeof scope.mainFrame === 'function' ? scope.mainFrame() : scope;
     const { ordered, hidden } = await unmentionedFrames(from, { tokens: [] });
@@ -828,13 +828,15 @@ async function startEdbServer({
       if (!child || depth + 1 > MAX_DEPTH || budget.remaining <= 0) continue;
 
       const url = String(child.url() || '');
-      // about:blank frames are placeholders, and a frame that reappears at
-      // the same url inside itself would recurse forever.
-      if (!url || url === 'about:blank' || seen.has(url)) continue;
+      // about:blank can hold a real document: Proton Mail writes the message
+      // being read into one. Read it, but do not descend into a frame that
+      // repeats a non-blank address, which would recurse forever.
+      const blank = !url || url === 'about:blank';
+      if (!url || (!blank && seen.has(url))) continue;
 
       budget.remaining -= 1;
       await walkInto(child, registry, stamped.frameId, depth + 1, budget,
-        new Set([...seen, url]), out);
+        blank ? seen : new Set([...seen, url]), out);
     }
   }
 

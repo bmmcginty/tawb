@@ -120,8 +120,8 @@ class CdpHandle {
 
   // The document inside this element, when this element is a frame. The
   // protocol answers directly, which is the one place Chrome is kinder than
-  // BiDi — Firefox has to match the Nth frame element to the Nth child
-  // context by position.
+  // BiDi — Firefox has to match an element to a child context by identity
+  // through window.frames.
   async contentFrame() {
     const described = await this.#session()
       .send('DOM.describeNode', { objectId: this.objectId })

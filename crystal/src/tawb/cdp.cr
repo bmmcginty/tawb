@@ -642,8 +642,8 @@ module Tawb
 
       # The document inside this element, when this element is a frame. The
       # protocol answers directly, which is the one place Chrome is kinder
-      # than BiDi: Firefox has to match the Nth frame element to the Nth child
-      # context by position (see `FirefoxDriver::FrameRef`).
+      # than BiDi: Firefox matches an element to a child context by identity
+      # through window.frames (see `FirefoxDriver::FrameRef`).
       def content_frame : Frame?
         described = begin
           @page.command("DOM.describeNode", {"objectId" => JSON::Any.new(@object_id)}, @session_id)

@@ -41,6 +41,13 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
     <h1>Heading</h1><p>Hello <a href="https://example.test/">Docs</a> after</p>
     ${hidden}
     <iframe title="Details" srcdoc="<h2>Inside</h2><p>Child words</p>"></iframe>
+    <iframe title="Written blank" src="about:blank"></iframe>
+    <script>
+      const doc = document.querySelector('iframe[title="Written blank"]').contentDocument;
+      doc.open();
+      doc.write('<!doctype html><p>Written into a blank frame.</p>');
+      doc.close();
+    </script>
     <button>Save</button></body></html>`);
 
   const baseEnv = {
@@ -64,7 +71,8 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
   assert.equal(crystal.status, 0, crystal.stderr);
   assert.equal(crystal.stderr, '');
   assert.equal(crystal.stdout, javascript.stdout);
-  assert.equal(crystal.stdout, '# Heading\nHello\n{Docs}\nafter\n<frame: Details>\n## Inside\nChild words\n[*Save]\n');
+  assert.equal(crystal.stdout, '# Heading\nHello\n{Docs}\nafter\n<frame: Details>\n## Inside\nChild words\n'
+    + '<frame: Written blank>\nWritten into a blank frame.\n[*Save]\n');
 
   fs.mkdirSync(path.join(baseEnv.XDG_CONFIG_HOME, 'tawb'), { recursive: true });
   fs.writeFileSync(path.join(baseEnv.XDG_CONFIG_HOME, 'tawb', 'settings.lynx.json'), JSON.stringify({
@@ -91,6 +99,13 @@ test('the native Firefox dump matches JavaScript on a real Firefox page', { skip
     <h1>Heading</h1><p>Hello <a href="https://example.test/">Docs</a> after</p>
     ${hidden}
     <iframe title="Details" srcdoc="<h2>Inside</h2><p>Child words</p>"></iframe>
+    <iframe title="Written blank" src="about:blank"></iframe>
+    <script>
+      const doc = document.querySelector('iframe[title="Written blank"]').contentDocument;
+      doc.open();
+      doc.write('<!doctype html><p>Written into a blank frame.</p>');
+      doc.close();
+    </script>
     <button>Save</button></body></html>`);
 
   const baseEnv = {
@@ -118,7 +133,8 @@ test('the native Firefox dump matches JavaScript on a real Firefox page', { skip
   assert.equal(crystal.stderr, '');
   assert.equal(crystal.stdout, javascript.stdout);
   assert.equal(crystal.stdout,
-    '# Heading\nHello\n{Docs}\nafter\n<frame: Details>\n## Inside\nChild words\n[*Save]\n');
+    '# Heading\nHello\n{Docs}\nafter\n<frame: Details>\n## Inside\nChild words\n'
+    + '<frame: Written blank>\nWritten into a blank frame.\n[*Save]\n');
 
   const javascriptLynx = run(process.execPath, [
     'src/index.js', '--front-end', 'lynx', '--dump', '--browser', 'firefox', page,
@@ -129,6 +145,68 @@ test('the native Firefox dump matches JavaScript on a real Firefox page', { skip
   assert.equal(javascriptLynx.status, 0, javascriptLynx.stderr);
   assert.equal(crystalLynx.status, 0, crystalLynx.stderr);
   assert.equal(crystalLynx.stdout, javascriptLynx.stdout);
+});
+
+test('the native Firefox dump pairs reordered frames with their documents', { skip: !enabled }, async () => {
+  const childServer = http.createServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(request.url === '/first'
+      ? '<!doctype html><p>Words in the first frame.</p>'
+      : '<!doctype html><p>Words in the second frame.</p>');
+  });
+  const parentServer = http.createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(`<!doctype html><title>reordered frames parent</title><body>
+      <script>
+        let loaded = 0;
+        const ready = () => {
+          if (++loaded === 2) document.body.insertBefore(second, first);
+        };
+        const first = document.createElement('iframe');
+        first.title = 'first frame';
+        first.src = 'http://127.0.0.1:${childServer.address().port}/first';
+        first.onload = ready;
+        const second = document.createElement('iframe');
+        second.title = 'second frame';
+        second.src = 'http://127.0.0.1:${childServer.address().port}/second';
+        second.onload = ready;
+        document.body.appendChild(first);
+        document.body.appendChild(second);
+      </script></body>`);
+  });
+  await listen(childServer, '127.0.0.1');
+  await listen(parentServer, '127.0.0.1');
+  const root = tempDir('tawb-crystal-reordered-frames-');
+  const env = {
+    ...process.env,
+    HOME: path.join(root, 'home'),
+    XDG_CONFIG_HOME: path.join(root, 'config'),
+    XDG_CACHE_HOME: path.join(root, 'cache'),
+  };
+  fs.mkdirSync(env.HOME, { recursive: true });
+  try {
+    const target = `http://127.0.0.1:${parentServer.address().port}/`;
+    const javascript = await runAsync(process.execPath,
+      ['src/index.js', '--dump', '--browser', 'firefox', target], {
+        cwd: ROOT,
+        env: { ...env, XDG_DATA_HOME: path.join(root, 'js-data') },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    const crystal = await runAsync(path.join(ROOT, 'bin', 'tawb'),
+      ['--dump', '--browser', 'firefox', target], {
+        cwd: ROOT,
+        env: { ...env, XDG_DATA_HOME: path.join(root, 'crystal-data') },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    assert.equal(javascript.status, 0, javascript.stderr);
+    assert.equal(crystal.status, 0, crystal.stderr);
+    assert.equal(crystal.stdout, javascript.stdout);
+    assert.equal(crystal.stdout,
+      '<frame: second frame>\nWords in the second frame.\n'
+      + '<frame: first frame>\nWords in the first frame.\n');
+  } finally {
+    await Promise.all([closeServer(parentServer), closeServer(childServer)]);
+  }
 });
 
 test('the native dump reads a closed shadow root through CDP', { skip: !enabled }, () => {
@@ -169,7 +247,7 @@ test('the native dump includes an out-of-process iframe', { skip: !enabled }, as
     response.end(`<!doctype html><h1>Parent document</h1>
       <iframe title="foreign frame" src="http://localhost:${childServer.address().port}/"></iframe>`);
   });
-  await listen(childServer);
+  await listen(childServer, '127.0.0.1');
   await listen(parentServer, '127.0.0.1');
   const env = {
     ...process.env,

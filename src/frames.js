@@ -121,9 +121,12 @@ function frameKey(frame) {
 // a closed shadow root cannot be found by querySelectorAll, so a walker that
 // only ever looks at elements will never learn that document exists at all.
 async function everyChildFrame(frame) {
-  if (typeof frame.childFrames !== 'function') return [];
+  const list = typeof frame.orderedChildFrames === 'function'
+    ? frame.orderedChildFrames.bind(frame)
+    : frame.childFrames;
+  if (typeof list !== 'function') return [];
   try {
-    const children = frame.childFrames();
+    const children = list();
     return Array.isArray(children) ? children : await children;
   } catch {
     return [];
@@ -242,15 +245,21 @@ async function walk(frame, source, depth, budget, seen, visited, driver, layout 
     placed.add(frameKey(child));
 
     const url = child.url();
-    // about:blank frames are placeholders, and a frame that reappears at the
-    // same URL inside itself would recurse forever.
-    if (!url || url === 'about:blank' || seen.has(url)) continue;
+    // about:blank is not a promise that the document is empty. Proton Mail
+    // writes the message being read into one, and that document is the whole
+    // reason the frame is on the page. Read it; a blank placeholder simply
+    // contributes no lines. Only a repeated non-blank address is skipped,
+    // because a frame that reappears at the same address inside itself would
+    // recurse until the depth limit.
+    const blank = !url || url === 'about:blank';
+    if (!url || (!blank && seen.has(url))) continue;
 
     budget.remaining -= 1;
     if (budget.remaining < 0) break;
 
     const nested = await walk(
-      child, source, depth + 1, budget, new Set([...seen, url]), visited, driver, layout, visual);
+      child, source, depth + 1, budget, blank ? seen : new Set([...seen, url]),
+      visited, driver, layout, visual);
     out.push(...nested);
   }
 
@@ -273,11 +282,18 @@ async function walk(frame, source, depth, budget, seen, visited, driver, layout 
     if (budget.remaining <= 0) break;
     let url = '';
     try { url = child.url() || ''; } catch { url = ''; }
-    if (!url || url === 'about:blank' || seen.has(url)) continue;
+    // A blank frame the markup never mentioned is normally an empty
+    // placeholder, so reading it is worthwhile only when it turns out to
+    // hold something. The same is true of one whose document was written
+    // into after the frame was created.
+    const blank = !url || url === 'about:blank';
+    if (!url || (!blank && seen.has(url))) continue;
 
     budget.remaining -= 1;
     const nested = await walk(
-      child, source, depth + 1, budget, new Set([...seen, url]), visited, driver, layout, visual);
+      child, source, depth + 1, budget, blank ? seen : new Set([...seen, url]),
+      visited, driver, layout, visual);
+    if (blank && !nested.length) continue;
 
     // The marker goes in even when nothing could be read out of the frame.
     // A document whose contents are behind a closed shadow root reads as

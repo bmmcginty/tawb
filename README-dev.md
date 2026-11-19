@@ -180,9 +180,16 @@ itself two lines later, and it names a frame from its `title` where
 Playwright emitted a bare `<frame>`. `compare` now holds the two engines
 against each other instead.
 
-Child frames work by position, because BiDi offers no element-to-context link:
-the Nth frame element in a document belongs to the Nth child context of it.
-That is the same ordering assumption the AX path has always relied on. Live updating, the clock's fast text patch and the reading freeze all
+BiDi still offers no element-to-context link. Child frames are matched by
+asking the parent document which frame element owns each child window: for
+every element, find its `contentWindow` among `window.frames`, which works
+even when the child is cross-origin. That gives the element's document
+position, and the browser's contexts are then placed at those positions.
+The two orders are not the same — a frame moved in the DOM keeps its browsing
+context but changes its element position, as Proton Mail does with its message
+pane — so matching by the browser's order alone can read the wrong document.
+AX, PAGE, INSPECT, SOURCE and the native Crystal tree all use the same
+placement pass. Live updating, the clock's fast text patch and the reading freeze all
 work identically — 28 patches and no snapshots on a one-second clock, the
 same as Chromium.
 

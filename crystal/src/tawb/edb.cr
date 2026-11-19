@@ -76,8 +76,8 @@ module Tawb
 
       # The documents the markup mentions, in document order. Matched by the
       # element that hosts each one, which Chromium answers directly and
-      # Firefox answers by position — the same two answers the JavaScript
-      # original gets from the same two engines.
+      # Firefox answers by identity through window.frames — the same two
+      # answers the JavaScript original gets from the same two engines.
       def ordered_frames : Array(DocumentEnv)
         found = [] of DocumentEnv
         @frame.query_all("iframe, frame").each do |handle|

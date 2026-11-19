@@ -49,6 +49,51 @@ test('a cross-origin iframe is read and activated through its own context', asyn
 
   parentServer = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    if (req.url === '/written') {
+      res.end(`<!doctype html><title>written frame parent</title>
+        <p>Before the frame</p>
+        <iframe title="Email content" src="about:blank"></iframe>
+        <p>After the frame</p>
+        <script>
+          const doc = document.querySelector('iframe').contentDocument;
+          doc.open();
+          doc.write('<!doctype html><p>Words written into a blank frame.</p>');
+          doc.close();
+        </script>`);
+      return;
+    }
+    if (req.url === '/reordered') {
+      // Move a still-connected iframe in the DOM. Firefox keeps the browsing
+      // contexts in the order the frames were made, so the first element no
+      // longer owns the first child context. Proton Mail does this to the
+      // message pane, and pairing by position alone swapped the documents.
+      res.end(`<!doctype html><title>reordered frames parent</title><body>
+        <script>
+          const make = (title) => {
+            const frame = document.createElement('iframe');
+            frame.title = title;
+            frame.src = 'about:blank';
+            document.body.appendChild(frame);
+            return frame;
+          };
+          const first = make('first frame');
+          const second = make('second frame');
+          document.body.insertBefore(second, first);
+          const write = (frame, text) => {
+            const doc = frame.contentDocument;
+            doc.open();
+            doc.write('<!doctype html><p>' + text + '</p>');
+            doc.close();
+          };
+          // Moving a connected frame can reset its document, so write after
+          // the new order is in place.
+          setTimeout(() => {
+            write(second, 'Words in the second frame.');
+            write(first, 'Words in the first frame.');
+          }, 0);
+        </script></body>`);
+      return;
+    }
     if (req.url === '/hidden') {
       res.end('<!doctype html><p>Hidden tracker document.</p>');
       return;
@@ -97,4 +142,51 @@ test('a cross-origin iframe is read and activated through its own context', asyn
   blocks = await snapshotFrameTree(page, 'ax', { driver });
   assert.ok(blocks.some((block) => block.text.includes('Pressed in the other origin')),
     'activation did not reach the child document');
+});
+
+test('a document written into an about:blank frame is read', async () => {
+  driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
+  const page = driver.context.pages()[0] || await driver.context.newPage();
+  await page.goto(`http://127.0.0.1:${parentServer.address().port}/written`, {
+    waitUntil: 'domcontentloaded',
+  });
+
+  let blocks = [];
+  for (let tries = 0; tries < 20; tries += 1) {
+    blocks = await snapshotFrameTree(page, 'ax', { driver });
+    if (blocks.some((block) => block.text.includes('Words written into a blank frame.'))) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  const before = blocks.findIndex((block) => block.text.includes('Before the frame'));
+  const inside = blocks.findIndex((block) => block.text.includes('Words written into a blank frame.'));
+  const after = blocks.findIndex((block) => block.text.includes('After the frame'));
+  assert.ok(inside > -1, 'the document written into the blank frame was not read');
+  assert.ok(before > -1 && before < inside && inside < after,
+    'the frame document was not spliced in where the frame sits');
+});
+
+test('a frame moved in the DOM is paired with the document it owns', async () => {
+  driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
+  const page = driver.context.pages()[0] || await driver.context.newPage();
+  await page.goto(`http://127.0.0.1:${parentServer.address().port}/reordered`, {
+    waitUntil: 'domcontentloaded',
+  });
+
+  let blocks = [];
+  for (let tries = 0; tries < 20; tries += 1) {
+    blocks = await snapshotFrameTree(page, 'ax', { driver });
+    if (blocks.some((block) => block.text.includes('Words in the first frame.'))
+      && blocks.some((block) => block.text.includes('Words in the second frame.'))) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  const secondFrame = blocks.findIndex((block) => block.text.includes('frame: second frame'));
+  const secondWords = blocks.findIndex((block) => block.text.includes('Words in the second frame.'));
+  const firstFrame = blocks.findIndex((block) => block.text.includes('frame: first frame'));
+  const firstWords = blocks.findIndex((block) => block.text.includes('Words in the first frame.'));
+  assert.ok(secondFrame > -1 && secondWords > secondFrame,
+    'the second frame lost its own document');
+  assert.ok(firstFrame > secondWords && firstWords > firstFrame,
+    'the first frame lost its own document');
 });

@@ -77,10 +77,10 @@ module Tawb
         fallback = {fallback + 1, index + 1}.max
         next if used.includes?(index)
         child = children[index]?
-        next unless child
+        next unless child && child.as_h?
         used << index
         remaining[0] -= 1
-        collect_frame(child, documents, depth + 1, remaining, items_for)
+        collect_frame(child.not_nil!, documents, depth + 1, remaining, items_for)
         break if remaining[0] <= 0
       end
     end
@@ -103,10 +103,10 @@ module Tawb
         index = frame_index(item, fallback)
         fallback = {fallback + 1, index + 1}.max
         child = children[index]?
-        next unless child
+        next unless child && child.as_h?
         next if remaining[0] <= 0
         remaining[0] -= 1
-        output.concat(build_frame(child, depth + 1, remaining, blocks_for))
+        output.concat(build_frame(child.not_nil!, depth + 1, remaining, blocks_for))
       end
       output
     end

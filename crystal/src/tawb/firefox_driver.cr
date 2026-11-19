@@ -413,8 +413,8 @@ module Tawb
       end
 
       # Elements embedded in this one, by selector: BiDi will not hand back a
-      # live list, so what comes back is one reference per position — the Nth
-      # frame element resolves to the Nth child context.
+      # live list, so what comes back is one reference per document position.
+      # FrameRef places the child contexts at those positions.
       def document_id : String
         @context_id
       end
@@ -443,9 +443,17 @@ module Tawb
         (0...count).map { |index| FrameRef.new(self, index) }
       end
 
-      # The child documents of this one, in the order the browser reports
-      # them, which is document order.
+      # The child documents of this one, placed at the index of the frame
+      # element that owns them. The browser's browsing-context order is not
+      # document order: a page that moves a frame in the DOM, as Proton Mail
+      # does with its message pane, can have its first <iframe> owned by the
+      # second context. `ordered_child_frames` keeps the holes so an element
+      # index still means that element.
       def child_frames : Array(Frame)
+        ordered_child_frames.compact
+      end
+
+      def ordered_child_frames : Array(Frame?)
         tree = begin
           @session.command("browsingContext.getTree", {
             "root"     => JSON::Any.new(@context_id),
@@ -456,11 +464,48 @@ module Tawb
         end
         contexts = tree.try(&.["contexts"]?).try(&.as_a?) || [] of JSON::Any
         children = contexts[0]?.try(&.as_h?).try(&.["children"]?).try(&.as_a?) || [] of JSON::Any
-        children.map do |child|
+        frames = children.map do |child|
           object = child.as_h
           Frame.new(@session, object["context"].as_s, @page,
             object["url"]?.try(&.as_s?) || "about:blank")
         end
+
+        placement = begin
+          evaluate("() => {" \
+            " const elements = Array.from(document.querySelectorAll('iframe,frame'));" \
+            " const positions = [];" \
+            " for (let index = 0; index < window.frames.length; index += 1) {" \
+            "   let element = null;" \
+            "   try {" \
+            "     element = elements.find((candidate) => candidate.contentWindow === window.frames[index]) || null;" \
+            "   } catch (e) { element = null; }" \
+            "   positions[index] = element ? elements.indexOf(element) : null;" \
+            " }" \
+            " return { hostCount: elements.length, positions };" \
+            "}").as_h?
+        rescue
+          nil
+        end
+        host_count = placement.try(&.["hostCount"]?.try(&.as_i?))
+        positions = placement.try(&.["positions"]?.try(&.as_a?))
+        return Array(Frame?).new(frames.size) { |index| frames[index] } unless host_count && positions
+
+        count = host_count.to_i
+        ordered = Array(Frame?).new(count) { nil }
+        unplaced = [] of Frame
+        frames.each_with_index do |frame, browser_index|
+          position = positions[browser_index]?.try(&.as_i?)
+          if position && position >= 0 && position < count
+            ordered[position.to_i] = frame
+          else
+            # A document in a closed shadow root has no element ordinary page
+            # code can find. It belongs after every mentionable frame, where
+            # the frame walker looks for unmentioned documents.
+            unplaced << frame
+          end
+        end
+        unplaced.each { |frame| ordered << frame }
+        ordered
       end
 
       # BiDi input actions name the document that owns the focused element, so
@@ -645,7 +690,7 @@ module Tawb
       end
 
       def content_frame : Frame?
-        @parent.child_frames[@index]?
+        @parent.ordered_child_frames[@index]?
       end
 
       def dispose : Nil
@@ -1178,16 +1223,60 @@ module Tawb
       private def frame_tree(context : JSON::Any) : JSON::Any
         object = context.as_h
         children = object["children"]?.try(&.as_a?) || [] of JSON::Any
+        placed = place_child_frames(object["context"].as_s, children)
         tree = {
           "frame" => JSON::Any.new({
             "id"  => JSON::Any.new(object["context"].as_s),
             "url" => JSON::Any.new(object["url"]?.try(&.as_s?) || "about:blank"),
           }),
         }
-        unless children.empty?
-          tree["childFrames"] = JSON::Any.new(children.map { |child| frame_tree(child) })
+        unless placed.empty?
+          tree["childFrames"] = JSON::Any.new(placed.map do |child|
+            child ? frame_tree(child) : JSON::Any.new(nil)
+          end)
         end
         JSON::Any.new(tree)
+      end
+
+      # Put GetTree's child contexts into the document order of the elements
+      # that own them. A null slot is a frame element the browser did not name,
+      # kept so the following slots still answer the right index.
+      private def place_child_frames(context_id : String,
+                                     children : Array(JSON::Any)) : Array(JSON::Any?)
+        return Array(JSON::Any?).new(0) if children.empty?
+        placement = begin
+          Frame.new(@protocol, context_id, self).evaluate("() => {" \
+            " const elements = Array.from(document.querySelectorAll('iframe,frame'));" \
+            " const positions = [];" \
+            " for (let index = 0; index < window.frames.length; index += 1) {" \
+            "   let element = null;" \
+            "   try {" \
+            "     element = elements.find((candidate) => candidate.contentWindow === window.frames[index]) || null;" \
+            "   } catch (e) { element = null; }" \
+            "   positions[index] = element ? elements.indexOf(element) : null;" \
+            " }" \
+            " return { hostCount: elements.length, positions };" \
+            "}").as_h?
+        rescue
+          nil
+        end
+        host_count = placement.try(&.["hostCount"]?.try(&.as_i?))
+        positions = placement.try(&.["positions"]?.try(&.as_a?))
+        return Array(JSON::Any?).new(children.size) { |index| children[index] } unless host_count && positions
+
+        count = host_count.to_i
+        ordered = Array(JSON::Any?).new(count) { nil }
+        unplaced = [] of JSON::Any
+        children.each_with_index do |child, browser_index|
+          position = positions[browser_index]?.try(&.as_i?)
+          if position && position >= 0 && position < count
+            ordered[position.to_i] = child
+          else
+            unplaced << child
+          end
+        end
+        unplaced.each { |child| ordered << child }
+        ordered
       end
     end
   end

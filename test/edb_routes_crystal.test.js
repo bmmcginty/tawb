@@ -408,6 +408,27 @@ test('a frame can be read as a page of its own', { skip }, async () => {
   assert.match(answers[1].body, /\/click">Verify<\/a>/);
 });
 
+test('a document written into an about:blank frame is read', { skip }, async () => {
+  const { answers } = await compare('a blank frame holding a written document', {
+    browser: browser({
+      tabs: [{
+        url: 'https://mail.example/one',
+        title: 'stub',
+        pageTitle: 'stub page',
+        tokens: PAGE_TOKENS,
+        frames: [{
+          url: 'about:blank',
+          title: 'Email content',
+          tokens: [{ kind: 'text', text: 'the message written into the blank frame' }],
+        }],
+      }],
+    }),
+    requests: [{ path: '/t/testtoken/1/' }],
+  });
+  assert.equal(answers[0].status, 200);
+  assert.match(answers[0].body, /the message written into the blank frame/);
+});
+
 test('a document that cannot be read does not take the page with it', { skip }, async () => {
   const { answers } = await compare('an unreadable frame', {
     browser: browser({

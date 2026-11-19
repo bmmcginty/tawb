@@ -30,12 +30,11 @@ const { askFirefoxLibrary } = require('./firefox_library');
 //   the AX view    comes from our own implementation in ax_own.js, because
 //                  Playwright is not here to compute it. Chromium keeps
 //                  using Playwright's.
-//   child frames   BiDi has no element-to-context link, so an iframe element
-//                  is matched to its browsing context by position: the Nth
-//                  frame element in a document belongs to the Nth child
-//                  context of that document. Which is the same ordering
-//                  assumption the AX path has always relied on to splice
-//                  frames into the right place.
+//   child frames   BiDi has no element-to-context link, so each child window
+//                  is matched to its iframe element by comparing contentWindow
+//                  with window.frames. That puts the browser's contexts in
+//                  document order even when the page has moved a frame, which
+//                  is what lets the AX path splice frames into the right place.
 
 const NAVIGATION_EVENTS = [
   'browsingContext.load',
@@ -152,7 +151,8 @@ class FirefoxFrame {
 
   // Only ever called for frame elements, and what the caller needs from each
   // is its child document. BiDi will not map an element to a context, so what
-  // comes back is a position: the Nth frame element in this document.
+  // comes back is a position in document order. childFrames() puts the browser's
+  // contexts back into that order.
   async $$(selector) {
     const count = await this.evaluate(
       (sel) => document.querySelectorAll(sel).length, selector);
@@ -161,18 +161,59 @@ class FirefoxFrame {
     return refs;
   }
 
-  // The child documents of this one, in the order the browser reports them,
-  // which is document order.
+  // The child documents of this one, placed at the index of the frame element
+  // that owns them.
+  //
+  // Firefox reports browsing contexts in their own order, which is not the
+  // document order of the <iframe> elements. A page that moves a frame in the
+  // DOM, as Proton Mail does with its message pane, can have its first
+  // <iframe> owned by the second browsing context. Pairing by position alone
+  // then reads the wrong document, and the message the reader opened vanishes.
+  //
+  // The page can still compare each element's contentWindow with the windows in
+  // window.frames, even when the child is cross-origin. That turns the browser's
+  // order into document positions without naming a context in the page.
   async childFrames() {
+    const ordered = await this.orderedChildFrames();
+    return ordered.filter(Boolean);
+  }
+
+  // The same list before the empty slots are removed. An empty slot is a DOM
+  // frame element whose document the browser did not name; it still has to
+  // occupy its index, or every frame after it would answer for the wrong
+  // element. See childFrames().
+  async orderedChildFrames() {
     const tree = await this.session.send('browsingContext.getTree', {
       root: this.contextId, maxDepth: 1,
     }).catch(() => null);
     const children = tree?.contexts?.[0]?.children || [];
-    return children.map((child) => {
+    const frames = children.map((child) => {
       const frame = new FirefoxFrame(this.session, child.context, this.page);
       frame._url = child.url || 'about:blank';
       return frame;
     });
+
+    // Keep this on one line and byte-for-byte the same as the Crystal driver's
+    // placement source: the wire differential compares the script text too.
+    const placement = await this.evaluate(() => { const elements = Array.from(document.querySelectorAll('iframe,frame')); const positions = []; for (let index = 0; index < window.frames.length; index += 1) {   let element = null;   try {     element = elements.find((candidate) => candidate.contentWindow === window.frames[index]) || null;   } catch (e) { element = null; }   positions[index] = element ? elements.indexOf(element) : null; } return { hostCount: elements.length, positions };}).catch(() => null);
+    if (!placement || !Array.isArray(placement.positions)) return frames;
+
+    const ordered = new Array(placement.hostCount);
+    const unplaced = [];
+    frames.forEach((frame, browserIndex) => {
+      const documentIndex = placement.positions[browserIndex];
+      if (Number.isInteger(documentIndex)
+        && documentIndex >= 0 && documentIndex < placement.hostCount) {
+        ordered[documentIndex] = frame;
+      } else {
+        // A document in a closed shadow root has no element that ordinary page
+        // code can find. It belongs after every mentionable frame, which is
+        // where the frame walker looks for unmentioned documents.
+        unplaced.push(frame);
+      }
+    });
+    unplaced.forEach((frame, index) => { ordered[placement.hostCount + index] = frame; });
+    return ordered;
   }
 
   // BiDi input actions name the document that owns the focused element, so a
@@ -192,7 +233,7 @@ class FirefoxFrameRef {
   }
 
   async contentFrame() {
-    const children = await this.parent.childFrames();
+    const children = await this.parent.orderedChildFrames();
     return children[this.index] || null;
   }
 

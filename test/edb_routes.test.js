@@ -299,6 +299,31 @@ test("a frame's contents are read into the page, where the frame sits", async ()
   }
 });
 
+test('a document written into an about:blank frame is read', async () => {
+  // Proton Mail puts the message being read in an about:blank frame and writes
+  // the document into it. The address alone does not mean the frame is empty.
+  const tokens = [
+    { kind: 'text', text: 'above' },
+    { kind: 'frame', desc: { tag: 'iframe', path: '/iframe[0]', name: 'Email content' }, name: 'Email content' },
+    { kind: 'text', text: 'below' },
+  ];
+  const inside = [{ kind: 'text', text: 'the message written into the blank frame' }];
+  const pages = [stubPageWithFrame('https://mail.example/one', tokens, 'about:blank', inside)];
+  const server = await startEdbServer({ driver: stubDriver(pages), port: 0, token: 'testtoken' });
+  const base = `http://127.0.0.1:${server.port}`;
+  try {
+    const res = await get(base, '/t/testtoken/1/');
+    assert.equal(res.status, 200);
+    const frameLine = res.body.indexOf('[frame: Email content]');
+    const message = res.body.indexOf('the message written into the blank frame');
+    const below = res.body.indexOf('below');
+    assert.ok(message > -1, 'the document written into the blank frame was not read');
+    assert.ok(frameLine < message && message < below, 'the blank frame lost its place in the page');
+  } finally {
+    await server.close?.();
+  }
+});
+
 test('a tab that is not there says so, and offers a way on', async () => {
   await withServer(SOME_TOKENS, async ({ base }) => {
     const res = await get(base, '/t/testtoken/99/');

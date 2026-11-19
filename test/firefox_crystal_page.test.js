@@ -83,7 +83,18 @@ for (const implementation of firefoxPageImplementations({
         case 'script.callFunction': {
           assert.equal(message.params.awaitPromise, true);
           assert.equal(message.params.resultOwnership, 'none');
-          if (message.params.functionDeclaration.includes('video[controls]')) {
+          if (message.params.functionDeclaration.includes('contentWindow === window.frames[index]')) {
+            result = {
+              type: 'success',
+              result: {
+                type: 'object',
+                value: [
+                  ['hostCount', { type: 'number', value: 1 }],
+                  ['positions', { type: 'array', value: [{ type: 'number', value: 0 }] }],
+                ],
+              },
+            };
+          } else if (message.params.functionDeclaration.includes('video[controls]')) {
             result = {
               type: 'success',
               result: {
@@ -130,23 +141,25 @@ for (const implementation of firefoxPageImplementations({
       { id: 8, method: 'script.callFunction' },
       { id: 9, method: 'script.callFunction' },
       { id: 10, method: 'script.callFunction' },
-      { id: 11, method: 'browsingContext.create' },
-      { id: 12, method: 'browsingContext.close' },
-      { id: 13, method: 'session.end' },
+      { id: 11, method: 'script.callFunction' },
+      { id: 12, method: 'browsingContext.create' },
+      { id: 13, method: 'browsingContext.close' },
+      { id: 14, method: 'session.end' },
     ]);
     assert.deepEqual(received[0].params, { capabilities: { alwaysMatch: {} } });
     assert.deepEqual(received[1].params, { events: ['browsingContext.domContentLoaded'] });
     assert.deepEqual(received[3].params, {
       context: 'top-context', url: 'https://example.test/start', wait: 'interactive',
     });
-    assert.deepEqual(received[10].params, { type: 'tab', background: true });
-    assert.deepEqual(received[11].params, { context: 'created-context' });
+    assert.deepEqual(received[11].params, { type: 'tab', background: true });
+    assert.deepEqual(received[12].params, { context: 'created-context' });
 
     // Keep a canonical wire observation of the extractor seam. This catches a
     // caller that still selects the right asset but sends it to the wrong
     // frame or drops an option before BiDi sees it.
     const scriptTrace = received
-      .filter(({ method }) => method === 'script.callFunction')
+      .filter(({ method, params }) => method === 'script.callFunction'
+        && !params.functionDeclaration.includes('contentWindow === window.frames[index]'))
       .map(bidiCallFunctionTrace);
     const invocationShape = scriptTrace.map((entry) => ({
       source: entry.source.includes('extractAxItems') ? 'extract_ax_items.js' : 'media-probe',

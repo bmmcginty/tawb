@@ -3351,6 +3351,10 @@ function firefoxPageImplementations({ bidi, FirefoxPage, FirefoxFrame, extractAx
       page.setUrl(top.url || 'about:blank');
       await page.goto(target, { waitUntil: 'domcontentloaded' });
       const result = await session.send('browsingContext.getTree', { root: top.context });
+      // The native frame tree asks each document which element owns each child
+      // context before it returns the tree. Mirror that pass here, both so the
+      // wire trace is the same and so this scenario exercises it.
+      await page.mainFrame().evaluate(() => { const elements = Array.from(document.querySelectorAll('iframe,frame')); const positions = []; for (let index = 0; index < window.frames.length; index += 1) {   let element = null;   try {     element = elements.find((candidate) => candidate.contentWindow === window.frames[index]) || null;   } catch (e) { element = null; }   positions[index] = element ? elements.indexOf(element) : null; } return { hostCount: elements.length, positions };});
       const documents = {};
       const frameTree = async (context) => {
         const frame = new FirefoxFrame(session, context.context, page);
