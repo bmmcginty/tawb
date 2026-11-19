@@ -182,6 +182,78 @@ test('typing reaches a field inside an embedded document', async () => {
   }
 });
 
+test('typing into a contenteditable inside a frame focuses the frame first', async () => {
+  driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
+  const page = driver.context.pages()[0] || await driver.context.newPage();
+  await page.goto('data:text/html,' + encodeURIComponent(`
+    <iframe srcdoc="<div id='editor' contenteditable aria-label='Message'></div>"></iframe>
+  `));
+  const core = new Core({ driver, page, source: 'ax' });
+  await core.rescan();
+  const keys = new Keymap({ terminfo: {}, load: false });
+  const state = {
+    interface: 'default', core, driver, keys, lines: layoutLines(core.blocks, 79),
+    cursor: 0, col: 0, scroll: 0, mode: 'browse', typing: null,
+    historyPlaces: new WeakMap(), statusMsg: '', statusHeldUntil: 0,
+    drawn: { title: null, address: null, hint: null, status: null },
+    title: '', library: null, dialog: null, linkAddress: false,
+  };
+  const write = process.stdout.write;
+  process.stdout.write = () => true;
+  try {
+    state.cursor = lineNamed(state, 'Message');
+    assert.ok(state.cursor >= 0, 'the editor in the frame was not in the buffer');
+    await activateCurrent(state, page);
+    assert.equal(state.mode, 'type');
+
+    await handleTypeKey('h', state, page);
+    await handleTypeKey('i', state, page);
+    assert.equal(await page.evaluate(() => document.querySelector('iframe')
+      .contentDocument.getElementById('editor').innerText), 'hi');
+
+    await handleTypeKey('\x7f', state, page);
+    assert.equal(await page.evaluate(() => document.querySelector('iframe')
+      .contentDocument.getElementById('editor').innerText), 'h',
+    'Backspace did not edit the embedded editor');
+  } finally {
+    await core.releaseTypingField().catch(() => {});
+    process.stdout.write = write;
+  }
+});
+
+test('an editing host signature does not fill the typing row with blank lines', async () => {
+  driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
+  const page = driver.context.pages()[0] || await driver.context.newPage();
+  await page.goto('data:text/html,' + encodeURIComponent(`
+    <iframe srcdoc="<div id='editor' contenteditable aria-label='Message'><div>Message</div><div class='signature'><div>   </div><div>  </div></div><br></div>"></iframe>
+  `));
+  const core = new Core({ driver, page, source: 'ax' });
+  await core.rescan();
+  const state = {
+    interface: 'default', core, driver,
+    keys: new Keymap({ terminfo: {}, load: false }),
+    lines: layoutLines(core.blocks, 79),
+    cursor: 0, col: 0, scroll: 0, mode: 'browse', typing: null,
+    historyPlaces: new WeakMap(), statusMsg: '', statusHeldUntil: 0,
+    drawn: { title: null, address: null, hint: null, status: null },
+    title: '', library: null, dialog: null, linkAddress: false,
+  };
+  const write = process.stdout.write;
+  process.stdout.write = () => true;
+  try {
+    state.cursor = lineNamed(state, 'Message');
+    await activateCurrent(state, page);
+    assert.equal(state.mode, 'type');
+    assert.equal(state.typing.text, 'Message\n\n',
+      'the empty signature block became part of the editor text');
+    assert.equal(state.typing.drawn, '[Message: Message  ]',
+      'a newline was written raw into the terminal row');
+  } finally {
+    await core.releaseTypingField().catch(() => {});
+    process.stdout.write = write;
+  }
+});
+
 test('Tab keeps typing between fields, then leaves editing for a combobox', async () => {
   driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
   const page = driver.context.pages()[0] || await driver.context.newPage();

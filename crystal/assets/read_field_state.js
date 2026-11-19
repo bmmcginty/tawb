@@ -27,8 +27,31 @@ function readFieldStateInPage(el) {
     const appendBreak = () => {
       if (text && !text.endsWith('\n')) text += '\n';
     };
+    // Whitespace between block children is source indentation, not the text
+    // the editor shows. Proton Mail's signature block is a tree of empty
+    // elements filled with it; walking every text node turned that layout into
+    // a screenful of blank lines in the reading row.
+    const onlyWhitespace = (value) => !/[^\s\u200b\ufeff\u00ad]/.test(value);
+    const blockDisplay = (element) => {
+      const display = getComputedStyle(element).display;
+      return display === 'block' || display === 'flex' || display === 'grid'
+        || display === 'list-item' || display.startsWith('table');
+    };
+    const emptyBlock = (element) => onlyWhitespace(element.textContent || '')
+      && !element.querySelector('br,img,hr,svg,canvas,video,audio,input,textarea,select,button');
+    const blockSibling = (node) => node && node.nodeType === Node.ELEMENT_NODE
+      && blockDisplay(node);
     const walk = (node, root = false) => {
       if (node.nodeType === Node.TEXT_NODE) {
+        if (onlyWhitespace(node.data)) {
+          const parent = node.parentElement;
+          const layoutWhitespace = !parent || onlyWhitespace(parent.textContent || '')
+            || blockSibling(node.previousSibling) || blockSibling(node.nextSibling);
+          if (layoutWhitespace) {
+            if (node === pointNode) caret = text.length;
+            return;
+          }
+        }
         if (node === pointNode) {
           caret = text.length + Math.min(Math.max(pointOffset, 0), node.data.length);
         }
@@ -42,10 +65,14 @@ function readFieldStateInPage(el) {
         return;
       }
 
-      const display = root ? '' : getComputedStyle(node).display;
-      const block = !root && (display === 'block' || display === 'flex'
-        || display === 'grid' || display === 'list-item' || display.startsWith('table'));
-      if (block) appendBreak();
+      const block = !root && blockDisplay(node);
+      if (block) {
+        if (emptyBlock(node)) {
+          if (pointNode && node.contains(pointNode)) caret = text.length;
+          return;
+        }
+        appendBreak();
+      }
       const children = Array.from(node.childNodes);
       for (let i = 0; i <= children.length; i += 1) {
         if (node === pointNode && pointOffset === i) caret = text.length;

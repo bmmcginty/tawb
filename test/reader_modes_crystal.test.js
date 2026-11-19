@@ -274,6 +274,16 @@ test('typing into a textarea learns that Enter is a new line', { skip: needsCrys
     'Typing — Tab: next control  Esc: stop  Enter: new line');
 });
 
+test('a newline in an edited field is drawn as a space on its row', { skip: needsCrystal }, async () => {
+  const NOTES = { role: 'textbox', name: 'Notes', multiline: true };
+  const state = typingState(NOTES, 'one\ntwo', 7, '[Notes: one two]');
+  const result = await runBoth('row with a newline', state, [
+    { op: 'typingText' },
+  ], { url: PAGE_URL });
+  assert.equal(result.results[0].value.text, '[Notes: one two]');
+  assert.doesNotMatch(result.results[0].value.text, /[\r\n\t]/);
+});
+
 test('enter makes a new line in a textarea instead of submitting', { skip: needsCrystal }, async () => {
   const NOTES = { role: 'textbox', name: 'Notes', multiline: true };
   const state = typingState(NOTES, 'hello', 5, '[Notes: hello]', {}, {

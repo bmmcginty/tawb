@@ -1935,7 +1935,11 @@ module Tawb
 
     def self.typing_text(state : State) : NamedTuple(text: String, caret_col: Int32)
       typing = state.typing.not_nil!
-      value = page_text(state, typing.text)
+      # The edited field is drawn on one terminal row. A newline written raw
+      # moves the cursor to another row and leaves the rest of the line behind,
+      # so multi-line fields and contenteditable editors were breaking the row
+      # apart as they were typed into. A space preserves the caret's column.
+      value = page_text(state, typing.text).gsub(/[\r\n\t]/, " ")
       if lynx_active?(state)
         line = current_line(state)
         # On a merged table row the marker lives in the span, not on the

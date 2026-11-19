@@ -1078,7 +1078,11 @@ function renderRow(state, lineIndex) {
 
 function typingText(state) {
   const item = state.typing.item;
-  const value = pageText(state, state.typing.text);
+  // The edited field is drawn on one terminal row. A newline written raw
+  // moves the cursor to another row and leaves the rest of the line behind,
+  // so multi-line fields and contenteditable editors were breaking the row
+  // apart as they were typed into. A space preserves the caret's column.
+  const value = String(pageText(state, state.typing.text)).replace(/[\r\n\t]/g, ' ');
   if (LYNX_ACTIONS.active(state)) {
     const line = state.lines ? currentLine(state) : null;
     // On a merged table row the marker lives in the span, not on the line, so
