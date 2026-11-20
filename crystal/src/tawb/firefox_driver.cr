@@ -745,13 +745,15 @@ module Tawb
 
       def title : String
         evaluate("() => document.title").as_s? || ""
-      rescue
+      rescue err
+        @closed = true if Frames.frame_gone?(err)
         ""
       end
 
       def foreground? : Bool
         evaluate("() => document.visibilityState === 'visible'").as_bool? || false
-      rescue
+      rescue err
+        @closed = true if Frames.frame_gone?(err)
         false
       end
 
@@ -765,6 +767,12 @@ module Tawb
 
       def evaluate(fn : String, arg : JSON::Any? = nil, expression = false) : JSON::Any
         Frame.new(@protocol, @context_id, self, @url).evaluate(fn, arg, expression)
+      rescue err
+        # This frame is the tab itself, so a missing browsing context here is
+        # not a disposable child: the whole page is gone. Recording that lets
+        # the reader switch somewhere live instead of retrying a dead tab.
+        @closed = true if Frames.frame_gone?(err)
+        raise err
       end
 
       def pierce_and_run(expression : String, page_function : String? = nil,
@@ -968,10 +976,16 @@ module Tawb
           "root" => JSON::Any.new(@context_id),
         }).as_h
         root = result["contexts"].as_a.first?
-        return [Frame.new(@protocol, @context_id, self, @url)] unless root
+        unless root
+          @closed = true
+          raise IO::Error.new("no such frame: Browsing Context with id #{@context_id} not found")
+        end
         frames = [] of Frame
         append_frames(root, frames)
         frames
+      rescue err
+        @closed = true if Frames.frame_gone?(err)
+        raise err
       end
 
       private def append_frames(context : JSON::Any, frames : Array(Frame)) : Nil
@@ -1001,7 +1015,8 @@ module Tawb
           url = child.as_h["url"]?.try(&.as_s?) || ""
           url.empty? || url == "about:blank"
         end
-      rescue
+      rescue err
+        @closed = true if Frames.frame_gone?(err)
         false # not answerable is not pending; the walk decides
       end
 
@@ -1123,6 +1138,9 @@ module Tawb
         }).as_h
         return nil if result["type"]?.try(&.as_s?) == "exception"
         Bidi.from_remote(result["result"]?).as_h?
+      rescue err
+        @closed = true if Frames.frame_gone?(err)
+        raise err
       end
 
       # The documents of this tab and how they nest, in the shape the frame
@@ -1133,9 +1151,15 @@ module Tawb
         result = @protocol.command("browsingContext.getTree", {
           "root" => JSON::Any.new(@context_id),
         }).as_h
-        context = result["contexts"].as_a.first? ||
-                  raise IO::Error.new("Firefox exposed no tree for browsing context #{@context_id}")
+        context = result["contexts"].as_a.first?
+        unless context
+          @closed = true
+          raise IO::Error.new("no such frame: Browsing Context with id #{@context_id} not found")
+        end
         frame_tree(context)
+      rescue err
+        @closed = true if Frames.frame_gone?(err)
+        raise err
       end
 
       def accessibility_documents(layout = false, visual = false) : Tuple(JSON::Any, Hash(String, Array(JSON::Any)))
@@ -1143,13 +1167,19 @@ module Tawb
           "root" => JSON::Any.new(@context_id),
         }).as_h
         context = result["contexts"].as_a.first?
-        raise IO::Error.new("Firefox exposed no tree for browsing context #{@context_id}") unless context
+        unless context
+          @closed = true
+          raise IO::Error.new("no such frame: Browsing Context with id #{@context_id} not found")
+        end
 
         tree = frame_tree(context)
         documents = Frames.collect_documents(tree) do |context_id|
           accessibility_items(context_id, layout, visual)
         end
         {tree, documents}
+      rescue err
+        @closed = true if Frames.frame_gone?(err)
+        raise err
       end
 
       def accessibility_items(context_id = @context_id, layout = false, visual = false) : Array(JSON::Any)

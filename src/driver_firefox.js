@@ -8,7 +8,7 @@ const { processAlive, killProcessGroup, compactDiagnostic } = require('./proc');
 const { otherReadersOn } = require('./session');
 const { forgetBrowser, markKept } = require('./registry');
 const { extractAxItems } = require('./ax_own');
-const { readDocument } = require('./frames');
+const { readDocument, isGoneFrameError } = require('./frames');
 const { orderEntries, MAX_ENTRIES } = require('./library');
 const { armNativeDialogs } = require('./native_prompt');
 const { askFirefoxLibrary } = require('./firefox_library');
@@ -118,35 +118,45 @@ class FirefoxFrame {
   }
 
   async evaluate(fn, arg, { timeout } = {}) {
-    const result = await this.session.send('script.callFunction', {
-      functionDeclaration: asFunctionDeclaration(fn),
-      arguments: arg === undefined ? [] : [toRemoteArgument(arg)],
-      target: { context: this.contextId },
-      awaitPromise: true,
-      resultOwnership: 'none',
-    }, timeout == null ? undefined : { timeout });
-    if (result.type === 'exception') {
-      throw new Error(result.exceptionDetails?.text || 'the page threw while evaluating');
+    try {
+      const result = await this.session.send('script.callFunction', {
+        functionDeclaration: asFunctionDeclaration(fn),
+        arguments: arg === undefined ? [] : [toRemoteArgument(arg)],
+        target: { context: this.contextId },
+        awaitPromise: true,
+        resultOwnership: 'none',
+      }, timeout == null ? undefined : { timeout });
+      if (result.type === 'exception') {
+        throw new Error(result.exceptionDetails?.text || 'the page threw while evaluating');
+      }
+      return bidi.fromRemoteValue(result.result);
+    } catch (err) {
+      markTopContextGone(this, err);
+      throw err;
     }
-    return bidi.fromRemoteValue(result.result);
   }
 
   async evaluateHandle(fn, arg) {
-    const result = await this.session.send('script.callFunction', {
-      functionDeclaration: asFunctionDeclaration(fn),
-      arguments: arg === undefined ? [] : [toRemoteArgument(arg)],
-      target: { context: this.contextId },
-      awaitPromise: true,
-      resultOwnership: 'root',
-    });
-    if (result.type === 'exception') {
-      throw new Error(result.exceptionDetails?.text || 'the page threw while evaluating');
+    try {
+      const result = await this.session.send('script.callFunction', {
+        functionDeclaration: asFunctionDeclaration(fn),
+        arguments: arg === undefined ? [] : [toRemoteArgument(arg)],
+        target: { context: this.contextId },
+        awaitPromise: true,
+        resultOwnership: 'root',
+      });
+      if (result.type === 'exception') {
+        throw new Error(result.exceptionDetails?.text || 'the page threw while evaluating');
+      }
+      // The shared id, not just the handle: a pointer action names its target
+      // by shared reference, and nothing else in BiDi will accept a handle for
+      // it. They are two names for one node and both come back here.
+      return new FirefoxHandle(
+        this.session, this.contextId, this.page, result.result.handle, result.result.sharedId);
+    } catch (err) {
+      markTopContextGone(this, err);
+      throw err;
     }
-    // The shared id, not just the handle: a pointer action names its target
-    // by shared reference, and nothing else in BiDi will accept a handle for
-    // it. They are two names for one node and both come back here.
-    return new FirefoxHandle(
-      this.session, this.contextId, this.page, result.result.handle, result.result.sharedId);
   }
 
   // Only ever called for frame elements, and what the caller needs from each
@@ -219,8 +229,16 @@ class FirefoxFrame {
   // BiDi input actions name the document that owns the focused element, so a
   // frame's keyboard is not the tab's.
   get keyboard() {
-    return new FirefoxKeyboard(this.session, this.contextId);
+    return new FirefoxKeyboard(this.session, this.contextId, this.page);
   }
+}
+
+// A frame's context is the tab itself only for the main frame. A lost child
+// frame is disposable; a lost top context means the page is gone.
+function markTopContextGone(frame, err) {
+  if (!isGoneFrameError(err)) return;
+  const page = frame && frame.page;
+  if (page && page.contextId === frame.contextId) page._closed = true;
 }
 
 // A frame element identified by where it sits rather than by a handle, since
@@ -270,7 +288,7 @@ class FirefoxHandle {
   // The keyboard of the document this element belongs to: a key reaches the
   // element that has focus in that document, not in the tab's top one.
   get keyboard() {
-    return new FirefoxKeyboard(this.session, this.contextId);
+    return new FirefoxKeyboard(this.session, this.contextId, this.page);
   }
 
   async contentFrame() {
@@ -359,16 +377,22 @@ const WEBDRIVER_KEYS = {
 // key events, so autocomplete, IME and a field's own handlers all behave as
 // they would under a human's fingers.
 class FirefoxKeyboard {
-  constructor(session, context) {
+  constructor(session, context, page = null) {
     this.session = session;
     this.contextId = typeof context === 'string' ? context : context.contextId;
+    this.page = page;
   }
 
   async #perform(actions) {
-    await this.session.send('input.performActions', {
-      context: this.contextId,
-      actions: [{ type: 'key', id: 'tweb-keyboard', actions }],
-    });
+    try {
+      await this.session.send('input.performActions', {
+        context: this.contextId,
+        actions: [{ type: 'key', id: 'tweb-keyboard', actions }],
+      });
+    } catch (err) {
+      markTopContextGone(this, err);
+      throw err;
+    }
   }
 
   async #send(values) {
@@ -416,7 +440,7 @@ class FirefoxPage {
     this._seenFrames = [];
     this._loading = false;
     this._closed = false;
-    this.keyboard = new FirefoxKeyboard(session, contextId);
+    this.keyboard = new FirefoxKeyboard(session, contextId, this);
   }
 
   context() {

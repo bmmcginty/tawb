@@ -2285,7 +2285,9 @@ function restoreTabPlace(state, page) {
 async function switchToTab(state, page, { note = '' } = {}) {
   if (!page || page === state.core.page) return false;
 
-  rememberTabPlace(state, state.core.page);
+  const previous = state.core.page;
+  rememberTabPlace(state, previous);
+  if (previous && previous !== page) state.previousTab = previous;
   await state.core.adoptTab(page);
 
   if (!attachedPages.has(page)) {
@@ -2502,13 +2504,10 @@ async function pulseLive(state, page) {
   // closed in the browser. The buffer then describes a tab that no longer
   // exists and every command against it fails, so move to one that does.
   if (page.isClosed && page.isClosed()) {
-    const remaining = state.core.tabs().filter((other) => other !== page);
-    if (!remaining.length) {
-      setStatus(state, 'The last tab closed.');
-      return;
-    }
-    log('tab.closed', { remaining: remaining.length });
-    await switchToTab(state, remaining[remaining.length - 1], { note: 'That tab closed' });
+    log('tab.closed', { remaining: state.core.tabs().filter((other) => other !== page).length });
+    // The same recovery a key uses: prefer the tab this one was opened from,
+    // then an ordinary tab, and open a fresh one only when none is left.
+    await containFrameLoss(state, page);
     return;
   }
 
@@ -3218,6 +3217,10 @@ async function recoverGoneFrame(state, page, item, previousTexts, anchor, event)
   log(event, {
     name: String(name).slice(0, 80), source: state.core.source, inFrame,
   });
+  if (page.isClosed && page.isClosed()) {
+    await containFrameLoss(state, page);
+    return;
+  }
   state.statusMsg = 'The page changed while that action ran; it was refreshed.';
   try {
     await refresh(state, page, { anchor, previousTexts });
@@ -3230,10 +3233,76 @@ async function recoverGoneFrame(state, page, item, previousTexts, anchor, event)
       await refresh(state, page, { resetCursor: true });
     } catch (again) {
       if (!isGoneFrameError(again)) throw again;
-      state.statusMsg = 'The page changed while that action ran; press r to rescan.';
+      // Even reading from the top failed: the top-level context itself is
+      // gone, whatever the tab inventory has heard so far. Move somewhere
+      // live rather than retrying a document that no longer exists.
+      await containFrameLoss(state, page);
+      return;
     }
   }
   render(state, page, { force: true });
+}
+
+// The wholesale recovery boundary for a key that met a document the browser
+// can no longer find. Every handler is covered by this, not only the ones
+// that know about frames: `r`, activation, typing, Flex dispatch and
+// everything else end here rather than printing a protocol error and
+// leaving the session.
+//
+// A child frame that went while its tab lives is recovered by reading the
+// same tab again. A tab that went is not: it is replaced from the live tab
+// inventory, and a browser with no tabs left gets one.
+async function containFrameLoss(state, page) {
+  state.typing = null;
+  state.controlling = null;
+  state.chooser = null;
+  state.files = null;
+  state.line = null;
+  state.find = null;
+  state.address = null;
+  state.flex = null;
+  state.mode = 'browse';
+  while (state.screens && state.screens.depth() > 0) state.screens.pop();
+
+  const closed = !!(page && page.isClosed && page.isClosed());
+  if (!closed) {
+    try {
+      await refresh(state, page, {});
+      render(state, page, { force: true });
+      setStatus(state, 'The page changed while that action ran; it was refreshed.');
+      return;
+    } catch (err) {
+      if (!isGoneFrameError(err)) throw err;
+    }
+  }
+
+  if (typeof state.core.tabs !== 'function' || typeof state.core.newTab !== 'function') {
+    setStatus(state, 'The page changed while that action ran; press r to rescan.');
+    return;
+  }
+  const candidates = state.core.tabs()
+    .filter((candidate) => candidate !== page && candidate !== state.core.page);
+  // Prefer the tab this one was opened from. In an OAuth flow that is the
+  // page waiting for the sign-in result, not a blank tab elsewhere.
+  if (state.previousTab && candidates.includes(state.previousTab)) {
+    candidates.splice(candidates.indexOf(state.previousTab), 1);
+    candidates.unshift(state.previousTab);
+  }
+  for (const candidate of candidates) {
+    try {
+      await switchToTab(state, candidate, { note: 'That tab closed' });
+      return;
+    } catch (err) {
+      if (!isGoneFrameError(err)) throw err;
+    }
+  }
+
+  try {
+    const fresh = await state.core.newTab();
+    await switchToTab(state, fresh, { note: 'That tab closed — opened a new tab' });
+  } catch (err) {
+    setStatus(state, 'The page went away and no other tab could be opened.');
+  }
 }
 
 async function activateCurrent(state, page) {
@@ -6185,6 +6254,9 @@ async function main() {
     // The page is the base screen; a library or chooser raises a screen above
     // it. See screen_stack.js and docs/screen-contract.md.
     screens: new ScreenStack(),
+    // The tab the current one was opened from, so recovery from a closed
+    // sign-in popup returns to the page that asked for it.
+    previousTab: null,
     interface: ARGS.frontEnd,
     keyReader: null,
     credentials: null,
@@ -6407,28 +6479,37 @@ async function main() {
     // dispatched this way; a prompt or a browser dialog raised above it has
     // its own mode and falls through to the mode switch below.
     const screen = state.screens ? state.screens.top() : null;
-    if (screen && screen.mode === state.mode && screen.mode === 'choose') {
-      result = await handleChooseKey(chunk, state, current);
-    } else if (screen && screen.mode === state.mode && screen.mode === 'library') {
-      result = await handleLibraryKey(chunk, state, current);
-    } else if (screen && screen.mode === state.mode && screen.mode === 'options') {
-      result = await handleOptionsKey(chunk, state, current);
-    } else if (screen && screen.mode === state.mode && screen.mode === 'print') {
-      result = await handlePrintKey(chunk, state, current);
-    } else if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
-    else if (state.mode === 'options') result = await handleOptionsKey(chunk, state, current);
-    else if (state.mode === 'print') result = await handlePrintKey(chunk, state, current);
-    else if (state.mode === 'library') result = await handleLibraryKey(chunk, state, current);
-    else if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
-    else if (state.mode === 'field-command') result = await handleFieldCommandKey(chunk, state, current);
-    else if (state.mode === 'forms') result = await handleFormsKey(chunk, state, current);
-    else if (state.mode === 'control') result = await handleControlKey(chunk, state, current);
-    else if (state.mode === 'page') result = await handlePageKey(chunk, state, current);
-    else if (state.mode === 'address') result = await handleAddressKey(chunk, state, current);
-    else if (state.mode === 'find') result = await handleFindKey(chunk, state, current);
-    else if (state.mode === 'command') result = await handleCommandKey(chunk, state, current);
-    else if (state.mode === 'number') result = await handleNumberKey(chunk, state, current);
-    else result = await handleBrowseKey(chunk, state, current);
+    try {
+      if (screen && screen.mode === state.mode && screen.mode === 'choose') {
+        result = await handleChooseKey(chunk, state, current);
+      } else if (screen && screen.mode === state.mode && screen.mode === 'library') {
+        result = await handleLibraryKey(chunk, state, current);
+      } else if (screen && screen.mode === state.mode && screen.mode === 'options') {
+        result = await handleOptionsKey(chunk, state, current);
+      } else if (screen && screen.mode === state.mode && screen.mode === 'print') {
+        result = await handlePrintKey(chunk, state, current);
+      } else if (state.mode === 'choose') result = await handleChooseKey(chunk, state, current);
+      else if (state.mode === 'options') result = await handleOptionsKey(chunk, state, current);
+      else if (state.mode === 'print') result = await handlePrintKey(chunk, state, current);
+      else if (state.mode === 'library') result = await handleLibraryKey(chunk, state, current);
+      else if (state.mode === 'type') result = await handleTypeKey(chunk, state, current);
+      else if (state.mode === 'field-command') result = await handleFieldCommandKey(chunk, state, current);
+      else if (state.mode === 'forms') result = await handleFormsKey(chunk, state, current);
+      else if (state.mode === 'control') result = await handleControlKey(chunk, state, current);
+      else if (state.mode === 'page') result = await handlePageKey(chunk, state, current);
+      else if (state.mode === 'address') result = await handleAddressKey(chunk, state, current);
+      else if (state.mode === 'find') result = await handleFindKey(chunk, state, current);
+      else if (state.mode === 'command') result = await handleCommandKey(chunk, state, current);
+      else if (state.mode === 'number') result = await handleNumberKey(chunk, state, current);
+      else result = await handleBrowseKey(chunk, state, current);
+    } catch (err) {
+      if (!isGoneFrameError(err)) throw err;
+      // No key handler may end the session by meeting a document the browser
+      // has already discarded. Recovery reads the same tab again, or moves to
+      // one that still exists, and never repeats the key.
+      await containFrameLoss(state, current);
+      result = undefined;
+    }
     const ms = Date.now() - t0;
 
     markInput(state);
@@ -6618,4 +6699,5 @@ module.exports = {
   handleChooseKey,
   askForLine, askYesNo, bookmarkPage, deleteLibraryBookmark,
   downloadCurrentLink, drawLinePrompt, beginKeystroke, finishKeystrokeStatus,
+  containFrameLoss,
 };

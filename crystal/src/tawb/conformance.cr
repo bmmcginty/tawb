@@ -1996,6 +1996,7 @@ module Tawb
       getter presses : Array(String)
       property fail_press : Bool
       property press_fault : String?
+      property closed : Bool
       property url : String
       property goto_fault : String?
       property goto_hang : Bool
@@ -2008,6 +2009,7 @@ module Tawb
       def initialize(@url : String, @title : String, @fail_press = false)
         @presses = [] of String
         @press_fault = nil
+        @closed = false
         @goto_fault = nil
         @goto_hang = false
         @reload_fault = nil
@@ -2023,6 +2025,10 @@ module Tawb
 
       def title : String
         @title
+      end
+
+      def closed? : Bool
+        @closed
       end
 
       def keyboard_press(key : String) : Nil
@@ -2109,6 +2115,7 @@ module Tawb
           page = ScriptedPage.new(spec["url"]?.try(&.as_s?) || "about:blank",
             spec["title"]?.try(&.as_s?) || "")
           page.blocks = spec["blocks"]?.try(&.as_a?)
+          page.closed = spec["closed"]?.try(&.as_bool?) || false
           page
         end
         @pages << ScriptedPage.new("about:blank", "") if @pages.empty?
@@ -2129,9 +2136,18 @@ module Tawb
       end
 
       def tab_after(page : Reader::PageEnv) : Reader::PageEnv?
-        return nil if @pages.size < 2
-        at = @pages.index { |candidate| candidate.same?(page) } || 0
-        @pages[(at + 1) % @pages.size]
+        live = @pages.reject(&.closed?)
+        return nil if live.size < 2
+        at = live.index { |candidate| candidate.object_id == page.object_id } || 0
+        live[(at + 1) % live.size]
+      end
+
+      def other_live_page(page : Reader::PageEnv) : Reader::PageEnv?
+        @pages.each do |candidate|
+          next if candidate.closed?
+          return candidate unless candidate.object_id == page.object_id
+        end
+        nil
       end
 
       def adopt_tab(page : Reader::PageEnv) : Nil
@@ -2149,12 +2165,13 @@ module Tawb
 
       def close_tab(page : Reader::PageEnv) : Nil
         raise IO::Error.new(@close_fault.not_nil!) if @close_fault
-        @pages.reject! { |candidate| candidate.same?(page) }
+        @pages.reject! { |candidate| candidate.object_id == page.object_id }
       end
 
       def tab_position(page : Reader::PageEnv) : NamedTuple(position: Int32, of: Int32)
-        at = @pages.index { |candidate| candidate.same?(page) }
-        {position: at ? at + 1 : 0, of: @pages.size}
+        live = @pages.reject(&.closed?)
+        at = live.index { |candidate| candidate.object_id == page.object_id }
+        {position: at ? at + 1 : 0, of: live.size}
       end
 
       def tab_label(page : Reader::PageEnv) : String
@@ -2773,6 +2790,12 @@ module Tawb
         return JSON::Any.new(nil) unless page
         Reader.refresh(state, page.not_nil!,
           action["resetCursor"]?.try(&.as_bool?) || false, action["anchor"]?)
+      when "recoverFrameLoss"
+        return JSON::Any.new(nil) unless page
+        tabs = state.tabs
+        return JSON::Any.new(nil) unless tabs
+        ReaderKeys.contain_frame_loss(output, state, page.not_nil!, tabs,
+          action["refreshFirst"]?.try(&.as_bool?) != false)
       when "closePopup"
         return JSON::Any.new(nil) unless page
         ReaderKeys.close_popup(output, state, page.not_nil!)

@@ -489,7 +489,8 @@ module Tawb
           # about is dispatched this way; a prompt or a browser dialog raised
           # above it has its own mode and falls through to the mode switch.
           top_screen = state.screens.top
-          verdict = if top_screen.mode == state.mode && top_screen.mode == "library"
+          verdict = begin
+            if top_screen.mode == state.mode && top_screen.mode == "library"
                       ReaderKeys.handle_library_key(terminal, state, current, keyboard, chunk)
                     elsif top_screen.mode == state.mode && top_screen.mode == "choose"
                       ReaderKeys.handle_choose_key(terminal, state, current, chunk); nil
@@ -527,6 +528,25 @@ module Tawb
                           Time.utc.to_unix_ms)
                       end
                     end
+          rescue err
+            if Frames.frame_gone?(err)
+              # No key handler may end the session by meeting a document the
+              # browser has already discarded. The loop owns the recovery so
+              # it runs after this handler has unwound, not inside its rescue.
+              state.pending_frame_loss = true
+              nil
+            else
+              raise err
+            end
+          end
+          if state.pending_frame_loss
+            state.pending_frame_loss = false
+            ReaderKeys.contain_frame_loss(terminal, state, tabs.current_page, tabs)
+          end
+          if state.lost_tab
+            state.lost_tab = false
+            ReaderKeys.contain_frame_loss(terminal, state, tabs.current_page, tabs, false)
+          end
           break if verdict == "quit"
 
           # A held key keeps the reader reading faster than the wait can

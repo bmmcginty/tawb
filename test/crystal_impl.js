@@ -1768,7 +1768,7 @@ function readerImplementations(index, keysModule) {
       title: async () => (entry.title ?? ''),
       mainFrame: () => page,
       on: () => {},
-      isClosed: () => closed,
+      isClosed: () => closed || !!entry.closed,
       async evaluate() { return null; },
       async goto(target) { url = target; },
       async waitForLoadState() {},
@@ -1974,6 +1974,9 @@ function readerImplementations(index, keysModule) {
           } else if (action.op === 'refresh') {
             await index.refresh(state, page, { resetCursor: !!action.resetCursor,
               anchor: action.anchor ?? null });
+            value = undefined;
+          } else if (action.op === 'recoverFrameLoss') {
+            await index.containFrameLoss(state, page);
             value = undefined;
           } else if (action.op === 'closePopup') {
             await index.closePopup(state, page);

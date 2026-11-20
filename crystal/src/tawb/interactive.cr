@@ -25,6 +25,7 @@ module Tawb
       def initialize(@raw); end
       def url : String; @raw.url; end
       def title : String; @raw.title; end
+      def closed? : Bool; @raw.closed?; end
       def keyboard_press(key : String) : Nil
         @raw.keyboard.press(key)
       end
@@ -307,6 +308,13 @@ module Tawb
       def tab_after(page : Reader::PageEnv) : Reader::PageEnv?
         @core.tab_after(unwrap(page)).try { |found| wrap(found) }
       end
+      def other_live_page(page : Reader::PageEnv) : Reader::PageEnv?
+        @core.tabs.each do |raw|
+          candidate = wrap(raw)
+          return candidate unless candidate.object_id == page.object_id
+        end
+        nil
+      end
       def adopt_tab(page : Reader::PageEnv) : Nil
         raw = unwrap(page); @core.adopt_tab(raw); @current_page = wrap(raw)
       end
@@ -399,14 +407,13 @@ module Tawb
       private def recover_closed_tab : Bool
         page = @core.page || return false
         return false unless page.closed?
-        remaining = @core.tabs.reject { |other| other.same?(page) }
-        if remaining.empty?
-          Reader.set_status(@output, @state, @tabs.current_page.url,
-            "The last tab closed.")
-          return true
-        end
-        @logger.write("tab.closed", {"remaining" => JSON::Any.new(remaining.size.to_i64)})
-        switch_to(remaining.last, "That tab closed")
+        @logger.write("tab.closed", {
+          "remaining" => JSON::Any.new(@core.tabs.reject { |other| other.same?(page) }.size.to_i64),
+        })
+        # One recovery path for both a closed tab noticed here and one met by
+        # a key: prefer the tab this one was opened from, then the ordinary
+        # tab order, and open a fresh tab only when none is left.
+        ReaderKeys.contain_frame_loss(@output, @state, @tabs.current_page, @tabs, false)
         true
       end
 

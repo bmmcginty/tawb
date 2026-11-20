@@ -147,6 +147,36 @@ test('new tab opens an empty address bar', { skip: needsCrystal }, async () => {
     'Could not open a new tab: the browser refused');
 });
 
+test('a lost tab is replaced from the live inventory, not rescanned',
+  { skip: needsCrystal }, async () => {
+    const lost = [
+      { ...tabs[0], closed: true },
+      tabs[1],
+    ];
+    const result = await runBoth('lost tab', state({}, { tabs: lost, currentTab: 0 }), [
+      { op: 'recoverFrameLoss' },
+    ]);
+    assert.equal(result.state.title, 'Two page');
+    assert.equal(result.state.lines[0].text, 'two');
+    assert.equal(result.state.statusMsg, 'That tab closed — tab 1 of 1: Two page');
+    assert.ok(!result.state.statusMsg.includes('Browsing Context'));
+  });
+
+test('a lost child frame is recovered by reading the same tab again',
+  { skip: needsCrystal }, async () => {
+    const result = await runBoth('lost child frame', state({}, {
+      rescanFailure: {
+        message: 'no such frame: Browsing Context with id 192c4265 not found',
+        once: true,
+      },
+      rescanBlocks: tabs[0].blocks,
+    }), [{ op: 'recoverFrameLoss' }]);
+    assert.equal(result.state.statusMsg,
+      'The page changed while that action ran; it was refreshed.');
+    assert.equal(result.state.lines[0].text, 'one');
+    assert.ok(!result.state.statusMsg.includes('192c4265'));
+  });
+
 test('close tab walks forward and preserves a refused tab', { skip: needsCrystal }, async () => {
   const keys = { bindings: { 'close-tab': ['x'] } };
   const closed = await runBoth('closed', state({ keys }), [

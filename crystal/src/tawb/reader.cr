@@ -153,6 +153,10 @@ module Tawb
     module PageEnv
       abstract def url : String
       abstract def title : String
+      # Whether the tab itself is gone. A child frame can disappear while the
+      # tab lives; only a closed top-level browsing context means there is no
+      # page left to read at all.
+      abstract def closed? : Bool
       # One key into the page's own keyboard. Raises when the page or the
       # driver refuses; the caller says so on the status row.
       abstract def keyboard_press(key : String) : Nil
@@ -189,6 +193,10 @@ module Tawb
       abstract def current_page : PageEnv
       abstract def next_tab(direction : Int32) : PageEnv?
       abstract def tab_after(page : PageEnv) : PageEnv?
+      # Any readable tab other than this one, for recovery when the current
+      # tab is gone and there is only one left. Asked one at a time so no
+      # separate list of wrappers outlives the tab inventory that made it.
+      abstract def other_live_page(page : PageEnv) : PageEnv?
       abstract def adopt_tab(page : PageEnv) : Nil
       abstract def new_tab : PageEnv
       abstract def close_tab(page : PageEnv) : Nil
@@ -990,6 +998,16 @@ module Tawb
       # A load-more is already asking the page for more; a second request
       # would fight the first one's rebuild.
       property loading_more : Bool
+      # A key handler found the tab gone and could not switch tabs itself; the
+      # loop that owns the tab inventory does that after the handler returns.
+      property lost_tab : Bool
+      # A handler met a lost document. The loop performs the recovery after
+      # the handler returns, outside the exception handler that caught it.
+      property pending_frame_loss : Bool
+      # The tab the reader was on before the current one. A popup that closes
+      # after OAuth belongs to the page that opened it, so recovery returns
+      # there rather than to whatever tab happens to be first in the list.
+      property previous_tab : PageEnv?
       # The search engine an address that is not an address is given to;
       # nil is the default one.
       property search : String?
@@ -1048,6 +1066,9 @@ module Tawb
         @presentation_source = nil
         @home_url = "https://www.google.com"
         @loading_more = false
+        @lost_tab = false
+        @pending_frame_loss = false
+        @previous_tab = nil
       end
     end
 

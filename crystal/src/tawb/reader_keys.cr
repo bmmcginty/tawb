@@ -663,6 +663,12 @@ module Tawb
     def self.recover_gone_frame(output : Screen::Output, state : Reader::State,
                                 page : Reader::PageEnv,
                                 previous_texts : Array(String), anchor : JSON::Any) : Nil
+      if page.closed?
+        state.lost_tab = true
+        state.status_msg = "That tab closed."
+        Reader.render(output, state, page.url) rescue nil
+        return
+      end
       state.status_msg = "The page changed while that action ran; it was refreshed."
       begin
         Reader.refresh(state, page, false, anchor, previous_texts)
@@ -675,10 +681,112 @@ module Tawb
           Reader.refresh(state, page, true)
         rescue again
           raise again unless Frames.frame_gone?(again)
-          state.status_msg = "The page changed while that action ran; press r to rescan."
+          # Even reading from the top failed: the top-level context itself is
+          # gone, whatever the tab inventory has heard so far. Let the loop
+          # move the reader to a live tab instead of retrying a dead one.
+          if state.tabs
+            state.lost_tab = true
+            state.status_msg = "That tab closed."
+            Reader.render(output, state, page.url) rescue nil
+          else
+            Reader.set_status(output, state, page.url,
+              "The page changed while that action ran; press r to rescan.")
+          end
+          return
         end
       end
       Reader.render(output, state, page.url)
+    end
+
+    # The wholesale recovery boundary for a key that met a document the
+    # browser can no longer find. Every handler is covered by this, not only
+    # the ones that know about frames: `r`, activation, typing and every
+    # other key end here rather than printing a protocol error and
+    # leaving the session.
+    #
+    # A child frame that went while its tab lives is recovered by reading the
+    # same tab again. A tab that went is not: it is replaced from the live
+    # tab inventory, and a browser with no tabs left gets one.
+    def self.contain_frame_loss(output : Screen::Output, state : Reader::State,
+                                page : Reader::PageEnv, tabs : Reader::TabEnv,
+                                refresh_first = true) : Nil
+      state.typing = nil
+      state.controlling = nil
+      state.chooser = nil
+      state.files = nil
+      state.line_prompt = nil
+      state.find = nil
+      state.address = nil
+      state.mode = "browse"
+      state.screens.depth.times { state.screens.pop }
+
+      if refresh_first && !page.closed?
+        begin
+          anchor = state.core.anchor
+          Reader.refresh(state, page, false, anchor)
+          Reader.render(output, state, page.url, true)
+          Reader.set_status(output, state, page.url,
+            "The page changed while that action ran; it was refreshed.")
+          return
+        rescue err
+          raise err unless Frames.frame_gone?(err)
+          begin
+            Reader.refresh(state, page, true)
+            Reader.render(output, state, page.url, true)
+            Reader.set_status(output, state, page.url,
+              "The page changed while that action ran; it was refreshed.")
+            return
+          rescue again
+            raise again unless Frames.frame_gone?(again)
+          end
+        end
+      end
+
+      current = tabs.current_page
+      candidates = [] of Reader::PageEnv
+      # Prefer the tab this one was opened from. In an OAuth flow that is the
+      # page waiting for the sign-in result, not a blank tab elsewhere in the
+      # window.
+      preferred = state.previous_tab
+      if preferred && preferred.object_id != current.object_id && !preferred.closed?
+        candidates << preferred.not_nil!
+      end
+      # Walk the same inventory an ordinary `>` uses, so recovery does not
+      # build a separate list of wrappers that the front end never sees.
+      seen = Set(UInt64).new
+      cursor = current
+      while (following = tabs.tab_after(cursor))
+        break if seen.includes?(following.object_id)
+        seen << following.object_id
+        break if following.object_id == current.object_id
+        unless candidates.any? { |candidate| candidate.object_id == following.not_nil!.object_id }
+          candidates << following.not_nil!
+        end
+        cursor = following
+      end
+      if candidates.empty?
+        other = tabs.other_live_page(current)
+        candidates << other.not_nil! if other
+      end
+      candidates.each do |candidate|
+        begin
+          switch_to_tab(output, state, tabs, candidate, "That tab closed")
+          return
+        rescue err
+          next if Frames.frame_gone?(err)
+          raise err
+        end
+      end
+
+      begin
+        fresh = tabs.new_tab
+        switch_to_tab(output, state, tabs, fresh, "That tab closed — opened a new tab")
+      rescue err
+        raise err unless Frames.frame_gone?(err) || err.is_a?(IO::Error)
+        Reader.set_status(output, state, current.url,
+          "The page went away and no other tab could be opened.")
+        Reader.render(output, state, current.url, true) rescue nil
+      end
     end
 
     # What to say afterwards, which is the browser's business as much as
@@ -4251,7 +4359,9 @@ module Tawb
                            tabs : Reader::TabEnv, page : Reader::PageEnv,
                            note : String = "") : Bool
       return false if page.same?(tabs.current_page)
-      remember_tab_place(state, tabs.current_page)
+      previous = tabs.current_page
+      remember_tab_place(state, previous)
+      state.previous_tab = previous unless previous.object_id == page.object_id
       tabs.adopt_tab(page)
       Reader.refresh(state, page, true)
       restore_tab_place(state, page)
