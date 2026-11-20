@@ -172,6 +172,30 @@ test('a frame that disappears during post-activation refresh is recovered withou
     assert.ok(!result.state.statusMsg.includes('485331304461'));
   });
 
+test('a tab whose frame never comes back during recovery is reported, not raised',
+  { skip: needsCrystal }, async () => {
+    const blocks = [
+      { text: 'before', item: { role: 'text' } },
+      { text: '{Sign in with email}', item: { role: 'link', name: 'Sign in with email', href: '/oauth' } },
+      { text: 'after', item: { role: 'text' } },
+    ];
+    // A sign-in popup can close as the link completes. The top-level context
+    // is gone, so neither the anchored refresh nor the fresh one can read it.
+    const state = stateFor(blocks, { cursor: 1 }, {
+      rescanFailure: {
+        message: 'no such frame: Browsing Context with id e77ab3d3 not found',
+      },
+      rescanBlocks: blocks,
+    });
+    const result = await runBoth('frame gone during recovery', state, [{ op: 'activate' }], {
+      url: PAGE_URL, title: 'Example',
+    });
+    assert.equal(result.state.statusMsg,
+      'The page changed while that action ran; press r to rescan.');
+    assert.equal(result.state.activated.length, 1, 'the possibly completed link was repeated');
+    assert.ok(!result.state.statusMsg.includes('e77ab3d3'));
+  });
+
 test('a timed-out activation says how long was given', { skip: needsCrystal }, async () => {
   const blocks = [
     { text: 'before', item: { role: 'text' } },

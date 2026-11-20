@@ -2926,7 +2926,17 @@ module Tawb
         "col"    => JSON::Any.new(state.col.to_i64),
         "scroll" => JSON::Any.new(state.scroll.to_i64),
       })
-      state.history_places[page.history_identity] = place
+      # A tab can close between the buffer being read and Enter being pressed.
+      # Asking a closed top-level context for its history entry then raises
+      # the browser's no-such-frame error before activation has even started;
+      # the address is still known and is enough to file the place under.
+      identity = begin
+        page.history_identity
+      rescue err
+        raise err unless Frames.frame_gone?(err)
+        "url:#{page.url}"
+      end
+      state.history_places[identity] = place
       url = page.url
       state.history_places["url:#{url}"] = place unless url.empty?
     end
