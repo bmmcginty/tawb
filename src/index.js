@@ -46,7 +46,7 @@ const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 const { entryLine, shortAddress, KIND_LABELS } = require('./library');
 const {
   EXPLICIT, CLEAR_FILTER,
-  createListState, entriesOf, selectedIndex, select, setFilter, move: moveList,
+  createListState, entriesOf, selectedIndex, select, setFilter, move: moveList, cursorLocation,
   beginFilter, filterKey, filterHint, printable: filterCharacter,
 } = require('./list_screen');
 const { resolveAddress, readerModeUrl, readerSourceUrl, DEFAULT_SEARCH } = require('./address');
@@ -3731,9 +3731,9 @@ function moveChooser(state, page, action) {
   if (!chooser) return;
   const index = moveList(chooser, action, viewportHeight());
   if (index < 0) return;
-  const optionIndex = chooserRows(state.core.chooser.options)[index].index;
-  const blockIndex = chooserBlockForOption(state, optionIndex);
-  const position = blockIndex >= 0 ? positionForBlock(state, blockIndex) : null;
+  const cursor = cursorLocation(chooser, entriesOf(chooser),
+    (entry) => chooserBlockForOption(state, entry.row.index));
+  const position = cursor.location >= 0 ? positionForBlock(state, cursor.location) : null;
   if (position) moveSelection(state, position.line, page, position.col);
 }
 
@@ -3763,8 +3763,9 @@ function openChooser(state, page, item, listing) {
 
   relayout(state);
   const range = chooserLines(state);
-  const selected = chooserBlockForOption(state, chooserEntryIndex(state));
-  const position = selected >= 0 ? positionForBlock(state, selected) : null;
+  const cursor = cursorLocation(state.chooser, entriesOf(state.chooser),
+    (entry) => chooserBlockForOption(state, entry.row.index));
+  const position = cursor.location >= 0 ? positionForBlock(state, cursor.location) : null;
   if (position) {
     state.cursor = position.line;
     state.col = position.col;
@@ -4037,8 +4038,8 @@ function showLibrary(state, page, filter, {
   state.col = 0;
   state.scroll = 0;
   relayout(state);
-  const selected = select(lib, entries);
-  const position = selected >= 0 ? positionForBlock(state, selected) : null;
+  const cursor = cursorLocation(lib, entries);
+  const position = cursor.location >= 0 ? positionForBlock(state, cursor.location) : null;
   if (position) {
     state.cursor = position.line;
     state.col = position.col;
@@ -4057,7 +4058,8 @@ function moveLibrary(state, page, action) {
   const entries = entriesOf(lib);
   const index = moveList(lib, action, viewportHeight());
   if (index < 0) return;
-  const position = positionForBlock(state, index);
+  const cursor = cursorLocation(lib, entries);
+  const position = cursor.location >= 0 ? positionForBlock(state, cursor.location) : null;
   if (position) moveSelection(state, position.line, page, position.col);
 }
 

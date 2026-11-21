@@ -80,6 +80,23 @@ function setFilter(list, filter) {
   return select(list);
 }
 
+// The cursor contract for every list screen. The list model settles which
+// entry is selected; `locationFor` turns that entry into the block or line
+// that draws it. A screen must not rediscover the cursor by searching its own
+// drawing for a focused or selected marker, because headings, control headers
+// and other furniture can carry those flags too. Without a mapping the entry
+// index is the location, which is what the library and the wizard use.
+function cursorLocation(list, entries = entriesOf(list), locationFor = null) {
+  const index = select(list, entries);
+  if (index < 0) return { index: -1, entry: null, location: -1 };
+  const entry = entries[index];
+  let location = index;
+  if (typeof locationFor === 'function') location = locationFor(entry, index);
+  else if (locationFor instanceof Map) location = locationFor.get(entry.key);
+  else if (locationFor) location = locationFor[entry.key];
+  return { index, entry, location: Number.isInteger(location) ? location : -1 };
+}
+
 function move(list, action, pageSize = 1) {
   const entries = entriesOf(list);
   const index = select(list, entries);
@@ -176,6 +193,6 @@ function filterHint(list, {
 
 module.exports = {
   TYPEAHEAD, EXPLICIT, CLEAR_FILTER,
-  createListState, entriesOf, selectedIndex, select, setFilter, move,
+  createListState, entriesOf, selectedIndex, select, setFilter, move, cursorLocation,
   beginFilter, endFilter, printable, filterKey, counts, filterSummary, filterHint,
 };

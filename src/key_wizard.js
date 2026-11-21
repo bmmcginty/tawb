@@ -4,7 +4,7 @@ const { Keymap } = require('./keys');
 const { KeyReader, EOF } = require('./input');
 const { visibleEntries, moveKey } = require('./list_model');
 const {
-  EXPLICIT, createListState, entriesOf, select, beginFilter, filterKey,
+  EXPLICIT, createListState, entriesOf, select, cursorLocation, beginFilter, filterKey,
 } = require('./list_screen');
 const { sectionsFor } = require('./wizard_order');
 
@@ -233,6 +233,8 @@ async function runKeyWizard({
     if (selected < scroll) scroll = selected;
     if (selected >= scroll + height) scroll = selected - height + 1;
     scroll = Math.max(0, Math.min(scroll, Math.max(0, entries.length - height)));
+    const cursor = cursorLocation(list, entries,
+      (_entry, index) => 3 + index - scroll);
 
     if (clear) {
       output.write('\x1b[2J');
@@ -295,7 +297,7 @@ async function runKeyWizard({
     } else if (capturing || pending || saving) {
       move(output, size(output).rows, Math.min(status.length + 1, size(output).cols));
     } else {
-      move(output, 3 + Math.max(selected, 0) - scroll, 1);
+      move(output, Math.max(cursor.location, 3), 1);
     }
   };
 

@@ -1059,14 +1059,15 @@ module Tawb
       key = ListModel.move_key(entries, object["selectedKey"]?.try(&.as_s?),
         action, Reader.viewport_height(state))
       object["selectedKey"] = key ? JSON::Any.new(key) : JSON::Any.new(nil)
-      moved = ListModel.selection_index(entries, key)
-      object["fallbackIndex"] = JSON::Any.new(Math.max(moved, 0).to_i64)
-      return if moved < 0
-      row = entries[moved].row.not_nil!.as_h
-      option_index = (row["index"]?.try(&.as_i64?) || 0).to_i32
-      block_index = chooser_block_index(state, option_index)
-      if block_index >= 0
-        if position = Reader.position_for_block(state, block_index)
+      cursor = ListScreen.cursor_location(entries, key) do |entry, _index|
+        row = entry.row.not_nil!.as_h
+        option_index = (row["index"]?.try(&.as_i64?) || 0).to_i32
+        chooser_block_index(state, option_index)
+      end
+      object["fallbackIndex"] = JSON::Any.new(Math.max(cursor.index, 0).to_i64)
+      return if cursor.index < 0
+      if cursor.location >= 0
+        if position = Reader.position_for_block(state, cursor.location)
           Reader.move_selection(output, state, page.url, position[:line], position[:col])
         end
       end
@@ -1126,18 +1127,20 @@ module Tawb
       state.chooser = JSON::Any.new(object)
       state.screens.push("choose", "select")
       entries = chooser_entries(object, "")
-      selected = select_list(object, entries)
+      select_list(object, entries)
+      cursor = ListScreen.cursor_location(entries,
+        object["selectedKey"]?.try(&.as_s?),
+        object["fallbackIndex"]?.try(&.as_i64?).try(&.to_i32)) do |entry, _index|
+        row = entry.row.not_nil!.as_h
+        option_index = (row["index"]?.try(&.as_i64?) || 0).to_i32
+        chooser_block_index(state, option_index)
+      end
       Reader.relayout(state)
       range = chooser_lines(state)
-      if selected >= 0
-        row = entries[selected].row.not_nil!.as_h
-        option_index = (row["index"]?.try(&.as_i64?) || 0).to_i32
-        block_index = chooser_block_index(state, option_index)
-        if block_index >= 0
-          if position = Reader.position_for_block(state, block_index)
-            state.cursor = position[:line]
-            state.col = position[:col]
-          end
+      if cursor.location >= 0
+        if position = Reader.position_for_block(state, cursor.location)
+          state.cursor = position[:line]
+          state.col = position[:col]
         end
       elsif range
         state.cursor = range[:first]
@@ -3223,7 +3226,10 @@ module Tawb
       end
       object["filter"] = JSON::Any.new(filter)
       entries = library_entries(object, filter)
-      selected = select_list(object, entries)
+      select_list(object, entries)
+      cursor = ListScreen.cursor_location(entries,
+        object["selectedKey"]?.try(&.as_s?),
+        object["fallbackIndex"]?.try(&.as_i64?).try(&.to_i32))
       blocks = entries.map do |entry|
         row = entry.row.not_nil!.as_h
         JSON::Any.new({"text" => row["text"],
@@ -3238,8 +3244,8 @@ module Tawb
       state.col = 0
       state.scroll = 0
       Reader.relayout(state)
-      if selected >= 0
-        if position = Reader.position_for_block(state, selected)
+      if cursor.location >= 0
+        if position = Reader.position_for_block(state, cursor.location)
           state.cursor = position[:line]
           state.col = position[:col]
         end
@@ -3264,11 +3270,13 @@ module Tawb
       key = ListModel.move_key(entries, object["selectedKey"]?.try(&.as_s?),
         action, Reader.viewport_height(state))
       object["selectedKey"] = key ? JSON::Any.new(key) : JSON::Any.new(nil)
-      moved = ListModel.selection_index(entries, key)
-      object["fallbackIndex"] = JSON::Any.new(Math.max(moved, 0).to_i64)
-      return if moved < 0
-      if position = Reader.position_for_block(state, moved)
-        Reader.move_selection(output, state, page.url, position[:line], position[:col])
+      cursor = ListScreen.cursor_location(entries, key)
+      object["fallbackIndex"] = JSON::Any.new(Math.max(cursor.index, 0).to_i64)
+      return if cursor.index < 0
+      if cursor.location >= 0
+        if position = Reader.position_for_block(state, cursor.location)
+          Reader.move_selection(output, state, page.url, position[:line], position[:col])
+        end
       end
     end
 
@@ -3284,9 +3292,12 @@ module Tawb
         if object = state.library.try(&.as_h?)
           filter = object["filter"]?.try(&.as_s?) || ""
           entries = library_entries(object, filter)
-          selected = select_list(object, entries)
-          if selected >= 0
-            if position = Reader.position_for_block(state, selected)
+          select_list(object, entries)
+          cursor = ListScreen.cursor_location(entries,
+            object["selectedKey"]?.try(&.as_s?),
+            object["fallbackIndex"]?.try(&.as_i64?).try(&.to_i32))
+          if cursor.location >= 0
+            if position = Reader.position_for_block(state, cursor.location)
               state.cursor = position[:line]
               state.col = position[:col]
             end
@@ -3296,16 +3307,18 @@ module Tawb
         if object = state.chooser.try(&.as_h?)
           filter = object["filter"]?.try(&.as_s?) || ""
           entries = chooser_entries(object, filter)
-          selected = select_list(object, entries)
-          if selected >= 0
-            row = entries[selected].row.not_nil!.as_h
+          select_list(object, entries)
+          cursor = ListScreen.cursor_location(entries,
+            object["selectedKey"]?.try(&.as_s?),
+            object["fallbackIndex"]?.try(&.as_i64?).try(&.to_i32)) do |entry, _index|
+            row = entry.row.not_nil!.as_h
             option_index = (row["index"]?.try(&.as_i64?) || 0).to_i32
-            block_index = chooser_block_index(state, option_index)
-            if block_index >= 0
-              if position = Reader.position_for_block(state, block_index)
-                state.cursor = position[:line]
-                state.col = position[:col]
-              end
+            chooser_block_index(state, option_index)
+          end
+          if cursor.location >= 0
+            if position = Reader.position_for_block(state, cursor.location)
+              state.cursor = position[:line]
+              state.col = position[:col]
             end
           end
         end

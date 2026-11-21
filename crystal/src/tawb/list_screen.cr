@@ -52,6 +52,29 @@ module Tawb
       Edit.new(false, false, false, filter, filtering)
     end
 
+    # The cursor contract for every list screen. The list model settles which
+    # entry is selected; the block turns that entry into the block or line
+    # that draws it. A screen must not rediscover the cursor by searching its
+    # own drawing for a focused or selected marker, because headings, control
+    # headers and other furniture can carry those flags too. Without a mapping
+    # the entry index is the location, which is what the library and the
+    # wizard use.
+    record Cursor(T), index : Int32, entry : ListModel::Entry(T)?, location : Int32
+
+    def self.cursor_location(entries : Array(ListModel::Entry(T)), selected_key : String?,
+                             fallback_index : Int32? = nil,
+                             &location_for : ListModel::Entry(T), Int32 -> Int32) : Cursor(T) forall T
+      index = ListModel.selection_index(entries, selected_key, fallback_index)
+      return Cursor(T).new(-1, nil, -1) if index < 0
+      entry = entries[index]
+      Cursor(T).new(index, entry, yield entry, index)
+    end
+
+    def self.cursor_location(entries : Array(ListModel::Entry(T)), selected_key : String?,
+                             fallback_index : Int32? = nil) : Cursor(T) forall T
+      cursor_location(entries, selected_key, fallback_index) { |_entry, index| index }
+    end
+
     def self.filter_summary(filter : String, total : Int32, shown : Int32,
                             noun : String = "row") : String
       plural = ->(count : Int32) { "#{count} #{noun}#{"s" unless count == 1}" }

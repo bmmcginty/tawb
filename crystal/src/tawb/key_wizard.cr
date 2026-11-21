@@ -261,6 +261,9 @@ module Tawb
         scroll = selected if selected < scroll
         scroll = selected - height + 1 if selected >= scroll + height
         scroll = Math.max(0, Math.min(scroll, Math.max(0, entries.size - height)))
+        cursor = ListScreen.cursor_location(entries, selected_key) do |_entry, index|
+          3 + index - scroll
+        end
 
         if clear
           output.write("\e[2J")
@@ -333,7 +336,7 @@ module Tawb
         elsif capturing || pending || saving
           output.write("\e[#{output.rows};#{Math.min(status.size + 1, output.columns)}H")
         else
-          output.write("\e[#{3 + Math.max(selected, 0) - scroll};1H")
+          output.write("\e[#{Math.max(cursor.location, 3)};1H")
         end
       end
 
