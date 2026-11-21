@@ -78,6 +78,16 @@ module Tawb
       MOVEMENTS[action]?
     end
 
+    # Resolve a keymap action and its Lynx context into the one action a list
+    # screen should see. A movement key wins over its profile spelling, and the
+    # Lynx Tab spellings become the focus actions the default profile uses.
+    def self.action(action : String?, context_action : String? = nil) : String?
+      return nil unless action
+      return "focus-next" if action == "fast-forward-link"
+      return "focus-previous" if action == "fast-backward-link"
+      movement(action) || (context_action ? movement(context_action) : nil) || action
+    end
+
     # The cursor contract for every list screen. The list model settles which
     # entry is selected; the block turns that entry into the block or line
     # that draws it. A screen must not rediscover the cursor by searching its

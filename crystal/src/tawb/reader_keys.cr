@@ -256,6 +256,23 @@ module Tawb
     # The interrupt that always leaves the program, popup or not.
     ALWAYS_QUIT = "\x03"
 
+    # A Flex screen owns its keyboard. These are the reader-wide commands that
+    # may still be delegated to the ordinary browse handler; movement and page
+    # editing are deliberately absent so they cannot leak into a list.
+    FLEX_GLOBAL_ACTIONS = Set{
+      "quit", "confirm-quit", "abort",
+      "location-bar", "goto", "location-edit", "link-address",
+      "history-back", "history-forward",
+      "new-tab", "next-tab", "previous-tab", "close-tab",
+      "bookmarks", "add-bookmark", "visited-links", "session-history", "history",
+      "downloads", "list-links", "list-addresses", "download-link", "browser-question",
+      "next-change", "previous-change", "where", "messages", "document-info", "options",
+      "link-number", "toggle-live", "toggle-link-address", "toggle-short-links",
+      "page-keyboard", "keyboard-wizard", "find-forward", "find-backward", "repeat-find",
+      "repeat-find-forward", "repeat-find-backward", "refresh", "reload-page",
+      "reload-no-cache", "print-page", "reader-mode", "help", "context-help",
+    }
+
     # What a key means while that popup is open: close it, quit for real, or
     # fall through to the browse map. Lynx's popup cancels on its quit and
     # abort functions, so all three readings of "leave" close the menu; only
@@ -3761,8 +3778,7 @@ module Tawb
 
       # Which keys are movement is one list-wide answer. Left and right have no
       # entry there, so a library does not move by character either.
-      movement = action ? ListScreen.movement(action) : nil
-      movement ||= context_action ? ListScreen.movement(context_action) : nil
+      movement = ListScreen.movement(ListScreen.action(action, context_action) || "")
       movement ||= "next" if key_is(chunk, "ArrowDown", state)
       movement ||= "previous" if key_is(chunk, "ArrowUp", state)
       movement ||= "page-next" if key_is(chunk, "PageDown", state)

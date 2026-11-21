@@ -46,7 +46,7 @@ const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 const { entryLine, shortAddress, KIND_LABELS } = require('./library');
 const {
   EXPLICIT, CLEAR_FILTER,
-  createListState, entriesOf, selectedIndex, select, setFilter, move: moveList, cursorLocation, listMovement,
+  createListState, entriesOf, selectedIndex, select, setFilter, move: moveList, cursorLocation, listMovement, listAction,
   beginFilter, filterKey, filterHint, printable: filterCharacter,
 } = require('./list_screen');
 const { resolveAddress, readerModeUrl, readerSourceUrl, DEFAULT_SEARCH } = require('./address');
@@ -4526,8 +4526,7 @@ async function handleLibraryKey(chunk, state, page) {
 
   // Which keys are movement is one list-wide answer. Left and right have no
   // entry there, so a library does not move by character either.
-  const movement = listMovement(movementAction)
-    || listMovement(contextAction)
+  const movement = listMovement(listAction(movementAction, contextAction))
     || (keyIs(chunk, 'ArrowDown', state) ? 'next' : null)
     || (keyIs(chunk, 'ArrowUp', state) ? 'previous' : null)
     || (keyIs(chunk, 'PageDown', state) ? 'page-next' : null)

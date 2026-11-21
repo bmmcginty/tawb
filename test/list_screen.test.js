@@ -10,6 +10,7 @@ const {
   TYPEAHEAD, EXPLICIT, CLEAR_FILTER,
   createListState, entriesOf, select, setFilter, move,
   beginFilter, endFilter, filterKey, filterSummary, filterHint,
+  listMovement, listAction,
 } = require('../src/list_screen');
 
 const row = (key, text, search = text) => ({ key, text, search });
@@ -82,4 +83,19 @@ test('movement and status come from the shared model', () => {
   assert.equal(filterHint(explicit), '/: filter');
   beginFilter(explicit);
   assert.match(filterHint(explicit), /Enter\/Esc/);
+});
+
+
+test('one movement table answers both profiles and leaves left and right alone', () => {
+  assert.equal(listMovement('next-line'), 'next');
+  assert.equal(listMovement('line-start'), 'first');
+  assert.equal(listMovement('line-end'), 'last');
+  assert.equal(listMovement('next-character'), null);
+  assert.equal(listMovement('previous-character'), null);
+  assert.equal(listAction('fast-forward-link'), 'focus-next');
+  assert.equal(listAction('fast-backward-link'), 'focus-previous');
+  assert.equal(listAction('next-focusable', 'next'), 'next');
+  assert.equal(listAction('next-line'), 'next');
+  assert.equal(listAction('next-character'), 'next-character');
+  assert.equal(listAction('previous-character'), 'previous-character');
 });

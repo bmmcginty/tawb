@@ -877,6 +877,12 @@ module Tawb
           end
         end
         JSON::Any.new(results)
+      when "list_screen.action"
+        object = payload.as_h
+        value = ListScreen.action(
+          object["action"]?.try(&.as_s?),
+          object["contextAction"]?.try(&.as_s?))
+        JSON::Any.new(value)
       when "list_screen.filter_key"
         object = payload.as_h
         edit = ListScreen.filter_key(

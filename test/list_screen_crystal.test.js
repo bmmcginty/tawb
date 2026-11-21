@@ -70,3 +70,18 @@ test('native filter status and hint match', { skip }, () => {
     }
   }
 });
+
+
+test('native list actions match the shipping movement table', { skip }, () => {
+  const cases = [
+    ['next-line', null], ['previous-line', null], ['line-start', null],
+    ['line-end', null], ['next-character', null], ['previous-character', null],
+    ['fast-forward-link', null], ['fast-backward-link', null],
+    ['next-focusable', 'next'], ['previous-focusable', 'previous'],
+    ['next', null], ['last', null],
+  ];
+  for (const [action, contextAction] of cases) {
+    assert.equal(call('list_screen.action', { action, contextAction }),
+      screen.listAction(action, contextAction), `${action}/${contextAction}`);
+  }
+});

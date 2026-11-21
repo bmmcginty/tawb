@@ -114,6 +114,15 @@ function listMovement(action) {
   return LIST_MOVEMENTS[action] || null;
 }
 
+// Resolve a keymap action and its Lynx context into the one action a list
+// screen should see. A movement key wins over its profile spelling, and the
+// Lynx Tab spellings become the focus actions the default profile uses.
+function listAction(action, contextAction = null) {
+  if (action === 'fast-forward-link') return 'focus-next';
+  if (action === 'fast-backward-link') return 'focus-previous';
+  return listMovement(action) || listMovement(contextAction) || action;
+}
+
 function move(list, action, pageSize = 1) {
   const entries = entriesOf(list);
   const index = select(list, entries);
@@ -210,6 +219,6 @@ function filterHint(list, {
 
 module.exports = {
   TYPEAHEAD, EXPLICIT, CLEAR_FILTER,
-  createListState, entriesOf, selectedIndex, select, setFilter, move, cursorLocation, listMovement,
+  createListState, entriesOf, selectedIndex, select, setFilter, move, cursorLocation, listMovement, listAction,
   beginFilter, endFilter, printable, filterKey, counts, filterSummary, filterHint,
 };

@@ -3178,6 +3178,31 @@
       "differences": []
     },
     {
+      "id": "operation.property-sheet",
+      "kind": "operation",
+      "javascript": [],
+      "crystal": [
+        "crystal/src/tawb/conformance.cr"
+      ],
+      "operations": [
+        "property_sheet.scenario"
+      ],
+      "surfaces": [
+        "flex"
+      ],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/property_sheet.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
       "id": "operation.focus",
       "kind": "operation",
       "javascript": [],
