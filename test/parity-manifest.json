@@ -1660,6 +1660,30 @@
       "differences": []
     },
     {
+      "id": "module.property-sheet",
+      "kind": "module",
+      "javascript": [
+        "src/property_sheet.js"
+      ],
+      "crystal": [
+        "crystal/src/tawb/property_sheet.cr"
+      ],
+      "surfaces": [
+        "flex"
+      ],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/property_sheet.test.js"
+      ],
+      "status": "scripted-only",
+      "differences": []
+    },
+    {
       "id": "module.focus",
       "kind": "module",
       "javascript": [
@@ -1934,9 +1958,14 @@
       "engines": [],
       "views": [],
       "fixtures": [],
-      "levels": [],
-      "tests": [],
-      "status": "uncovered",
+      "levels": [
+        "operation"
+      ],
+      "tests": [
+        "test/list_screen.test.js",
+        "test/list_screen_crystal.test.js"
+      ],
+      "status": "scripted-only",
       "differences": []
     },
     {
@@ -3452,6 +3481,7 @@
         "crystal/src/tawb/conformance.cr"
       ],
       "operations": [
+        "list_screen.action",
         "list_screen.filter_hint",
         "list_screen.filter_key",
         "list_screen.filter_summary"

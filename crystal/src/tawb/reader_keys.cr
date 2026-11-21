@@ -1,4 +1,5 @@
 require "./portal"
+require "./property_sheet"
 require "json"
 require "./address"
 require "./reader"
@@ -3594,12 +3595,14 @@ module Tawb
     private def self.ask_line(output : Screen::Output, state : Reader::State,
                               page : Reader::PageEnv, keyboard : Keyboard?,
                               label : String, initial : String,
-                              hint : String) : String?
+                              hint : String,
+                              existing_token : Input::Token? = nil) : String?
       return nil unless keyboard
       previous_mode = state.mode
       state.mode = "line"
       state.line_prompt = Reader::LinePrompt.new(label, Reader::Buffer.new(initial, initial.size))
-      token = keyboard.claim
+      token = existing_token || keyboard.claim
+      owns_token = existing_token.nil?
       Reader.draw_hint(output, state, true)
       # `hint` is not written: the prompt below writes the same row, so a hint
       # would be replaced before it could be read.
@@ -3628,7 +3631,7 @@ module Tawb
           Reader.draw_line_prompt(output, state)
         end
       ensure
-        keyboard.release(token)
+        keyboard.release(token) if owns_token
         state.line_prompt = nil
         state.mode = previous_mode
         Reader.draw_hint(output, state, true)

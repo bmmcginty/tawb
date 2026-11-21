@@ -41,6 +41,7 @@ const { createLynxActions } = require('./lynx_actions');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { ScreenStack } = require('./screen_stack');
+const { PropertySheet } = require('./property_sheet');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
 const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 const { entryLine, shortAddress, KIND_LABELS } = require('./library');

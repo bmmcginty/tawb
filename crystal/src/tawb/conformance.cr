@@ -31,6 +31,7 @@ require "./layout_order"
 require "./library"
 require "./list_model"
 require "./list_screen"
+require "./property_sheet"
 require "./screen_stack"
 require "./library_chromium"
 require "./live"
@@ -816,6 +817,29 @@ module Tawb
         runtime_scenario(payload)
       when "startup.scenario"
         startup_scenario(payload)
+      when "property_sheet.scenario"
+        object = payload.as_h
+        rows = (object["rows"]?.try(&.as_a?) || [] of JSON::Any).map do |raw|
+          fields = raw.as_h
+          choices = fields["choices"]?.try(&.as_a?).try(&.map { |value| value.as_s })
+          PropertySheet::PropertyRow.new(
+            fields["id"].as_s, fields["label"].as_s,
+            fields["value"]?.try(&.as_s?) || "",
+            fields["kind"]?.try(&.as_s?) || "text",
+            choices,
+            fields["command"]?.try(&.as_s?),
+            fields["note"]?.try(&.as_s?) || "")
+        end
+        sheet = PropertySheet.new(object["title"]?.try(&.as_s?) || "Properties", rows,
+          object["actionLabel"]?.try(&.as_s?))
+        results = [] of JSON::Any
+        (object["actions"]?.try(&.as_a?) || [] of JSON::Any).each do |step|
+          results << JSON::Any.new(sheet.handle(step.as_s))
+        end
+        JSON::Any.new({
+          "results" => JSON::Any.new(results),
+          "snapshot" => sheet.snapshot,
+        })
       when "list_model.visible_entries"
         object = payload.as_h
         sections = object["sections"].as_a.map do |raw|
