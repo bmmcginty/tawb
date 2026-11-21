@@ -97,6 +97,23 @@ function cursorLocation(list, entries = entriesOf(list), locationFor = null) {
   return { index, entry, location: Number.isInteger(location) ? location : -1 };
 }
 
+// The movement a list owns. Library, chooser, wizard and Flex all ask this
+// table rather than each spelling out which keymap actions mean next, first
+// and so on. Left and right are deliberately absent: they are not list
+// movement, and a list which gives them another meaning handles them before
+// asking here.
+const LIST_MOVEMENTS = {
+  'next-line': 'next', 'previous-line': 'previous',
+  'next-screen': 'page-next', 'previous-screen': 'page-previous',
+  top: 'first', bottom: 'last', 'line-start': 'first', 'line-end': 'last',
+  next: 'next', previous: 'previous', first: 'first', last: 'last',
+  'page-next': 'page-next', 'page-previous': 'page-previous',
+};
+
+function listMovement(action) {
+  return LIST_MOVEMENTS[action] || null;
+}
+
 function move(list, action, pageSize = 1) {
   const entries = entriesOf(list);
   const index = select(list, entries);
@@ -193,6 +210,6 @@ function filterHint(list, {
 
 module.exports = {
   TYPEAHEAD, EXPLICIT, CLEAR_FILTER,
-  createListState, entriesOf, selectedIndex, select, setFilter, move, cursorLocation,
+  createListState, entriesOf, selectedIndex, select, setFilter, move, cursorLocation, listMovement,
   beginFilter, endFilter, printable, filterKey, counts, filterSummary, filterHint,
 };

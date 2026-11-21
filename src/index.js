@@ -46,7 +46,7 @@ const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 const { entryLine, shortAddress, KIND_LABELS } = require('./library');
 const {
   EXPLICIT, CLEAR_FILTER,
-  createListState, entriesOf, selectedIndex, select, setFilter, move: moveList, cursorLocation,
+  createListState, entriesOf, selectedIndex, select, setFilter, move: moveList, cursorLocation, listMovement,
   beginFilter, filterKey, filterHint, printable: filterCharacter,
 } = require('./list_screen');
 const { resolveAddress, readerModeUrl, readerSourceUrl, DEFAULT_SEARCH } = require('./address');
@@ -4524,28 +4524,17 @@ async function handleLibraryKey(chunk, state, page) {
     return;
   }
 
-  if (keyIs(chunk, 'ArrowDown', state) || contextAction === 'next'
-      || movementAction === 'next-line') {
-    return moveLibrary(state, page, 'next');
-  }
-  if (keyIs(chunk, 'ArrowUp', state) || contextAction === 'previous'
-      || movementAction === 'previous-line') {
-    return moveLibrary(state, page, 'previous');
-  }
-  if (keyIs(chunk, 'PageDown', state) || contextAction === 'page-next'
-      || movementAction === 'next-screen') {
-    return moveLibrary(state, page, 'page-next');
-  }
-  if (keyIs(chunk, 'PageUp', state) || contextAction === 'page-previous'
-      || movementAction === 'previous-screen') {
-    return moveLibrary(state, page, 'page-previous');
-  }
-  if (keyIs(chunk, 'Home', state) || contextAction === 'first' || movementAction === 'top') {
-    return moveLibrary(state, page, 'first');
-  }
-  if (keyIs(chunk, 'End', state) || contextAction === 'last' || movementAction === 'bottom') {
-    return moveLibrary(state, page, 'last');
-  }
+  // Which keys are movement is one list-wide answer. Left and right have no
+  // entry there, so a library does not move by character either.
+  const movement = listMovement(movementAction)
+    || listMovement(contextAction)
+    || (keyIs(chunk, 'ArrowDown', state) ? 'next' : null)
+    || (keyIs(chunk, 'ArrowUp', state) ? 'previous' : null)
+    || (keyIs(chunk, 'PageDown', state) ? 'page-next' : null)
+    || (keyIs(chunk, 'PageUp', state) ? 'page-previous' : null)
+    || (keyIs(chunk, 'Home', state) ? 'first' : null)
+    || (keyIs(chunk, 'End', state) ? 'last' : null);
+  if (movement) return moveLibrary(state, page, movement);
 }
 
 // ---------------------------------------------------------------------------

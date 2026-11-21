@@ -52,6 +52,32 @@ module Tawb
       Edit.new(false, false, false, filter, filtering)
     end
 
+    # The movement a list owns. Library, chooser, wizard and Flex all ask this
+    # table rather than each spelling out which keymap actions mean next, first
+    # and so on. Left and right are deliberately absent: they are not list
+    # movement, and a list which gives them another meaning handles them before
+    # asking here.
+    MOVEMENTS = {
+      "next-line"       => "next",
+      "previous-line"   => "previous",
+      "next-screen"     => "page-next",
+      "previous-screen" => "page-previous",
+      "top"             => "first",
+      "bottom"          => "last",
+      "line-start"      => "first",
+      "line-end"        => "last",
+      "next"            => "next",
+      "previous"        => "previous",
+      "first"           => "first",
+      "last"            => "last",
+      "page-next"       => "page-next",
+      "page-previous"   => "page-previous",
+    }
+
+    def self.movement(action : String) : String?
+      MOVEMENTS[action]?
+    end
+
     # The cursor contract for every list screen. The list model settles which
     # entry is selected; the block turns that entry into the block or line
     # that draws it. A screen must not rediscover the cursor by searching its

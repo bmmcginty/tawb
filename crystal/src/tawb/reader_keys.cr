@@ -3759,19 +3759,17 @@ module Tawb
         return nil
       end
 
-      if key_is(chunk, "ArrowDown", state) || context_action == "next" || action == "next-line"
-        move_library(output, state, page, "next")
-      elsif key_is(chunk, "ArrowUp", state) || context_action == "previous" || action == "previous-line"
-        move_library(output, state, page, "previous")
-      elsif key_is(chunk, "PageDown", state) || context_action == "page-next" || action == "next-screen"
-        move_library(output, state, page, "page-next")
-      elsif key_is(chunk, "PageUp", state) || context_action == "page-previous" || action == "previous-screen"
-        move_library(output, state, page, "page-previous")
-      elsif key_is(chunk, "Home", state) || context_action == "first" || action == "top"
-        move_library(output, state, page, "first")
-      elsif key_is(chunk, "End", state) || context_action == "last" || action == "bottom"
-        move_library(output, state, page, "last")
-      end
+      # Which keys are movement is one list-wide answer. Left and right have no
+      # entry there, so a library does not move by character either.
+      movement = action ? ListScreen.movement(action) : nil
+      movement ||= context_action ? ListScreen.movement(context_action) : nil
+      movement ||= "next" if key_is(chunk, "ArrowDown", state)
+      movement ||= "previous" if key_is(chunk, "ArrowUp", state)
+      movement ||= "page-next" if key_is(chunk, "PageDown", state)
+      movement ||= "page-previous" if key_is(chunk, "PageUp", state)
+      movement ||= "first" if key_is(chunk, "Home", state)
+      movement ||= "last" if key_is(chunk, "End", state)
+      move_library(output, state, page, movement) if movement
       nil
     end
 
