@@ -1340,6 +1340,24 @@
       "differences": []
     },
     {
+      "id": "module.display",
+      "kind": "module",
+      "javascript": [
+        "src/display.js"
+      ],
+      "crystal": [],
+      "surfaces": [],
+      "engines": [],
+      "views": [],
+      "fixtures": [],
+      "levels": [],
+      "tests": [
+        "test/display.test.js"
+      ],
+      "status": "uncovered",
+      "differences": []
+    },
+    {
       "id": "module.dom",
       "kind": "module",
       "javascript": [
