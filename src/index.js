@@ -10,7 +10,7 @@ const {
   findBlockWithText, sameDocumentFragment,
   ActionTimeout, withTimeout, ACTION_TIMEOUT_MS,
 } = require('./core');
-const { displaySettings } = require('./display');
+const { displaySettings, rowDetail } = require('./display');
 const { armFrame, refreshDue, pulse, TICK_MS } = require('./live');
 const { isGoneFrameError } = require('./frames');
 const {
@@ -887,6 +887,15 @@ function linkTarget(state, page) {
   return state.shortLinks ? shortTarget(item.href, pageUrl(page)) : item.href;
 }
 
+// What the line under the cursor can say about itself: the landmark it is in,
+// the description or keystroke its control carries, the text of an aside the
+// reader asked to hear there. Empty unless the settings ask for it.
+function lineDetail(state) {
+  const block = currentBlock(state);
+  if (!block) return '';
+  return rowDetail(block, ARGS.display);
+}
+
 // The same address, said the way a person would say it to someone already
 // standing on the page: a link from /a/b/c to /b is "/b", because the host is
 // the one they are on and repeating it says nothing. A link that leaves the
@@ -1195,7 +1204,9 @@ function rememberMessage(state, msg) {
 // the one-line prompt are all drawn on this row and own it while they are up.
 function drawStatus(state, page) {
   if (state.mode !== 'browse') return;
-  const wanted = linkTarget(state, page) || state.statusMsg;
+  const detail = state.statusMsg ? '' : lineDetail(state);
+  const target = linkTarget(state, page);
+  const wanted = target && detail ? `${target} — ${detail}` : (target || state.statusMsg || detail);
   const rendered = pageText(state, wanted).slice(0, termSize().cols);
   if (rendered === state.drawn.status) return;
   writeStatusRow(state, rendered);
