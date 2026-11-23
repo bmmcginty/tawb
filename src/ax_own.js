@@ -990,12 +990,54 @@ function extractAxItems(options) {
   // exactly which containers it belongs to when it is rendered.
   let containerDepth = 0;
 
+  // What a control says about itself beyond its name: the description a
+  // screen reader announces after the name, the error message that explains a
+  // rejected field, the keystroke that does the same job, the role described in
+  // the world's terms, and the popup it opens. None of it is the name, and all
+  // of it is lost today, so it is carried on the item for the display to place.
+  const annotationOf = (el) => {
+    if (!el || !el.getAttribute) return undefined;
+    const said = {};
+    const described = clean(el.getAttribute('aria-describedby'));
+    if (described) {
+      const parts = [];
+      for (const id of described.split(' ')) {
+        if (!id) continue;
+        let target = null;
+        try { target = document.getElementById(id); } catch { target = null; }
+        if (target) parts.push(accessibleName(target, 1, true, true));
+      }
+      const text = clean(parts.join(' '));
+      if (text) said.description = text;
+    }
+    const description = clean(el.getAttribute('aria-description'));
+    if (description && !said.description) said.description = description;
+    const invalid = clean(el.getAttribute('aria-invalid'));
+    if (invalid && invalid !== 'false') {
+      const id = clean(el.getAttribute('aria-errormessage'));
+      let target = null;
+      if (id) { try { target = document.getElementById(id); } catch { target = null; } }
+      const text = target ? clean(accessibleName(target, 1, true, true)) : '';
+      if (text) said.error = text;
+    }
+    const shortcuts = clean(el.getAttribute('aria-keyshortcuts'));
+    if (shortcuts) said.keyshortcuts = shortcuts;
+    const describedRole = clean(el.getAttribute('aria-roledescription'));
+    if (describedRole) said.roleDescription = describedRole;
+    const popup = clean(el.getAttribute('aria-haspopup'));
+    if (popup && popup !== 'false') said.haspopup = popup;
+    const attributes = Object.keys(said);
+    return attributes.length ? said : undefined;
+  };
+
   const fromElement = (item, el) => {
     const table = layout ? tableInfoOf(el) : undefined;
+    const annotation = annotationOf(el);
     const flow = layout ? flowOf(el, item.role) : undefined;
     return {
       depth: containerDepth,
       ...item,
+      ...(annotation ? { annotation } : {}),
       ...(table ? { table } : {}),
       ...(flow ? { flow } : {}),
       ...(visual ? { visual: visualOf(el, el) } : {}),

@@ -212,3 +212,30 @@ test('a presentational role still removes the semantics nothing depends on', asy
   assert.equal(items.some((item) => item.name === 'Hidden button'), false,
     'aria-hidden content was exposed by the presentational-role change');
 });
+
+test('what a control says beyond its name is carried, not dropped', async () => {
+  const page = await openPage(`<!doctype html><body>
+    <button aria-describedby="d" aria-keyshortcuts="Alt+D"
+      aria-roledescription="destructive action" aria-haspopup="dialog">Delete</button>
+    <span id="d" hidden>Cannot be undone</span>
+    <input aria-label="Email" aria-invalid="true" aria-errormessage="e">
+    <span id="e">Must contain an at sign</span>
+    <div role="button" tabindex="0" aria-description="Opens a menu">Options</div>
+  </body>`);
+
+  const items = await page.evaluate(extractAxItems, {});
+  const remove = items.find((item) => item.name === 'Delete');
+  assert.ok(remove, 'the described button was not in the tree');
+  assert.equal(remove.annotation?.description, 'Cannot be undone',
+    'a description pointing at hidden text was lost');
+  assert.equal(remove.annotation?.keyshortcuts, 'Alt+D');
+  assert.equal(remove.annotation?.roleDescription, 'destructive action');
+  assert.equal(remove.annotation?.haspopup, 'dialog');
+
+  const email = items.find((item) => item.name === 'Email');
+  assert.equal(email.annotation?.error, 'Must contain an at sign',
+    'the error message for an invalid field was lost');
+
+  const options = items.find((item) => item.name === 'Options');
+  assert.equal(options.annotation?.description, 'Opens a menu', 'aria-description was lost');
+});
