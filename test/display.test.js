@@ -91,3 +91,26 @@ test('annotations are heard in the row, on the line, or not at all', () => {
   assert.equal(off.text, '{Delete}');
   assert.equal(rowDetail(off, { context: 'off', annotations: 'off', notes: 'off' }), '');
 });
+
+test('notes are read in the flow, kept for the row, or dropped', () => {
+  const items = [
+    text(0, 'Before'), BR,
+    { role: 'note', name: '', container: true, depth: 0 }, BR,
+    text(1, 'Prices include tax.'), BR,
+    text(1, 'Ask at the desk.'), BR,
+    text(0, 'After'), BR,
+  ];
+
+  assert.deepEqual(buildBlocks(items, { notes: 'inline' }).map((block) => block.text),
+    ['Before', 'Prices include tax.', 'Ask at the desk.', 'After']);
+
+  const status = buildBlocks(items, { notes: 'status' });
+  assert.deepEqual(status.map((block) => block.text), ['Before', '[note]', 'After']);
+  const note = status.find((block) => block.text === '[note]');
+  assert.equal(note.note, 'Prices include tax. Ask at the desk.');
+  assert.equal(rowDetail(note, { context: 'off', annotations: 'off', notes: 'status' }),
+    'Prices include tax. Ask at the desk.');
+
+  assert.deepEqual(buildBlocks(items, { notes: 'off' }).map((block) => block.text),
+    ['Before', 'After']);
+});

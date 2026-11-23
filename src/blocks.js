@@ -81,6 +81,9 @@ function buildBlocks(items, settings = {}) {
   // The context the last emitted line belonged to, so an inline context is
   // said once at the start of a run rather than on every line in it.
   let lastContext = '';
+  // The aside currently standing as one line, for notes a reader asked for in
+  // the status row instead of in the flow.
+  let aside = null;
 
   for (const item of items) {
     if (item.role === '__break__') { atBoundary = true; continue; }
@@ -96,6 +99,34 @@ function buildBlocks(items, settings = {}) {
     const depth = Number.isInteger(item.depth) ? item.depth : 0;
     const context = containers.slice(0, depth).filter(Boolean)
       .map((one) => ({ role: one.role, name: one.name }));
+    const asideAt = context.findIndex((one) => NOTE_ROLES.has(one.role));
+
+    // An aside the reader did not ask to read in the flow: its words belong to
+    // the row, and one standing line says there is something here.
+    if (asideAt >= 0 && display.notes !== 'inline') {
+      if (display.notes === 'off') continue;
+      const owner = containers[asideAt];
+      const words = typeof item.name === 'string' ? item.name : '';
+      if (!aside || aside.owner !== owner) {
+        aside = {
+          owner,
+          block: {
+            kind: 'control',
+            text: `[${owner.role}${owner.name ? `: ${owner.name}` : ''}]`,
+            item,
+            spans: [],
+            startsBlock: true,
+            note: '',
+            context,
+          },
+        };
+        blocks.push(aside.block);
+        lastContext = contextLabel(context);
+      }
+      if (words) aside.block.note = joinProse(aside.block.note, words);
+      continue;
+    }
+
     let text = renderLine(item);
     if (!text) continue;
 
