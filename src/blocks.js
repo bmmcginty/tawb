@@ -132,11 +132,14 @@ function buildBlocks(items, settings = {}) {
       startsBlock: atBoundary,
     };
     if (context.length) block.context = context;
+    if (item.annotation) block.annotation = item.annotation;
     const label = contextLabel(context);
     if (display.context === 'inline' && label && label !== lastContext) {
       block.text = `in: ${label} — ${block.text}`;
     }
     lastContext = label;
+    const said = inlineDetail(block, display);
+    if (said) block.text = `${block.text} (${said})`;
     blocks.push(block);
     pendingPrefix = '';
     atBoundary = false;

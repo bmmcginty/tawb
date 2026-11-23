@@ -74,3 +74,20 @@ test('a context path names the role and only the name a container has', () => {
     'main › list Results');
   assert.equal(contextLabel([]), '');
 });
+
+test('annotations are heard in the row, on the line, or not at all', () => {
+  const items = [
+    link(0, 'Delete', { annotation: { description: 'Cannot be undone', keyshortcuts: 'Alt+D' } }), BR,
+  ];
+  const status = buildBlocks(items, { annotations: 'status' })[0];
+  assert.equal(status.text, '{Delete}', 'a status annotation lengthened the line');
+  assert.equal(rowDetail(status, { context: 'off', annotations: 'status', notes: 'off' }),
+    'Cannot be undone — keys Alt+D');
+
+  const inline = buildBlocks(items, { annotations: 'inline' })[0];
+  assert.equal(inline.text, '{Delete} (Cannot be undone — keys Alt+D)');
+
+  const off = buildBlocks(items, { annotations: 'off' })[0];
+  assert.equal(off.text, '{Delete}');
+  assert.equal(rowDetail(off, { context: 'off', annotations: 'off', notes: 'off' }), '');
+});
