@@ -98,6 +98,18 @@ test('a cross-origin iframe is read and activated through its own context', asyn
       res.end('<!doctype html><p>Hidden tracker document.</p>');
       return;
     }
+    if (req.url === '/presentational') {
+      // reCAPTCHA frames its own checkbox this way, and Facebook's two-step
+      // page is nothing but that frame. The role takes the frame's semantics
+      // away; it does not take the document inside it away.
+      res.end(`<!doctype html><title>presentational frame parent</title>
+        <p>Before the frame</p>
+        <iframe role="presentation" title="reCAPTCHA"
+          style="width:300px; height:150px"
+          src="http://localhost:${childServer.address().port}/"></iframe>
+        <p>After the frame</p>`);
+      return;
+    }
     // More hidden children than the frame-reading budget come first. The
     // visible frame must be selected by its real element ordinal rather than
     // mistaken for the first tracker or dropped after the first 25 contexts.
@@ -142,6 +154,33 @@ test('a cross-origin iframe is read and activated through its own context', asyn
   blocks = await snapshotFrameTree(page, 'ax', { driver });
   assert.ok(blocks.some((block) => block.text.includes('Pressed in the other origin')),
     'activation did not reach the child document');
+});
+
+test('a frame the author marked presentational is still read', async () => {
+  driver = driver || await openDriver({ engine: ENGINE, profile, log: () => {} });
+  const page = driver.context.pages()[0] || await driver.context.newPage();
+  await page.goto(`http://127.0.0.1:${parentServer.address().port}/presentational`, {
+    waitUntil: 'domcontentloaded',
+  });
+
+  let blocks = [];
+  for (let tries = 0; tries < 20; tries += 1) {
+    blocks = await snapshotFrameTree(page, 'ax', { driver });
+    if (blocks.some((block) => block.text.includes('Words from the other origin.'))) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  const before = blocks.findIndex((block) => block.text.includes('Before the frame'));
+  const marker = blocks.findIndex((block) => block.item && block.item.role === 'iframe');
+  const inside = blocks.findIndex((block) => block.text.includes('Words from the other origin.'));
+  const after = blocks.findIndex((block) => block.text.includes('After the frame'));
+  assert.ok(inside > -1,
+    'role="presentation" on an iframe hid the document it hosts');
+  assert.ok(marker > -1, 'the frame left no marker in reading order');
+  assert.ok(before > -1 && before < marker && marker < inside && inside < after,
+    'the frame document was not spliced in where the frame sits');
+  assert.ok(blocks.some((block) => block.item && block.item.name === 'Press child'),
+    'a control inside the presentational frame was not read');
 });
 
 test('a document written into an about:blank frame is read', async () => {

@@ -881,8 +881,13 @@
     const shown = visibility === SHOWN;
 
     // A frame marks where embedded content begins; its own lines are spliced
-    // in after it by the frame walker.
-    if (shown && role === 'iframe') {
+    // in after it by the frame walker. What marks it is the element hosting a
+    // document, not the role the author gave it: role="presentation" takes
+    // the frame's own semantics away but leaves the embedded document there,
+    // and reCAPTCHA frames its checkbox exactly that way. Honouring the role
+    // instead dropped the document from the page altogether — Facebook's
+    // two-step page became a challenge with nothing to press.
+    if (shown && (role === 'iframe' || tag === 'iframe' || tag === 'frame')) {
       emit(fromElement({
         role: 'iframe', name: accessibleName(el), axIndex: register(el),
         frameIndex: frameIndices.get(el),

@@ -41,6 +41,8 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
     <h1>Heading</h1><p>Hello <a href="https://example.test/">Docs</a> after</p>
     ${hidden}
     <iframe title="Details" srcdoc="<h2>Inside</h2><p>Child words</p>"></iframe>
+    <iframe role="presentation" title="Challenge"
+      srcdoc="<p>Challenge words</p><button>I am not a robot</button>"></iframe>
     <iframe title="Written blank" src="about:blank"></iframe>
     <script>
       const doc = document.querySelector('iframe[title="Written blank"]').contentDocument;
@@ -72,6 +74,7 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
   assert.equal(crystal.stderr, '');
   assert.equal(crystal.stdout, javascript.stdout);
   assert.equal(crystal.stdout, '# Heading\nHello\n{Docs}\nafter\n<frame: Details>\n## Inside\nChild words\n'
+    + '<frame: Challenge>\nChallenge words\n[*I am not a robot]\n'
     + '<frame: Written blank>\nWritten into a blank frame.\n[*Save]\n');
 
   fs.mkdirSync(path.join(baseEnv.XDG_CONFIG_HOME, 'tawb'), { recursive: true });
@@ -88,7 +91,10 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
   assert.equal(crystalLynx.stdout, javascriptLynx.stdout);
   assert.match(crystalLynx.stdout, /^\s+Heading/m);
   assert.match(crystalLynx.stdout, /^\s+Hello \[1\]Docs after/m);
-  assert.match(crystalLynx.stdout, /^\s+\[2\]Save/m);
+  // The button inside the presentational frame is numbered like any other,
+  // so the one after it comes third.
+  assert.match(crystalLynx.stdout, /^\s+\[2\]I am not a robot/m);
+  assert.match(crystalLynx.stdout, /^\s+\[3\]Save/m);
 });
 
 test('the native Firefox dump matches JavaScript on a real Firefox page', { skip: !enabled }, () => {
@@ -99,6 +105,8 @@ test('the native Firefox dump matches JavaScript on a real Firefox page', { skip
     <h1>Heading</h1><p>Hello <a href="https://example.test/">Docs</a> after</p>
     ${hidden}
     <iframe title="Details" srcdoc="<h2>Inside</h2><p>Child words</p>"></iframe>
+    <iframe role="presentation" title="Challenge"
+      srcdoc="<p>Challenge words</p><button>I am not a robot</button>"></iframe>
     <iframe title="Written blank" src="about:blank"></iframe>
     <script>
       const doc = document.querySelector('iframe[title="Written blank"]').contentDocument;
@@ -134,6 +142,7 @@ test('the native Firefox dump matches JavaScript on a real Firefox page', { skip
   assert.equal(crystal.stdout, javascript.stdout);
   assert.equal(crystal.stdout,
     '# Heading\nHello\n{Docs}\nafter\n<frame: Details>\n## Inside\nChild words\n'
+    + '<frame: Challenge>\nChallenge words\n[*I am not a robot]\n'
     + '<frame: Written blank>\nWritten into a blank frame.\n[*Save]\n');
 
   const javascriptLynx = run(process.execPath, [
