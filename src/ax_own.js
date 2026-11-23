@@ -1048,6 +1048,7 @@ function extractAxItems(options) {
   };
 
   const emit = (item, el, node = el) => {
+    if (item.depth === undefined) item.depth = containerDepth;
     if (item.role !== '__break__') {
       if (layout && !item.table && el) {
         const table = tableInfoOf(el);

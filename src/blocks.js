@@ -1,6 +1,7 @@
 'use strict';
 
 const { renderLine, LINK_ROLES } = require('./aria');
+const { DEFAULTS, NOTE_ROLES, contextLabel, inlineDetail } = require('./display');
 
 // Turns flattened accessibility items into blocks — one per line of output.
 //
@@ -67,20 +68,35 @@ function continuesProse(item, previousBlock, atBoundary) {
     && previousBlock.item.role === 'text';
 }
 
-function buildBlocks(items) {
+function buildBlocks(items, settings = {}) {
+  const display = { ...DEFAULTS, ...settings };
   const blocks = [];
   let pendingPrefix = '';
   // A container boundary means the next block begins a new paragraph-level
   // run, which is what paragraph navigation (p/P) steps between.
   let atBoundary = true;
+  // The containers we are inside, by depth. Their roles and names are the
+  // context of every line beneath them.
+  const containers = [];
+  // The context the last emitted line belonged to, so an inline context is
+  // said once at the start of a run rather than on every line in it.
+  let lastContext = '';
 
   for (const item of items) {
     if (item.role === '__break__') { atBoundary = true; continue; }
     // A container is a place in the page, not a line of it. It stays in the
     // item stream — the display asks for it when the reader wants to know
     // where they are — but it never becomes a line between the lines.
-    if (item.container) continue;
-    const text = renderLine(item);
+    if (item.container) {
+      const at = Number.isInteger(item.depth) ? item.depth : containers.length;
+      containers[at] = { role: item.role, name: item.name };
+      containers.length = at + 1;
+      continue;
+    }
+    const depth = Number.isInteger(item.depth) ? item.depth : 0;
+    const context = containers.slice(0, depth).filter(Boolean)
+      .map((one) => ({ role: one.role, name: one.name }));
+    let text = renderLine(item);
     if (!text) continue;
 
     if (isSeparatorText(item)) {
@@ -108,13 +124,20 @@ function buildBlocks(items) {
       continue;
     }
 
-    blocks.push({
+    const block = {
       kind: 'control',
       text: pendingPrefix ? `${pendingPrefix} ${text}` : text,
       item,
       spans: [],
       startsBlock: atBoundary,
-    });
+    };
+    if (context.length) block.context = context;
+    const label = contextLabel(context);
+    if (display.context === 'inline' && label && label !== lastContext) {
+      block.text = `in: ${label} — ${block.text}`;
+    }
+    lastContext = label;
+    blocks.push(block);
     pendingPrefix = '';
     atBoundary = false;
   }
