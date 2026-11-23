@@ -36,6 +36,9 @@ module Tawb
       "search"                    => Kind::String,
       "link-address"              => Kind::Boolean,
       "short-links"               => Kind::Boolean,
+      "context"                   => Kind::String,
+      "annotations"               => Kind::String,
+      "notes"                     => Kind::String,
       "escape-unicode"            => Kind::Boolean,
       "unicode"                   => Kind::String,
       "alt-screen"                => Kind::Boolean,
@@ -96,6 +99,9 @@ module Tawb
         "search"                => json(string(values, "search") || env["TAWB_SEARCH"]? || DEFAULT_SEARCH),
         "linkAddress"           => json(boolean(values, "link-address", true)),
         "shortLinks"            => json(boolean(values, "short-links", false)),
+        "contextMode"           => json(display_mode(string(values, "context"), "context")),
+        "annotationsMode"       => json(display_mode(string(values, "annotations"), "annotations")),
+        "notesMode"             => json(display_mode(string(values, "notes"), "notes")),
         "escapeUnicode"         => json(boolean(values, "escape-unicode", false)),
         "unicodeMode"           => json(unicode_mode(string(values, "unicode"))),
         "altScreen"             => json(boolean(values, "alt-screen", true)),
@@ -105,6 +111,24 @@ module Tawb
         "update"                => json(boolean(values, "update", false)),
         "port"                  => json(port_number(string(values, "port"))),
       })
+    end
+
+    # Where each class of extra information is said. See src/display.js for
+    # the same three settings on the JavaScript side.
+    DISPLAY_DEFAULTS = {
+      "context"     => "off",
+      "annotations" => "status",
+      "notes"       => "inline",
+    }
+    DISPLAY_MODES = {"inline", "status", "off"}
+
+    def self.display_mode(value : String?, name : String) : String
+      return DISPLAY_DEFAULTS[name] if value.nil? || value.empty?
+      mode = value.downcase
+      unless DISPLAY_MODES.includes?(mode)
+        raise ArgumentError.new("Unknown #{name} mode #{value}; use inline, status or off")
+      end
+      mode
     end
 
     def self.parse_edb(argv : Array(String), env : Hash(String, String)) : Hash(String, JSON::Any)

@@ -31,9 +31,10 @@ module Tawb
       documents
     end
 
-    def self.build(tree : JSON::Any, documents : Hash(String, Array(JSON::Any))) : Array(JSON::Any)
+    def self.build(tree : JSON::Any, documents : Hash(String, Array(JSON::Any)),
+                   display : Hash(String, String)? = nil) : Array(JSON::Any)
       assemble(tree) do |frame_id|
-        blocks = Blocks.build(documents[frame_id]? || [] of JSON::Any)
+        blocks = Blocks.build(documents[frame_id]? || [] of JSON::Any, display)
         # An accessibility item carries no element reference, so it records
         # the document it came from: activation resolves its role and name
         # against that document and not against the tab's top one.

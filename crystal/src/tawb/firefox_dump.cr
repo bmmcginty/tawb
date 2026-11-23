@@ -40,7 +40,8 @@ module Tawb
           owned: false, keep_browser: keep_browser, brokered: false,
           target: target, layout: lynx,
           escape_unicode: options["escapeUnicode"].as_bool,
-          unicode: options["unicodeMode"].as_s, preferences: preferences)
+          unicode: options["unicodeMode"].as_s, preferences: preferences,
+          display: Tawb::Cli.dump_display(options))
         STDOUT << result["text"].as_s
         return
       end
@@ -53,7 +54,8 @@ module Tawb
           started.library_port, owned: started.owned?, keep_browser: keep_browser,
           brokered: true, target: target, layout: lynx,
           escape_unicode: options["escapeUnicode"].as_bool,
-          unicode: options["unicodeMode"].as_s, preferences: preferences)
+          unicode: options["unicodeMode"].as_s, preferences: preferences,
+          display: Tawb::Cli.dump_display(options))
         STDOUT << result["text"].as_s
       ensure
         # Only a browser we started is ours to shut down, and only when
@@ -73,6 +75,7 @@ module Tawb
                        target : String, layout : Bool, escape_unicode : Bool,
                        unicode : String,
                        preferences : Hash(String, JSON::Any),
+                       display : Hash(String, String)? = nil,
                        attempts = 3) : Hash(String, JSON::Any)
       endpoint = browser_endpoint
       protocol : Bidi::Session? = nil
@@ -126,7 +129,7 @@ module Tawb
         page.navigate(target)
         Dump.settle_embedded_frames(page)
         tree, documents = page.accessibility_documents(layout)
-        blocks = Frames.build(tree, documents)
+        blocks = Frames.build(tree, documents, display)
         text = if layout
                  convert = ->(value : String) { UnicodeText.present(value, unicode, escape_unicode) }
                  display = LynxDisplay.blocks(blocks, preferences, false, convert)

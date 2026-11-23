@@ -39,6 +39,12 @@ module Tawb
       --unicode <ascii|full>        ascii punctuation (default) or full Unicode
       --link-address                announce the link under the cursor (default)
       --no-link-address             start with the status row quiet
+      --context <inline|status|off> where to say the landmark, group or table
+                                    cell the cursor is in (default off)
+      --annotations <mode>          where to say a control's description, error,
+                                    keystroke or described role (default status)
+      --notes <mode>                where to say a note, tooltip or figure
+                                    caption (default inline)
       --short-links                 shorten same-site links to their path
       --close-initial-tab-on-exit   close the tab this session opened on exit
       --search <url>                search template with %s (TAWB_SEARCH)
@@ -285,7 +291,12 @@ module Tawb
           adopted = !page.nil?
         end
         page ||= browser.create_page.as(Engine::Page)
-        core = Core.new(source: "ax", layout: layout, driver: browser,
+        display = {
+          "context"     => options["contextMode"].as_s,
+          "annotations" => options["annotationsMode"].as_s,
+          "notes"       => options["notesMode"].as_s,
+        }
+        core = Core.new(source: "ax", layout: layout, display: display, driver: browser,
           page: page, browser_port: browser_port, logger: logger)
         core.adopt_tab(page.not_nil!)
         binding = Interactive::CoreBinding.new(core)
@@ -298,6 +309,9 @@ module Tawb
         state.interface = options["frontEnd"].as_s
         state.link_address = options["linkAddress"].as_bool
         state.short_links = options["shortLinks"].as_bool
+        state.context_mode = options["contextMode"].as_s
+        state.annotations_mode = options["annotationsMode"].as_s
+        state.notes_mode = options["notesMode"].as_s
         state.escape_unicode = options["escapeUnicode"].as_bool
         state.unicode = options["unicodeMode"].as_s
         state.search = options["search"].as_s
@@ -754,6 +768,16 @@ module Tawb
       "ws://127.0.0.1:#{port}/session"
     end
 
+    # The same three settings the reader has, for a dump that a script or a
+    # comparison can read.
+    def self.dump_display(options : Hash(String, JSON::Any)) : Hash(String, String)
+      {
+        "context"     => options["contextMode"].as_s,
+        "annotations" => options["annotationsMode"].as_s,
+        "notes"       => options["notesMode"].as_s,
+      }
+    end
+
     private def self.run_dump(options : Hash(String, JSON::Any)) : Nil
       if options["engine"].as_s == "firefox"
         FirefoxDump.run(options)
@@ -771,7 +795,7 @@ module Tawb
         Dump.settle_embedded_frames(page)
         lynx = options["frontEnd"].as_s == "lynx"
         tree, documents = page.accessibility_documents(layout: lynx)
-        blocks = Frames.build(tree, documents)
+        blocks = Frames.build(tree, documents, dump_display(options))
         if lynx
           convert = ->(text : String) { UnicodeText.present(text, options["unicodeMode"].as_s, options["escapeUnicode"].as_bool) }
           display = LynxDisplay.blocks(blocks, LynxSettings.preferences, false, convert)

@@ -420,7 +420,8 @@ module Tawb
                    driver : Engine::Session? = nil,
                    page : Engine::Page? = nil,
                    browser_port : Int32? = nil,
-                   logger : Log? = nil)
+                   logger : Log? = nil,
+                   display : Hash(String, String)? = nil)
       @source = source
       @driver = driver
       @page = page
@@ -431,6 +432,9 @@ module Tawb
       # reader who has not asked for Lynx does not pay for it.
       @layout = layout
       @layout_order = layout_order
+      # Where context, annotations and notes are said; decides how the blocks
+      # are built, not only how they are painted. See src/display.js.
+      @display = display
       @blocks = [] of Block
       @generation = 0
       @rendered_url = ""
@@ -596,7 +600,7 @@ module Tawb
       when "ax", "inspect"
         visual = @layout_order == "default" ? false : @layout_order
         tree, documents = target.accessibility_documents(@layout, visual)
-        return Frames.build(tree, documents) if @source == "ax"
+        return Frames.build(tree, documents, @display) if @source == "ax"
         Frames.assemble(tree) do |frame_id|
           InspectHtml.blocks(documents[frame_id]? || [] of JSON::Any, frame_id)
         end

@@ -918,6 +918,11 @@ module Tawb
       property unicode : String
       property short_links : Bool
       property link_address : Bool
+      # Where context, annotations and notes are said: "inline", "status" or
+      # "off". See src/display.js for the JavaScript reader's copy.
+      property context_mode : String
+      property annotations_mode : String
+      property notes_mode : String
       property status_msg : String
       # When a message that asked for a hold stops owning the row, in unix
       # milliseconds. A live region announcement is the case: it arrives
@@ -1023,6 +1028,9 @@ module Tawb
         @unicode = "ascii"
         @short_links = false
         @link_address = true
+        @context_mode = "off"
+        @annotations_mode = "status"
+        @notes_mode = "inline"
         @status_msg = ""
         @status_held_until = 0_i64
         @messages = [] of String
@@ -1878,6 +1886,46 @@ module Tawb
     # off. Only ever the page's own buffer: with one of the browser's own
     # lists open the lines on screen are bookmarks or history entries rather
     # than links on the page.
+    # What the line under the cursor can say about itself: the landmark it is
+    # in, the description or keystroke its control carries, the text of an
+    # aside the reader asked to hear in the row. Empty unless the settings ask.
+    def self.line_detail(state : State) : String
+      block = current_block(state) || return ""
+      object = block.as_h
+      said = [] of String
+      if state.context_mode == "status" && (context = object["context"]?.try(&.as_a?))
+        labels = context.compact_map do |entry|
+          hash = entry.as_h?
+          next nil unless hash
+          role = hash["role"]?.try(&.as_s?) || "container"
+          name = hash["name"]?.try(&.as_s?) || ""
+          name.empty? ? role : "#{role} #{name}"
+        end
+        said << "in: #{labels.join(" › ")}" unless labels.empty?
+      end
+      if state.annotations_mode == "status" && (said_about = object["annotation"]?.try(&.as_h?))
+        if (text = said_about["description"]?.try(&.as_s?)) && !text.empty?
+          said << text
+        end
+        if (text = said_about["error"]?.try(&.as_s?)) && !text.empty?
+          said << "error: #{text}"
+        end
+        if (text = said_about["keyshortcuts"]?.try(&.as_s?)) && !text.empty?
+          said << "keys #{text}"
+        end
+        if (text = said_about["haspopup"]?.try(&.as_s?)) && !text.empty?
+          said << "opens a #{text}"
+        end
+        if (text = said_about["roleDescription"]?.try(&.as_s?)) && !text.empty?
+          said << text
+        end
+      end
+      if state.notes_mode == "status" && (text = object["note"]?.try(&.as_s?)) && !text.empty?
+        said << text
+      end
+      said.join(" — ")
+    end
+
     def self.link_target(state : State, page_url : String) : String?
       return nil unless state.link_address
       return nil if state.library || state.dialog
@@ -1948,7 +1996,13 @@ module Tawb
     # braille display from re-flashing a row that did not change.
     def self.draw_status(output : Screen::Output, state : State, page_url : String) : Nil
       return unless state.mode == "browse"
-      wanted = link_target(state, page_url) || state.status_msg
+      detail = state.status_msg.empty? ? line_detail(state) : ""
+      target = link_target(state, page_url)
+      wanted = if target && !detail.empty?
+                 "#{target} — #{detail}"
+               else
+                 target || state.status_msg || detail
+               end
       rendered = page_text(state, wanted)[0, state.cols]
       return if rendered == state.drawn.status
       write_status_row(output, state, rendered)
