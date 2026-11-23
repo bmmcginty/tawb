@@ -128,9 +128,18 @@ test('AX and PAGE collect layout geometry only when it is requested', async () =
     // The legacy boolean requests both forms and remains useful to callers
     // inspecting all visual metadata in one extraction.
     const measured = await page.evaluate(extractor, { visual: true });
-    const product = measured.find((item) => (item.name || item.text) === 'Product');
-    const reviews = measured.find((item) => (item.name || item.text) === 'Reviews');
-    const price = measured.find((item) => (item.name || item.text) === 'Current price is $10.50');
+    // The geometry belongs to whatever holds the text: with structural roles
+    // in the tree that is the container (the cell, the named region) rather
+    // than the text item inside it, so prefer the item that carries a path.
+    const named = (text) => measured.find((item) => (item.name || item.text) === text
+      && item.visual?.path?.length)
+      || measured.find((item) => (item.name || item.text) === text);
+    const product = named('Product');
+    const reviews = named('Reviews');
+    // The purchase card is the <aside> landmark itself: its text is a child
+    // item now, and the box that sits in the grid is the container.
+    const price = measured.find((item) => item.role === 'complementary' && item.visual?.path?.length)
+      || named('Current price is $10.50');
     assert.ok(product?.visual?.rect, 'the product heading had no rectangle');
     assert.ok(reviews?.visual?.rect, 'the review block had no rectangle');
     assert.ok(price?.visual?.rect, 'the purchase card had no rectangle');
@@ -141,8 +150,8 @@ test('AX and PAGE collect layout geometry only when it is requested', async () =
       'separate grid children were collapsed into one group');
     assert.ok(price.visual.rect.top < reviews.visual.rect.top,
       'the browser did not report the CSS placement that contradicts DOM order');
-    const flex = measured.find((item) => (item.name || item.text) === 'Flex first');
-    const cell = measured.find((item) => (item.name || item.text) === 'Cell A');
+    const flex = named('Flex first');
+    const cell = named('Cell A');
     assert.equal(flex.visual.path.at(-1).kind, 'flex');
     assert.equal(flex.visual.path.at(-1).direction, 'rtl');
     assert.equal(cell.visual.path.at(-1).kind, 'table');

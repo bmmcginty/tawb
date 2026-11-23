@@ -244,6 +244,7 @@ async function nativeObservations(options, selected, urls) {
       engine: options.engine, endpoint, profile, urls, collect: COLLECT.toString(),
     }, 1_800_000, env);
     return selected.map((entry, index) => ({
+      suite: entry.suite,
       name: entry.name,
       items: answers[index]?.items || [],
       cases: answers[index]?.cases || [],
@@ -277,7 +278,9 @@ function judge(observations, totals, unreached, failures) {
       if (!item) {
         totals.unreached += 1;
         const key = c.role ? `${c.tag}[role=${c.role}]` : c.tag;
-        unreached.set(key, (unreached.get(key) || 0) + 1);
+        if (!unreached.has(entry.suite)) unreached.set(entry.suite, new Map());
+        const shapes = unreached.get(entry.suite);
+        shapes.set(key, (shapes.get(key) || 0) + 1);
         continue;
       }
       if (compareLabel) {
@@ -348,6 +351,7 @@ async function main() {
           await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => {});
           await new Promise((r) => setTimeout(r, 120));
           observations.push({
+            suite: entry.suite,
             name: entry.name,
             items: await page.evaluate(extractAxItems, {}).catch(() => []),
             cases: await page.evaluate(COLLECT).catch(() => []),
@@ -374,14 +378,54 @@ async function main() {
   console.log(`\n${implementation}, ${totals.files} files (${totals.empty} with no inline expectations)`);
   line('labels', totals.label);
   line('roles', totals.role);
-  // Not all of these are wrong. Our tree speaks through a container rather
-  // than for it, so a marked div[role=group] never becomes an item of its own;
-  // and content the walk treats as hidden is deliberately absent. The
-  // breakdown is here to tell those apart from a control we simply lost.
-  console.log(`  ${String(totals.unreached).padStart(4)} elements our tree emitted no item for, by shape:`);
-  const worst = [...unreached.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
-  for (const [what, count] of worst) console.log(`         ${String(count).padStart(4)}  ${what}`);
-  if (options.failOnMismatch && (totals.label[1] || totals.role[1])) process.exitCode = 1;
+  // An element the test marked and our tree said nothing about is a gap, not a
+  // note. Some gaps are structural and known: the tree speaks through a
+  // container rather than for it, so a marked div[role=group] has no item of
+  // its own until structural roles are emitted, and content the walk treats as
+  // hidden is deliberately absent. Those are recorded with a reason in
+  // tools/wpt-unreached.json and pinned by count, so this fails on a shape we
+  // have never accounted for and on any regression inside one we have, while
+  // still letting the list shrink as the gaps close.
+  const allowance = readAllowance();
+  const unexpected = [];
+  let known = 0;
+  for (const [suite, shapes] of unreached) {
+    const allowedShapes = allowance[suite] || {};
+    for (const [shape, count] of shapes) {
+      const allowed = allowedShapes[shape] || 0;
+      if (allowed >= count) { known += count; continue; }
+      unexpected.push({ suite, shape, count, allowed });
+    }
+  }
+  console.log(`  ${String(totals.unreached).padStart(4)} elements our tree emitted no item for:`
+    + ` ${known} known, ${unexpected.length ? `${unexpected.reduce((n, u) => n + (u.count - u.allowed), 0)} unexpected` : 'none unexpected'}`);
+  for (const [suite, shapes] of unreached) {
+    const worst = [...shapes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+    for (const [what, count] of worst) {
+      const allowed = (allowance[suite] || {})[what] || 0;
+      const mark = allowed >= count ? 'known' : 'UNEXPECTED';
+      console.log(`         ${String(count).padStart(4)}  ${suite}/${what}  ${mark}`);
+    }
+  }
+  if (options.failOnMismatch) {
+    if (totals.label[1] || totals.role[1] || unexpected.length) process.exitCode = 1;
+    if (unexpected.length) {
+      console.log('\nunreached elements with no entry in tools/wpt-unreached.json:');
+      for (const { suite, shape, count, allowed } of unexpected) {
+        console.log(`  ${suite}/${shape}: ${count} (allowed ${allowed})`);
+      }
+    }
+  }
+}
+
+// What the gate already knows about, per suite and element shape, with the
+// reason it is still there. See the report above.
+function readAllowance() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(__dirname, 'wpt-unreached.json'), 'utf8'));
+  } catch {
+    return {};
+  }
 }
 
 if (require.main === module) {

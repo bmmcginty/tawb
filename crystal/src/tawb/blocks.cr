@@ -19,6 +19,8 @@ module Tawb
           at_boundary = true
           next
         end
+        # A container is a place in the page, not a line of it.
+        next if object["container"]?.try(&.as_bool?)
         text = Aria.render_line(item)
         next if text.empty?
 

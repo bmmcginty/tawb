@@ -76,6 +76,10 @@ function buildBlocks(items) {
 
   for (const item of items) {
     if (item.role === '__break__') { atBoundary = true; continue; }
+    // A container is a place in the page, not a line of it. It stays in the
+    // item stream — the display asks for it when the reader wants to know
+    // where they are — but it never becomes a line between the lines.
+    if (item.container) continue;
     const text = renderLine(item);
     if (!text) continue;
 

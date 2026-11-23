@@ -125,13 +125,17 @@ function extractAxItems(options) {
     'menuitemcheckbox', 'menuitemradio', 'tab', 'switch', 'checkbox', 'radio', 'option']);
   const FIELDS = new Set(['textbox', 'searchbox', 'combobox', 'listbox', 'slider',
     'spinbutton']);
+  // Atomic roles that a person can operate, which are worth a line even when
+  // the page gave them no name at all.
+  const CONTROL_ROLES = new Set(['button', 'link', 'menuitem', 'menuitemcheckbox',
+    'menuitemradio', 'tab', 'switch', 'checkbox', 'radio', 'option']);
   // Concrete ARIA roles authors may use. Unknown roles are ignored by the
   // browser, leaving the element's native HTML role in force; accepting any
   // string here instead makes a typo erase controls such as submit buttons.
   // A role attribute is a token list, so the first recognised token wins.
   const ARIA_ROLES = new Set([
-    'alert', 'alertdialog', 'application', 'article', 'banner', 'button', 'cell',
-    'checkbox', 'code', 'columnheader', 'combobox', 'complementary', 'contentinfo',
+    'alert', 'alertdialog', 'application', 'article', 'banner', 'button', 'caption',
+    'cell', 'checkbox', 'code', 'columnheader', 'combobox', 'complementary', 'contentinfo',
     'definition', 'deletion', 'dialog', 'directory', 'document', 'emphasis', 'feed',
     'figure', 'form', 'generic', 'grid', 'gridcell', 'group', 'heading', 'img',
     'insertion', 'link', 'list', 'listbox', 'listitem', 'log', 'main', 'mark',
@@ -139,8 +143,9 @@ function extractAxItems(options) {
     'menuitemradio', 'meter', 'navigation', 'none', 'note', 'option', 'paragraph',
     'presentation', 'progressbar', 'radio', 'radiogroup', 'region', 'row',
     'rowgroup', 'rowheader', 'scrollbar', 'search', 'searchbox', 'separator',
-    'slider', 'spinbutton', 'status', 'strong', 'subscript', 'suggestion',
-    'superscript', 'switch', 'tab', 'table', 'tablist', 'tabpanel', 'term',
+    'sectionfooter', 'sectionheader', 'slider', 'spinbutton', 'status', 'strong',
+    'subscript', 'suggestion', 'superscript', 'switch', 'tab', 'table', 'tablist',
+    'tabpanel', 'term',
     'textbox', 'time', 'timer', 'toolbar', 'tooltip', 'tree', 'treegrid', 'treeitem',
   ]);
   // A player is one line, and what it says is where it has got to.
@@ -391,19 +396,17 @@ function extractAxItems(options) {
     return tag === 'button' || tag === 'select' || tag === 'textarea' || tag === 'summary'
       || tag === 'iframe' || tag === 'object' || tag === 'embed';
   };
-  const keepsItsOwnRole = (el) => {
-    if (focusableByHost(el)) return true;
+  const carriesGlobalAria = (el) => {
     for (const attribute of GLOBAL_ARIA) if (el.hasAttribute(attribute)) return true;
     return false;
   };
+  const keepsItsOwnRole = (el) => focusableByHost(el) || carriesGlobalAria(el);
 
-  const roleOf = (el) => {
-    const explicit = clean(el.getAttribute('role')).toLowerCase().split(' ')
-      .find((token) => ARIA_ROLES.has(token));
-    if (explicit && !(PRESENTATIONAL.has(explicit) && keepsItsOwnRole(el))) return explicit;
+  // The role the element has when the author says nothing.
+  const implicitRole = (el) => {
     const tag = el.tagName.toLowerCase();
     // HTML gives an editing host textbox behaviour without requiring an ARIA
-    // role. ARIA may refine that role when the author supplied one, above.
+    // role. ARIA may refine that role when the author supplied one.
     if (editingHost(el)) return 'textbox';
     if (tag === 'input') {
       const type = (el.getAttribute('type') || 'text').toLowerCase();
@@ -414,6 +417,28 @@ function extractAxItems(options) {
     // rule pages actually trip over.
     if (tag === 'a' || tag === 'area') return el.hasAttribute('href') ? 'link' : 'generic';
     return Object.prototype.hasOwnProperty.call(IMPLICIT, tag) ? IMPLICIT[tag] : 'generic';
+  };
+
+  // A deprecated or renamed role whose computed role is another one. The
+  // platform maps it; a tree that reports the spelling instead describes a
+  // role no screen reader has.
+  const ROLE_SYNONYMS = { directory: 'list' };
+
+  const roleOf = (el) => {
+    const tokens = clean(el.getAttribute('role')).toLowerCase().split(' ')
+      .filter((token) => ARIA_ROLES.has(token));
+    const unnamed = !clean(el.getAttribute('aria-label'))
+      && !clean(el.getAttribute('aria-labelledby'))
+      && !clean(el.getAttribute('title'));
+    for (const token of tokens) {
+      if (PRESENTATIONAL.has(token) && keepsItsOwnRole(el)) continue;
+      // A landmark needs a name to be that landmark; without one the platform
+      // falls through to the next role the author gave, and then to the
+      // element's own. A group is a group whether or not it is named.
+      if ((token === 'region' || token === 'form') && unnamed) continue;
+      return ROLE_SYNONYMS[token] || token;
+    }
+    return implicitRole(el);
   };
 
   // Atomic controls normally own all of their descendants: a span inside a
@@ -444,7 +469,22 @@ function extractAxItems(options) {
   const blockLevel = (el) => {
     const display = styleOf(el).display;
     return display === 'block' || display === 'flex' || display === 'grid'
-      || display === 'list-item' || display.startsWith('table');
+      || display === 'list-item' || display === 'inline-block' || display === 'flow-root'
+      || display.startsWith('table');
+  };
+
+  // Text as the page renders it. A screen reader is given the characters on
+  // screen, not the ones in the source: `text-transform: uppercase` is a
+  // visual change to the letters themselves, and a name built from the source
+  // text reads the wrong string.
+  const transformText = (text, el) => {
+    if (!text || !el) return text;
+    const transform = styleOf(el).textTransform;
+    if (!transform || transform === 'none') return text;
+    if (transform === 'uppercase') return text.toUpperCase();
+    if (transform === 'lowercase') return text.toLowerCase();
+    if (transform === 'capitalize') return text.replace(/(^|[^\p{L}])(\p{L})/gu, (all, before, letter) => before + letter.toUpperCase());
+    return text;
   };
 
   // Text a stylesheet put on the page. It is content as far as a reader is
@@ -490,17 +530,52 @@ function extractAxItems(options) {
     let raw = pseudoText(el, '::before');
     for (const child of kidsOf(el)) {
       if (child.nodeType === Node.TEXT_NODE) {
-        raw += child.data || '';
+        raw += transformText(child.data || '', el);
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         if (SKIP.has(child.tagName.toLowerCase())) continue;
         if (!inherited && hidden(child)) continue;
         if (independentlyFocusable(child)) continue;
-        const name = accessibleName(child, depth + 1, true, includeHidden);
-        if (!name) continue;
+        const childRole = roleOf(child);
+        // A child named by its own content contributes that content with the
+        // whitespace it actually had. Trimming it to join it loses the space
+        // before an inline word — "this is an <dfn>example</dfn>" became
+        // "this is anexample" — which is why the raw form is asked for here
+        // and cleaned only once, at the end of the whole name.
+        const contentNamed = NAME_FROM_CONTENT.has(childRole) || INLINE.has(childRole)
+          || childRole === 'paragraph';
+        const name = contentNamed
+          ? rawNameFromContent(child, depth + 1, includeHidden)
+          : accessibleName(child, depth + 1, true, includeHidden);
+        if (!clean(name)) continue;
         raw += blockLevel(child) ? ` ${name} ` : name;
       }
     }
     return clean(raw + pseudoText(el, '::after'));
+  };
+
+  // The same walk, untrimmed. Only the ends differ, so the trimming rule for a
+  // whole name stays in one place.
+  const rawNameFromContent = (el, depth, includeHidden) => {
+    const inherited = includeHidden && hidden(el);
+    let raw = pseudoText(el, '::before');
+    for (const child of kidsOf(el)) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        raw += transformText(child.data || '', el);
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        if (SKIP.has(child.tagName.toLowerCase())) continue;
+        if (!inherited && hidden(child)) continue;
+        if (independentlyFocusable(child)) continue;
+        const childRole = roleOf(child);
+        const contentNamed = NAME_FROM_CONTENT.has(childRole) || INLINE.has(childRole)
+          || childRole === 'paragraph';
+        const name = contentNamed
+          ? rawNameFromContent(child, depth + 1, includeHidden)
+          : accessibleName(child, depth + 1, true, includeHidden);
+        if (!clean(name)) continue;
+        raw += blockLevel(child) ? ` ${name} ` : name;
+      }
+    }
+    return raw + pseudoText(el, '::after');
   };
 
   const contentText = (el) => clean(el.innerText || el.textContent || '');
@@ -562,6 +637,11 @@ function extractAxItems(options) {
         if (value) return value;
       }
       const placeholder = clean(el.getAttribute('placeholder'));
+      // HTML-AAM names a field from its title before its placeholder: the
+      // placeholder is the last resort, and a page that sets both meant the
+      // title as the name.
+      const titled = clean(el.getAttribute('title'));
+      if (titled) return titled;
       if (placeholder) return placeholder;
     }
     if (tag === 'fieldset') {
@@ -891,10 +971,30 @@ function extractAxItems(options) {
     return answer;
   };
 
+  // Roles that are a place in the page rather than a line of it: they carry a
+  // name, sometimes a position and a state, and everything inside them. A
+  // reader wants to know it is in a named landmark, a group, a table cell or a
+  // tree item without every one of those becoming a line between the lines it
+  // already reads, so they are emitted as containers and the display decides.
+  const STRUCTURAL = new Set([
+    'navigation', 'main', 'banner', 'contentinfo', 'complementary', 'search', 'region',
+    'form', 'group', 'radiogroup', 'list', 'directory', 'menu', 'menubar', 'tablist',
+    'tabpanel', 'toolbar', 'tree', 'treeitem', 'treegrid', 'grid', 'table', 'row',
+    'rowgroup', 'cell', 'gridcell', 'columnheader', 'rowheader', 'caption', 'feed',
+    'article', 'document', 'application', 'dialog', 'alertdialog', 'figure', 'note',
+    'suggestion', 'comment', 'log', 'marquee', 'timer', 'status', 'alert', 'meter',
+    'caption', 'sectionheader', 'sectionfooter',
+    'progressbar', 'tooltip', 'definition', 'term', 'blockquote', 'listitem',
+  ]);
+  // How many containers we are inside. Every item records it, so an item knows
+  // exactly which containers it belongs to when it is rendered.
+  let containerDepth = 0;
+
   const fromElement = (item, el) => {
     const table = layout ? tableInfoOf(el) : undefined;
     const flow = layout ? flowOf(el, item.role) : undefined;
     return {
+      depth: containerDepth,
       ...item,
       ...(table ? { table } : {}),
       ...(flow ? { flow } : {}),
@@ -1057,7 +1157,11 @@ function extractAxItems(options) {
       // rows can still be told apart.
       const name = accessibleName(el) || (fileInput
         ? (clean(el.getAttribute('name')) || 'Choose file') : '');
-      if (name) {
+      // An unnamed control is still a control. A browser keeps it in its tree
+      // and only a screen reader's "button" is missing, so dropping it here
+      // hides an icon-only button or an untouched ARIA checkbox from a reader
+      // who could otherwise have pressed it.
+      if (name || CONTROL_ROLES.has(role)) {
         const item = { role, name, ...stateOf(el), axIndex: register(el) };
         // A file input arrives here as a button, because that is what it is
         // to a reader. What it also is, is the one control whose activation
@@ -1157,11 +1261,34 @@ function extractAxItems(options) {
     const blockLevel = !INLINE.has(role);
     if (blockLevel) boundary();
 
+    // The container itself, when it has a role that says something. It is
+    // emitted before its children so the reading order carries the nesting,
+    // and it carries the states that belong to a place rather than a control:
+    // how deep a tree item is, which way a column is sorted, whether a list
+    // takes more than one selection.
+    const container = shown && (STRUCTURAL.has(role) || carriesGlobalAria(el));
+    if (container) {
+      emit(fromElement({
+        role,
+        name: accessibleName(el),
+        ...stateOf(el),
+        level: el.getAttribute('aria-level')
+          || (/^h[1-6]$/.test(tag) ? tag[1] : undefined),
+        posinset: el.getAttribute('aria-posinset') || undefined,
+        setsize: el.getAttribute('aria-setsize') || undefined,
+        sort: el.getAttribute('aria-sort') || undefined,
+        multiselectable: el.getAttribute('aria-multiselectable') === 'true' || undefined,
+        container: true,
+        axIndex: register(el),
+      }, el));
+    }
+    if (container) containerDepth += 1;
+
     const before = out.length;
     for (const child of kidsOf(el)) {
       if (child.nodeType === Node.TEXT_NODE) {
         if (!shown) continue; // this element's own text is not on screen
-        const text = clean(child.data);
+        const text = clean(transformText(child.data, el));
         if (text) emit({ role: 'text', name: text, markup: '#text' }, el, child);
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         walk(child);
@@ -1176,6 +1303,7 @@ function extractAxItems(options) {
       if (name) emit(fromElement({ role: 'text', name }, el));
     }
 
+    if (container) containerDepth -= 1;
     if (blockLevel) boundary();
   };
 

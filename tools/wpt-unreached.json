@@ -1,0 +1,13 @@
+{
+  "wai-aria/role": {
+    "div[role=image]": 1,
+    "div[role=img]": 1
+  },
+  "accname/name": {
+    "img": 5,
+    "circle": 1,
+    "option": 1,
+    "h3": 1,
+    "abbr": 1
+  }
+}
