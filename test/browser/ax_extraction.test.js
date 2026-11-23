@@ -149,3 +149,57 @@ test('AX and PAGE collect layout geometry only when it is requested', async () =
     assert.equal(measured.some((item) => (item.name || item.text) === 'Hidden'), false);
   }
 });
+
+test('a presentational role cannot hide a control the platform exposes', async () => {
+  // WAI-ARIA refuses role="presentation" and role="none" when the element is
+  // focusable or carries a global ARIA attribute, and browsers refuse them the
+  // same way. Taking the author's word instead turned every such control into
+  // prose: the reCAPTCHA checkbox on Facebook's two-step page sits in a
+  // presentational frame and could not be pressed at all.
+  const page = await openPage(`<!doctype html><body>
+    <button role="presentation">Presentational button</button>
+    <a role="presentation" href="/next">Presentational link</a>
+    <input type="checkbox" role="presentation" aria-label="Agree">
+    <input type="text" role="none" aria-label="Your name">
+    <select role="presentation" aria-label="Pick one"><option>One</option></select>
+    <details><summary role="presentation">More</summary><p>Body</p></details>
+    <button role="presentation" aria-label="Close">x</button>
+  </body>`);
+
+  const items = await page.evaluate(extractAxItems, {});
+  const has = (role, name) => items.some((item) => item.role === role && item.name === name);
+  assert.ok(has('button', 'Presentational button'), 'a presentational button was not a button');
+  assert.ok(has('link', 'Presentational link'), 'a presentational link was not a link');
+  assert.ok(has('checkbox', 'Agree'),
+    'a presentational checkbox lost its role to its aria-label');
+  assert.ok(has('textbox', 'Your name'), 'a presentational text field was not editable');
+  assert.ok(has('combobox', 'Pick one'), 'a presentational select was not a combobox');
+  assert.ok(has('button', 'More'), 'a presentational summary lost its disclosure');
+  assert.ok(has('button', 'Close'),
+    'a button that is both presentational and named in ARIA lost both');
+});
+
+test('a presentational role still removes the semantics nothing depends on', async () => {
+  // The refusal is narrowly scoped: where nothing is focusable and no global
+  // ARIA attribute is set, the author's request stands, and a reader should
+  // still get the text — a heading is not a stop, but it is not lost either.
+  const page = await openPage(`<!doctype html><body>
+    <h2 role="presentation">Plain title</h2>
+    <ul role="presentation"><li role="presentation">Plain item</li></ul>
+    <h2 role="presentation" aria-label="Named title">Plain title</h2>
+    <div aria-hidden="true"><button>Hidden button</button></div>
+  </body>`);
+
+  const items = await page.evaluate(extractAxItems, {});
+  const has = (role, name) => items.some((item) => item.role === role && item.name === name);
+  assert.ok(has('text', 'Plain title'), 'the text of a presentational heading was lost');
+  assert.equal(has('heading', 'Plain title'), false,
+    'a presentational heading kept a role the author removed');
+  assert.ok(has('text', 'Plain item'), 'the text of a presentational list item was lost');
+  assert.ok(has('heading', 'Named title'),
+    'a heading carrying a global ARIA attribute lost its role');
+  // aria-hidden is a separate question and stays honoured: this change is
+  // about which role an exposed element has, not about what is exposed.
+  assert.equal(items.some((item) => item.name === 'Hidden button'), false,
+    'aria-hidden content was exposed by the presentational-role change');
+});

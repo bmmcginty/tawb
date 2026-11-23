@@ -360,10 +360,47 @@ function extractAxItems(options) {
   const editingHost = (el) => !!el.isContentEditable
     && !(el.parentElement && el.parentElement.isContentEditable);
 
+  // Presentational roles are the author asking for an element's own semantics
+  // to be dropped, and WAI-ARIA names two cases where the request is refused:
+  // the element can be focused, or it carries a global ARIA state or property.
+  // Browsers refuse the same way — a <button role="presentation"> is still a
+  // button to a screen reader, and one with aria-label still has that name.
+  // Taking the role literally turned every such control into prose that could
+  // not be pressed: an input marked presentational and named in ARIA read as a
+  // line of text with no way to type into it, and a summary marked that way
+  // lost the disclosure it opens.
+  const PRESENTATIONAL = new Set(['presentation', 'none']);
+  // The global states and properties, which only mean something on a node the
+  // tree still exposes — which is why their presence refuses the request.
+  const GLOBAL_ARIA = [
+    'aria-atomic', 'aria-busy', 'aria-controls', 'aria-current', 'aria-describedby',
+    'aria-details', 'aria-disabled', 'aria-dropeffect', 'aria-errormessage',
+    'aria-flowto', 'aria-grabbed', 'aria-haspopup', 'aria-hidden', 'aria-invalid',
+    'aria-keyshortcuts', 'aria-label', 'aria-labelledby', 'aria-live', 'aria-owns',
+    'aria-relevant', 'aria-roledescription',
+  ];
+  // What the host language makes focusable, spelled out rather than asked of
+  // the element: this decides roleOf(), and the helper that answers "is this
+  // control independently focusable" asks roleOf() in turn.
+  const focusableByHost = (el) => {
+    if (el.hasAttribute('tabindex')) return true;
+    if (editingHost(el)) return true;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'a' || tag === 'area') return el.hasAttribute('href');
+    if (tag === 'input') return (el.getAttribute('type') || 'text').toLowerCase() !== 'hidden';
+    return tag === 'button' || tag === 'select' || tag === 'textarea' || tag === 'summary'
+      || tag === 'iframe' || tag === 'object' || tag === 'embed';
+  };
+  const keepsItsOwnRole = (el) => {
+    if (focusableByHost(el)) return true;
+    for (const attribute of GLOBAL_ARIA) if (el.hasAttribute(attribute)) return true;
+    return false;
+  };
+
   const roleOf = (el) => {
     const explicit = clean(el.getAttribute('role')).toLowerCase().split(' ')
       .find((token) => ARIA_ROLES.has(token));
-    if (explicit) return explicit;
+    if (explicit && !(PRESENTATIONAL.has(explicit) && keepsItsOwnRole(el))) return explicit;
     const tag = el.tagName.toLowerCase();
     // HTML gives an editing host textbox behaviour without requiring an ARIA
     // role. ARIA may refine that role when the author supplied one, above.

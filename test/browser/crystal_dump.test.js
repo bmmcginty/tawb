@@ -50,7 +50,8 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
       doc.write('<!doctype html><p>Written into a blank frame.</p>');
       doc.close();
     </script>
-    <button>Save</button></body></html>`);
+    <button>Save</button>
+    <button role="presentation">Presentation</button></body></html>`);
 
   const baseEnv = {
     ...process.env,
@@ -75,7 +76,7 @@ test('the static Crystal dump matches JavaScript on a real Chromium page', { ski
   assert.equal(crystal.stdout, javascript.stdout);
   assert.equal(crystal.stdout, '# Heading\nHello\n{Docs}\nafter\n<frame: Details>\n## Inside\nChild words\n'
     + '<frame: Challenge>\nChallenge words\n[*I am not a robot]\n'
-    + '<frame: Written blank>\nWritten into a blank frame.\n[*Save]\n');
+    + '<frame: Written blank>\nWritten into a blank frame.\n[*Save]\n[*Presentation]\n');
 
   fs.mkdirSync(path.join(baseEnv.XDG_CONFIG_HOME, 'tawb'), { recursive: true });
   fs.writeFileSync(path.join(baseEnv.XDG_CONFIG_HOME, 'tawb', 'settings.lynx.json'), JSON.stringify({
@@ -114,7 +115,8 @@ test('the native Firefox dump matches JavaScript on a real Firefox page', { skip
       doc.write('<!doctype html><p>Written into a blank frame.</p>');
       doc.close();
     </script>
-    <button>Save</button></body></html>`);
+    <button>Save</button>
+    <button role="presentation">Presentation</button></body></html>`);
 
   const baseEnv = {
     ...process.env,
@@ -143,7 +145,7 @@ test('the native Firefox dump matches JavaScript on a real Firefox page', { skip
   assert.equal(crystal.stdout,
     '# Heading\nHello\n{Docs}\nafter\n<frame: Details>\n## Inside\nChild words\n'
     + '<frame: Challenge>\nChallenge words\n[*I am not a robot]\n'
-    + '<frame: Written blank>\nWritten into a blank frame.\n[*Save]\n');
+    + '<frame: Written blank>\nWritten into a blank frame.\n[*Save]\n[*Presentation]\n');
 
   const javascriptLynx = run(process.execPath, [
     'src/index.js', '--front-end', 'lynx', '--dump', '--browser', 'firefox', page,
