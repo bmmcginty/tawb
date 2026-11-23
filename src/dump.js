@@ -120,6 +120,7 @@ function formatLynxBlocks(blocks, { preferences = {}, escapeUnicode = false, uni
 async function dumpAx({
   driver,
   target,
+  display = undefined,
   frontEnd = 'default',
   preferences = {},
   escapeUnicode = false,
@@ -136,6 +137,7 @@ async function dumpAx({
     // metadata, so only that front end asks for it. See needsLayoutMetadata.
     const blocks = await snapshot(page, 'ax', {
       driver, layout: needsLayoutMetadata(frontEnd),
+      ...(display === undefined ? {} : { display }),
     });
     const output = frontEnd === 'lynx'
       ? formatLynxBlocks(blocks, { preferences, escapeUnicode, unicodeMode, width })

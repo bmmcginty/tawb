@@ -228,3 +228,15 @@ test('a malformed settings file names itself in the error', () => {
   fs.writeFileSync(file, '--profile "unfinished\n');
   assert.throws(() => readSettings({ file }), new RegExp(`Cannot read settings from ${file}`));
 });
+
+test('display settings are read from the command line and validated', () => {
+  assert.deepEqual(jsParseArgs([], {}).display,
+    { context: 'off', annotations: 'status', notes: 'inline' });
+  assert.deepEqual(
+    jsParseArgs(['--context', 'inline', '--annotations=off', '--notes', 'status'], {}).display,
+    { context: 'inline', annotations: 'off', notes: 'status' });
+  assert.throws(() => jsParseArgs(['--context', 'loud'], {}),
+    /Unknown context mode loud; use inline, status or off/);
+  assert.throws(() => jsParseArgs(['--annotations', 'loud'], {}),
+    /Unknown annotations mode loud; use inline, status or off/);
+});

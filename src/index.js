@@ -10,6 +10,7 @@ const {
   findBlockWithText, sameDocumentFragment,
   ActionTimeout, withTimeout, ACTION_TIMEOUT_MS,
 } = require('./core');
+const { displaySettings } = require('./display');
 const { armFrame, refreshDue, pulse, TICK_MS } = require('./live');
 const { isGoneFrameError } = require('./frames');
 const {
@@ -119,6 +120,9 @@ const OPTION_SPEC = {
   search: { type: 'string' },
   'link-address': { type: 'boolean' },
   'short-links': { type: 'boolean' },
+  context: { type: 'string' },
+  annotations: { type: 'string' },
+  notes: { type: 'string' },
   'escape-unicode': { type: 'boolean' },
   unicode: { type: 'string' },
   'alt-screen': { type: 'boolean' },
@@ -153,6 +157,11 @@ function parseArgs(argv, env = process.env) {
     search: values.search || env.TAWB_SEARCH || DEFAULT_SEARCH,
     linkAddress: values['link-address'] ?? true,
     shortLinks: values['short-links'] ?? false,
+    display: displaySettings({
+      context: values.context,
+      annotations: values.annotations,
+      notes: values.notes,
+    }),
     escapeUnicode: values['escape-unicode'] ?? false,
     unicodeMode: unicodeMode(values.unicode || 'ascii'),
     altScreen: values['alt-screen'] ?? true,
@@ -6059,6 +6068,12 @@ const USAGE = [
   '  --unicode <ascii|full>        ascii punctuation (default) or full Unicode',
   '  --link-address                announce the link under the cursor (default)',
   '  --no-link-address             start with the status row quiet',
+  '  --context <inline|status|off> where to say the landmark, group or table',
+  '                                cell the cursor is in (default off)',
+  '  --annotations <mode>          where to say a control\'s description, error,',
+  '                                keystroke or described role (default status)',
+  '  --notes <mode>                where to say a note, tooltip or figure',
+  '                                caption (default inline)',
   '  --short-links                 shorten same-site links to their path',
   '  --close-initial-tab-on-exit   close the tab this session opened on exit',
   '  --search <url>                search template with %s (TAWB_SEARCH)',
@@ -6182,6 +6197,7 @@ async function main() {
       await dumpAx({
         driver,
         target: dumpTarget,
+        display: ARGS.display,
         frontEnd: ARGS.frontEnd,
         // The Lynx presentation needs the same preferences the reader would
         // have: which links and fields are numbered, and on which side. Read
@@ -6238,6 +6254,9 @@ async function main() {
     // Only the Lynx display lays a page out with the extractor's inline-flow
     // and table-cell metadata, so only that interface asks for it.
     layout: needsLayoutMetadata(ARGS.frontEnd),
+    // Where the reader wants context, annotations and notes said. See
+    // src/display.js; the classes are decided per reader, not per site.
+    display: ARGS.display,
   });
   const state = {
     core,

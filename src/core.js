@@ -74,11 +74,11 @@ const SOURCE_LABELS = { ax: 'AX', render: 'PAGE', inspect: 'INSPECT', source: 'S
 const DOM_SOURCES = new Set(['source']);
 
 async function snapshotBlocks(page, source = 'ax', {
-  visited = null, driver = null, layout = false, layoutOrder = 'default',
+  visited = null, driver = null, layout = false, layoutOrder = 'default', display = undefined,
 } = {}) {
   const t0 = Date.now();
   const visual = layoutOrder === 'default' ? false : layoutOrder;
-  const extracted = await snapshotFrameTree(page, source, { visited, driver, layout, visual });
+  const extracted = await snapshotFrameTree(page, source, { visited, driver, layout, visual, display });
   const extractedAt = Date.now();
   const blocks = orderBlocks(extracted, layoutOrder);
   const orderedAt = Date.now();
@@ -510,6 +510,7 @@ const RESTORE_SCROLL = () => {
 class Core {
   constructor({
     driver, page, source, sources, browserPort = null, layout = false, layoutOrder = 'default',
+    display = undefined,
   }) {
     this.driver = driver;
     this.page = page;
@@ -521,6 +522,10 @@ class Core {
     // reader who has not asked for Lynx does not pay for it. See blocksForFrame.
     this.layout = layout;
     this.layoutOrder = layoutOrder;
+    // Where the reader wants context, annotations and notes said — see
+    // src/display.js. It travels with the snapshot because it decides how the
+    // blocks are built, not just how they are painted.
+    this.display = display;
     this.blocks = [];
     // Bumped whenever the block list is replaced wholesale. A front end that
     // holds its own copy — which every front end does, and a front end
@@ -697,6 +702,7 @@ class Core {
     const started = Date.now();
     const visited = [];
     this.blocks = await snapshotBlocks(page, this.source, {
+      display: this.display,
       visited, driver: this.driver, layout: this.layout, layoutOrder: this.layoutOrder,
     });
     this.restoreAttachedFiles(this.blocks, page);

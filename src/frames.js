@@ -60,7 +60,7 @@ function isFrameItem(item) {
 // table-cell placement the Lynx display needs. It is off for every other
 // reader, so the extra closest() walk never runs and blocks carry no
 // metadata they would never read.
-async function blocksForFrame(frame, source, driver = null, layout = false, visual = false) {
+async function blocksForFrame(frame, source, driver = null, layout = false, visual = false, display = undefined) {
   // SOURCE stays unfolded on purpose: it shows structure, where separator
   // folding would be a lie.
   if (source === 'source') {
@@ -76,7 +76,7 @@ async function blocksForFrame(frame, source, driver = null, layout = false, visu
   if (!driver) throw new Error('the AX and INSPECT views need a driver to read accessibility semantics');
   const items = await driver.axItems(frame, { layout, visual });
   if (source === 'inspect') return inspectBlocks(items, frame);
-  const blocks = buildBlocks(items);
+  const blocks = buildBlocks(items, display);
   // AX items carry no element reference, so record the frame they came from;
   // activation resolves role/name against that frame, not the main page.
   for (const block of blocks) {
@@ -173,18 +173,18 @@ async function orderedChildFrames(frame, limit = Infinity, requested = null) {
 // `visited` collects the frames that actually contributed content, so the
 // caller can observe exactly what it displays.
 async function snapshotFrameTree(page, source, {
-  visited = null, driver = null, layout = false, visual = false,
+  visited = null, driver = null, layout = false, visual = false, display = undefined,
 } = {}) {
   if (typeof page.beginFrameSnapshot === 'function') page.beginFrameSnapshot();
   const budget = { remaining: MAX_FRAMES };
-  return walk(page.mainFrame(), source, 0, budget, new Set(), visited, driver, layout, visual);
+  return walk(page.mainFrame(), source, 0, budget, new Set(), visited, driver, layout, visual, display);
 }
 
-async function walk(frame, source, depth, budget, seen, visited, driver, layout = false, visual = false) {
+async function walk(frame, source, depth, budget, seen, visited, driver, layout = false, visual = false, display = undefined) {
   let blocks;
   const tBlocks = Date.now();
   try {
-    blocks = await withDeadline(blocksForFrame(frame, source, driver, layout, visual), FRAME_BUDGET_MS, null);
+    blocks = await withDeadline(blocksForFrame(frame, source, driver, layout, visual, display), FRAME_BUDGET_MS, null);
   } catch (err) {
     log('frame.blocks.error', {
       depth, url: frame.url().slice(0, 80), error: String(err && err.message ? err.message : err).slice(0, 160),
@@ -259,7 +259,7 @@ async function walk(frame, source, depth, budget, seen, visited, driver, layout 
 
     const nested = await walk(
       child, source, depth + 1, budget, blank ? seen : new Set([...seen, url]),
-      visited, driver, layout, visual);
+      visited, driver, layout, visual, display);
     out.push(...nested);
   }
 
@@ -292,7 +292,7 @@ async function walk(frame, source, depth, budget, seen, visited, driver, layout 
     budget.remaining -= 1;
     const nested = await walk(
       child, source, depth + 1, budget, blank ? seen : new Set([...seen, url]),
-      visited, driver, layout, visual);
+      visited, driver, layout, visual, display);
     if (blank && !nested.length) continue;
 
     // The marker goes in even when nothing could be read out of the frame.
