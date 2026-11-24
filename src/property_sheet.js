@@ -30,7 +30,7 @@ function display(row) {
 
 // A property sheet is a list screen whose rows name a property and show its
 // current value. It shares the list state, movement and cursor contract with
-// the library and Flex; a choice row opens the same kind of nested list.
+// the library and every list; a choice row opens the same kind of nested list.
 class PropertySheet {
   constructor({ title = 'Properties', rows = [], actionLabel = null } = {}) {
     this.title = String(title);

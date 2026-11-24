@@ -52,7 +52,7 @@ module Tawb
       Edit.new(false, false, false, filter, filtering)
     end
 
-    # The movement a list owns. Library, chooser, wizard and Flex all ask this
+    # The movement a list owns. Library, chooser, wizard and every list ask this
     # table rather than each spelling out which keymap actions mean next, first
     # and so on. Left and right are deliberately absent: they are not list
     # movement, and a list which gives them another meaning handles them before

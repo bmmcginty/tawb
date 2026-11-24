@@ -1686,9 +1686,7 @@
       "crystal": [
         "crystal/src/tawb/property_sheet.cr"
       ],
-      "surfaces": [
-        "flex"
-      ],
+      "surfaces": [],
       "engines": [],
       "views": [],
       "fixtures": [],
@@ -3234,9 +3232,7 @@
       "operations": [
         "property_sheet.scenario"
       ],
-      "surfaces": [
-        "flex"
-      ],
+      "surfaces": [],
       "engines": [],
       "views": [],
       "fixtures": [],

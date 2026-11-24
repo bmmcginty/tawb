@@ -42,7 +42,6 @@ const { createLynxActions } = require('./lynx_actions');
 const { KeyReader, EOF } = require('./input');
 const { runKeyWizard } = require('./key_wizard');
 const { ScreenStack } = require('./screen_stack');
-const { PropertySheet } = require('./property_sheet');
 const { editAction, applyBufferEdit, sendFieldEdit } = require('./edit');
 const { Credentials, describeChallenge, splitCredentials } = require('./auth');
 const { entryLine, shortAddress, KIND_LABELS } = require('./library');
@@ -3266,8 +3265,8 @@ async function recoverGoneFrame(state, page, item, previousTexts, anchor, event)
 
 // The wholesale recovery boundary for a key that met a document the browser
 // can no longer find. Every handler is covered by this, not only the ones
-// that know about frames: `r`, activation, typing, Flex dispatch and
-// everything else end here rather than printing a protocol error and
+// that know about frames: `r`, activation, typing and every other key end
+// here rather than printing a protocol error and
 // leaving the session.
 //
 // A child frame that went while its tab lives is recovered by reading the
@@ -3281,7 +3280,6 @@ async function containFrameLoss(state, page) {
   state.line = null;
   state.find = null;
   state.address = null;
-  state.flex = null;
   state.mode = 'browse';
   while (state.screens && state.screens.depth() > 0) state.screens.pop();
 
