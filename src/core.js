@@ -931,6 +931,13 @@ class Core {
   async adoptTab(page) {
     const targetId = await this.driver.targetIdFor(page).catch(() => null);
     if (targetId && this.browserPort != null) claimTab(this.browserPort, targetId);
+    // Show the tab the reader chose. A background tab reports itself hidden,
+    // and a feed asked to load more from one does not answer: the scroll never
+    // reaches the page's lazy loader. Bringing the tab forward is what makes
+    // the page the reader is reading the page the browser is showing.
+    await page.bringToFront().catch((err) => {
+      log('page.foreground.failed', { error: String(err.message || err).slice(0, 160) });
+    });
     // A tab that is ours is one whose password prompts we answer. A tab that
     // is not stays with the browser's own dialog, because a challenge raised
     // in somebody else's tab is not ours to put in front of this reader.

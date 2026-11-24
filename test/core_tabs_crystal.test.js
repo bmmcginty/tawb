@@ -76,6 +76,12 @@ async function withEndpoint(run) {
           });
           result = { context: 'created-context' };
           break;
+        case 'browsingContext.activate':
+          for (const page of current.values()) page.foreground = false;
+          const activated = current.get(message.params.context);
+          if (activated) activated.foreground = true;
+          result = {};
+          break;
         case 'browsingContext.close':
           current.delete(message.params.context);
           result = {};
@@ -117,8 +123,8 @@ for (const implementation of coreTabImplementations(core, session)) {
       'top-a',
       'First tab',
       'https://c.test/no-title',
-      true,
       false,
+      true,
       'created-context',
       ['top-a', 'top-b', 'top-c', 'created-context'],
       null,

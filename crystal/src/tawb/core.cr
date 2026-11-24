@@ -1427,6 +1427,18 @@ module Tawb
       if (port = @browser_port)
         Session.claim_tab(port, target_id)
       end
+      # Show the tab the reader chose. A background tab reports itself hidden,
+      # and a feed asked to load more from one does not answer: the scroll
+      # never reaches the page's lazy loader. Bringing the tab forward is what
+      # makes the page the reader is reading the page the browser is showing.
+      begin
+        page.bring_to_front
+      rescue error
+        detail = (error.message || error.to_s)[0, 160]
+        @logger.try(&.write("page.foreground.failed", {
+          "error" => JSON::Any.new(detail),
+        }))
+      end
       # Intercept only this tab's chooser and its password prompts. Taking
       # either from somebody else's tab suppresses the browser's own dialog
       # and leaves them unable to answer.

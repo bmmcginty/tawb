@@ -408,12 +408,17 @@ function coreTabImplementations(javascript, session) {
       const page = {
         contextId: given.id,
         _url: given.url,
+        _foreground: given.foreground,
         _closed: false,
         _armed: 0,
         url: () => page._url,
         title: async () => given.title,
         isClosed: () => page._closed,
-        evaluate: async () => given.foreground,
+        evaluate: async () => page._foreground,
+        bringToFront: async () => {
+          for (const other of pages) other._foreground = false;
+          page._foreground = true;
+        },
         close: async () => { page._closed = true; },
         setDefaultTimeout: () => {},
         setDefaultNavigationTimeout: () => {},
@@ -426,9 +431,14 @@ function coreTabImplementations(javascript, session) {
       armFileChooser: async (page) => { page._armed += 1; return true; },
       newTab: async () => {
         const page = {
-          contextId: 'created-context', _url: 'about:blank', _closed: false,
+          contextId: 'created-context', _url: 'about:blank', _foreground: false,
+          _closed: false,
           url: () => page._url, title: async () => '', isClosed: () => page._closed,
-          evaluate: async () => false, close: async () => { page._closed = true; },
+          evaluate: async () => page._foreground, close: async () => { page._closed = true; },
+          bringToFront: async () => {
+            for (const other of pages) other._foreground = false;
+            page._foreground = true;
+          },
           setDefaultTimeout: () => {}, setDefaultNavigationTimeout: () => {},
         };
         pages.push(page);

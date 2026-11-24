@@ -384,6 +384,25 @@ test('a feed that changes its node count in either direction has answered', asyn
   });
 });
 
+test('adopting a tab brings it to the front before arming it', async () => {
+  const calls = [];
+  const page = {
+    url: () => 'https://example.test/',
+    bringToFront: async () => { calls.push('front'); },
+    setDefaultTimeout: () => {},
+    setDefaultNavigationTimeout: () => {},
+  };
+  const driver = {
+    targetIdFor: async () => 'top-1',
+    armAuth: async () => { calls.push('auth'); },
+    armFileChooser: async () => { calls.push('files'); },
+  };
+  const core = new Core({ driver, page, source: 'ax', sources: ['ax'] });
+
+  assert.equal(await core.adoptTab(page), 'top-1');
+  assert.deepEqual(calls, ['front', 'auth', 'files']);
+});
+
 test('a popup rendered at the end of the document is brought to its control', () => {
   // Frameworks render a menu into the end of <body> so nothing can clip it,
   // which in a line list puts it nowhere near the button that opened it.

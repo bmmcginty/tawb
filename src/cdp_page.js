@@ -672,6 +672,13 @@ class CdpPage {
     return this.evaluate(() => document.title).catch(() => '');
   }
 
+  // Make this the tab the browser is showing. A tab the reader is not looking
+  // at reports itself hidden, and a page that loads on scroll will not answer
+  // one; see Core#adoptTab.
+  async bringToFront() {
+    await this.session.send('Page.bringToFront');
+  }
+
   evaluate(fn, arg) {
     return this.mainFrame().evaluate(fn, arg);
   }

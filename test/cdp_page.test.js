@@ -34,6 +34,22 @@ function fakePage() {
   return { page, session };
 }
 
+test('bringing a tab to the front is the browser command', async () => {
+  const sent = [];
+  const session = {
+    sessionId: 'PAGE',
+    detached: false,
+    send: async (method, params = {}) => { sent.push({ method, params }); return {}; },
+    on() {},
+    off() {},
+  };
+  const page = new CdpPage({ closePage: async () => {} }, session, 'TARGET');
+
+  await page.bringToFront();
+
+  assert.deepEqual(sent, [{ method: 'Page.bringToFront', params: {} }]);
+});
+
 test('an execution context id belongs to the session that issued it', () => {
   const { page, session } = fakePage();
   const iframe = fakeSession('IFRAME');

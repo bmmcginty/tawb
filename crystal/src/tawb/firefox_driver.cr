@@ -757,6 +757,15 @@ module Tawb
         false
       end
 
+      # Make this the tab the browser is showing. A background tab reports
+      # itself hidden, and a page that loads on scroll will not answer one;
+      # see Core#adopt_tab.
+      def bring_to_front : Nil
+        @protocol.command("browsingContext.activate", {
+          "context" => JSON::Any.new(@context_id),
+        })
+      end
+
       # BiDi commands carry their own bound; these preserve the page contract
       # the core applies when it adopts a tab.
       def set_default_timeout(milliseconds : Int32) : Nil

@@ -55,6 +55,20 @@ function remoteItems(role, name, { childFrame = false } = {}) {
   return { type: 'success', result: { type: 'array', value } };
 }
 
+test('bringing a Firefox tab to the front activates its context', async () => {
+  const sent = [];
+  const session = {
+    send: async (method, params) => { sent.push({ method, params }); return {}; },
+  };
+  const page = new FirefoxPage(session, 'top-context', {});
+
+  await page.bringToFront();
+
+  assert.deepEqual(sent, [{
+    method: 'browsingContext.activate', params: { context: 'top-context' },
+  }]);
+});
+
 for (const implementation of firefoxPageImplementations({
   bidi, FirefoxPage, FirefoxFrame, extractAxItems,
 })) {

@@ -1614,6 +1614,13 @@ module Tawb
         false
       end
 
+      # Make this the tab the browser is showing. A background tab reports
+      # itself hidden, and a page that loads on scroll will not answer one;
+      # see Core#adopt_tab.
+      def bring_to_front : Nil
+        command("Page.bringToFront")
+      end
+
       # The handler for a password prompt raised in this tab, given by the
       # session that opened the tab. Nothing is intercepted until the tab is
       # armed: taking the prompt from a tab somebody else is reading would
