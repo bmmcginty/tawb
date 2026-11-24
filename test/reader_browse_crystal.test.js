@@ -257,13 +257,13 @@ test('moving past the end asks a feed for more', { skip: needsCrystal }, async (
     text: `line ${index}`,
     item: { role: 'text' },
   }));
-  const grew = Array.from({ length: 9 }, (_, index) => ({
+  const moreLines = Array.from({ length: 9 }, (_, index) => ({
     text: `line ${index}`,
     item: { role: 'text' },
   }));
-  const asked = await runBoth('grew', stateFor(lines, { cursor: 5 }, {
-    askMoreOutcome: { grew: true, scrollable: true, moved: true, target: 'bottom' },
-    rescanBlocks: grew,
+  const asked = await runBoth('more', stateFor(lines, { cursor: 5 }, {
+    askMoreOutcome: { changed: true, scrollable: true, moved: true, target: 'bottom' },
+    rescanBlocks: moreLines,
   }), [
     { op: 'browseKey', chunk: 'j' },
   ], { url: PAGE_URL });
@@ -276,18 +276,18 @@ test('moving past the end asks a feed for more', { skip: needsCrystal }, async (
   ], { url: PAGE_URL });
   assert.equal(end.state.statusMsg, 'End of page.');
   const nothing = await runBoth('nothing', stateFor(lines, { cursor: 5 }, {
-    askMoreOutcome: { grew: false, scrollable: false, moved: false, target: 'nothing' },
+    askMoreOutcome: { changed: false, scrollable: false, moved: false, target: 'nothing' },
   }), [
     { op: 'browseKey', chunk: 'j' },
   ], { url: PAGE_URL });
   assert.equal(nothing.state.statusMsg, 'End of page.');
-  const grewButEmpty = await runBoth('grew but empty', stateFor(lines, { cursor: 5 }, {
-    askMoreOutcome: { grew: true, scrollable: true, moved: true, target: 'bottom' },
+  const changedButEmpty = await runBoth('changed but empty', stateFor(lines, { cursor: 5 }, {
+    askMoreOutcome: { changed: true, scrollable: true, moved: true, target: 'bottom' },
     rescanBlocks: lines,
   }), [
     { op: 'browseKey', chunk: 'j' },
   ], { url: PAGE_URL });
-  assert.equal(grewButEmpty.state.statusMsg, 'Nothing more to read.');
+  assert.equal(changedButEmpty.state.statusMsg, 'Nothing more to read.');
   const failed = await runBoth('failed', stateFor(lines, { cursor: 5 }, {
     askMoreFailure: { message: 'the page would not say' },
   }), [

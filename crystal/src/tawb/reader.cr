@@ -406,7 +406,7 @@ module Tawb
       # answered no.
       abstract def no_more_to_load : Bool
       # Ask a lazy feed for more once, restoring its scroll if nothing
-      # arrives. The answer says whether the page grew.
+      # changes. The answer says whether the page changed.
       abstract def ask_for_more : JSON::Any
       # Putting the reader back after a rebuild the reader asked for: the
       # anchor first, then the text the buffer used to hold.
@@ -813,7 +813,7 @@ module Tawb
           raise IO::Error.new(failure.as_h["message"]?.try(&.as_s?) || "the page would not say")
         end
         @ask_more_outcome || JSON::Any.new({
-          "grew"       => JSON::Any.new(false),
+          "changed"    => JSON::Any.new(false),
           "scrollable" => JSON::Any.new(false),
           "moved"      => JSON::Any.new(false),
           "target"     => JSON::Any.new("nothing"),

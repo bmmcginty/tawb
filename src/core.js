@@ -591,33 +591,35 @@ class Core {
   }
 
   // Ask the page for more content: scroll whatever scrolls to the bottom and
-  // watch for elements to appear. Puts the scroll back when nothing does,
-  // because scrolling is not free of consequences even when it gains nothing
-  // — sent to the bottom of a Wikipedia article, the sticky table of contents
-  // collapses and the page loses 216 lines the reader had and did not ask to
-  // give up.
+  // watch for the element count to change. A feed can grow by adding posts or
+  // shrink by replacing the nodes it already had — virtualized feeds do both —
+  // so either direction means the page answered. Puts the scroll back when
+  // nothing changes, because scrolling is not free of consequences even when
+  // it gains nothing — sent to the bottom of a Wikipedia article, the sticky
+  // table of contents collapses and the page loses 216 lines the reader had
+  // and did not ask to give up.
   async askForMore(page = this.page) {
     const probe = await page.evaluate(SCROLL_TO_BOTTOM);
-    let grew = false;
+    let changed = false;
 
     if (probe.scrollable) {
       try {
         await page.waitForFunction(
-          (n) => document.getElementsByTagName('*').length > n,
+          (n) => document.getElementsByTagName('*').length !== n,
           probe.elements,
           { timeout: probe.moved ? LOAD_MORE_TIMEOUT_MS : LOAD_MORE_SETTLED_MS, polling: 250 },
         );
-        grew = true;
+        changed = true;
       } catch {
-        grew = false; // nothing arrived; this really is the end
+        changed = false; // nothing changed; this really is the end
       }
     }
 
-    if (!grew) {
+    if (!changed) {
       await page.evaluate(RESTORE_SCROLL).catch(() => {});
       this.exhausted = { url: this.renderedUrl, blocks: this.blocks.length };
     }
-    return { grew, scrollable: probe.scrollable, moved: probe.moved, target: probe.target };
+    return { changed, scrollable: probe.scrollable, moved: probe.moved, target: probe.target };
   }
 
   // The reader did something. Live refreshes hold off while this is recent,

@@ -1334,7 +1334,7 @@ function readerImplementations(index, keysModule) {
       async askForMore() {
         const failure = spec.core?.askMoreFailure;
         if (failure) throw new Error(failure.message ?? 'the page would not say');
-        return spec.core?.askMoreOutcome ?? { grew: false, scrollable: false, moved: false, target: 'nothing' };
+        return spec.core?.askMoreOutcome ?? { changed: false, scrollable: false, moved: false, target: 'nothing' };
       },
       async reanchor() {
         return { block: spec.core?.reanchorBlock ?? -1, exact: spec.core?.reanchorExact ?? false };

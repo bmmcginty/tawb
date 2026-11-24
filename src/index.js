@@ -2464,14 +2464,14 @@ async function loadMore(state, page) {
     return;
   }
 
-  // Nothing arrived, so there is nothing to rebuild — and a rebuild here does
+  // Nothing changed, so there is nothing to rebuild — and a rebuild here does
   // not merely cost a snapshot for no gain, it can lose content. The core has
   // put the scroll back and remembered the answer.
-  if (!asked.grew) {
+  if (!asked.changed) {
     state.loadingMore = false;
     state.core.live.refreshing = wasRefreshing;
     log('loadmore', {
-      ms: Date.now() - t0, grew: false, scrollable: asked.scrollable,
+      ms: Date.now() - t0, changed: false, scrollable: asked.scrollable,
       scrolled: asked.target, added: 0, lines: state.lines.length,
     });
     setStatus(state, 'End of page.');
@@ -2495,7 +2495,7 @@ async function loadMore(state, page) {
   state.loadingMore = false;
 
   repaintList(state, page, screen);
-  log('loadmore', { ms: Date.now() - t0, grew: true, scrolled: asked.target, added, lines: state.lines.length });
+  log('loadmore', { ms: Date.now() - t0, changed: true, scrolled: asked.target, added, lines: state.lines.length });
 
   if (added > 0) {
     // The reader asked to move down, so move down — onto the first of what
@@ -2503,7 +2503,7 @@ async function loadMore(state, page) {
     moveSelection(state, state.cursor + 1, page);
     setStatus(state, `${added} more line${added === 1 ? '' : 's'}.`);
   } else {
-    // The page grew but said nothing worth reading: trackers, a spinner.
+    // The page changed but said nothing worth reading: trackers, a spinner.
     setStatus(state, 'Nothing more to read.');
   }
 }

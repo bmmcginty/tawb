@@ -11,7 +11,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { Core, sliderTarget } = require('../src/core');
+const { Core, sliderTarget, SCROLL_TO_BOTTOM, RESTORE_SCROLL } = require('../src/core');
 
 const blocksOf = (texts) => texts.map((text, i) => ({ text, item: { name: text, domIndex: i } }));
 
@@ -311,6 +311,77 @@ test('a driver with no pointer of its own says so rather than appearing to hover
   assert.equal(core.canHover(), false);
   const result = await core.hover({ role: 'link', name: 'Members' }, {});
   assert.deepEqual(result, { ok: false, reason: 'cannot be hovered with the edbrowse driver' });
+});
+
+test('a feed that changes its node count in either direction has answered', async (t) => {
+  for (const [name, count] of [['more', 12], ['fewer', 8]]) {
+    await t.test(name, async () => {
+      let restored = false;
+      const page = {
+        evaluate: async (fn) => {
+          if (fn === SCROLL_TO_BOTTOM) {
+            return { elements: 10, scrollable: true, moved: true, target: 'document' };
+          }
+          if (fn === RESTORE_SCROLL) {
+            restored = true;
+            return true;
+          }
+          return undefined;
+        },
+        waitForFunction: async (fn, before) => {
+          assert.equal(typeof fn, 'function');
+          const saved = global.document;
+          try {
+            global.document = { getElementsByTagName: () => ({ length: before }) };
+            assert.equal(fn(before), false, 'the count it started at is not a change');
+            global.document = { getElementsByTagName: () => ({ length: count }) };
+            assert.equal(fn(before), true, 'a count in either direction is a change');
+          } finally {
+            if (saved === undefined) delete global.document;
+            else global.document = saved;
+          }
+          return true;
+        },
+      };
+      const core = new Core({ driver: {}, page, source: 'ax', sources: ['ax'] });
+      core.renderedUrl = 'https://example.test/feed';
+      core.blocks = blocksOf(['page']);
+
+      assert.deepEqual(await core.askForMore(page), {
+        changed: true, scrollable: true, moved: true, target: 'document',
+      });
+      assert.equal(core.noMoreToLoad(), false);
+      assert.equal(restored, false, 'a changed page keeps the scroll that asked for more');
+    });
+  }
+
+  await t.test('unchanged', async () => {
+    let restored = false;
+    const page = {
+      evaluate: async (fn) => {
+        if (fn === SCROLL_TO_BOTTOM) {
+          return { elements: 10, scrollable: true, moved: true, target: 'document' };
+        }
+        if (fn === RESTORE_SCROLL) {
+          restored = true;
+          return true;
+        }
+        return undefined;
+      },
+      waitForFunction: async () => {
+        throw new Error('waitForFunction timed out');
+      },
+    };
+    const core = new Core({ driver: {}, page, source: 'ax', sources: ['ax'] });
+    core.renderedUrl = 'https://example.test/feed';
+    core.blocks = blocksOf(['page']);
+
+    assert.deepEqual(await core.askForMore(page), {
+      changed: false, scrollable: true, moved: true, target: 'document',
+    });
+    assert.equal(core.noMoreToLoad(), true);
+    assert.equal(restored, true, 'a barren scroll is put back');
+  });
 });
 
 test('a popup rendered at the end of the document is brought to its control', () => {

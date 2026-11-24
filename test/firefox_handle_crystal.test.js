@@ -880,7 +880,7 @@ test('both runtimes invoke load-more and fragment assets on the acting page', as
     const label = implementation.name;
     assert.deepEqual(observations, [
       null,
-      { grew: false, scrollable: false, moved: false, target: 'nothing' },
+      { changed: false, scrollable: false, moved: false, target: 'nothing' },
       1,
     ], label);
 

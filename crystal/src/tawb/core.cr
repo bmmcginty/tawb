@@ -695,34 +695,36 @@ module Tawb
     end
 
     # Ask a lazy feed for more once, restoring its visual scroll position if
-    # no elements arrive. Ordinary long documents are already fully present
-    # in the buffer; only a growing DOM counts as more content.
+    # the element count does not change. A feed can grow by adding posts or
+    # shrink by replacing nodes it already had — virtualized feeds do both —
+    # so either direction means the page answered. Ordinary long documents are
+    # already fully present in the buffer; only a changing DOM counts as more.
     def ask_for_more(page : Engine::Page? = @page) : JSON::Any
       target = page || raise IO::Error.new("this core has no page")
       probe = target.evaluate(SCROLL_TO_BOTTOM).as_h
       scrollable = probe["scrollable"]?.try(&.as_bool?) || false
       moved = probe["moved"]?.try(&.as_bool?) || false
       before = Core.js_number(probe["elements"]?)
-      grew = false
+      changed = false
       if scrollable
         timeout = moved ? LOAD_MORE_TIMEOUT_MS : LOAD_MORE_SETTLED_MS
         deadline = Time.instant + timeout.milliseconds
         while Time.instant < deadline
           count = Core.js_number(target.evaluate(
             "() => document.getElementsByTagName('*').length"))
-          if count > before
-            grew = true
+          if count != before
+            changed = true
             break
           end
           sleep 250.milliseconds
         end
       end
-      unless grew
+      unless changed
         target.evaluate(RESTORE_SCROLL) rescue nil
         @exhausted = Exhausted.new(@rendered_url, @blocks.size)
       end
       JSON::Any.new({
-        "grew"       => JSON::Any.new(grew),
+        "changed"    => JSON::Any.new(changed),
         "scrollable" => JSON::Any.new(scrollable),
         "moved"      => JSON::Any.new(moved),
         "target"     => JSON::Any.new(probe["target"]?.try(&.as_s?) || "nothing"),

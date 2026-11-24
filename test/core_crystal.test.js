@@ -559,7 +559,7 @@ if (implementations.length > 1) {
     }
   });
 
-  test('Crystal asks a lazy feed for more and puts a barren scroll back', async () => {
+  test('Crystal asks a lazy feed for more when its node count changes', async () => {
     const server = http.createServer();
     const sockets = new Set();
     const calls = new Map();
@@ -578,6 +578,7 @@ if (implementations.length > 1) {
     });
     server.on('upgrade', (request, socket, head) => {
       const mode = request.url.startsWith('/grow') ? 'grow'
+        : request.url.startsWith('/shrink') ? 'shrink'
         : request.url.startsWith('/stuck') ? 'stuck' : 'static';
       const tally = { counts: 0, restores: 0 };
       calls.set(mode, tally);
@@ -590,10 +591,12 @@ if (implementations.length > 1) {
           if (declaration.includes('scrollingElement')) {
             result = { result: remote(mode === 'static'
               ? { elements: 5, scrollable: false, moved: false, target: 'nothing' }
-              : { elements: 10, scrollable: true, moved: mode === 'grow', target: 'document' }) };
+              : { elements: 10, scrollable: true, moved: mode !== 'stuck', target: 'document' }) };
           } else if (declaration.includes('getElementsByTagName')) {
             tally.counts += 1;
-            result = { result: remote(tally.counts > 1 && mode === 'grow' ? 12 : 10) };
+            const count = tally.counts > 1 && mode === 'grow' ? 12
+              : tally.counts > 1 && mode === 'shrink' ? 8 : 10;
+            result = { result: remote(count) };
           } else if (declaration.includes('undo')) {
             tally.restores += 1;
             result = { result: remote(true) };
@@ -608,18 +611,24 @@ if (implementations.length > 1) {
     try {
       const grown = await crystal.moreScenario(`ws://127.0.0.1:${port}/grow`);
       assert.deepEqual(grown, {
-        grew: true, scrollable: true, moved: true, target: 'document', exhausted: false,
+        changed: true, scrollable: true, moved: true, target: 'document', exhausted: false,
+      });
+      const shrunk = await crystal.moreScenario(`ws://127.0.0.1:${port}/shrink`);
+      assert.deepEqual(shrunk, {
+        changed: true, scrollable: true, moved: true, target: 'document', exhausted: false,
       });
       const stuck = await crystal.moreScenario(`ws://127.0.0.1:${port}/stuck`);
       assert.deepEqual(stuck, {
-        grew: false, scrollable: true, moved: false, target: 'document', exhausted: true,
+        changed: false, scrollable: true, moved: false, target: 'document', exhausted: true,
       });
       const still = await crystal.moreScenario(`ws://127.0.0.1:${port}/static`);
       assert.deepEqual(still, {
-        grew: false, scrollable: false, moved: false, target: 'nothing', exhausted: true,
+        changed: false, scrollable: false, moved: false, target: 'nothing', exhausted: true,
       });
       assert.equal(calls.get('grow').restores, 0);
       assert.ok(calls.get('grow').counts >= 2);
+      assert.equal(calls.get('shrink').restores, 0);
+      assert.ok(calls.get('shrink').counts >= 2);
       assert.equal(calls.get('stuck').restores, 1);
       assert.ok(calls.get('stuck').counts >= 2);
       assert.equal(calls.get('static').restores, 1);

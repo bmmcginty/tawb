@@ -4751,8 +4751,8 @@ module Tawb
         return
       end
 
-      unless asked.as_h["grew"]?.try(&.as_bool?)
-        # Nothing arrived, so there is nothing to rebuild — and a rebuild
+      unless asked.as_h["changed"]?.try(&.as_bool?)
+        # Nothing changed, so there is nothing to rebuild — and a rebuild
         # here does not merely cost a snapshot for no gain, it can lose
         # content. The core has put the scroll back and remembered the
         # answer.
@@ -4799,7 +4799,7 @@ module Tawb
         Reader.set_status(output, state, page.url,
           "#{added} more line#{added == 1 ? "" : "s"}.")
       else
-        # The page grew but said nothing worth reading: trackers, a spinner.
+        # The page changed but said nothing worth reading: trackers, a spinner.
         Reader.set_status(output, state, page.url, "Nothing more to read.")
       end
     end
